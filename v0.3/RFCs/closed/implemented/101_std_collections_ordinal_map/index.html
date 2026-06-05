@@ -1,0 +1,6562 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Documentation for the Incan programming language">
+      
+      
+      
+      
+      
+      
+      <link rel="icon" href="../../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
+    
+    
+      
+        <title>RFC 101: std.collections.OrdinalMap — deterministic compact key-to-ordinal lookup - Incan Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../../assets/stylesheets/main.6f8fc17f.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../../stylesheets/pygments.css">
+    
+      <link rel="stylesheet" href="/shared/incapunk/incapunk.css">
+    
+    <script>__md_scope=new URL("../../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#rfc-101-stdcollectionsordinalmap-deterministic-compact-key-to-ordinal-lookup" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+      
+  <img src="/shared/incapunk/wordmark_small_001.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Incan Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              RFC 101: std.collections.OrdinalMap — deterministic compact key-to-ordinal lookup
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="amber"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/dannys-code-corner/incan" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    dannys-code-corner/incan
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+      
+  <img src="/shared/incapunk/wordmark_small_001.png" alt="logo">
+
+    </a>
+    Incan Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/dannys-code-corner/incan" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    dannys-code-corner/incan
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../.." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../start_here/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Start here
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            Start here
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../start_here/coming_from_python/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Coming from Python (apps)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../start_here/coming_from_rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Coming from Rust (evaluator)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../start_here/pipelines_and_automation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Pipelines & automation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../start_here/beginner/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Beginner
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../comparisons/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Comparisons
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            Comparisons
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../comparisons/python/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Incan vs Python
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../comparisons/rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Incan vs Rust
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../comparisons/python_compatibility_tools/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Incan vs Python compatibility tools
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../language/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Language
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            Language
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_2" id="__nav_4_2_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Tutorials
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_2">
+            <span class="md-nav__icon md-icon"></span>
+            Tutorials
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_2_1" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../language/tutorials/book/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    The Incan Book (Basics)
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4_2_1" id="__nav_4_2_1_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_2_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_2_1">
+            <span class="md-nav__icon md-icon"></span>
+            The Incan Book (Basics)
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/book/01_hello_world/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    1. Hello world
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/book/02_values_variables_and_types/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    2. Values, variables, and types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/book/03_functions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    3. Functions
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/book/04_control_flow/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    4. Control flow
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/book/05_modules_and_imports/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    5. Modules and imports
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/book/06_errors/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    6. Errors (Result/Option and `?`)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/book/07_strings_and_formatting/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    7. Strings and formatting
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/book/08_collections_and_iteration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    8. Collections and iteration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/book/09_enums/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    9. Enums and better `match`
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/book/10_models_vs_classes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    10. Models vs classes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/book/11_traits_and_derives/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    11. Traits and derives
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/book/12_newtypes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    12. Newtypes (stronger types)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/book/13_unit_tests/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    13. Unit tests
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/dates_and_times/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Dates and times
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/build_your_first_api/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Build your first API
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/fallible_and_infallible_paths/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Fallible and infallible paths
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/web_framework/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Web framework
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_3" id="__nav_4_3_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    How-to
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_3">
+            <span class="md-nav__icon md-icon"></span>
+            How-to
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/async_programming/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Async programming
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/customize_derived_behavior/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Customize derived behavior
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/dates_and_times/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Dates and times
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/error_handling_recipes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error handling recipes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/error_messages/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error messages
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/file_io/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    File I/O
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/binary_text_encoding/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Binary-text encoding
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/compression/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Compression
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/dynamic_json/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Dynamic JSON
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/generators/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Generators
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/imports_and_modules/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Imports and modules
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/module_state/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Module state
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/choosing_collections/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/choosing_numeric_types/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Choosing numeric types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/modeling_with_enums/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Modeling with enums
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/project_lifecycle/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Project lifecycle
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/testing_stdlib/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Testing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/string_processing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/working_with_uuids/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with UUIDs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/performance/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Performance
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/rust_interop/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Rust interop
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/rust_types_for_python_devs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Rust types (coming from Python)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_4" id="__nav_4_4_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Reference
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_4">
+            <span class="md-nav__icon md-icon"></span>
+            Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/language/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Language reference (generated)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/feature_inventory/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Feature inventory (generated)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/code_style/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Code style guide
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/functions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Functions and calls
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/generators/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Generators
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/symbol_aliases/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Symbol aliases
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/callable_presets/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Callable presets
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/glossary/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Glossary
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/file_io/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    File I/O reference (Path/File APIs)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/imports_and_modules/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Imports and modules
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/static_storage/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Static storage
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/numeric_semantics/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Numeric semantics
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/project_lifecycle/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Project lifecycle
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/strings/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Strings and Bytes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/reflection/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Reflection
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/derives_and_traits/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Derives & traits (reference)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_4_17" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../language/reference/stdlib/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Standard library
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4_4_17" id="__nav_4_4_17_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_4_17_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_4_17">
+            <span class="md-nav__icon md-icon"></span>
+            Standard library
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/async/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.async
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/collections/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.collections
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/compression/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.compression
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/derives/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.derives.*
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/datetime/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.datetime
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/encoding/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.encoding
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/fs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.fs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/graph/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.graph
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/hash/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.hash
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/io/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.io
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/json/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.json
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/telemetry/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.telemetry
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/regex/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.regex
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/uuid/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.uuid
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/tempfile/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.tempfile
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/reflection/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.reflection
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/result/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.result
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/traits/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.traits.*
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/testing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.testing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/math/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.math
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_4_18" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../language/reference/stdlib_traits/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Stdlib traits
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4_4_18" id="__nav_4_4_18_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_4_18_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_4_18">
+            <span class="md-nav__icon md-icon"></span>
+            Stdlib traits
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib_traits/collection_protocols/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Collection protocols
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Indexing and slicing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib_traits/callable/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Callable objects
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib_traits/awaitable/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Awaitable values
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib_traits/error/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error trait
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib_traits/operators/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Operators
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib_traits/conversions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Conversions
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_4_19" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_4_19" id="__nav_4_4_19_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Derives
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_4_19_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_4_19">
+            <span class="md-nav__icon md-icon"></span>
+            Derives
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/derives/string_representation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    String representation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/derives/comparison/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Comparison
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/derives/copying_default/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Copying/default
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/derives/serialization/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Serialization
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/derives/validation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Validation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/derives/custom_behavior/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Custom behavior
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_5" id="__nav_4_5_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Explanation
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5">
+            <span class="md-nav__icon md-icon"></span>
+            Explanation
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/why_incan/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Why Incan?
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/why_not_just_rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Why not just Rust?
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/how_incan_works/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    How Incan works
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/compile_time_and_runtime/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Compile time and runtime
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/rust_shaped_confidence/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Rust-shaped confidence
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/control_flow/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Control flow
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/callable_presets/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Callable presets
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/closures/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Closures
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/consts/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Consts
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/generators/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Generators
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/static_storage/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Module static storage
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/numeric_types/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Numeric types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/datetime_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Date and time model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/ordinal_map/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    OrdinalMap
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/derives_and_traits/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Derives & traits (explained)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/call_site_type_arguments/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Why call-site type args exist
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/how_derives_work/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    How derives work
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/enums/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Enums
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/error_handling/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error handling
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/imports_and_modules/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Imports and modules
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../language/explanation/models_and_classes/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Models and classes
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
+            <span class="md-nav__icon md-icon"></span>
+            Models and classes
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/models_and_classes/models/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Models
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/models_and_classes/classes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Classes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/traits_as_language_hooks/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Traits as language hooks
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/scopes_and_name_resolution/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Scopes and name resolution
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../tooling/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Tooling
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            Tooling
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_2" id="__nav_5_2_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Tutorials
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_2">
+            <span class="md-nav__icon md-icon"></span>
+            Tutorials
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/tutorials/getting_started/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/tutorials/your_first_project/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Your first project
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Pipeline mini-project
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    How-to
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3">
+            <span class="md-nav__icon md-icon"></span>
+            How-to
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/how-to/install_and_run/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Install/build/run
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/how-to/dependencies/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Managing dependencies
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/how-to/ci_and_automation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    CI & automation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/how-to/troubleshooting/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Troubleshooting
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/how-to/editor_setup/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Editor setup
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/how-to/lsp/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    LSP
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/how-to/formatting/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Formatting with incan fmt
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/how-to/testing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Testing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_4" id="__nav_5_4_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Explanation
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_4">
+            <span class="md-nav__icon md-icon"></span>
+            Explanation
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/explanation/projects_today/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Projects today
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/explanation/lsp_architecture/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    LSP architecture
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_5" id="__nav_5_5_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Reference
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_5">
+            <span class="md-nav__icon md-icon"></span>
+            Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/reference/cli_reference/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    CLI reference
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/reference/contract_metadata/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Checked contract metadata
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/reference/checked_api_metadata/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Checked API metadata
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/reference/project_configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Project configuration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    LSP protocol support
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../whitepapers/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Whitepapers
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            Whitepapers
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../whitepapers/incan_ecosystem_north_star/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Incan ecosystem north star
+  </span>
+  
+    
+  
+  
+    <span class="md-status md-status--Snapshot"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+          
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../contributing/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Contributing
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_7" id="__nav_7_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            Contributing
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_7_2" id="__nav_7_2_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Tutorials
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_2">
+            <span class="md-nav__icon md-icon"></span>
+            Tutorials
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_2_1" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../contributing/tutorials/book/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Incan Contributor Book (Advanced)
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_7_2_1" id="__nav_7_2_1_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_7_2_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_2_1">
+            <span class="md-nav__icon md-icon"></span>
+            Incan Contributor Book (Advanced)
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    1. Architecture tour
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    2. Layering and boundaries
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    3. Proposals: issues vs RFCs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    4. Your first change: add a builtin
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    5. Your first syntax change
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    6. Tooling loop: formatter + tests
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    7. Tooling loop: LSP
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    8. Docsite contributor loop
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_7_3" id="__nav_7_3_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    How-to
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_3">
+            <span class="md-nav__icon md-icon"></span>
+            How-to
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/how-to/extending_language/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Extending the language
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Author library DSLs with incan_vocab
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/how-to/auditing_generated_rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Auditing generated Rust
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Benchmarks & profiling (repository)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/how-to/ci_and_automation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    CI & automation (repository)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/how-to/writing_rfcs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Writing RFCs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_7_4" id="__nav_7_4_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Explanation
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_4">
+            <span class="md-nav__icon md-icon"></span>
+            Explanation
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/explanation/architecture/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Architecture
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/explanation/duckborrowing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Duckborrowing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/explanation/generated_rust_quality/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Generated Rust quality
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/explanation/layering/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Layering rules
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/explanation/incapunk_docs_theme/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Incapunk docs theme
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Readable, maintainable Rust
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.testing internals
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_7_5" id="__nav_7_5_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Reference
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_5">
+            <span class="md-nav__icon md-icon"></span>
+            Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/reference/generated_rust_stdlib_coverage/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Generated Rust stdlib coverage
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    RFCs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../release_notes/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Release notes
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_8" id="__nav_8_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            Release notes
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../release_notes/0_3/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.3
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../release_notes/0_2/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.2
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../release_notes/0_1/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.1
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../roadmap/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Roadmap
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../stability/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Stability policy
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      Summary
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#north-star" class="md-nav__link">
+    <span class="md-ellipsis">
+      North star
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#core-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      Core model
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#motivation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Motivation
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Goals
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Non-Goals
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#guide-level-explanation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Guide-level explanation
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reference-level-explanation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Reference-level explanation
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Reference-level explanation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#module-and-type" class="md-nav__link">
+    <span class="md-ellipsis">
+      Module and type
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ordinal-key-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      Ordinal key contract
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#construction-from-keys" class="md-nav__link">
+    <span class="md-ellipsis">
+      Construction from keys
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#construction-from-pairs" class="md-nav__link">
+    <span class="md-ellipsis">
+      Construction from pairs
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lookup-apis" class="md-nav__link">
+    <span class="md-ellipsis">
+      Lookup APIs
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unchecked-lookup" class="md-nav__link">
+    <span class="md-ellipsis">
+      Unchecked lookup
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#deterministic-storage-and-compact-ordinals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Deterministic storage and compact ordinals
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#serialization" class="md-nav__link">
+    <span class="md-ellipsis">
+      Serialization
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#size-introspection" class="md-nav__link">
+    <span class="md-ellipsis">
+      Size introspection
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#error-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      Error model
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#relationship-to-dict-and-frozendict" class="md-nav__link">
+    <span class="md-ellipsis">
+      Relationship to dict and FrozenDict
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#design-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      Design details
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Design details">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lookup-algorithm-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      Lookup algorithm contract
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#prior-art-and-acknowledgement" class="md-nav__link">
+    <span class="md-ellipsis">
+      Prior art and acknowledgement
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#deterministic-retry-policy" class="md-nav__link">
+    <span class="md-ellipsis">
+      Deterministic retry policy
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#exact-verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      Exact verification
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#key-encoding-and-schema-evolution" class="md-nav__link">
+    <span class="md-ellipsis">
+      Key encoding and schema evolution
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dataset-and-metadata-usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      Dataset and metadata usage
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#api-aliases" class="md-nav__link">
+    <span class="md-ellipsis">
+      API aliases
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alternatives-considered" class="md-nav__link">
+    <span class="md-ellipsis">
+      Alternatives considered
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Alternatives considered">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#string-only-map" class="md-nav__link">
+    <span class="md-ellipsis">
+      String-only map
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#general-frozen-dictionary-optimization" class="md-nav__link">
+    <span class="md-ellipsis">
+      General frozen dictionary optimization
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#builtin-dict-with-conventions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Builtin dict with conventions
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fingerprint-only-verified-map" class="md-nav__link">
+    <span class="md-ellipsis">
+      Fingerprint-only verified map
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#full-database-index-abstraction" class="md-nav__link">
+    <span class="md-ellipsis">
+      Full database index abstraction
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#drawbacks" class="md-nav__link">
+    <span class="md-ellipsis">
+      Drawbacks
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      Implementation architecture
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#layers-affected" class="md-nav__link">
+    <span class="md-ellipsis">
+      Layers affected
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      Implementation Plan
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Implementation Plan">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-rfc-lifecycle-capability-intake-and-benchmarks" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 1: RFC lifecycle, capability intake, and benchmarks
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-2-ordinalkey-contract-and-deterministic-scalar-encodings" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 2: OrdinalKey contract and deterministic scalar encodings
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-3-ordinalmap-construction-and-lookup" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 3: OrdinalMap construction and lookup
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-4-compact-storage-deterministic-layout-and-serialization" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 4: Compact storage, deterministic layout, and serialization
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-5-compiler-and-tooling-support" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 5: Compiler and tooling support
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-6-docs-release-notes-and-quality-gates" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 6: Docs, release notes, and quality gates
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-log" class="md-nav__link">
+    <span class="md-ellipsis">
+      Implementation log
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Implementation log">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#spec-design" class="md-nav__link">
+    <span class="md-ellipsis">
+      Spec / design
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stdlib-runtime" class="md-nav__link">
+    <span class="md-ellipsis">
+      Stdlib / runtime
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compiler-tooling" class="md-nav__link">
+    <span class="md-ellipsis">
+      Compiler / tooling
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tests-benchmarks" class="md-nav__link">
+    <span class="md-ellipsis">
+      Tests / benchmarks
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#docs-release" class="md-nav__link">
+    <span class="md-ellipsis">
+      Docs / release
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#design-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Design Decisions
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+  
+
+
+<h1 id="rfc-101-stdcollectionsordinalmap-deterministic-compact-key-to-ordinal-lookup">RFC 101: <code>std.collections.OrdinalMap</code> — deterministic compact key-to-ordinal lookup<a class="headerlink" href="#rfc-101-stdcollectionsordinalmap-deterministic-compact-key-to-ordinal-lookup" title="Permanent link">&para;</a></h1>
+<ul>
+<li><strong>Status:</strong> Implemented</li>
+<li><strong>Created:</strong> 2026-05-19</li>
+<li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
+<li><strong>Related:</strong><ul>
+<li>RFC 009 (sized numeric types)</li>
+<li>RFC 022 (namespaced stdlib modules and compiler handoff)</li>
+<li>RFC 023 (compilable stdlib and Rust module binding)</li>
+<li>RFC 030 (<code>std.collections</code> extended collection types)</li>
+<li>RFC 052 (module static storage)</li>
+<li>RFC 065 (<code>std.hash</code> stable hashing primitives)</li>
+<li>RFC 086 (schema descriptors and adapters)</li>
+<li>RFC 098 (native associated types for traits)</li>
+<li>RFC 099 (generic trait-targeted methods)</li>
+</ul>
+</li>
+<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/595</li>
+<li><strong>Follow-up:</strong> https://github.com/dannys-code-corner/incan/issues/596 (v0.5 trait-system bridge removal)</li>
+<li><strong>RFC PR:</strong> —</li>
+<li><strong>Written against:</strong> v0.3</li>
+<li><strong>Shipped in:</strong> v0.3</li>
+</ul>
+<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
+<p>This RFC proposes <code>std.collections.OrdinalMap</code>, an immutable map from deterministically encodable keys to compact integer ordinals. The type gives schemas, catalogs, generated metadata, and immutable dataset dictionaries a reproducible way to turn names, IDs, dates, UUIDs, and other stable scalar values into integer codes, while keeping safe lookup exact, deterministic, serializable, and separate from mutable <code>dict</code> or general <code>FrozenDict</code> semantics.</p>
+<h2 id="north-star">North star<a class="headerlink" href="#north-star" title="Permanent link">&para;</a></h2>
+<p><code>OrdinalMap</code> is not a convenience wrapper around <code>dict[str, int]</code>. The desired end-state is a stdlib collection whose output is deterministic enough for persisted metadata and dataset indexes, and whose performance profile is credible against specialized immutable-map libraries.</p>
+<p>The target use case is large, static, query-many lookup: schemas with hundreds of columns, catalogs with stable IDs, dictionary-encoded segment values, and planning-time name resolution for systems such as InQL. A planner should be able to resolve stable keys to ordinals once, cache or ship that representation, and then execute against compact integer positions instead of repeatedly comparing source keys.</p>
+<h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>Ordinal maps are immutable key-to-integer maps:</strong> an <code>OrdinalMap[K]</code> maps each unique key of type <code>K</code> to a non-negative integer ordinal.</li>
+<li><strong>Keys are deterministic encodings, not arbitrary hashables:</strong> supported keys must implement a stable key-encoding contract so equal keys produce identical canonical bytes across platforms.</li>
+<li><strong>Construction is deterministic:</strong> the same canonical input must produce the same ordinals, lookup structure, and serialized bytes for a given Incan version and format version.</li>
+<li><strong>Safe lookup is exact:</strong> default lookup APIs must not silently return an ordinal for a missing key.</li>
+<li><strong>Storage is compact:</strong> ordinal cells should use the smallest supported unsigned storage width that can represent the maximum ordinal.</li>
+<li><strong>Unchecked lookup is explicit:</strong> a proven-present fast path may exist, but it must be visibly unsafe in the API and must not be the default behavior.</li>
+<li><strong>The public contract is portable:</strong> observable behavior must be defined by deterministic key encoding, exact safe lookup, compact ordinal storage, and deterministic serialization rather than backend-specific map behavior.</li>
+</ol>
+<h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
+<p>Large systems frequently need to resolve stable names or scalar values into integer positions before doing real work. Column names become column ordinals, field names become field IDs, table names become catalog IDs, enum-like values become compact codes, and string or scalar dictionary values become physical segment codes. Once a query, transformation, or scan has resolved a key to an ordinal, the hot path can use integer slots instead of repeated string comparisons.</p>
+<p>Builtin <code>dict</code> is the right tool for mutable, general-purpose lookup. It is not the right public abstraction for immutable, reproducible, serialized lookup tables that should be rebuilt byte-for-byte across machines. <code>FrozenDict</code> is the right general frozen dictionary shape, but it is intentionally broad and should not be overloaded with specialized minimal-perfect-hash or ordinal-specific behavior.</p>
+<p>The motivating requirement is not merely speed. Determinism matters because generated metadata, persisted catalogs, and immutable dataset segments must be reproducible. If the same schema or dictionary domain produces different index bytes depending on process randomness, host platform, or insertion-order accidents, downstream artifacts become harder to diff, cache, test, verify, and distribute.</p>
+<p>Purpose-built data libraries also need a primitive below full physical indexing. A table with hundreds of columns and billions of rows should not resolve column names inside the row loop. The plan should resolve names to ordinals once, then execute against integer slots. For dictionary-encoded scalar columns, the segment dictionary should resolve a value such as <code>"paid"</code> or <code>Status.Paid</code> to an integer code once, then scan or compare packed integer codes.</p>
+<p>This RFC is directly informed by Daniel Lemire's <a href="https://github.com/lemire/constmap"><code>constmap</code></a> work and by Thomas Mueller Graf and Daniel Lemire's <a href="https://arxiv.org/abs/2201.01174">binary fuse</a> and <a href="https://arxiv.org/abs/1912.08258">xor filter</a> papers. That work demonstrates the practical value of immutable compact maps built from a known key set, including fast lookup, compact storage, verified and unchecked lookup modes, and serialization. <code>OrdinalMap</code> adapts those lessons to Incan's stdlib goals: deterministic construction, exact safe lookup, generic deterministic scalar keys, and ordinal/code-oriented semantics rather than a string-only <code>uint64</code> map.</p>
+<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Add <code>OrdinalMap[K]</code> to <code>std.collections</code> as an immutable, deterministic key-to-ordinal lookup type.</li>
+<li>Define <code>OrdinalKey</code> as the stable key-encoding contract for key types that can be used with <code>OrdinalMap</code>.</li>
+<li>Support stable scalar keys beyond <code>str</code> and <code>bytes</code>, including booleans, ordinary <code>int</code>, fixed-width integers, fixed-precision decimals, UUIDs, civil dates, civil times, civil datetimes, fixed-offset datetimes, value enums with stable scalar encodings, and user-defined key types that implement the contract.</li>
+<li>Support construction from ordered keys where ordinals are input positions.</li>
+<li>Support construction from explicit key/ordinal pairs where ordinals are caller-provided.</li>
+<li>Require exact safe lookup semantics for default APIs.</li>
+<li>Define deterministic construction and deterministic serialization requirements.</li>
+<li>Select compact ordinal storage width from the maximum ordinal.</li>
+<li>Provide batch lookup APIs for resolving many keys without forcing callers into repeated boilerplate.</li>
+<li>Provide explicit unchecked lookup APIs for proven-present hot paths and benchmarkable batch lookup, without making unchecked lookup the default.</li>
+<li>Provide byte-size introspection and deterministic serialization/deserialization APIs suitable for persisted metadata.</li>
+<li>Match the practical feature surface that made <code>constmap</code> and <code>fastconstmap</code> worth studying: immutable construction from known keys and ordinals, fast lookup, batch lookup, checked and unchecked modes, compact storage, serialization, deserialization, and benchmarks against ordinary maps.</li>
+</ul>
+<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>This RFC does not replace builtin <code>dict</code>.</li>
+<li>This RFC does not replace <code>FrozenDict</code>.</li>
+<li>This RFC does not define a mutable ordered map.</li>
+<li>This RFC does not define a row-level database index, B-tree, bitmap index, inverted index, vector index, or range index.</li>
+<li>This RFC does not accept arbitrary objects without a deterministic <code>OrdinalKey</code> implementation.</li>
+<li>This RFC does not define floating-point key semantics. Float support needs a separate policy for NaN payloads, signed zero, and canonicalization before it can satisfy this RFC's determinism requirement.</li>
+<li>This RFC does not standardize probabilistic missing-key behavior as the default safe API.</li>
+<li>This RFC does not expose backend hash-table, minimal-perfect-hash, or fuse-filter internals as part of the public contract.</li>
+</ul>
+<h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
+<p>Use <code>OrdinalMap</code> when a stable set of keys needs stable integer positions.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.collections</span><span class="w"> </span><span class="kn">import</span> <span class="nc">OrdinalMap</span>
+
+<span class="n">columns</span> <span class="o">=</span> <span class="nc">OrdinalMap</span><span class="o">.</span><span class="n">from_keys</span><span class="p">([</span><span class="s2">&quot;order_id&quot;</span><span class="p">,</span> <span class="s2">&quot;customer_id&quot;</span><span class="p">,</span> <span class="s2">&quot;status&quot;</span><span class="p">,</span> <span class="s2">&quot;amount&quot;</span><span class="p">])</span><span class="o">?</span>
+
+<span class="k">assert</span> <span class="n">columns</span><span class="p">[</span><span class="s2">&quot;status&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="mi">2</span>
+<span class="k">assert</span> <span class="n">columns</span><span class="o">.</span><span class="nb">get</span><span class="p">(</span><span class="s2">&quot;missing&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">is_none</span><span class="p">()</span>
+</code></pre></div>
+<p>The simplest construction form takes an ordered key list. The ordinal is the key's position in that list.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">statuses</span> <span class="o">=</span> <span class="nc">OrdinalMap</span><span class="o">.</span><span class="n">from_keys</span><span class="p">([</span><span class="s2">&quot;pending&quot;</span><span class="p">,</span> <span class="s2">&quot;paid&quot;</span><span class="p">,</span> <span class="s2">&quot;cancelled&quot;</span><span class="p">])</span><span class="o">?</span>
+
+<span class="k">assert</span> <span class="n">statuses</span><span class="p">[</span><span class="s2">&quot;pending&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span>
+<span class="k">assert</span> <span class="n">statuses</span><span class="p">[</span><span class="s2">&quot;paid&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="mi">1</span>
+<span class="k">assert</span> <span class="n">statuses</span><span class="p">[</span><span class="s2">&quot;cancelled&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="mi">2</span>
+</code></pre></div>
+<p>Explicit ordinals are useful when ordinals come from a file format, schema registry, generated catalog, or physical storage layout.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">field_ids</span> <span class="o">=</span> <span class="nc">OrdinalMap</span><span class="o">.</span><span class="n">from_pairs</span><span class="p">([</span>
+    <span class="p">(</span><span class="s2">&quot;order_id&quot;</span><span class="p">,</span> <span class="mi">10</span><span class="p">),</span>
+    <span class="p">(</span><span class="s2">&quot;customer_id&quot;</span><span class="p">,</span> <span class="mi">12</span><span class="p">),</span>
+    <span class="p">(</span><span class="s2">&quot;status&quot;</span><span class="p">,</span> <span class="mi">18</span><span class="p">),</span>
+<span class="p">])</span><span class="o">?</span>
+
+<span class="k">assert</span> <span class="n">field_ids</span><span class="p">[</span><span class="s2">&quot;status&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="mi">18</span>
+</code></pre></div>
+<p>Ordinal maps are not limited to strings. They can map any key with a stable canonical byte encoding.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">first_id</span><span class="p">:</span> <span class="kt">u64</span> <span class="o">=</span> <span class="mi">1001</span>
+<span class="n">second_id</span><span class="p">:</span> <span class="kt">u64</span> <span class="o">=</span> <span class="mi">1002</span>
+<span class="n">third_id</span><span class="p">:</span> <span class="kt">u64</span> <span class="o">=</span> <span class="mi">1003</span>
+<span class="n">customer_ids</span> <span class="o">=</span> <span class="nc">OrdinalMap</span><span class="o">.</span><span class="n">from_keys</span><span class="p">([</span><span class="n">first_id</span><span class="p">,</span> <span class="n">second_id</span><span class="p">,</span> <span class="n">third_id</span><span class="p">])</span><span class="o">?</span>
+<span class="k">assert</span> <span class="n">customer_ids</span><span class="p">[</span><span class="n">second_id</span><span class="p">]</span> <span class="o">==</span> <span class="mi">1</span>
+</code></pre></div>
+<p>UUID and date-like values are ordinary use cases when their stdlib representation has a fixed canonical encoding.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.datetime</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Date</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.uuid</span><span class="w"> </span><span class="kn">import</span> <span class="nc">UUID</span>
+
+<span class="n">statement_days</span> <span class="o">=</span> <span class="nc">OrdinalMap</span><span class="o">.</span><span class="n">from_keys</span><span class="p">([</span>
+    <span class="nc">Date</span><span class="o">.</span><span class="n">fromisoformat</span><span class="p">(</span><span class="s2">&quot;2026-05-01&quot;</span><span class="p">)</span><span class="o">?</span><span class="p">,</span>
+    <span class="nc">Date</span><span class="o">.</span><span class="n">fromisoformat</span><span class="p">(</span><span class="s2">&quot;2026-06-01&quot;</span><span class="p">)</span><span class="o">?</span><span class="p">,</span>
+<span class="p">])</span><span class="o">?</span>
+
+<span class="n">tenant_ids</span> <span class="o">=</span> <span class="nc">OrdinalMap</span><span class="o">.</span><span class="n">from_keys</span><span class="p">([</span>
+    <span class="nc">UUID</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="s2">&quot;018f2f26-4b7e-7a1a-9f32-59f1ab02a001&quot;</span><span class="p">)</span><span class="o">?</span><span class="p">,</span>
+    <span class="nc">UUID</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="s2">&quot;018f2f26-4b7e-7a1a-9f32-59f1ab02a002&quot;</span><span class="p">)</span><span class="o">?</span><span class="p">,</span>
+<span class="p">])</span><span class="o">?</span>
+</code></pre></div>
+<p>For dictionary-encoded data, an ordinal map can translate values into compact codes before execution enters a hot row loop.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">status_codes</span> <span class="o">=</span> <span class="nc">OrdinalMap</span><span class="o">.</span><span class="n">from_keys</span><span class="p">([</span><span class="s2">&quot;cancelled&quot;</span><span class="p">,</span> <span class="s2">&quot;paid&quot;</span><span class="p">,</span> <span class="s2">&quot;pending&quot;</span><span class="p">])</span><span class="o">?</span>
+<span class="n">paid_code</span> <span class="o">=</span> <span class="n">status_codes</span><span class="o">.</span><span class="n">require</span><span class="p">(</span><span class="s2">&quot;paid&quot;</span><span class="p">)</span><span class="o">?</span>
+
+<span class="c1"># A scan can compare stored integer codes to `paid_code` instead of comparing strings for every row.</span>
+</code></pre></div>
+<p>Batch lookup resolves many names or values at once.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">wanted</span> <span class="o">=</span> <span class="n">columns</span><span class="o">.</span><span class="n">require_many</span><span class="p">([</span><span class="s2">&quot;status&quot;</span><span class="p">,</span> <span class="s2">&quot;amount&quot;</span><span class="p">])</span><span class="o">?</span>
+<span class="k">assert</span> <span class="n">wanted</span> <span class="o">==</span> <span class="p">[</span><span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>
+</code></pre></div>
+<p>Persisted metadata can serialize an ordinal map. Deserialization must validate the format, key encoding, construction metadata, and exact-lookup data before returning a usable map.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">blob</span> <span class="o">=</span> <span class="n">columns</span><span class="o">.</span><span class="n">to_bytes</span><span class="p">()</span>
+<span class="n">round_trip</span> <span class="o">=</span> <span class="nc">OrdinalMap</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span><span class="o">.</span><span class="n">from_bytes</span><span class="p">(</span><span class="n">blob</span><span class="p">)</span><span class="o">?</span>
+<span class="k">assert</span> <span class="n">round_trip</span><span class="p">[</span><span class="s2">&quot;amount&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="mi">3</span>
+</code></pre></div>
+<h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
+<h3 id="module-and-type">Module and type<a class="headerlink" href="#module-and-type" title="Permanent link">&para;</a></h3>
+<p><code>std.collections</code> must expose <code>OrdinalMap[K]</code> as a public immutable collection type. <code>OrdinalMap[K]</code> maps keys of type <code>K</code> to non-negative integer ordinals.</p>
+<p><code>OrdinalMap[K]</code> must require <code>K</code> to satisfy <code>OrdinalKey</code>. A key type that lacks a stable canonical encoding must not be accepted by <code>OrdinalMap</code>.</p>
+<p>The type must be immutable after construction. APIs that appear to add, remove, or reassign entries must return a new map or be absent.</p>
+<h3 id="ordinal-key-contract">Ordinal key contract<a class="headerlink" href="#ordinal-key-contract" title="Permanent link">&para;</a></h3>
+<p>The stdlib must define an ordinal-key contract for key types that can be used with <code>OrdinalMap</code>. The contract must provide canonical bytes for a key value and must identify the key encoding used by serialized maps.</p>
+<p>The trait name is <code>OrdinalKey</code>.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">pub</span> <span class="k">trait</span> <span class="nc">OrdinalKey</span><span class="p">:</span>
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">ordinal_encoding</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="o">...</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_ordinal_bytes</span><span class="p">(</span><span class="n">data</span><span class="p">:</span> <span class="nb">bytes</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Self</span><span class="p">,</span> <span class="nc">OrdinalMapError</span><span class="p">]:</span> <span class="o">...</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">ordinal_bytes</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bytes</span><span class="p">:</span> <span class="o">...</span>
+</code></pre></div>
+<p><code>ordinal_bytes(self)</code> returns the canonical bytes for a concrete key value. <code>ordinal_encoding()</code> returns a stable type-level encoding identifier, such as <code>str:utf8</code>, <code>uuid:rfc9562-bytes</code>, or another accepted identifier. <code>from_ordinal_bytes(data)</code> decodes one stored canonical key record for the target key type and is required so <code>OrdinalMap[K].from_bytes(data)</code> can reconstruct exact keys without forcing callers through string conversion. Serialized maps store the encoding identifier and must reject data whose key encoding does not match the target <code>OrdinalMap[K]</code>.</p>
+<p>The key encoding must be deterministic across supported platforms. It must not depend on locale, process-randomized hash seeds, pointer identity, memory layout, map iteration order, host endianness, timezone database versions, or implementation-defined object identity.</p>
+<p>The required key set includes <code>str</code>, <code>bytes</code>, <code>bool</code>, ordinary <code>int</code>, fixed-width signed and unsigned integers, <code>decimal[p, s]</code> / <code>numeric[p, s]</code> / <code>decimal128[p, s]</code>, <code>UUID</code>, <code>Date</code>, <code>Time</code>, <code>DateTime</code>, <code>DateTimeOffset</code>, value enums whose values have stable scalar encodings, and user-defined types that implement <code>OrdinalKey</code> with a versioned encoding identifier.</p>
+<p><code>str</code> keys must encode their exact Unicode string value as UTF-8 bytes without implicit case folding, locale handling, or normalization. If callers need normalized keys, they must normalize before construction.</p>
+<p><code>bytes</code> keys must encode as their raw byte contents.</p>
+<p>Integer keys must encode deterministically. Ordinary <code>int</code> uses Incan's stable <code>i64</code> encoding. Fixed-width integer keys use little-endian two's-complement representation for signed fixed-width integers and little-endian representation for unsigned fixed-width integers.</p>
+<p>Decimal keys must encode deterministically through the <code>Decimal128</code> runtime representation: little-endian signed coefficient bytes followed by the stored scale byte. Binary floating-point keys remain excluded from <code>OrdinalKey</code>.</p>
+<p><code>UUID</code> keys must encode as their 16 RFC/network-order bytes. <code>Date</code> keys must encode the proleptic Gregorian year, month, and day fields. <code>Time</code> keys must encode hour, minute, second, and nanosecond fields. <code>DateTime</code> keys must encode the date fields followed by the time fields. <code>DateTimeOffset</code> keys must encode the local datetime fields plus the fixed offset in seconds. These encodings must not route through locale-formatted strings.</p>
+<p>Floating-point keys are excluded because NaN payloads, negative zero, and cross-language canonicalization rules need a separate policy before floats can satisfy this RFC's deterministic-key contract.</p>
+<h3 id="construction-from-keys">Construction from keys<a class="headerlink" href="#construction-from-keys" title="Permanent link">&para;</a></h3>
+<p><code>OrdinalMap.from_keys(keys: list[K]) -&gt; Result[OrdinalMap[K], OrdinalMapError]</code> must construct a map where each key's ordinal is its zero-based position in the input list.</p>
+<p>Construction from keys must reject duplicate keys. Duplicate detection must use the key's equality semantics and canonical ordinal bytes consistently. If two values compare equal, they must not appear as distinct keys. If two non-equal values produce the same canonical bytes, construction must fail with an encoding-collision error because the key contract has been violated.</p>
+<p>For a fixed ordered input list, construction must be deterministic. The implementation may use hashing or retry-based placement internally, but all seeds, retries, placement choices, and serialized output must be derived deterministically from the canonical input and format version.</p>
+<h3 id="construction-from-pairs">Construction from pairs<a class="headerlink" href="#construction-from-pairs" title="Permanent link">&para;</a></h3>
+<p><code>OrdinalMap.from_pairs(entries: list[Tuple[K, int]]) -&gt; Result[OrdinalMap[K], OrdinalMapError]</code> must construct a map where each key maps to the explicit non-negative ordinal supplied by the caller.</p>
+<p>Construction from pairs must reject duplicate keys, duplicate ordinals, and negative ordinals. Ordinal maps are position/code maps, not many-to-one labels. If many-to-one labels are needed later, they must use a separate type or an explicit constructor with a different name.</p>
+<p>Construction from pairs must be deterministic regardless of the input pair order when explicit ordinals are the same. The serialized representation should use a canonical order derived from key bytes or ordinal order so byte output is reproducible.</p>
+<h3 id="lookup-apis">Lookup APIs<a class="headerlink" href="#lookup-apis" title="Permanent link">&para;</a></h3>
+<p><code>OrdinalMap[K].get(key: K) -&gt; Option[int]</code> must return <code>Some(ordinal)</code> when <code>key</code> is present and <code>None</code> when it is absent.</p>
+<p><code>OrdinalMap[K].require(key: K) -&gt; Result[int, OrdinalMapError]</code> must return the ordinal when present and a missing-key error when absent.</p>
+<p><code>OrdinalMap[K].__getitem__(key: K) -&gt; int</code> must return the ordinal when present and raise a <code>KeyError</code>-style runtime error when missing, matching Incan's mapping indexing convention. Examples that handle absent keys should use <code>get</code> or <code>require</code>; indexing is the ergonomic present-key path.</p>
+<p><code>OrdinalMap[K].__contains__(key: K) -&gt; bool</code> must return whether <code>key</code> is present.</p>
+<p><code>OrdinalMap[K].get_many(keys: list[K]) -&gt; list[Option[int]]</code> must perform batch lookup while preserving input order.</p>
+<p><code>OrdinalMap[K].require_many(keys: list[K]) -&gt; Result[list[int], OrdinalMapError]</code> must perform batch lookup and return a missing-key error if any key is absent. The error should identify at least one missing key position and should identify all missing key positions when practical.</p>
+<p>Safe lookup APIs must be exact. They must not return an ordinal for an absent key due only to hash or fingerprint collision. If an implementation uses fingerprints internally, it must verify enough key material to reject absent keys exactly before returning from safe APIs.</p>
+<h3 id="unchecked-lookup">Unchecked lookup<a class="headerlink" href="#unchecked-lookup" title="Permanent link">&para;</a></h3>
+<p>Unchecked lookup APIs must be provided for callers that can prove a key is present through external invariants or prior exact validation. The APIs are <code>get_unchecked(key: K) -&gt; int</code> and <code>get_many_unchecked(keys: list[K]) -&gt; list[int]</code>.</p>
+<p>Unchecked lookup must not be used by <code>get</code>, <code>require</code>, <code>__getitem__</code>, <code>__contains__</code>, <code>get_many</code>, or <code>require_many</code>.</p>
+<p>Unchecked lookup must document its missing-key behavior as undefined or implementation-specific. It must not silently become the default surface because the primary <code>OrdinalMap</code> contract is exact lookup. Benchmarks should include both safe and unchecked paths so Incan owns the performance story without weakening the default API.</p>
+<h3 id="deterministic-storage-and-compact-ordinals">Deterministic storage and compact ordinals<a class="headerlink" href="#deterministic-storage-and-compact-ordinals" title="Permanent link">&para;</a></h3>
+<p>A conforming implementation must store ordinals using the smallest unsigned integer width that can represent the maximum ordinal in the map. The required width choices are <code>u8</code>, <code>u16</code>, <code>u32</code>, and <code>u64</code>.</p>
+<p>A map whose maximum ordinal is at most <code>255</code> must use <code>u8</code> ordinal cells. A map whose maximum ordinal is at most <code>65535</code> must use <code>u16</code> ordinal cells. A map whose maximum ordinal is at most <code>4294967295</code> must use <code>u32</code> ordinal cells. Larger supported ordinals must use <code>u64</code> ordinal cells.</p>
+<p>The public API returns ordinary Incan <code>int</code> ordinals unless a narrower return type is explicitly requested by a future RFC. Compact storage is an implementation and serialization property, not a narrowing of the public value.</p>
+<h3 id="serialization">Serialization<a class="headerlink" href="#serialization" title="Permanent link">&para;</a></h3>
+<p><code>OrdinalMap[K].to_bytes() -&gt; bytes</code> must return a deterministic byte representation for the map.</p>
+<p><code>OrdinalMap[K].from_bytes(data: bytes) -&gt; Result[OrdinalMap[K], OrdinalMapError]</code> must parse and validate a serialized map before returning it.</p>
+<p>Serialized ordinal maps must use the following container contract:</p>
+<ul>
+<li>magic bytes: <code>b"INCAN_ORDMAP\0"</code>;</li>
+<li>format version: little-endian <code>u16</code>, with this RFC defining format version <code>1</code>;</li>
+<li>flags: little-endian <code>u16</code>;</li>
+<li>key encoding identifier: little-endian <code>u16</code> byte length followed by UTF-8 identifier bytes;</li>
+<li>key count: little-endian <code>u64</code>;</li>
+<li>ordinal width: one byte with allowed values <code>1</code>, <code>2</code>, <code>4</code>, and <code>8</code>;</li>
+<li>lookup algorithm identifier: little-endian <code>u16</code> byte length followed by UTF-8 identifier bytes;</li>
+<li>verification mode: one byte, where the required safe mode means exact key verification;</li>
+<li>length-delimited sections for key records, ordinal cells, lookup payload, and algorithm metadata.</li>
+</ul>
+<p>Serialization must use little-endian byte order for numeric fields.</p>
+<p>Two maps constructed from equivalent canonical input under the same format version must serialize to identical bytes.</p>
+<p>Deserialization must reject unknown required format versions, unsupported key encodings, malformed payloads, duplicate keys in stored exact-verification data, duplicate ordinals, invalid ordinal widths, invalid counts, truncated payloads, and inconsistent payload lengths.</p>
+<h3 id="size-introspection">Size introspection<a class="headerlink" href="#size-introspection" title="Permanent link">&para;</a></h3>
+<p><code>OrdinalMap[K].nbytes() -&gt; int</code> should return the number of bytes retained by the ordinal-map payload, excluding ordinary object/header overhead that cannot be made portable across backends.</p>
+<p><code>OrdinalMap[K].serialized_size() -&gt; int</code> must return the number of bytes <code>to_bytes()</code> would produce without requiring callers to materialize the serialized bytes when practical.</p>
+<p>The documentation must distinguish payload size from total process heap usage.</p>
+<h3 id="error-model">Error model<a class="headerlink" href="#error-model" title="Permanent link">&para;</a></h3>
+<p>The stdlib must define <code>OrdinalMapError</code> or an equivalent stable error type. It must expose a stable category string and a human-readable message.</p>
+<p>Error categories must include duplicate key, duplicate ordinal, negative ordinal, stored-key hash collision, missing key, malformed serialized data, unsupported serialized version or flags, invalid key encoding, key-encoding mismatch, unsupported lookup or verification mode, unsupported ordinal width, non-canonical serialized payloads, and unsupported metadata. Unsupported key types are compile-time <code>OrdinalKey</code> bound diagnostics, not runtime <code>OrdinalMapError</code> values.</p>
+<h3 id="relationship-to-dict-and-frozendict">Relationship to <code>dict</code> and <code>FrozenDict</code><a class="headerlink" href="#relationship-to-dict-and-frozendict" title="Permanent link">&para;</a></h3>
+<p><code>OrdinalMap</code> must not change builtin <code>dict</code> semantics.</p>
+<p><code>OrdinalMap</code> must not change <code>FrozenDict</code> semantics.</p>
+<p><code>OrdinalMap</code> must live in <code>std.collections</code> as a specialized collection for deterministic immutable ordinal lookup. It may share ordinary collection protocols such as <code>len</code>, membership, iteration, and indexing where those protocols fit the exact lookup contract.</p>
+<h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
+<h3 id="lookup-algorithm-contract">Lookup algorithm contract<a class="headerlink" href="#lookup-algorithm-contract" title="Permanent link">&para;</a></h3>
+<p>This RFC does not standardize a specific minimal-perfect-hash or fuse-filter algorithm. The public contract is deterministic construction, exact safe lookup, compact ordinal storage, unchecked proven-present lookup, and deterministic serialization.</p>
+<p>The implementation must include a deterministic compact lookup representation intended for large maps. It may use a binary-fuse-style structure, a minimal perfect hash family, or another deterministic layout as long as the public requirements hold. It may also choose simpler representations for very small maps if that is faster or smaller after overhead, but a small-map fallback alone does not satisfy the performance goal.</p>
+<p>Feature parity with the motivating libraries is a requirement at the capability level, not at the exact type-signature level. <code>OrdinalMap</code> must cover construction, lookup, batch lookup, checked lookup, unchecked lookup, serialization, deserialization, and benchmarkable large-map behavior. It deliberately extends the key model beyond strings and bytes through <code>OrdinalKey</code>, and it deliberately keeps safe lookup exact rather than making unchecked behavior the ergonomic default.</p>
+<h3 id="prior-art-and-acknowledgement">Prior art and acknowledgement<a class="headerlink" href="#prior-art-and-acknowledgement" title="Permanent link">&para;</a></h3>
+<p>Daniel Lemire's <a href="https://github.com/lemire/constmap"><code>constmap</code></a> project is the immediate practical inspiration for this RFC. The project describes a compact immutable string-to-<code>uint64</code> map using the binary fuse filter construction, with lookup shaped around one hash computation, three array accesses, and XOR reconstruction. Its README also calls out the trade-off between unchecked lookup and verified missing-key detection, plus serialization for reuse. <code>OrdinalMap</code> should acknowledge that prior art while deliberately choosing a different public contract: deterministic generic ordinal keys, exact safe lookup, and persistent metadata suitability.</p>
+<p>The algorithmic family comes from Thomas Mueller Graf and Daniel Lemire's <a href="https://arxiv.org/abs/2201.01174">"Binary Fuse Filters: Fast and Smaller Than Xor Filters"</a> and the earlier <a href="https://arxiv.org/abs/1912.08258">"Xor Filters: Faster and Smaller Than Bloom and Cuckoo Filters"</a>. This RFC does not require Incan to standardize those algorithms, but they are important prior art for the space/time trade-offs motivating the feature.</p>
+<h3 id="deterministic-retry-policy">Deterministic retry policy<a class="headerlink" href="#deterministic-retry-policy" title="Permanent link">&para;</a></h3>
+<p>If the implementation uses retry-based construction, the retry sequence must be deterministic. A conforming strategy is to derive a base seed from the canonical key encodings, map format version, key encoding identifier, and algorithm identifier, then derive attempt seeds from that base seed and a monotonically increasing attempt number.</p>
+<p>The implementation must define a deterministic failure mode if construction cannot find a valid layout within its supported attempt budget. Failure must return <code>OrdinalMapError</code>; it must not loop indefinitely.</p>
+<h3 id="exact-verification">Exact verification<a class="headerlink" href="#exact-verification" title="Permanent link">&para;</a></h3>
+<p>Safe lookup requires exact missing-key rejection. A compact implementation may use fingerprints as an early reject, but it must be able to verify the queried key exactly before returning an ordinal from safe APIs.</p>
+<p>Every serialized map must carry enough exact-verification data to reconstruct the complete set of canonical key bytes and ordinals. Safe lookup must compare the queried key's canonical bytes against exact stored membership data before returning an ordinal. The exact data may be organized as canonical key records, a sorted side table, collision buckets, or another deterministic structure, but it must participate in <code>to_bytes()</code> and <code>from_bytes()</code> so persisted maps remain exact.</p>
+<p>A separate future RFC may define an explicitly probabilistic mode for callers that accept false-positive risk. That mode must not be named or documented as the ordinary safe <code>OrdinalMap</code> contract.</p>
+<h3 id="key-encoding-and-schema-evolution">Key encoding and schema evolution<a class="headerlink" href="#key-encoding-and-schema-evolution" title="Permanent link">&para;</a></h3>
+<p>Serialized maps are tied to a key encoding identifier. If a type's canonical encoding changes in a backward-incompatible way, maps serialized with the old encoding must either continue to load through a compatibility path or fail with an unsupported key encoding error.</p>
+<p>User-defined key encodings must use a non-empty, versioned <code>ordinal_encoding()</code> identifier if they can be persisted. Deserialization must reject persisted maps whose encoding identifier is unsupported, ambiguous, or unversioned for the target key type.</p>
+<h3 id="dataset-and-metadata-usage">Dataset and metadata usage<a class="headerlink" href="#dataset-and-metadata-usage" title="Permanent link">&para;</a></h3>
+<p>For schema-like data, <code>OrdinalMap[str]</code> resolves field names or column names to integer positions. Query and transformation systems can resolve names once during planning, then execute against integer slots.</p>
+<p>For immutable dictionary-encoded data, <code>OrdinalMap[K]</code> resolves a distinct scalar domain value to a compact code. A scan can compare stored integer codes rather than comparing full key values repeatedly.</p>
+<p>For catalogs and generated metadata, <code>OrdinalMap</code> gives deterministic bytes that can be cached, diffed, shipped, and validated. This is more important than raw lookup speed alone because metadata reproducibility affects build systems, storage snapshots, and tests.</p>
+<h3 id="api-aliases">API aliases<a class="headerlink" href="#api-aliases" title="Permanent link">&para;</a></h3>
+<p>A future RFC may add aliases for common specializations. For example, <code>NameIndex</code> could be an alias for <code>OrdinalMap[str]</code> if schema/name lookup needs a clearer user-facing name.</p>
+<p>Aliases must not obscure the generic contract. <code>OrdinalMap[K]</code> remains the normative type proposed by this RFC.</p>
+<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
+<h3 id="string-only-map">String-only map<a class="headerlink" href="#string-only-map" title="Permanent link">&para;</a></h3>
+<p>A string-only map is simpler and matches many schema and catalog use cases. It is too narrow for immutable scalar dictionaries, enum-coded columns, numeric identifiers, UUID-like values, and other deterministic scalar domains. The better boundary is a stable key-encoding contract.</p>
+<h3 id="general-frozen-dictionary-optimization">General frozen dictionary optimization<a class="headerlink" href="#general-frozen-dictionary-optimization" title="Permanent link">&para;</a></h3>
+<p>Optimizing <code>FrozenDict</code> would hide a specialized ordinal/code lookup contract inside a general mapping type. That would make missing-key semantics, compact ordinal storage, serialization, and unchecked lookup harder to explain. <code>FrozenDict</code> should remain the general frozen dictionary, while <code>OrdinalMap</code> owns the specialized deterministic ordinal use case.</p>
+<h3 id="builtin-dict-with-conventions">Builtin <code>dict</code> with conventions<a class="headerlink" href="#builtin-dict-with-conventions" title="Permanent link">&para;</a></h3>
+<p>Users can build a <code>dict[str, int]</code>, but that does not give deterministic serialized layout, compact ordinal storage, exact persisted lookup data, or a reproducible construction contract. <code>dict</code> remains appropriate for dynamic in-memory maps.</p>
+<h3 id="fingerprint-only-verified-map">Fingerprint-only verified map<a class="headerlink" href="#fingerprint-only-verified-map" title="Permanent link">&para;</a></h3>
+<p>Fingerprint-only maps can be compact and fast, but they are not exact unless the fingerprint width is treated as part of an explicitly probabilistic contract. Persisted metadata and dataset dictionaries should not silently accept false positives. Fingerprints may be an optimization, but safe lookup must verify exact key membership.</p>
+<h3 id="full-database-index-abstraction">Full database index abstraction<a class="headerlink" href="#full-database-index-abstraction" title="Permanent link">&para;</a></h3>
+<p>A database index abstraction would need row identifiers, duplicate keys, range scans, null semantics, updates, segment visibility, and physical planning integration. <code>OrdinalMap</code> is smaller: it maps stable keys to integer ordinals. More complete physical indexes can build on ordinal maps where appropriate.</p>
+<h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
+<p><code>OrdinalMap</code> adds a specialized collection to the stdlib, and specialized collections carry documentation and teaching cost. The type must justify itself through real uses in schemas, metadata, catalogs, and immutable dictionaries rather than through benchmark novelty.</p>
+<p>Exact safe lookup costs more memory than fingerprint-only lookup. This is the right trade-off for persisted and correctness-sensitive data, but it means the most compact benchmark shape cannot be the default safe contract.</p>
+<p>Generic key support requires a stable encoding story. If the key contract is too broad, serialized maps become fragile. If it is too narrow, the type becomes a string-only convenience. The required key set must stay tied to deterministic canonical encodings.</p>
+<p>Construction can be more expensive than building a <code>dict</code>, especially for large maps. The type is intended for build-once, query-many workloads; it should not be promoted for one-off small maps.</p>
+<p>Unchecked lookup is useful for proven-present hot paths, but it is easy to misuse. The API must make unsafety visible and examples should prefer exact lookup unless a caller has already validated presence.</p>
+<h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
+<p>This section describes the expected implementation architecture. Algorithm choices may evolve during implementation, but the public contract in this RFC must remain stable.</p>
+<p>The recommended shape is an implementation in <code>std.collections</code> backed by typed lists, stable hash helpers from <code>std.hash</code>, byte serialization helpers from <code>std.io</code> and <code>std.encoding</code>, and ordinary model/enum definitions for the public error and representation choices.</p>
+<p>The implementation must own the full contract: key encoding, validation, construction, lookup, exact verification, unchecked lookup, serialization, deserialization, and size introspection. A small-map representation may be better for tens of keys, while a minimal-perfect or fuse-style representation may be better for thousands or millions of keys. Both can live behind the same public contract when benchmarks justify the split.</p>
+<p>Compiler support may recognize registered stdlib hot paths and specialize them when doing so preserves the same public construction semantics and deterministic byte output. In v0.3, shared toolchain metadata describes the <code>OrdinalMap[str]</code> lookup helper shape, while the Rust helper body lives in <code>incan_stdlib</code> and expands inside the generated <code>std.collections</code> module. That keeps the compiler from embedding collection-specific lookup bodies or depending on the runtime stdlib crate. <code>OrdinalKey</code> support for language scalar families still uses a deliberately narrow Rust emission bridge because RFC 098/099 have not yet shipped the full source-level trait-owned capability-family model. That bridge is technical debt, not incomplete RFC 101 scope: the trait contract remains authored in <code>std.collections</code>, construction and serialization remain ordinary Incan source, and the bridge should collapse into RFC 098/099 conformance metadata once those RFCs land. The v0.5 cleanup is tracked by issue #596.</p>
+<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Typechecker / Symbol resolution</strong>: validates generic <code>OrdinalMap[K]</code> construction against the ordinal-key contract and reports unsupported key types.</li>
+<li><strong>IR Lowering</strong>: may need to preserve enough static construction information for compile-time baking.</li>
+<li><strong>Emission</strong>: may emit pre-baked deterministic ordinal-map payloads for module-static or const-compatible construction.</li>
+<li><strong>Stdlib / Runtime (<code>incan_stdlib</code>)</strong>: adds the public <code>OrdinalMap</code> type, key-encoding contract, error type, constructors, lookup APIs, and serialization APIs.</li>
+<li><strong>LSP / Tooling</strong>: should surface completions and hover documentation for <code>OrdinalMap</code>, supported key types, missing-key APIs, and unchecked lookup warnings.</li>
+</ul>
+<h2 id="implementation-plan">Implementation Plan<a class="headerlink" href="#implementation-plan" title="Permanent link">&para;</a></h2>
+<h3 id="phase-1-rfc-lifecycle-capability-intake-and-benchmarks">Phase 1: RFC lifecycle, capability intake, and benchmarks<a class="headerlink" href="#phase-1-rfc-lifecycle-capability-intake-and-benchmarks" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Capture the settled design decisions in this RFC and move the RFC to active implementation status.</li>
+<li>Inspect existing <code>.incn</code> stdlib patterns for generic collections, traits, stable hashing, byte I/O, UUID, and datetime support before choosing representation details.</li>
+<li>Establish benchmark fixtures against builtin <code>dict</code>, Python <code>fastconstmap</code>, and the prior spike so performance claims are measured rather than assumed.</li>
+</ul>
+<h3 id="phase-2-ordinalkey-contract-and-deterministic-scalar-encodings">Phase 2: <code>OrdinalKey</code> contract and deterministic scalar encodings<a class="headerlink" href="#phase-2-ordinalkey-contract-and-deterministic-scalar-encodings" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Add the public <code>OrdinalKey</code> trait in stdlib source.</li>
+<li>Implement deterministic encodings for <code>str</code>, <code>bytes</code>, <code>bool</code>, ordinary <code>int</code>, fixed-width signed and unsigned integers, fixed-precision decimals, <code>UUID</code>, <code>Date</code>, <code>Time</code>, <code>DateTime</code>, <code>DateTimeOffset</code>, stable scalar value enums, and user-defined <code>OrdinalKey</code> adopters.</li>
+<li>Add diagnostics or typed errors for unsupported key types and invalid user-defined encoding identifiers.</li>
+</ul>
+<h3 id="phase-3-ordinalmap-construction-and-lookup">Phase 3: <code>OrdinalMap</code> construction and lookup<a class="headerlink" href="#phase-3-ordinalmap-construction-and-lookup" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Add the <code>OrdinalMap[K]</code> type, <code>OrdinalMapError</code>, and constructors from ordered keys and explicit key/ordinal pairs.</li>
+<li>Reject duplicate keys, duplicate ordinals, negative ordinals, and key-encoding collisions.</li>
+<li>Implement exact safe lookup APIs, batch lookup APIs, membership, length, and mapping-style indexing with <code>KeyError</code> behavior.</li>
+<li>Implement explicit unchecked single and batch lookup APIs without routing safe APIs through unchecked behavior.</li>
+</ul>
+<h3 id="phase-4-compact-storage-deterministic-layout-and-serialization">Phase 4: Compact storage, deterministic layout, and serialization<a class="headerlink" href="#phase-4-compact-storage-deterministic-layout-and-serialization" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Select <code>u8</code>, <code>u16</code>, <code>u32</code>, or <code>u64</code> ordinal storage from the maximum ordinal.</li>
+<li>Implement a deterministic compact lookup layout suitable for large maps, with deterministic retry and failure behavior.</li>
+<li>Implement the standardized byte container, exact verification payload, <code>to_bytes</code>, <code>from_bytes</code>, <code>nbytes</code>, and <code>serialized_size</code>.</li>
+<li>Validate deserialization errors for malformed payloads, unsupported versions, unsupported key encodings, duplicate keys, duplicate ordinals, and inconsistent lengths.</li>
+</ul>
+<h3 id="phase-5-compiler-and-tooling-support">Phase 5: Compiler and tooling support<a class="headerlink" href="#phase-5-compiler-and-tooling-support" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Add typechecker support needed for <code>OrdinalMap[K]</code> bounds and clear unsupported-key diagnostics.</li>
+<li>Add lowering/emission fixes exposed by the implementation.</li>
+<li>Add static construction or const-baking support if benchmarks show that ordinary module-static <code>OrdinalMap.from_keys(...)</code> needs compiler help to meet the feature's performance goal.</li>
+<li>Update LSP hover/completion surfaces for <code>OrdinalMap</code>, <code>OrdinalKey</code>, safe lookup, and unchecked lookup warnings.</li>
+</ul>
+<h3 id="phase-6-docs-release-notes-and-quality-gates">Phase 6: Docs, release notes, and quality gates<a class="headerlink" href="#phase-6-docs-release-notes-and-quality-gates" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Update authored stdlib reference docs and collection-selection guidance.</li>
+<li>Add release notes for the target dev release.</li>
+<li>Run focused tests, benchmark verification, and the repository pre-commit gate.</li>
+</ul>
+<h2 id="implementation-log">Implementation log<a class="headerlink" href="#implementation-log" title="Permanent link">&para;</a></h2>
+<h3 id="spec-design">Spec / design<a class="headerlink" href="#spec-design" title="Permanent link">&para;</a></h3>
+<ul class="task-list">
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Settle public name as <code>OrdinalMap</code>.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Settle <code>OrdinalKey</code> as the stable deterministic key contract.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Settle non-string key scope, including UUID and civil date/time values.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Settle duplicate-ordinal rejection for <code>from_pairs</code>.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Settle exact safe lookup and explicit unchecked lookup requirements.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Settle deterministic serialization container fields.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Exclude probabilistic fingerprint-only lookup from stdlib safe semantics.</li>
+</ul>
+<h3 id="stdlib-runtime">Stdlib / runtime<a class="headerlink" href="#stdlib-runtime" title="Permanent link">&para;</a></h3>
+<ul class="task-list">
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Add <code>OrdinalKey</code>.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Add deterministic key encodings for required builtin scalar types.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Add deterministic key encodings for UUID and datetime scalar types.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Add <code>OrdinalMapError</code>.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Add <code>OrdinalMap[K]</code> constructors and validation.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Add exact safe lookup and batch lookup APIs.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Add unchecked lookup and batch lookup APIs.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Add compact ordinal storage width selection.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Add deterministic compact lookup layout for large maps.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Add deterministic serialization, deserialization, and size introspection.</li>
+</ul>
+<h3 id="compiler-tooling">Compiler / tooling<a class="headerlink" href="#compiler-tooling" title="Permanent link">&para;</a></h3>
+<ul class="task-list">
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Add or fix typechecker support for <code>OrdinalKey</code> bounds and unsupported-key diagnostics.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Add or fix lowering/emission support exposed by the implementation.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Evaluate compiler support against benchmark results. Shared generated-support metadata routes <code>OrdinalMap[str]</code> hot paths to stdlib-owned borrowed string helpers without exposing borrow syntax in Incan source. In the latest 1,000,000-key local run, exact single-key lookup beat <code>fastconstmap.VerifiedConstMap</code>; exact batch lookup remained higher, while unchecked batch lookup beat <code>fastconstmap.ConstMap</code>.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Mark the v0.3 scalar <code>OrdinalKey</code> Rust bridge as technical debt pending RFC 098/099 trait-owned capability families and track the v0.5 cleanup in issue #596.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Update LSP metadata for public APIs and unchecked warnings.</li>
+</ul>
+<h3 id="tests-benchmarks">Tests / benchmarks<a class="headerlink" href="#tests-benchmarks" title="Permanent link">&para;</a></h3>
+<ul class="task-list">
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Add unit and integration tests for constructors, duplicate handling, lookup, batch lookup, membership, indexing, and missing-key behavior.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Add serialization round-trip and malformed-payload tests.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Add deterministic-output tests across equivalent inputs.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Add tests for required non-string key types.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Add benchmark coverage against builtin <code>dict</code>, Python <code>fastconstmap</code>, and the prior spike baseline.</li>
+</ul>
+<h3 id="docs-release">Docs / release<a class="headerlink" href="#docs-release" title="Permanent link">&para;</a></h3>
+<ul class="task-list">
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Update <code>std.collections</code> reference docs.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Update collection-choice guidance.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Add release notes entry for the target dev release.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Run the repository pre-commit gate.</li>
+</ul>
+<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
+<ol>
+<li>The public type name is <code>OrdinalMap</code>. Aliases such as <code>NameIndex</code> may be added later for common specializations, but they must not replace or obscure the generic <code>OrdinalMap[K]</code> contract.</li>
+<li>The key contract is <code>OrdinalKey</code>: a type can be used as a key when it can produce deterministic canonical bytes for each value and a stable type-level encoding identifier for serialized maps.</li>
+<li><code>OrdinalMap</code> is not string-only. Required deterministic keys include <code>str</code>, <code>bytes</code>, <code>bool</code>, ordinary <code>int</code>, fixed-width signed and unsigned integers, fixed-precision decimals, UUIDs, civil dates, civil times, civil datetimes, fixed-offset datetimes, stable scalar value enums, and user-defined types that implement <code>OrdinalKey</code> with versioned encodings.</li>
+<li>Floating-point keys are excluded until a separate policy defines canonical NaN, signed-zero, and payload behavior.</li>
+<li><code>from_pairs</code> rejects duplicate ordinals. Many-to-one labels are a different abstraction and should not be hidden inside <code>OrdinalMap</code>.</li>
+<li><code>get</code> returns <code>Option[int]</code>, <code>require</code> returns <code>Result[int, OrdinalMapError]</code>, and indexing returns an <code>int</code> for present keys while raising a <code>KeyError</code>-style runtime error for missing keys.</li>
+<li>Unchecked lookup ships as an explicit non-default API for proven-present hot paths and benchmark ownership. Safe APIs must remain exact and must not depend on unchecked behavior.</li>
+<li>Serialized maps use the standardized <code>INCAN_ORDMAP</code> container fields in this RFC, little-endian numeric fields, stable key encoding identifiers, compact ordinal width metadata, algorithm metadata, and exact verification data.</li>
+<li>Safe lookup must be exact. Probabilistic fingerprint-only behavior is outside the stdlib safe contract.</li>
+<li>Compiler optimizations may precompute or specialize <code>OrdinalMap</code>, but they must preserve the public construction semantics and deterministic serialized output.</li>
+<li>The v0.3 implementation may use a narrow Rust bridge for scalar <code>OrdinalKey</code> families until RFC 098/099 can express trait-owned capability families in source; that bridge must remain explicit and removable, with removal tracked as v0.5 chore #596.</li>
+</ol>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "../../../..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      
+        <script src="../../../../_snippets/javascripts/mathjax.js"></script>
+      
+        <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
+      
+        <script src="../../../../_snippets/javascripts/tablesort.js"></script>
+      
+        <script src="../../../../_snippets/javascripts/rfc_table_filter.js"></script>
+      
+    
+  </body>
+</html>

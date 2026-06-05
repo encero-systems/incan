@@ -1,0 +1,6 @@
+flowchart TD
+    incanSource[Incan_source_.incn] --> parser[Parse_and_validate]
+    parser --> typecheck[Typecheck_and_resolve]
+    typecheck --> lower[Lower_to_Rust]
+    lower --> cargo[Cargo_build]
+    cargo --> binary[Executable]
