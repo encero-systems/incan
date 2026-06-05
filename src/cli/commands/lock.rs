@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -34,6 +34,8 @@ use super::common::{collect_rust_inspect_query_paths, ensure_rust_inspect_worksp
 const LOCK_DEPENDENCY_PREHEAT_FINGERPRINT_FILE: &str = ".incan_dependency_preheat_fingerprint";
 const LOCK_DEPENDENCY_PREHEAT_LOCK_FILE: &str = ".incan_dependency_preheat.lock";
 const LOCK_DEPENDENCY_PREHEAT_STALE_LOCK_SECS: u64 = 30 * 60;
+const LIBRARY_DEPENDENCY_PREHEAT_FINGERPRINT_FILE: &str = ".incan_library_dependency_preheat_fingerprint";
+const LIBRARY_DEPENDENCY_PREHEAT_LOCK_FILE: &str = ".incan_library_dependency_preheat.lock";
 
 /// Generate or update incan.lock for a project.
 pub fn lock_project(
@@ -402,6 +404,21 @@ fn lock_dependency_preheat_stamp_matches(stamp_path: &Path, fingerprint: &str) -
         .unwrap_or(false)
 }
 
+/// Run a Cargo preheat command with inherited output so long dependency builds remain visible.
+fn run_streamed_cargo_preheat(mut command: Command, context: &str) -> CliResult<()> {
+    command.stdout(Stdio::inherit());
+    command.stderr(Stdio::inherit());
+    let status = command
+        .status()
+        .map_err(|err| CliError::failure(format!("Failed to run {context}: {err}")))?;
+    if !status.success() {
+        return Err(CliError::failure(format!(
+            "{context} failed with status {status}; Cargo output was streamed above"
+        )));
+    }
+    Ok(())
+}
+
 /// Add one lock-workspace input file to the dependency-preheat fingerprint.
 fn hash_lock_dependency_preheat_file(hasher: &mut Sha256, base: &Path, path: &Path) -> io::Result<()> {
     let relative = path.strip_prefix(base).unwrap_or(path);
@@ -412,14 +429,19 @@ fn hash_lock_dependency_preheat_file(hasher: &mut Sha256, base: &Path, path: &Pa
     Ok(())
 }
 
-/// Compute the fingerprint that decides whether lock dependency preheat can be reused.
-fn compute_lock_dependency_preheat_fingerprint(
+/// Compute the fingerprint that decides whether a dependency preheat can be reused.
+fn compute_dependency_preheat_fingerprint(
     lock_dir: &Path,
     cargo_flags: &[String],
     target_dir: &Path,
+    namespace: &[u8],
+    command_label: &str,
+    fingerprint_file: &str,
 ) -> io::Result<String> {
     let mut hasher = Sha256::new();
-    hasher.update(b"incan_lock_dependency_preheat/1\0");
+    hasher.update(namespace);
+    hasher.update(command_label.as_bytes());
+    hasher.update(b"\0");
     hasher.update(target_dir.to_string_lossy().as_bytes());
     hasher.update(b"\0");
     for flag in cargo_flags {
@@ -429,11 +451,39 @@ fn compute_lock_dependency_preheat_fingerprint(
     hash_lock_dependency_preheat_file(&mut hasher, lock_dir, &lock_dir.join("Cargo.toml"))?;
     hash_lock_dependency_preheat_file(&mut hasher, lock_dir, &lock_dir.join("Cargo.lock"))?;
     hash_lock_dependency_preheat_file(&mut hasher, lock_dir, &lock_dir.join("src").join("main.rs"))?;
-    Ok(format!(
-        "{}{}",
+    Ok(format!("{}{}", fingerprint_file, hex::encode(hasher.finalize())))
+}
+
+/// Compute the fingerprint that decides whether lock dependency preheat can be reused.
+fn compute_lock_dependency_preheat_fingerprint(
+    lock_dir: &Path,
+    cargo_flags: &[String],
+    target_dir: &Path,
+) -> io::Result<String> {
+    compute_dependency_preheat_fingerprint(
+        lock_dir,
+        cargo_flags,
+        target_dir,
+        b"incan_lock_dependency_preheat/1\0",
+        "cargo test --no-run",
         LOCK_DEPENDENCY_PREHEAT_FINGERPRINT_FILE,
-        hex::encode(hasher.finalize())
-    ))
+    )
+}
+
+/// Compute the fingerprint that decides whether generated-library dependency preheat can be reused.
+fn compute_library_dependency_preheat_fingerprint(
+    lock_dir: &Path,
+    cargo_flags: &[String],
+    target_dir: &Path,
+) -> io::Result<String> {
+    compute_dependency_preheat_fingerprint(
+        lock_dir,
+        cargo_flags,
+        target_dir,
+        b"incan_library_dependency_preheat/1\0",
+        "cargo build --release",
+        LIBRARY_DEPENDENCY_PREHEAT_FINGERPRINT_FILE,
+    )
 }
 
 /// Compile the lock workspace dependency graph into the generated-test target domain when stale.
@@ -509,18 +559,7 @@ fn run_lock_dependency_preheat(
     command.env("CARGO_TARGET_DIR", &target_dir);
     command.current_dir(project_root);
 
-    let output = command.output().map_err(|err| {
-        CliError::failure(format!(
-            "Failed to run cargo test --no-run for dependency preheat: {err}"
-        ))
-    })?;
-    if !output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(CliError::failure(format!(
-            "cargo test --no-run failed while preheating dependencies:\n{stdout}\n{stderr}"
-        )));
-    }
+    run_streamed_cargo_preheat(command, "cargo test --no-run for dependency preheat")?;
 
     fs::write(&stamp_path, &fingerprint).map_err(|err| {
         CliError::failure(format!(
@@ -529,6 +568,113 @@ fn run_lock_dependency_preheat(
         ))
     })?;
     drop(guard);
+    Ok(())
+}
+
+/// Compile the lock workspace dependency graph into the generated-library target/profile domain when stale.
+pub(crate) fn run_generated_library_dependency_preheat(
+    project_root: &Path,
+    lock_dir: &Path,
+    cargo_features: &CargoFeatureSelection,
+    cargo_policy: &CargoPolicy,
+    target_dir: &Path,
+) -> CliResult<()> {
+    if !lock_dependency_preheat_enabled() {
+        eprintln!("generated library dependency preheat: disabled by INCAN_LOCK_PREHEAT");
+        return Ok(());
+    }
+
+    let cargo_flags = cargo_command_flags(cargo_policy, cargo_features);
+    let fingerprint =
+        compute_library_dependency_preheat_fingerprint(lock_dir, &cargo_flags, target_dir).map_err(|err| {
+            CliError::failure(format!(
+                "Failed to fingerprint generated library dependency preheat: {err}"
+            ))
+        })?;
+    let stamp_path = lock_dir.join(LIBRARY_DEPENDENCY_PREHEAT_FINGERPRINT_FILE);
+    if lock_dependency_preheat_stamp_matches(&stamp_path, &fingerprint) {
+        eprintln!(
+            "generated library dependency preheat: up-to-date (target {}, profile release)",
+            target_dir.display()
+        );
+        return Ok(());
+    }
+
+    eprintln!(
+        "preheating Cargo dependencies for generated library builds into {} (profile release)",
+        target_dir.display()
+    );
+    let _ = io::stderr().flush();
+
+    let lock_path = lock_dir.join(LIBRARY_DEPENDENCY_PREHEAT_LOCK_FILE);
+    let stale_after = stale_lock_dependency_preheat_after();
+    let wait_start = Instant::now();
+    let mut announced_wait = false;
+    let guard = loop {
+        if lock_dependency_preheat_stamp_matches(&stamp_path, &fingerprint) {
+            eprintln!(
+                "generated library dependency preheat: reused after waiting {:.2}s",
+                wait_start.elapsed().as_secs_f64()
+            );
+            return Ok(());
+        }
+        match try_acquire_lock_dependency_preheat(&lock_path) {
+            Ok(Some(guard)) => break guard,
+            Ok(None) => {
+                if lock_dependency_preheat_is_stale(&lock_path, stale_after) {
+                    let _ = fs::remove_file(&lock_path);
+                    continue;
+                }
+                if !announced_wait && wait_start.elapsed() >= Duration::from_secs(1) {
+                    eprintln!("waiting for another generated library dependency preheat to finish");
+                    let _ = io::stderr().flush();
+                    announced_wait = true;
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
+            Err(err) => {
+                return Err(CliError::failure(format!(
+                    "Failed to acquire generated library dependency preheat lock {}: {err}",
+                    lock_path.display()
+                )));
+            }
+        }
+    };
+
+    if lock_dependency_preheat_stamp_matches(&stamp_path, &fingerprint) {
+        drop(guard);
+        eprintln!("generated library dependency preheat: up-to-date after lock acquisition");
+        return Ok(());
+    }
+
+    let start = Instant::now();
+    let mut command = Command::new("cargo");
+    command.arg("build");
+    command.arg("--release");
+    command.arg("--manifest-path");
+    command.arg(lock_dir.join("Cargo.toml"));
+    for flag in &cargo_flags {
+        command.arg(flag);
+    }
+    command.env("CARGO_TARGET_DIR", target_dir);
+    command.current_dir(project_root);
+
+    run_streamed_cargo_preheat(
+        command,
+        "cargo build --release for generated library dependency preheat",
+    )?;
+
+    fs::write(&stamp_path, &fingerprint).map_err(|err| {
+        CliError::failure(format!(
+            "Failed to write generated library dependency preheat fingerprint {}: {err}",
+            stamp_path.display()
+        ))
+    })?;
+    drop(guard);
+    eprintln!(
+        "generated library dependency preheat: ran in {:.2}s",
+        start.elapsed().as_secs_f64()
+    );
     Ok(())
 }
 
@@ -836,6 +982,34 @@ mod tests {
         let second = compute_lock_dependency_preheat_fingerprint(&temp_dir, &[], &target_dir)?;
 
         assert_ne!(first, second);
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn library_dependency_preheat_fingerprint_uses_separate_profile_domain() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join(format!("incan_library_preheat_fingerprint_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(temp_dir.join("src"))?;
+        fs::write(
+            temp_dir.join("Cargo.toml"),
+            "[package]\nname = \"library_preheat\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        fs::write(
+            temp_dir.join("Cargo.lock"),
+            "# This file is automatically @generated by Cargo.\nversion = 4\n",
+        )?;
+        fs::write(temp_dir.join("src").join("main.rs"), "fn main() {}\n")?;
+
+        let target_dir = temp_dir.join("target").join(".cargo-target");
+        let test_preheat = compute_lock_dependency_preheat_fingerprint(&temp_dir, &[], &target_dir)?;
+        let library_preheat = compute_library_dependency_preheat_fingerprint(&temp_dir, &[], &target_dir)?;
+
+        assert_ne!(
+            test_preheat, library_preheat,
+            "test-harness and generated-library preheats must not share stale stamps"
+        );
+        assert!(library_preheat.starts_with(LIBRARY_DEPENDENCY_PREHEAT_FINGERPRINT_FILE));
         let _ = fs::remove_dir_all(&temp_dir);
         Ok(())
     }

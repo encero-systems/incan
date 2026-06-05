@@ -86,12 +86,15 @@ Dependency flags:
 
 Without `--locked` or `--frozen`, `incan build` creates `incan.lock` when it is missing. If an existing lockfile is stale, the command warns and reuses the embedded `Cargo.lock` payload without rewriting `incan.lock`; run `incan lock` to refresh the committed lockfile intentionally.
 
+For `incan build --lib`, dependency preheat uses the generated lock workspace and the same release-profile Cargo target directory as the real generated library build. If the dependency graph is unchanged, the preheat stamp is reused; if it has to run, the command prints the target/profile domain before invoking Cargo and streams Cargo's progress while the preheat compiles.
+
 Environment defaults:
 
 - `INCAN_OFFLINE=1`, `INCAN_LOCKED=1`, and `INCAN_FROZEN=1` behave like their matching flags.
 - `INCAN_FROZEN=1` implies offline and locked mode.
 - CLI flags take precedence over these defaults. Use the `--no-*` forms to disable a policy default set by the environment.
 - `INCAN_CARGO_ARGS="..."` is split on whitespace and used when no Cargo args were supplied on the CLI.
+- `INCAN_LOCK_PREHEAT=0` disables dependency preheat for lock/test and generated-library build paths.
 
 Examples:
 
@@ -198,7 +201,7 @@ Without `--locked` or `--frozen`, `incan test` creates `incan.lock` when it is m
 
 Timeouts apply to generated test batches. `--timeout` sets the default batch timeout and `@timeout("duration")` from `std.testing` can override the batch containing one test. Fixtures, including async fixtures, do not have separate per-fixture timeout configuration. The runner awaits async fixture teardown after ordinary assertion failures and panics while the worker remains alive. If timeout enforcement terminates a worker process, remaining teardown is best-effort.
 
-Before executing a stale generated test harness, `incan test` preheats it with `cargo test --no-run` and stores a fingerprint next to the generated project. A normal console run prints a preheat line only when this work is needed; `-v` also shows the preheat phase timing and whether another Incan process was already doing the same preheat. Lock generation also preheats non-trivial dependency graphs into the same generated test target domain before writing `incan.lock`, so the next harness run can reuse dependency artifacts instead of discovering a subzero Cargo graph on the hot path.
+Before executing a stale generated test harness, `incan test` preheats it with `cargo test --no-run` and stores a fingerprint next to the generated project. A normal console run prints a preheat line only when this work is needed and streams Cargo's progress for cold preheats; `-v` also shows generated-harness planning, preparation-cache hits or misses, preheat timing, Cargo target directory, and Cargo test phase timing. Lock generation also preheats non-trivial dependency graphs into the same generated test target domain before writing `incan.lock`, so the next harness run can reuse dependency artifacts instead of discovering a cold Cargo graph on the hot path.
 
 Examples:
 

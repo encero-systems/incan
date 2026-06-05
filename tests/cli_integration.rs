@@ -362,6 +362,58 @@ def main() -> None:
     Ok(())
 }
 
+#[test]
+fn build_lib_preheats_dependency_graph_for_generated_library_target() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let helper_dir = tmp.path().join("library_preheat_helper");
+    fs::create_dir_all(helper_dir.join("src"))?;
+    fs::write(
+        helper_dir.join("Cargo.toml"),
+        "[package]\nname = \"library_preheat_helper\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    fs::write(helper_dir.join("src").join("lib.rs"), "pub fn value() -> i64 { 7 }\n")?;
+
+    let _main_path = write_minimal_project(
+        tmp.path(),
+        "cli_library_preheat_project",
+        r#"
+[rust-dependencies.library_preheat_helper]
+path = "library_preheat_helper"
+"#,
+    )?;
+    fs::write(
+        tmp.path().join("src").join("lib.incn"),
+        r#"from rust::library_preheat_helper import value
+
+pub def exported_value() -> int:
+  return value()
+"#,
+    )?;
+
+    let first = run_incan(tmp.path(), &["build", "--lib"])?;
+    assert_success(&first, "first incan build --lib with dependency preheat");
+    let first_stderr = String::from_utf8_lossy(&first.stderr);
+    assert!(
+        first_stderr.contains("preheating Cargo dependencies for generated library builds"),
+        "build --lib should explain generated-library dependency preheat work, got:\n{first_stderr}"
+    );
+    assert!(
+        tmp.path()
+            .join("target/incan_lock/.incan_library_dependency_preheat_fingerprint")
+            .is_file(),
+        "generated-library dependency preheat should write a fingerprint stamp"
+    );
+
+    let second = run_incan(tmp.path(), &["build", "--lib"])?;
+    assert_success(&second, "second incan build --lib with dependency preheat");
+    let second_stderr = String::from_utf8_lossy(&second.stderr);
+    assert!(
+        second_stderr.contains("generated library dependency preheat: up-to-date"),
+        "second build --lib should report generated-library dependency preheat reuse, got:\n{second_stderr}"
+    );
+    Ok(())
+}
+
 fn stale_lockfile_without_changing_cargo_payload(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
     let lock_path = root.join("incan.lock");
     let original = fs::read_to_string(&lock_path)?;

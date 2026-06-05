@@ -1251,7 +1251,15 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
     let mut xfailed = 0;
     let mut xpassed = 0;
 
+    let planning_start = Instant::now();
     let units = build_execution_units(&filtered_tests, path, default_timeout, stop_on_fail, jobs);
+    if report_format == TestOutputFormat::Console && verbose {
+        println!(
+            "planned {} generated harness unit(s) in {:.2}s",
+            units.len(),
+            planning_start.elapsed().as_secs_f64()
+        );
+    }
     if report_format == TestOutputFormat::Console && !stop_on_fail {
         for unit in &units {
             let files = unit
@@ -1284,6 +1292,12 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
         verbose,
         report_format == TestOutputFormat::Console,
     );
+    if report_format == TestOutputFormat::Console && verbose {
+        println!(
+            "generated harness execution phase completed in {:.2}s",
+            start_time.elapsed().as_secs_f64()
+        );
+    }
     raw_batch_results.sort_by_key(|(index, _)| *index);
     let mut raw_results_by_id: HashMap<String, TestResult> = HashMap::new();
     for (_, batch_results) in raw_batch_results {

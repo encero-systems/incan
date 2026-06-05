@@ -49,6 +49,8 @@ Run tests:
 incan test tests/
 ```
 
+For long suites, use `incan test -v` to see generated-harness planning, preparation-cache hits or misses, preheat timing, and Cargo test phase timing. Ordinary console runs still show the collected test count and any generated-harness preheat that has to run; when a cold preheat invokes Cargo, Cargo's own progress is streamed instead of hidden until the end. Verbose mode is the better troubleshooting view when you need to tell whether time is going into package preparation, Rust metadata prewarm, Cargo preheat, or actual test execution.
+
 ## Test Discovery
 
 Tests are discovered automatically from two sources:

@@ -36,7 +36,7 @@ use super::common::{
 };
 #[cfg(feature = "rust_inspect")]
 use super::common::{collect_rust_inspect_query_paths, ensure_rust_inspect_workspace, prewarm_rust_inspect_workspace};
-use super::lock::{LockResolutionRequest, resolve_lock_payload};
+use super::lock::{LockResolutionRequest, resolve_lock_payload, run_generated_library_dependency_preheat};
 use super::vocab_extraction::{PendingDesugarerArtifact, collect_library_vocab_metadata};
 use crate::cli::prelude::ParsedModule;
 #[cfg(feature = "rust_inspect")]
@@ -789,6 +789,8 @@ pub fn build_library(
         #[cfg(feature = "rust_inspect")]
         rust_inspect_query_paths: &metadata_query_paths,
     })?;
+    let should_preheat_library_dependencies = lock_payload_for_typecheck.is_some()
+        && (!resolved.dependencies.is_empty() || !project_requirements.stdlib_features.is_empty());
     #[cfg(feature = "rust_inspect")]
     let rust_inspect_manifest_dir = {
         let rust_inspect_manifest_dir = ensure_rust_inspect_workspace(
@@ -971,6 +973,16 @@ pub fn build_library(
         generator
             .generate_nested(&main_code, &rust_modules)
             .map_err(|e| CliError::failure(format!("Error generating project: {e}")))?;
+    }
+
+    if should_preheat_library_dependencies {
+        run_generated_library_dependency_preheat(
+            &project_root,
+            &project_root.join("target").join("incan_lock"),
+            &cargo_features,
+            &cargo_policy,
+            &generator.cargo_target_dir(),
+        )?;
     }
 
     match generator.build() {

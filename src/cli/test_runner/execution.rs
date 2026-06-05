@@ -2,7 +2,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
@@ -2671,7 +2671,7 @@ fn cargo_test_command(
 /// Run `cargo test --no-run` for one generated harness and return its elapsed time.
 fn run_generated_harness_preheat(request: &HarnessPreheatRequest<'_>) -> Result<Duration, String> {
     let start = Instant::now();
-    let command = cargo_test_command(
+    let mut command = cargo_test_command(
         request.manifest_path,
         request.cargo_flags,
         request.jobs,
@@ -2680,6 +2680,20 @@ fn run_generated_harness_preheat(request: &HarnessPreheatRequest<'_>) -> Result<
         true,
         false,
     );
+    if request.emit_progress && request.timeout.is_none() {
+        command.stdout(Stdio::inherit());
+        command.stderr(Stdio::inherit());
+        let status = command
+            .status()
+            .map_err(|err| format!("failed to run cargo test --no-run: {err}"))?;
+        if !status.success() {
+            return Err(format!(
+                "cargo test --no-run failed with status {status}; cargo output was streamed above"
+            ));
+        }
+        return Ok(start.elapsed());
+    }
+
     let (output, timed_out) = run_command_with_timeout(command, request.timeout)
         .map_err(|err| format!("failed to run cargo test --no-run: {err}"))?;
     if timed_out {
@@ -3013,7 +3027,15 @@ pub(super) fn run_file_tests_batch(
         cargo_policy,
     );
 
+    let prep_start = Instant::now();
     let prepared: Arc<PreparedTestFile> = if let Some(hit) = prep_cache.prepared_files.get(&cache_key) {
+        if options.verbose && options.emit_progress {
+            println!(
+                "test prep phase: cache hit for {} file(s) in {:.2}s",
+                seen_files.len(),
+                prep_start.elapsed().as_secs_f64()
+            );
+        }
         Arc::clone(hit)
     } else {
         // ---- Context: cold prep — inline imports, resolve and merge Cargo deps, lock + rust-inspect workspace ----
@@ -3230,6 +3252,13 @@ pub(super) fn run_file_tests_batch(
         };
         let arc = Arc::new(prepared);
         prep_cache.prepared_files.insert(cache_key, Arc::clone(&arc));
+        if options.verbose && options.emit_progress {
+            println!(
+                "test prep phase: cache miss prepared {} source module(s) in {:.2}s",
+                arc.source_modules.len(),
+                prep_start.elapsed().as_secs_f64()
+            );
+        }
         arc
     };
 
@@ -3398,11 +3427,12 @@ pub(super) fn run_file_tests_batch(
     };
     if options.verbose && options.emit_progress {
         println!(
-            "preheat phase: {} in {:.2}s (wait {:.2}s, generated changed: {})",
+            "preheat phase: {} in {:.2}s (wait {:.2}s, generated changed: {}, target: {})",
             preheat_status_label(preheat_outcome.status),
             preheat_outcome.elapsed.as_secs_f64(),
             preheat_outcome.waited.as_secs_f64(),
-            generated_changed
+            generated_changed,
+            shared_target_dir.display()
         );
     }
 
@@ -3416,6 +3446,14 @@ pub(super) fn run_file_tests_batch(
         options.no_capture,
     );
 
+    if options.verbose && options.emit_progress {
+        println!(
+            "cargo test phase: running generated harness {}",
+            manifest_path.display()
+        );
+        let _ = io::stdout().flush();
+    }
+    let cargo_test_start = Instant::now();
     let (output, timed_out) = match run_command_with_timeout(command, options.timeout) {
         Ok(result) => result,
         Err(e) => {
@@ -3430,6 +3468,12 @@ pub(super) fn run_file_tests_batch(
                 .collect();
         }
     };
+    if options.verbose && options.emit_progress {
+        println!(
+            "cargo test phase: completed in {:.2}s",
+            cargo_test_start.elapsed().as_secs_f64()
+        );
+    }
 
     let elapsed = start.elapsed();
     let stdout = String::from_utf8_lossy(&output.stdout);

@@ -45,7 +45,7 @@ impl ProjectGenerator {
     /// nested `target/` directory, which forces Cargo to rebuild dependencies repeatedly across examples, smoke
     /// tests, and benchmark checks. Sharing a parent-scoped target dir lets those generated crates reuse compiled
     /// dependencies.
-    fn cargo_target_dir(&self) -> PathBuf {
+    pub(crate) fn cargo_target_dir(&self) -> PathBuf {
         if let Some(target_dir) = Self::generated_cargo_target_dir_override() {
             return target_dir;
         }

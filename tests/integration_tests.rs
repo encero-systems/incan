@@ -7496,6 +7496,16 @@ def test_preheat() -> None:
             "expected first run to preheat stale harness.\nstdout:\n{}",
             first_stdout,
         );
+        assert!(
+            first_stdout.contains("planned 1 generated harness unit(s)"),
+            "expected verbose run to report generated harness planning.\nstdout:\n{}",
+            first_stdout,
+        );
+        assert!(
+            first_stdout.contains("cargo test phase: completed"),
+            "expected verbose run to report cargo test phase timing.\nstdout:\n{}",
+            first_stdout,
+        );
 
         let second = run_incan_test_with_args(&dir, &["-v"]);
         let second_stdout = String::from_utf8_lossy(&second.stdout);

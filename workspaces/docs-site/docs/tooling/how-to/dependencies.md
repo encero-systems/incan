@@ -113,7 +113,9 @@ If `incan.lock` doesn't exist and you run `incan build` or `incan test` without 
 
 If `incan.lock` already exists but is stale, default `incan build` and `incan test` warn and reuse the existing embedded `Cargo.lock` payload without rewriting `incan.lock`. Run `incan lock` when you intentionally want to refresh the committed lock file.
 
-For `incan test`, a generated or changed lock can make the generated Rust harness stale. The runner preheats stale harnesses before executing tests so later test commands can reuse the compiled Cargo state. When lock generation sees Rust dependency inputs or stdlib feature requirements, it also preheats those dependencies with `cargo test --no-run` into the generated test target domain before writing `incan.lock`; unchanged relocks reuse a dependency preheat fingerprint.
+For `incan test`, a generated or changed lock can make the generated Rust harness stale. The runner preheats stale harnesses before executing tests so later test commands can reuse the compiled Cargo state. When lock generation sees Rust dependency inputs or stdlib feature requirements, it also preheats those dependencies with `cargo test --no-run` into the generated test target domain before writing `incan.lock`; unchanged relocks reuse a dependency preheat fingerprint, while cold preheats stream Cargo's own progress instead of leaving the terminal silent.
+
+For `incan build --lib`, the compiler also preheats the generated lock workspace into the same release-profile Cargo target directory used by the generated library build. This matters for packages with stable but expensive Rust dependency graphs: a warmed lock workspace should make the following library build reuse the dependency artifacts instead of compiling the same graph in a different target/profile domain. Cold generated-library preheats print the target/profile domain before invoking Cargo and stream Cargo's progress until the preheat completes. Set `INCAN_LOCK_PREHEAT=0` only when you deliberately want to disable both lock/test dependency preheat and generated-library dependency preheat while debugging.
 
 ### Strict mode for CI
 
