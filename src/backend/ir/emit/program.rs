@@ -32,7 +32,8 @@ use super::super::decl::{
     IrTraitBound, IrTypeParam, Visibility,
 };
 use super::super::expr::{
-    IrDictEntry, IrExprKind, IrGeneratorClause, IrListEntry, IrMethodDispatch, MethodKind, Pattern, VarRefKind,
+    IrCallArg, IrDictEntry, IrExprKind, IrGeneratorClause, IrListEntry, IrMethodDispatch, MethodKind, Pattern,
+    VarRefKind,
 };
 use super::super::stmt::AssignTarget;
 use super::super::types::{IR_UNION_TYPE_NAME, IrType};
@@ -1812,12 +1813,172 @@ impl<'a> IrEmitter<'a> {
 
     /// Collect anonymous union shapes referenced by an expression tree.
     fn collect_union_types_from_expr(expr: &TypedExpr, out: &mut HashMap<String, IrType>) {
-        Self::collect_union_types_from_type(&expr.ty, out);
+        Self::collect_union_types_from_expr_inner(expr, out, None);
+    }
+
+    /// Collect union shapes for an expression while honoring the type position the expression is emitted into.
+    ///
+    /// Public dependency calls can target provider-owned anonymous unions nested inside containers such as
+    /// `list[provider::Union]`. In that case the target type owns the generated wrapper, and the expression's local
+    /// semantic union shape must not be collected as a consumer-owned enum definition.
+    fn collect_union_types_from_expr_for_target(
+        expr: &TypedExpr,
+        target_ty: Option<&IrType>,
+        out: &mut HashMap<String, IrType>,
+    ) {
+        if let Some(target_ty) = target_ty {
+            Self::collect_union_types_from_type(target_ty, out);
+        }
+        Self::collect_union_types_from_expr_inner(expr, out, target_ty);
+    }
+
+    /// Collect union shapes inside an expression type while preserving provider-owned target ownership.
+    fn collect_union_types_from_type_for_target(
+        expr_ty: &IrType,
+        target_ty: Option<&IrType>,
+        out: &mut HashMap<String, IrType>,
+    ) {
+        let Some(target_ty) = target_ty else {
+            Self::collect_union_types_from_type(expr_ty, out);
+            return;
+        };
+        if Self::target_external_union_covers_expr(target_ty, expr_ty) {
+            return;
+        }
+        match (target_ty, expr_ty) {
+            (IrType::List(target), IrType::List(expr)) | (IrType::Set(target), IrType::Set(expr)) => {
+                Self::collect_union_types_from_type_for_target(expr, Some(target), out);
+            }
+            (IrType::Option(target), IrType::Option(expr))
+            | (IrType::Ref(target), IrType::Ref(expr))
+            | (IrType::RefMut(target), IrType::RefMut(expr)) => {
+                Self::collect_union_types_from_type_for_target(expr, Some(target), out);
+            }
+            (IrType::Option(target), expr) => {
+                Self::collect_union_types_from_type_for_target(expr, Some(target), out);
+            }
+            (IrType::Dict(target_key, target_value), IrType::Dict(expr_key, expr_value)) => {
+                Self::collect_union_types_from_type_for_target(expr_key, Some(target_key), out);
+                Self::collect_union_types_from_type_for_target(expr_value, Some(target_value), out);
+            }
+            (IrType::Result(target_ok, target_err), IrType::Result(expr_ok, expr_err)) => {
+                Self::collect_union_types_from_type_for_target(expr_ok, Some(target_ok), out);
+                Self::collect_union_types_from_type_for_target(expr_err, Some(target_err), out);
+            }
+            (IrType::Tuple(target_items), IrType::Tuple(expr_items)) if target_items.len() == expr_items.len() => {
+                for (target, expr) in target_items.iter().zip(expr_items) {
+                    Self::collect_union_types_from_type_for_target(expr, Some(target), out);
+                }
+            }
+            _ => Self::collect_union_types_from_type(expr_ty, out),
+        }
+    }
+
+    /// Return whether a target type covers an expression's union shape through a provider-owned external union.
+    ///
+    /// The check is structural rather than top-level only so containers, options, tuples, dictionaries, and result
+    /// payloads can preserve public dependency ownership across nested argument and collection positions.
+    fn target_external_union_covers_expr(target_ty: &IrType, expr_ty: &IrType) -> bool {
+        match (target_ty, expr_ty) {
+            (IrType::ExternalUnion { .. }, _) => target_ty.union_type_name() == expr_ty.union_type_name(),
+            (IrType::List(target), IrType::List(expr)) | (IrType::Set(target), IrType::Set(expr)) => {
+                Self::target_external_union_covers_expr(target, expr)
+            }
+            (IrType::Option(target), IrType::Option(expr))
+            | (IrType::Ref(target), IrType::Ref(expr))
+            | (IrType::RefMut(target), IrType::RefMut(expr)) => Self::target_external_union_covers_expr(target, expr),
+            (IrType::Option(target), expr) => Self::target_external_union_covers_expr(target, expr),
+            (IrType::Dict(target_key, target_value), IrType::Dict(expr_key, expr_value)) => {
+                Self::target_external_union_covers_expr(target_key, expr_key)
+                    && Self::target_external_union_covers_expr(target_value, expr_value)
+            }
+            (IrType::Result(target_ok, target_err), IrType::Result(expr_ok, expr_err)) => {
+                Self::target_external_union_covers_expr(target_ok, expr_ok)
+                    && Self::target_external_union_covers_expr(target_err, expr_err)
+            }
+            (IrType::Tuple(target_items), IrType::Tuple(expr_items)) if target_items.len() == expr_items.len() => {
+                target_items
+                    .iter()
+                    .zip(expr_items)
+                    .all(|(target, expr)| Self::target_external_union_covers_expr(target, expr))
+            }
+            _ => false,
+        }
+    }
+
+    /// Return the target type for one list or set element when a collection expression has an expected type.
+    fn list_element_target_type(target_ty: Option<&IrType>) -> Option<&IrType> {
+        match target_ty {
+            Some(IrType::List(inner) | IrType::Set(inner)) => Some(inner),
+            _ => None,
+        }
+    }
+
+    /// Return expected key and value types for a dictionary expression when the surrounding type provides them.
+    fn dict_target_types(target_ty: Option<&IrType>) -> (Option<&IrType>, Option<&IrType>) {
+        match target_ty {
+            Some(IrType::Dict(key, value)) => (Some(key), Some(value)),
+            _ => (None, None),
+        }
+    }
+
+    /// Return the expected item type for one tuple position when the surrounding type provides it.
+    fn tuple_item_target_type(target_ty: Option<&IrType>, index: usize) -> Option<&IrType> {
+        match target_ty {
+            Some(IrType::Tuple(items)) => items.get(index),
+            _ => None,
+        }
+    }
+
+    /// Return the expected argument type from a callable signature for a positional or named call argument.
+    fn call_arg_target_type<'sig>(
+        arg: &IrCallArg,
+        index: usize,
+        signature: Option<&'sig FunctionSignature>,
+    ) -> Option<&'sig IrType> {
+        let signature = signature?;
+        if let Some(name) = &arg.name
+            && let Some(param) = signature.params.iter().find(|param| param.name == *name)
+        {
+            return Some(&param.ty);
+        }
+        signature.params.get(index).map(|param| &param.ty)
+    }
+
+    /// Collect union shapes from callable defaults that may be emitted as missing call arguments.
+    fn collect_union_types_from_signature_defaults(signature: &FunctionSignature, out: &mut HashMap<String, IrType>) {
+        for param in &signature.params {
+            if let Some(default) = &param.default {
+                Self::collect_union_types_from_expr_for_target(default, Some(&param.ty), out);
+            }
+        }
+    }
+
+    /// Collect union shapes from an expression tree, optionally using an expected target type to keep ownership stable.
+    fn collect_union_types_from_expr_inner(
+        expr: &TypedExpr,
+        out: &mut HashMap<String, IrType>,
+        target_ty: Option<&IrType>,
+    ) {
+        Self::collect_union_types_from_type_for_target(&expr.ty, target_ty, out);
         match &expr.kind {
-            IrExprKind::Call { func, args, .. } => {
-                Self::collect_union_types_from_call_callee(func, out);
-                for arg in args {
-                    Self::collect_union_types_from_expr(&arg.expr, out);
+            IrExprKind::Call {
+                func,
+                args,
+                callable_signature,
+                ..
+            } => {
+                if let Some(callable_signature) = callable_signature {
+                    Self::collect_union_types_from_signature_defaults(callable_signature, out);
+                } else {
+                    Self::collect_union_types_from_call_callee(func, out);
+                }
+                for (index, arg) in args.iter().enumerate() {
+                    Self::collect_union_types_from_expr_for_target(
+                        &arg.expr,
+                        Self::call_arg_target_type(arg, index, callable_signature.as_ref()),
+                        out,
+                    );
                 }
             }
             IrExprKind::BuiltinCall { args, .. } => {
@@ -1825,7 +1986,22 @@ impl<'a> IrEmitter<'a> {
                     Self::collect_union_types_from_expr(arg, out);
                 }
             }
-            IrExprKind::MethodCall { receiver, args, .. } | IrExprKind::KnownMethodCall { receiver, args, .. } => {
+            IrExprKind::MethodCall {
+                receiver,
+                args,
+                callable_signature,
+                ..
+            } => {
+                Self::collect_union_types_from_expr(receiver, out);
+                for (index, arg) in args.iter().enumerate() {
+                    Self::collect_union_types_from_expr_for_target(
+                        &arg.expr,
+                        Self::call_arg_target_type(arg, index, callable_signature.as_ref()),
+                        out,
+                    );
+                }
+            }
+            IrExprKind::KnownMethodCall { receiver, args, .. } => {
                 Self::collect_union_types_from_expr(receiver, out);
                 for arg in args {
                     Self::collect_union_types_from_expr(&arg.expr, out);
@@ -1862,28 +2038,46 @@ impl<'a> IrEmitter<'a> {
             }
             IrExprKind::Field { object, .. } => Self::collect_union_types_from_expr(object, out),
             IrExprKind::List(items) => {
+                let element_target_ty = Self::list_element_target_type(target_ty);
                 for item in items {
                     match item {
                         IrListEntry::Element(value) | IrListEntry::Spread(value) => {
-                            Self::collect_union_types_from_expr(value, out);
+                            let item_target_ty = match item {
+                                IrListEntry::Element(_) => element_target_ty,
+                                IrListEntry::Spread(_) => target_ty,
+                            };
+                            Self::collect_union_types_from_expr_for_target(value, item_target_ty, out);
                         }
                     }
                 }
             }
             IrExprKind::Dict(entries) => {
+                let (key_target_ty, value_target_ty) = Self::dict_target_types(target_ty);
                 for entry in entries {
                     match entry {
                         IrDictEntry::Pair(key, value) => {
-                            Self::collect_union_types_from_expr(key, out);
-                            Self::collect_union_types_from_expr(value, out);
+                            Self::collect_union_types_from_expr_for_target(key, key_target_ty, out);
+                            Self::collect_union_types_from_expr_for_target(value, value_target_ty, out);
                         }
-                        IrDictEntry::Spread(value) => Self::collect_union_types_from_expr(value, out),
+                        IrDictEntry::Spread(value) => {
+                            Self::collect_union_types_from_expr_for_target(value, target_ty, out)
+                        }
                     }
                 }
             }
-            IrExprKind::Set(items) | IrExprKind::Tuple(items) => {
+            IrExprKind::Set(items) => {
+                let element_target_ty = Self::list_element_target_type(target_ty);
                 for item in items {
-                    Self::collect_union_types_from_expr(item, out);
+                    Self::collect_union_types_from_expr_for_target(item, element_target_ty, out);
+                }
+            }
+            IrExprKind::Tuple(items) => {
+                for (index, item) in items.iter().enumerate() {
+                    Self::collect_union_types_from_expr_for_target(
+                        item,
+                        Self::tuple_item_target_type(target_ty, index),
+                        out,
+                    );
                 }
             }
             IrExprKind::Struct { fields, .. } => {
@@ -2190,6 +2384,9 @@ impl<'a> IrEmitter<'a> {
     /// Emit the generated Rust enum for one normalized anonymous union shape.
     fn emit_generated_union_type(&self, ty: &IrType) -> Option<TokenStream> {
         let ty = self.resolve_type_aliases_for_emit(ty);
+        if matches!(ty, IrType::ExternalUnion { .. }) {
+            return None;
+        }
         let name = ty.union_type_name()?;
         let members = ty.union_members()?;
         let name_ident = format_ident!("{}", name);
@@ -2792,6 +2989,9 @@ impl<'a> IrEmitter<'a> {
             let mut canonical_union_types = HashMap::new();
             for (_, union_ty) in union_types {
                 let union_ty = self.resolve_type_aliases_for_emit(&union_ty);
+                if matches!(union_ty, IrType::ExternalUnion { .. }) {
+                    continue;
+                }
                 if let Some(name) = union_ty.union_type_name() {
                     canonical_union_types.insert(name, union_ty);
                 }
@@ -2953,5 +3153,76 @@ impl<'a> IrEmitter<'a> {
                 .reachable_items
                 .contains(&impl_block.target_type),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::IrEmitter;
+    use crate::backend::ir::types::{IR_UNION_TYPE_NAME, IrType};
+    use std::collections::HashMap;
+
+    fn union(members: Vec<IrType>) -> IrType {
+        IrType::NamedGeneric(IR_UNION_TYPE_NAME.to_string(), members)
+    }
+
+    fn provider_union() -> IrType {
+        union(vec![IrType::Struct("ProviderColumn".to_string()), IrType::Int])
+    }
+
+    fn external_provider_union() -> IrType {
+        IrType::ExternalUnion {
+            library: "provider".to_string(),
+            union: Box::new(provider_union()),
+        }
+    }
+
+    fn local_union() -> IrType {
+        union(vec![IrType::Struct("LocalValue".to_string()), IrType::String])
+    }
+
+    #[test]
+    fn external_union_coverage_requires_all_compound_slots_to_match() {
+        assert!(IrEmitter::target_external_union_covers_expr(
+            &IrType::Tuple(vec![external_provider_union(), external_provider_union()]),
+            &IrType::Tuple(vec![provider_union(), provider_union()])
+        ));
+        assert!(!IrEmitter::target_external_union_covers_expr(
+            &IrType::Tuple(vec![external_provider_union(), IrType::String]),
+            &IrType::Tuple(vec![provider_union(), local_union()])
+        ));
+        assert!(!IrEmitter::target_external_union_covers_expr(
+            &IrType::Dict(Box::new(external_provider_union()), Box::new(IrType::String)),
+            &IrType::Dict(Box::new(provider_union()), Box::new(local_union()))
+        ));
+        assert!(!IrEmitter::target_external_union_covers_expr(
+            &IrType::Result(Box::new(external_provider_union()), Box::new(IrType::String)),
+            &IrType::Result(Box::new(provider_union()), Box::new(local_union()))
+        ));
+    }
+
+    #[test]
+    fn targeted_union_collection_keeps_uncovered_local_compound_slots() -> Result<(), String> {
+        let target = IrType::Tuple(vec![external_provider_union(), IrType::String]);
+        let expr_ty = IrType::Tuple(vec![provider_union(), local_union()]);
+        let mut collected = HashMap::new();
+
+        IrEmitter::collect_union_types_from_type_for_target(&expr_ty, Some(&target), &mut collected);
+        let provider_name = provider_union()
+            .union_type_name()
+            .ok_or("provider union should have a generated name")?;
+        let local_name = local_union()
+            .union_type_name()
+            .ok_or("local union should have a generated name")?;
+
+        assert!(
+            !collected.contains_key(&provider_name),
+            "provider-owned union should not be re-collected locally"
+        );
+        assert!(
+            collected.contains_key(&local_name),
+            "uncovered local union sibling should still be collected"
+        );
+        Ok(())
     }
 }

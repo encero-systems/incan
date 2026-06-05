@@ -18,17 +18,7 @@ impl Formatter {
                 }
             }
             Statement::VocabExpressionItem(item) => {
-                self.format_expr(&item.expr.node);
-                if let Some(alias) = &item.alias {
-                    self.writer.write(" as ");
-                    self.writer.write(alias);
-                }
-                for modifier in &item.modifiers {
-                    self.writer.write(" ");
-                    self.writer.write(&modifier.keyword);
-                    self.writer.write(" ");
-                    self.format_expr(&modifier.value.node);
-                }
+                self.format_vocab_expression_item_contents(item);
                 self.writer.newline();
             }
             Statement::Assert(assert_stmt) => self.format_assert(assert_stmt),
@@ -103,16 +93,7 @@ impl Formatter {
                     self.writer.write("@");
                     self.writer.writeln(&decorator.node.path.segments.join("."));
                 }
-                self.writer.write(&vocab_block.keyword);
-                if !vocab_block.header_args.is_empty() {
-                    self.writer.write(" ");
-                    for (idx, arg) in vocab_block.header_args.iter().enumerate() {
-                        if idx > 0 {
-                            self.writer.write(", ");
-                        }
-                        self.format_expr(&arg.node);
-                    }
-                }
+                self.format_vocab_block_header(vocab_block);
                 self.writer.writeln(":");
                 self.writer.indent();
                 for stmt in &vocab_block.body {

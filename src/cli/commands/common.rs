@@ -7,6 +7,8 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::{LazyLock, Mutex};
 
 #[cfg(feature = "rust_inspect")]
 use crate::backend::ProjectGenerator;
@@ -19,14 +21,18 @@ use crate::frontend::ast::{ImportKind, Program, Span};
 use crate::frontend::contract_metadata::{
     CanonicalModelBundle, materialize_contract_models, read_project_model_bundles,
 };
-use crate::frontend::library_manifest_index::LibraryManifestIndex;
+use crate::frontend::library_manifest_index::{
+    LibraryManifestFailureKind, LibraryManifestIndex, LibraryManifestIndexEntry,
+};
 use crate::frontend::module::{
     SourceModuleImportResolution, canonicalize_source_module_segments, resolve_program_source_imports,
 };
 use crate::frontend::{ast_walk, diagnostics, lexer, parser, typechecker, vocab_desugar_pass};
 use crate::lockfile::CargoFeatureSelection;
-use crate::manifest::ProjectManifest;
 use crate::manifest::{DependencySource, DependencySpec};
+use crate::manifest::{
+    INTERNAL_MANIFEST_OVERRIDE_ENV, INTERNAL_PROJECT_ROOT_OVERRIDE_ENV, MANIFEST_FILENAME, ProjectManifest,
+};
 use crate::project_lifecycle::toolchain::ToolchainConstraintSet;
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect::{Inspector, InspectorConfig};
@@ -41,6 +47,7 @@ use sha2::{Digest, Sha256};
 ///
 /// Files larger than this are rejected to prevent out-of-memory conditions during compilation.
 const MAX_SOURCE_SIZE: u64 = 100 * 1024 * 1024;
+static PREPARED_LIBRARY_DEPENDENCIES: LazyLock<Mutex<HashSet<PathBuf>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
 
 /// Unified project requirements collected from parsed modules and loaded provider manifests.
 #[derive(Debug, Clone, Default)]
@@ -196,6 +203,9 @@ impl CompilationSession {
             .map(|manifest| manifest.project_root().to_path_buf())
             .unwrap_or(inferred_project_root);
         let source_root = resolve_source_root(&project_root, manifest.as_ref());
+        if let Some(manifest) = manifest.as_ref() {
+            prepare_missing_library_dependency_artifacts(manifest)?;
+        }
         let library_manifest_index = manifest
             .as_ref()
             .and_then(|manifest| {
@@ -271,6 +281,81 @@ impl CompilationSession {
         }
         Ok(ast)
     }
+}
+
+/// Ensure clean check/format/test entrypoints see the same public dependency manifests as warmed worktrees.
+fn prepare_missing_library_dependency_artifacts(manifest: &ProjectManifest) -> CliResult<()> {
+    if manifest.library_dependencies().is_empty() {
+        return Ok(());
+    }
+
+    let initial_index = LibraryManifestIndex::from_project_manifest(manifest);
+    let mut missing = Vec::new();
+    for (dependency_key, dependency) in manifest.library_dependencies() {
+        let Some(LibraryManifestIndexEntry::Failed(failure)) = initial_index.get(dependency_key) else {
+            continue;
+        };
+        if failure.kind == LibraryManifestFailureKind::ArtifactMissing
+            && dependency.path.join(MANIFEST_FILENAME).is_file()
+        {
+            missing.push((dependency_key.clone(), dependency.path.clone()));
+        }
+    }
+
+    for (dependency_key, dependency_root) in missing {
+        prepare_library_dependency_artifact(&dependency_key, &dependency_root)?;
+    }
+
+    Ok(())
+}
+
+/// Build one missing `pub::` dependency artifact through the existing library-mode compiler path.
+fn prepare_library_dependency_artifact(dependency_key: &str, dependency_root: &Path) -> CliResult<()> {
+    let canonical_root = fs::canonicalize(dependency_root).unwrap_or_else(|_| dependency_root.to_path_buf());
+    {
+        let prepared = PREPARED_LIBRARY_DEPENDENCIES
+            .lock()
+            .map_err(|_| CliError::failure("failed to lock prepared library dependency set"))?;
+        if prepared.contains(&canonical_root) {
+            return Ok(());
+        }
+    }
+
+    eprintln!(
+        "Preparing missing pub::{dependency_key} dependency artifact with `incan build --lib` in {}",
+        dependency_root.display()
+    );
+    let current_exe = env::current_exe()
+        .map_err(|error| CliError::failure(format!("failed to resolve current incan executable: {error}")))?;
+    let output = Command::new(current_exe)
+        .args(["build", "--lib"])
+        .current_dir(dependency_root)
+        .env_remove(INTERNAL_MANIFEST_OVERRIDE_ENV)
+        .env_remove(INTERNAL_PROJECT_ROOT_OVERRIDE_ENV)
+        .output()
+        .map_err(|error| {
+            CliError::failure(format!(
+                "failed to run `incan build --lib` for pub::{dependency_key} dependency at {}: {error}",
+                dependency_root.display()
+            ))
+        })?;
+
+    if !output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(CliError::failure(format!(
+            "failed to prepare pub::{dependency_key} dependency artifact at {}\nstdout:\n{}\nstderr:\n{}",
+            dependency_root.display(),
+            stdout.trim_end(),
+            stderr.trim_end()
+        )));
+    }
+
+    let mut prepared = PREPARED_LIBRARY_DEPENDENCIES
+        .lock()
+        .map_err(|_| CliError::failure("failed to lock prepared library dependency set"))?;
+    prepared.insert(canonical_root);
+    Ok(())
 }
 
 /// Collect a unified set of project requirements from source imports and loaded provider manifests.

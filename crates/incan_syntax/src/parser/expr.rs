@@ -384,8 +384,14 @@ impl<'a> Parser<'a> {
     /// Parse postfix forms such as calls, method calls, field access, indexing, and `?`.
     fn postfix(&mut self) -> Result<Spanned<Expr>, CompileError> {
         let mut expr = self.primary()?;
+        let mut fluent_layout_depth = 0usize;
 
         loop {
+            if self.consume_fluent_chain_terminator(&mut fluent_layout_depth) {
+                break;
+            }
+            self.consume_fluent_chain_continuation(&mut fluent_layout_depth);
+
             if self.match_token(&TokenKind::Punctuation(PunctuationId::Question)) {
                 let span = Span::new(expr.span.start, self.tokens[self.pos - 1].span.end);
                 expr = Spanned::new(Expr::Try(Box::new(expr)), span);
@@ -495,6 +501,71 @@ impl<'a> Parser<'a> {
         }
 
         Ok(expr)
+    }
+
+    /// Consume the layout prefix for an indented fluent method/field continuation.
+    ///
+    /// This accepts source shaped as:
+    ///
+    /// ```text
+    /// value = receiver
+    ///     .method()
+    ///     .field
+    /// ```
+    ///
+    /// The lexer emits ordinary `Newline`/`Indent`/`Dedent` tokens for that layout. Treating the indented leading
+    /// `.` as expression continuation keeps fluent APIs writable without requiring wrapping parentheses.
+    fn consume_fluent_chain_continuation(&mut self, fluent_layout_depth: &mut usize) -> bool {
+        if !self.check(&TokenKind::Newline) {
+            return false;
+        }
+
+        let next = self.tokens.get(self.pos + 1).map(|token| &token.kind);
+        let after_next = self.tokens.get(self.pos + 2).map(|token| &token.kind);
+        if matches!(next, Some(TokenKind::Indent))
+            && matches!(after_next, Some(TokenKind::Punctuation(PunctuationId::Dot)))
+        {
+            self.advance(); // newline
+            self.advance(); // continuation indent
+            *fluent_layout_depth += 1;
+            return true;
+        }
+
+        if *fluent_layout_depth > 0 && matches!(next, Some(TokenKind::Punctuation(PunctuationId::Dot))) {
+            self.advance(); // newline between continuation lines
+            return true;
+        }
+
+        false
+    }
+
+    /// Consume the layout suffix that closes an indented fluent continuation.
+    fn consume_fluent_chain_terminator(&mut self, fluent_layout_depth: &mut usize) -> bool {
+        if *fluent_layout_depth == 0 || !self.check(&TokenKind::Newline) {
+            return false;
+        }
+
+        let mut next_non_newline = self.pos;
+        while matches!(
+            self.tokens.get(next_non_newline).map(|token| &token.kind),
+            Some(TokenKind::Newline)
+        ) {
+            next_non_newline += 1;
+        }
+
+        if !matches!(
+            self.tokens.get(next_non_newline).map(|token| &token.kind),
+            Some(TokenKind::Dedent)
+        ) {
+            return false;
+        }
+
+        while self.pos < next_non_newline {
+            self.advance(); // final continuation newline or blank continuation line
+        }
+        self.advance(); // continuation dedent
+        *fluent_layout_depth = fluent_layout_depth.saturating_sub(1);
+        true
     }
 
     /// Parse one call-site type argument: either a full [`Type`] or the inference placeholder `_`.
@@ -822,7 +893,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        let body = if self.match_punct(PunctuationId::Colon) {
+        let (body, body_item_trailing_commas) = if self.match_punct(PunctuationId::Colon) {
             self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
             self.expect_suite_indent("Expected indented block after vocab keyword")?;
             let body = self.parse_scoped_vocab_indented_body(
@@ -831,7 +902,8 @@ impl<'a> Parser<'a> {
                 spec.expression_item_modifiers.clone(),
             )?;
             self.expect(&TokenKind::Dedent, "Expected dedent after vocab block body")?;
-            body
+            let body_item_trailing_commas = vec![false; body.len()];
+            (body, body_item_trailing_commas)
         } else if self.match_punct(PunctuationId::LBrace) {
             self.parse_scoped_vocab_braced_body(
                 &keyword_name,
@@ -859,6 +931,7 @@ impl<'a> Parser<'a> {
             decorators: Vec::new(),
             header_args,
             body,
+            body_item_trailing_commas,
         })
     }
 
@@ -889,7 +962,7 @@ impl<'a> Parser<'a> {
         keyword_name: &str,
         clause_body_kind: Option<incan_vocab::ClauseBodyKind>,
         expression_item_modifiers: Vec<incan_vocab::ExpressionItemModifierSurface>,
-    ) -> Result<Vec<Spanned<Statement>>, CompileError> {
+    ) -> Result<(Vec<Spanned<Statement>>, Vec<bool>), CompileError> {
         self.vocab_block_stack.push(keyword_name.to_string());
         self.vocab_body_kind_stack.push(clause_body_kind);
         self.vocab_expression_item_modifier_stack
@@ -905,8 +978,9 @@ impl<'a> Parser<'a> {
     fn braced_vocab_body(
         &mut self,
         sibling_parent_keyword: Option<String>,
-    ) -> Result<Vec<Spanned<Statement>>, CompileError> {
+    ) -> Result<(Vec<Spanned<Statement>>, Vec<bool>), CompileError> {
         let mut body = Vec::new();
+        let mut body_item_trailing_commas = Vec::new();
         self.skip_newlines();
         while !self.check_punct(PunctuationId::RBrace) && !self.is_at_end() {
             if self.braced_vocab_body_boundary(sibling_parent_keyword.as_deref()) {
@@ -923,13 +997,13 @@ impl<'a> Parser<'a> {
                 body.push(Spanned::new(stmt, Span::new(start, end)));
             }
             self.skip_newlines();
-            self.match_punct(PunctuationId::Comma);
+            body_item_trailing_commas.push(self.match_punct(PunctuationId::Comma));
             self.skip_newlines();
         }
         if sibling_parent_keyword.is_none() {
             self.expect_punct(PunctuationId::RBrace, "Expected '}' after vocab expression block")?;
         }
-        Ok(body)
+        Ok((body, body_item_trailing_commas))
     }
 
     /// Parse one child clause/declaration inside a braced vocab body when metadata says the current token starts one.
@@ -964,7 +1038,7 @@ impl<'a> Parser<'a> {
         self.advance();
         self.consume_vocab_compound_tokens(&spec_compound_tokens)?;
 
-        let body = if self.match_punct(PunctuationId::Colon) {
+        let (body, body_item_trailing_commas) = if self.match_punct(PunctuationId::Colon) {
             self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
             self.expect_suite_indent("Expected indented block after vocab keyword")?;
             let body = self.parse_scoped_vocab_indented_body(
@@ -973,7 +1047,8 @@ impl<'a> Parser<'a> {
                 spec.expression_item_modifiers.clone(),
             )?;
             self.expect(&TokenKind::Dedent, "Expected dedent after vocab block body")?;
-            body
+            let body_item_trailing_commas = vec![false; body.len()];
+            (body, body_item_trailing_commas)
         } else if self.match_punct(PunctuationId::LBrace) {
             self.parse_scoped_vocab_braced_body(
                 &keyword_name,
@@ -1002,6 +1077,7 @@ impl<'a> Parser<'a> {
             decorators: Vec::new(),
             header_args: Vec::new(),
             body,
+            body_item_trailing_commas,
         })
     }
 
@@ -1012,7 +1088,7 @@ impl<'a> Parser<'a> {
         clause_body_kind: Option<incan_vocab::ClauseBodyKind>,
         expression_item_modifiers: Vec<incan_vocab::ExpressionItemModifierSurface>,
         sibling_parent_keyword: Option<String>,
-    ) -> Result<Vec<Spanned<Statement>>, CompileError> {
+    ) -> Result<(Vec<Spanned<Statement>>, Vec<bool>), CompileError> {
         self.vocab_block_stack.push(keyword_name.to_string());
         self.vocab_body_kind_stack.push(clause_body_kind);
         self.vocab_expression_item_modifier_stack
@@ -1038,31 +1114,37 @@ impl<'a> Parser<'a> {
     fn braced_single_expression_until_boundary(
         &mut self,
         sibling_parent_keyword: Option<&str>,
-    ) -> Result<Vec<Spanned<Statement>>, CompileError> {
+    ) -> Result<(Vec<Spanned<Statement>>, Vec<bool>), CompileError> {
         if self.braced_vocab_body_boundary(sibling_parent_keyword) {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), Vec::new()));
         }
         let start = self.current_span().start;
         let expr = self.expression()?;
         let end = expr.span.end;
-        Ok(vec![Spanned::new(Statement::Expr(expr), Span::new(start, end))])
+        Ok((
+            vec![Spanned::new(Statement::Expr(expr), Span::new(start, end))],
+            vec![false],
+        ))
     }
 
     /// Parse expression-list entries in braced syntax until the next sibling clause/declaration.
     fn braced_expression_items_until_boundary(
         &mut self,
         sibling_parent_keyword: Option<&str>,
-    ) -> Result<Vec<Spanned<Statement>>, CompileError> {
+    ) -> Result<(Vec<Spanned<Statement>>, Vec<bool>), CompileError> {
         let mut statements = Vec::new();
+        let mut trailing_commas = Vec::new();
         while !self.braced_vocab_body_boundary(sibling_parent_keyword) {
             statements.push(self.braced_vocab_expression_list_item()?);
             self.skip_newlines();
-            if !self.match_punct(PunctuationId::Comma) && self.braced_vocab_body_boundary(sibling_parent_keyword) {
+            let had_comma = self.match_punct(PunctuationId::Comma);
+            trailing_commas.push(had_comma);
+            if !had_comma && self.braced_vocab_body_boundary(sibling_parent_keyword) {
                 break;
             }
             self.skip_newlines();
         }
-        Ok(statements)
+        Ok((statements, trailing_commas))
     }
 
     /// Parse one expression-list item in braced syntax.

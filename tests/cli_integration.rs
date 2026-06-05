@@ -822,6 +822,134 @@ def main() -> None:
 }
 
 #[test]
+fn build_pub_method_accepts_dependency_owned_union_alias_payload_issue755() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let producer_root = tmp.path().join("union_provider");
+    let producer_src = producer_root.join("src");
+    fs::create_dir_all(&producer_src)?;
+    fs::write(
+        producer_root.join("incan.toml"),
+        r#"[project]
+name = "union_provider"
+version = "0.1.0"
+"#,
+    )?;
+    fs::write(
+        producer_src.join("surface.incn"),
+        r#"
+pub model ColumnRefExpr:
+    name: str
+
+
+pub model NumberColumnExpr:
+    expr: ColumnRefExpr
+
+
+pub model SortExpr:
+    expr: ColumnRefExpr
+
+
+pub type ColumnExpr = Union[ColumnRefExpr, NumberColumnExpr, SortExpr]
+pub type NumberValueOrColumn = Union[ColumnRefExpr, NumberColumnExpr, int]
+
+
+pub model Frame:
+    source: str
+
+    def filter(self, predicate: ColumnExpr) -> Self:
+        return self
+
+    def order_by(self, columns: list[ColumnExpr]) -> Self:
+        return self
+
+
+pub def frame() -> Frame:
+    return Frame(source="orders")
+
+
+pub def col(name: str) -> ColumnRefExpr:
+    return ColumnRefExpr(name=name)
+
+
+pub def add(left: NumberValueOrColumn, right: NumberValueOrColumn) -> NumberColumnExpr:
+    return NumberColumnExpr(expr=col("sum"))
+
+
+pub def desc(expr: ColumnExpr) -> ColumnExpr:
+    return SortExpr(expr=col("sorted"))
+"#,
+    )?;
+    fs::write(
+        producer_src.join("lib.incn"),
+        r#"pub from surface import ColumnExpr, ColumnRefExpr, Frame, NumberColumnExpr, NumberValueOrColumn, SortExpr, add, col, desc, frame
+"#,
+    )?;
+    let producer_build = run_incan(&producer_root, &["build", "--lib"])?;
+    assert_success(
+        &producer_build,
+        "producer build --lib for dependency-owned union boundary issue755",
+    );
+
+    let consumer_root = tmp.path().join("union_consumer");
+    let consumer_main = write_minimal_project(
+        &consumer_root,
+        "union_consumer",
+        r#"
+[dependencies]
+union_provider = { path = "../union_provider" }
+"#,
+    )?;
+    fs::write(
+        &consumer_main,
+        r#"from pub::union_provider import add as __incan_vocab_helper_union_provider_add
+from pub::union_provider import col as __incan_vocab_helper_union_provider_col
+from pub::union_provider import desc as __incan_vocab_helper_union_provider_desc
+from pub::union_provider import frame as __incan_vocab_helper_union_provider_frame
+
+
+def main() -> None:
+    __incan_vocab_helper_union_provider_frame().filter(
+        __incan_vocab_helper_union_provider_add(__incan_vocab_helper_union_provider_col("amount"), 5),
+    )
+    __incan_vocab_helper_union_provider_frame().order_by([
+        __incan_vocab_helper_union_provider_desc(__incan_vocab_helper_union_provider_col("amount")),
+    ])
+    return
+"#,
+    )?;
+    let consumer_build = run_incan(
+        &consumer_root,
+        &[
+            "build",
+            consumer_main.to_str().ok_or("consumer main path was not valid UTF-8")?,
+        ],
+    )?;
+    assert_success(
+        &consumer_build,
+        "pub consumer build for dependency-owned union boundary issue755",
+    );
+
+    let generated_consumer = fs::read_to_string(consumer_root.join("target/incan/union_consumer/src/main.rs"))?;
+    assert!(
+        generated_consumer.contains("union_provider::__IncanUnion"),
+        "expected public method call to use dependency-owned wrapper paths, got:\n{generated_consumer}"
+    );
+    assert!(
+        generated_consumer.contains("union_provider::desc(union_provider::__IncanUnion"),
+        "expected public union-return helper call to use dependency-owned wrapper paths, got:\n{generated_consumer}"
+    );
+    assert!(
+        !generated_consumer.contains("crate::__IncanUnion"),
+        "expected public consumer not to re-own dependency union wrappers, got:\n{generated_consumer}"
+    );
+    assert!(
+        !generated_consumer.contains("pub enum __IncanUnion"),
+        "expected public consumer not to emit local duplicate dependency union wrappers, got:\n{generated_consumer}"
+    );
+    Ok(())
+}
+
+#[test]
 fn build_narrowed_union_fallback_helper_calls_issue743() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "narrowed_fallback_call", "")?;

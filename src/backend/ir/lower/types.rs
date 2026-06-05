@@ -10,10 +10,11 @@
 
 use super::super::expr::BinOp;
 use super::super::types::{IR_UNION_TYPE_NAME, IrType};
-use super::AstLowering;
 use super::errors::LoweringError;
+use super::{AstLowering, FunctionSignature};
 use crate::frontend::ast;
 use crate::frontend::library_manifest_index::LibraryManifestIndexEntry;
+use crate::frontend::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::frontend::symbols::ResolvedType;
 use crate::library_manifest::resolved_type_from_manifest_type_ref;
 use crate::numeric_adapters::{ir_type_to_numeric_ty, numeric_op_from_ast};
@@ -160,6 +161,233 @@ impl AstLowering {
         }
     }
 
+    /// Lower one public manifest type in the context of its owning library.
+    ///
+    /// Manifest type references are provider-local metadata. Consumers may call public helpers without importing the
+    /// type aliases mentioned by those helpers, so alias expansion cannot rely on the consumer's import scope. This
+    /// path expands provider-local aliases first, then marks anonymous union wrappers as owned by the provider crate.
+    pub(super) fn lower_pub_manifest_type(&self, library: &str, ty: &ResolvedType) -> IrType {
+        let mut expanding = std::collections::HashSet::new();
+        let expanded = self.expand_pub_manifest_type_aliases(library, ty.clone(), &mut expanding);
+        self.pub_external_type(library, self.lower_resolved_type(&expanded))
+    }
+
+    /// Lower one public manifest type reference in the context of its owning library.
+    pub(super) fn lower_pub_manifest_type_ref(&self, library: &str, ty: &crate::library_manifest::TypeRef) -> IrType {
+        self.lower_pub_manifest_type(library, &resolved_type_from_manifest_type_ref(ty))
+    }
+
+    /// Mark every type in a callable signature that belongs to a public dependency as dependency-owned.
+    pub(super) fn pub_external_signature(&self, library: &str, signature: FunctionSignature) -> FunctionSignature {
+        FunctionSignature {
+            params: signature
+                .params
+                .into_iter()
+                .map(|mut param| {
+                    let ty = self.expand_pub_manifest_ir_type_aliases(
+                        library,
+                        param.ty,
+                        &mut std::collections::HashSet::new(),
+                    );
+                    param.ty = self.pub_external_type(library, ty);
+                    param
+                })
+                .collect(),
+            return_type: {
+                let ty = self.expand_pub_manifest_ir_type_aliases(
+                    library,
+                    signature.return_type,
+                    &mut std::collections::HashSet::new(),
+                );
+                self.pub_external_type(library, ty)
+            },
+        }
+    }
+
+    /// Expand provider-local type aliases inside already-lowered IR signature metadata.
+    fn expand_pub_manifest_ir_type_aliases(
+        &self,
+        library: &str,
+        ty: IrType,
+        expanding: &mut std::collections::HashSet<String>,
+    ) -> IrType {
+        match ty {
+            IrType::Struct(name) => self
+                .expand_pub_manifest_ir_named_alias(library, name.clone(), expanding)
+                .unwrap_or(IrType::Struct(name)),
+            IrType::List(inner) => IrType::List(Box::new(
+                self.expand_pub_manifest_ir_type_aliases(library, *inner, expanding),
+            )),
+            IrType::Dict(key, value) => IrType::Dict(
+                Box::new(self.expand_pub_manifest_ir_type_aliases(library, *key, expanding)),
+                Box::new(self.expand_pub_manifest_ir_type_aliases(library, *value, expanding)),
+            ),
+            IrType::Set(inner) => IrType::Set(Box::new(
+                self.expand_pub_manifest_ir_type_aliases(library, *inner, expanding),
+            )),
+            IrType::Tuple(items) => IrType::Tuple(
+                items
+                    .into_iter()
+                    .map(|item| self.expand_pub_manifest_ir_type_aliases(library, item, expanding))
+                    .collect(),
+            ),
+            IrType::Option(inner) => IrType::Option(Box::new(
+                self.expand_pub_manifest_ir_type_aliases(library, *inner, expanding),
+            )),
+            IrType::Result(ok, err) => IrType::Result(
+                Box::new(self.expand_pub_manifest_ir_type_aliases(library, *ok, expanding)),
+                Box::new(self.expand_pub_manifest_ir_type_aliases(library, *err, expanding)),
+            ),
+            IrType::Function { params, ret } => IrType::Function {
+                params: params
+                    .into_iter()
+                    .map(|param| self.expand_pub_manifest_ir_type_aliases(library, param, expanding))
+                    .collect(),
+                ret: Box::new(self.expand_pub_manifest_ir_type_aliases(library, *ret, expanding)),
+            },
+            IrType::Ref(inner) => IrType::Ref(Box::new(
+                self.expand_pub_manifest_ir_type_aliases(library, *inner, expanding),
+            )),
+            IrType::RefMut(inner) => IrType::RefMut(Box::new(
+                self.expand_pub_manifest_ir_type_aliases(library, *inner, expanding),
+            )),
+            IrType::NamedGeneric(name, args) => IrType::NamedGeneric(
+                name,
+                args.into_iter()
+                    .map(|arg| self.expand_pub_manifest_ir_type_aliases(library, arg, expanding))
+                    .collect(),
+            ),
+            IrType::TypeToken(inner) => IrType::TypeToken(Box::new(
+                self.expand_pub_manifest_ir_type_aliases(library, *inner, expanding),
+            )),
+            IrType::ExternalUnion { library: owner, union } => {
+                let owner_for_union = owner.clone();
+                IrType::ExternalUnion {
+                    library: owner,
+                    union: Box::new(self.expand_pub_manifest_ir_type_aliases(&owner_for_union, *union, expanding)),
+                }
+            }
+            other => other,
+        }
+    }
+
+    /// Expand one provider-local IR alias name by consulting the provider manifest.
+    fn expand_pub_manifest_ir_named_alias(
+        &self,
+        library: &str,
+        name: String,
+        expanding: &mut std::collections::HashSet<String>,
+    ) -> Option<IrType> {
+        let manifest_index = self.library_manifest_index.as_ref()?;
+        let LibraryManifestIndexEntry::Loaded { manifest, .. } = manifest_index.get(library)? else {
+            return None;
+        };
+        let alias = manifest
+            .exports
+            .type_aliases
+            .iter()
+            .find(|alias| alias.name == name && alias.type_params.is_empty())?;
+        if !expanding.insert(name.clone()) {
+            return None;
+        }
+        let expanded = self.lower_pub_manifest_type_ref(library, &alias.target);
+        expanding.remove(&name);
+        Some(expanded)
+    }
+
+    /// Expand provider-local type aliases inside public manifest metadata.
+    fn expand_pub_manifest_type_aliases(
+        &self,
+        library: &str,
+        ty: ResolvedType,
+        expanding: &mut std::collections::HashSet<String>,
+    ) -> ResolvedType {
+        match ty {
+            ResolvedType::Named(name) => self
+                .expand_pub_manifest_named_alias(library, name.clone(), Vec::new(), expanding)
+                .unwrap_or(ResolvedType::Named(name)),
+            ResolvedType::Generic(name, args) => {
+                let expanded_args = args
+                    .into_iter()
+                    .map(|arg| self.expand_pub_manifest_type_aliases(library, arg, expanding))
+                    .collect::<Vec<_>>();
+                self.expand_pub_manifest_named_alias(library, name.clone(), expanded_args.clone(), expanding)
+                    .unwrap_or(ResolvedType::Generic(name, expanded_args))
+            }
+            ResolvedType::Function(params, ret) => ResolvedType::Function(
+                params
+                    .into_iter()
+                    .map(|param| crate::frontend::symbols::CallableParam {
+                        name: param.name,
+                        ty: self.expand_pub_manifest_type_aliases(library, param.ty, expanding),
+                        kind: param.kind,
+                        has_default: param.has_default,
+                    })
+                    .collect(),
+                Box::new(self.expand_pub_manifest_type_aliases(library, *ret, expanding)),
+            ),
+            ResolvedType::Tuple(items) => ResolvedType::Tuple(
+                items
+                    .into_iter()
+                    .map(|item| self.expand_pub_manifest_type_aliases(library, item, expanding))
+                    .collect(),
+            ),
+            ResolvedType::FrozenList(inner) => ResolvedType::FrozenList(Box::new(
+                self.expand_pub_manifest_type_aliases(library, *inner, expanding),
+            )),
+            ResolvedType::FrozenDict(key, value) => ResolvedType::FrozenDict(
+                Box::new(self.expand_pub_manifest_type_aliases(library, *key, expanding)),
+                Box::new(self.expand_pub_manifest_type_aliases(library, *value, expanding)),
+            ),
+            ResolvedType::FrozenSet(inner) => ResolvedType::FrozenSet(Box::new(
+                self.expand_pub_manifest_type_aliases(library, *inner, expanding),
+            )),
+            ResolvedType::Ref(inner) => ResolvedType::Ref(Box::new(
+                self.expand_pub_manifest_type_aliases(library, *inner, expanding),
+            )),
+            ResolvedType::RefMut(inner) => ResolvedType::RefMut(Box::new(
+                self.expand_pub_manifest_type_aliases(library, *inner, expanding),
+            )),
+            ResolvedType::TypeToken(inner) => ResolvedType::TypeToken(Box::new(
+                self.expand_pub_manifest_type_aliases(library, *inner, expanding),
+            )),
+            other => other,
+        }
+    }
+
+    /// Expand one provider-local named alias, applying generic arguments and stopping on alias cycles.
+    fn expand_pub_manifest_named_alias(
+        &self,
+        library: &str,
+        name: String,
+        args: Vec<ResolvedType>,
+        expanding: &mut std::collections::HashSet<String>,
+    ) -> Option<ResolvedType> {
+        let manifest_index = self.library_manifest_index.as_ref()?;
+        let LibraryManifestIndexEntry::Loaded { manifest, .. } = manifest_index.get(library)? else {
+            return None;
+        };
+        let alias = manifest.exports.type_aliases.iter().find(|alias| alias.name == name)?;
+        if alias.type_params.len() != args.len() || !expanding.insert(name.clone()) {
+            return None;
+        }
+        let target = resolved_type_from_manifest_type_ref(&alias.target);
+        let substituted = if alias.type_params.is_empty() {
+            target
+        } else {
+            let params = alias
+                .type_params
+                .iter()
+                .map(|param| param.name.clone())
+                .collect::<Vec<_>>();
+            let subst = type_param_subst_map(&params, &args);
+            substitute_resolved_type(&target, &subst)
+        };
+        let expanded = self.expand_pub_manifest_type_aliases(library, substituted, expanding);
+        expanding.remove(&name);
+        Some(expanded)
+    }
+
     /// Lower a simple imported public type alias from manifest metadata instead of trusting the raw source name.
     ///
     /// Consumer modules only import the generated Rust alias item. The manifest target is the semantic source of truth
@@ -185,8 +413,7 @@ impl AstLowering {
         if !alias.type_params.is_empty() {
             return None;
         }
-        let target = resolved_type_from_manifest_type_ref(&alias.target);
-        Some(self.pub_external_type(library, self.lower_resolved_type(&target)))
+        Some(self.lower_pub_manifest_type_ref(library, &alias.target))
     }
 
     /// Merge a typechecker-derived IR type with an already-lowered IR type without erasing in-scope generic

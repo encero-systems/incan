@@ -17,8 +17,8 @@ use crate::frontend::symbols::{CallableParam, NewtypePrimitiveConstraint, Resolv
 use crate::frontend::typechecker::{FixedUnpackPlan, RustArgCoercionKind, ValidatedNewtypeCoercionMode};
 use crate::frontend::typechecker::{IdentKind, ResolvedOperatorKind};
 use crate::library_manifest::{
-    FunctionExport, ParamDefaultCallArgExport, ParamDefaultCallSignatureExport, ParamDefaultExport, ParamExport,
-    ParamKindExport, resolved_type_from_manifest_type_ref,
+    FunctionExport, MethodExport, ParamDefaultCallArgExport, ParamDefaultCallSignatureExport, ParamDefaultExport,
+    ParamExport, ParamKindExport,
 };
 use incan_core::lang::keywords::{self, KeywordId};
 use incan_core::lang::stdlib;
@@ -231,7 +231,7 @@ impl AstLowering {
                 .params
                 .iter()
                 .map(|param| {
-                    let base_ty = self.lower_resolved_type(&resolved_type_from_manifest_type_ref(&param.ty));
+                    let base_ty = self.lower_pub_manifest_type_ref(library, &param.ty);
                     let kind = param_kind_from_manifest(param.kind);
                     FunctionParam {
                         name: param.name.clone(),
@@ -243,7 +243,7 @@ impl AstLowering {
                     }
                 })
                 .collect(),
-            return_type: self.lower_resolved_type(&resolved_type_from_manifest_type_ref(&function.return_type)),
+            return_type: self.lower_pub_manifest_type_ref(library, &function.return_type),
         }
     }
 
@@ -349,11 +349,11 @@ impl AstLowering {
                     .map(|function| self.callable_signature_from_pub_function_export(library, function))
             });
         let return_type = signature
-            .map(|signature| self.lower_resolved_type(&resolved_type_from_manifest_type_ref(&signature.return_type)))
+            .map(|signature| self.lower_pub_manifest_type_ref(library, &signature.return_type))
             .or_else(|| {
-                function.as_ref().map(|function| {
-                    self.lower_resolved_type(&resolved_type_from_manifest_type_ref(&function.return_type))
-                })
+                function
+                    .as_ref()
+                    .map(|function| self.lower_pub_manifest_type_ref(library, &function.return_type))
             })
             .unwrap_or(IrType::Unknown);
         let args = args
@@ -400,7 +400,7 @@ impl AstLowering {
                 .params
                 .iter()
                 .map(|param| {
-                    let base_ty = self.lower_resolved_type(&resolved_type_from_manifest_type_ref(&param.ty));
+                    let base_ty = self.lower_pub_manifest_type_ref(library, &param.ty);
                     let kind = param_kind_from_manifest(param.kind);
                     FunctionParam {
                         name: param.name.clone(),
@@ -412,7 +412,7 @@ impl AstLowering {
                     }
                 })
                 .collect(),
-            return_type: self.lower_resolved_type(&resolved_type_from_manifest_type_ref(&signature.return_type)),
+            return_type: self.lower_pub_manifest_type_ref(library, &signature.return_type),
         }
     }
 
@@ -453,6 +453,84 @@ impl AstLowering {
         let mut cache = crate::frontend::typechecker::stdlib_loader::StdlibAstCache::new();
         let method = cache.lookup_type_method_decl(module_path, type_name, method_name)?;
         Some(self.callable_signature_from_stdlib_method_decl(&method))
+    }
+
+    /// Resolve an imported public dependency model/class method signature from the provider manifest.
+    pub(in crate::backend::ir::lower) fn callable_signature_for_imported_pub_type_method(
+        &mut self,
+        library: &str,
+        receiver_ty: &IrType,
+        method_name: &str,
+    ) -> Option<FunctionSignature> {
+        let type_name = Self::nominal_receiver_type_name(receiver_ty)?;
+        let manifest_index = self.library_manifest_index.as_ref()?;
+        let LibraryManifestIndexEntry::Loaded { manifest, .. } = manifest_index.get(library)? else {
+            return None;
+        };
+        let method = manifest
+            .exports
+            .models
+            .iter()
+            .find(|model| model.name == type_name)
+            .and_then(|model| model.methods.iter().find(|method| method.name == method_name))
+            .or_else(|| {
+                manifest
+                    .exports
+                    .classes
+                    .iter()
+                    .find(|class| class.name == type_name)
+                    .and_then(|class| class.methods.iter().find(|method| method.name == method_name))
+            })
+            .or_else(|| {
+                manifest
+                    .exports
+                    .newtypes
+                    .iter()
+                    .find(|newtype| newtype.name == type_name)
+                    .and_then(|newtype| newtype.methods.iter().find(|method| method.name == method_name))
+            })
+            .or_else(|| {
+                manifest
+                    .exports
+                    .enums
+                    .iter()
+                    .find(|enum_| enum_.name == type_name)
+                    .and_then(|enum_| enum_.methods.iter().find(|method| method.name == method_name))
+            })?
+            .clone();
+        Some(self.callable_signature_from_pub_method_export(library, &method))
+    }
+
+    /// Return the nominal receiver type name used for manifest method lookup.
+    fn nominal_receiver_type_name(receiver_ty: &IrType) -> Option<&str> {
+        match receiver_ty {
+            IrType::Struct(name) | IrType::NamedGeneric(name, _) => Some(name.rsplit("::").next().unwrap_or(name)),
+            IrType::Ref(inner) | IrType::RefMut(inner) => Self::nominal_receiver_type_name(inner),
+            _ => None,
+        }
+    }
+
+    /// Rebuild a public dependency method signature from manifest metadata.
+    fn callable_signature_from_pub_method_export(&mut self, library: &str, method: &MethodExport) -> FunctionSignature {
+        FunctionSignature {
+            params: method
+                .params
+                .iter()
+                .map(|param| {
+                    let base_ty = self.lower_pub_manifest_type_ref(library, &param.ty);
+                    let kind = param_kind_from_manifest(param.kind);
+                    FunctionParam {
+                        name: param.name.clone(),
+                        ty: Self::lower_param_container_type(kind, base_ty),
+                        mutability: Mutability::Immutable,
+                        is_self: false,
+                        kind,
+                        default: self.lower_pub_param_default(library, param),
+                    }
+                })
+                .collect(),
+            return_type: self.lower_pub_manifest_type_ref(library, &method.return_type),
+        }
     }
 
     /// Resolve the signature for an imported stdlib function by its canonical import path.
@@ -2075,6 +2153,10 @@ impl AstLowering {
                 None
             }
         });
+        let callable_signature = match (imported_pub_library, callable_signature) {
+            (Some(library), Some(signature)) => Some(self.pub_external_signature(library, signature)),
+            (_, signature) => signature,
+        };
         if let (Some(library), Some(signature)) = (imported_pub_library, callable_signature.as_ref()) {
             func.ty = self.pub_external_function_type(library, signature);
         }

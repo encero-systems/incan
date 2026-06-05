@@ -10423,6 +10423,7 @@ def database() -> Database:
 mod rfc031_pub_import_integration_tests {
     use super::*;
     use incan::library_manifest::{FunctionExport, LibraryManifest, ModelExport, ParamExport, TypeRef};
+    use incan::manifest::{INTERNAL_MANIFEST_OVERRIDE_ENV, INTERNAL_PROJECT_ROOT_OVERRIDE_ENV};
     use sha2::{Digest, Sha256};
     use std::path::PathBuf;
 
@@ -10465,6 +10466,18 @@ mod rfc031_pub_import_integration_tests {
             .args(["test", target.to_string_lossy().as_ref()])
             .env("CARGO_NET_OFFLINE", "true")
             .env("INCAN_TEST_SHARED_TARGET_DIR", shared_test_runner_target_dir())
+            .output()?)
+    }
+
+    fn run_fmt(target: &Path) -> Result<std::process::Output, Box<dyn std::error::Error>> {
+        Ok(super::incan_command()
+            .args(["fmt", target.to_string_lossy().as_ref()])
+            .output()?)
+    }
+
+    fn run_fmt_check(target: &Path) -> Result<std::process::Output, Box<dyn std::error::Error>> {
+        Ok(super::incan_command()
+            .args(["fmt", "--check", target.to_string_lossy().as_ref()])
             .output()?)
     }
 
@@ -11382,6 +11395,8 @@ pub def display[T](data: DataSet[T]) -> None:
                             incan_vocab::ClauseSurface::expr("FROM").required(),
                             incan_vocab::ClauseSurface::expr_list("GROUP BY").optional(),
                             incan_vocab::ClauseSurface::expr_list("SELECT").required(),
+                            incan_vocab::ClauseSurface::expr_list("ORDER BY").optional(),
+                            incan_vocab::ClauseSurface::nested_items("WINDOW BY").optional(),
                         ]),
                 ),
             )
@@ -13425,7 +13440,7 @@ def query_block_call(orders: LazyFrame[Order]) -> LazyFrame[Selected]:
     }
 
     #[test]
-    fn consumer_test_activates_dependency_vocab_surfaces_issue730() -> Result<(), Box<dyn std::error::Error>> {
+    fn consumer_test_activates_dependency_vocab_surfaces_issue730_issue756() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let response = incan_vocab::DesugarResponse::expression(incan_vocab::IncanExpr::Int(7));
         let output_payload = serde_json::to_string(&response)?;
@@ -13449,10 +13464,57 @@ def query_block_call(orders: LazyFrame[Order]) -> LazyFrame[Selected]:
             r#"import pub::querykit
 
 def test_dependency_vocab_query_block() -> None:
-  selected: int = query { FROM orders SELECT amount as total }
-  assert selected == 7
+    selected: int = query {
+        FROM orders
+        GROUP BY
+            amount as grouped,
+            region as region_group
+        SELECT
+            amount as total
+        ORDER BY amount
+        WINDOW BY
+            rank = amount
+    }
+    assert selected == 7
 "#,
         )?;
+
+        let fmt_output = run_fmt(&test_path)?;
+        assert!(
+            fmt_output.status.success(),
+            "expected incan fmt to parse dependency-activated vocab in a nested package test file.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&fmt_output.stdout),
+            String::from_utf8_lossy(&fmt_output.stderr)
+        );
+
+        let formatted_source = std::fs::read_to_string(&test_path)?;
+        for clause in [
+            "selected: int = query {",
+            "        GROUP BY\n            amount as grouped,\n            region as region_group",
+            "        ORDER BY amount",
+            "        WINDOW BY\n            rank = amount",
+        ] {
+            assert!(
+                formatted_source.contains(clause),
+                "expected incan fmt to preserve dependency-vocab expression block shape `{clause}`.\nformatted source:\n{}",
+                formatted_source
+            );
+        }
+        for rejected_clause in ["query:", "GROUP BY:", "ORDER BY:", "WINDOW BY:"] {
+            assert!(
+                !formatted_source.contains(rejected_clause),
+                "expected incan fmt not to rewrite expression vocab block through colon clause `{rejected_clause}`.\nformatted source:\n{}",
+                formatted_source
+            );
+        }
+
+        let fmt_output = run_fmt_check(&test_path)?;
+        assert!(
+            fmt_output.status.success(),
+            "expected formatted dependency-activated vocab file to pass incan fmt --check.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&fmt_output.stdout),
+            String::from_utf8_lossy(&fmt_output.stderr)
+        );
 
         let check_output = run_check(&test_path)?;
         assert!(
@@ -13469,6 +13531,87 @@ def test_dependency_vocab_query_block() -> None:
             String::from_utf8_lossy(&test_output.stdout),
             String::from_utf8_lossy(&test_output.stderr)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn fmt_prepares_clean_source_dependency_vocab_before_parsing_issue756() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let producer_root = tmp.path().join("deps").join("querykit");
+        std::fs::create_dir_all(producer_root.join("src"))?;
+        std::fs::write(
+            producer_root.join("incan.toml"),
+            "[project]\nname = \"querykit\"\nversion = \"0.1.0\"\n\n[vocab]\ncrate = \"vocab_companion\"\n",
+        )?;
+        std::fs::write(
+            producer_root.join("src/lib.incn"),
+            "pub def ready() -> int:\n  return 1\n",
+        )?;
+        write_vocab_companion_crate_with_source(
+            &producer_root,
+            "vocab_companion",
+            "querykit_vocab_companion",
+            r#"use incan_vocab::{ClauseSurface, DeclarationSurface, DslSurface, VocabRegistration};
+
+pub fn library_vocab() -> VocabRegistration {
+    VocabRegistration::new().with_surface(
+        DslSurface::on_import("querykit").with_declaration(
+            DeclarationSurface::named("query")
+                .with_clause_body()
+                .desugars_to_expression()
+                .with_clauses([
+                    ClauseSurface::expr("FROM").required(),
+                    ClauseSurface::expr_list("SELECT").required(),
+                ]),
+        ),
+    )
+}
+"#,
+        )?;
+
+        let consumer_root = tmp.path().join("consumer");
+        std::fs::create_dir_all(consumer_root.join("src"))?;
+        std::fs::write(
+            consumer_root.join("incan.toml"),
+            "[project]\nname = \"consumer\"\nversion = \"0.1.0\"\n\n[dependencies]\nquerykit = { path = \"../deps/querykit\" }\n",
+        )?;
+        let main_path = consumer_root.join("src/main.incn");
+        std::fs::write(
+            &main_path,
+            r#"import pub::querykit
+
+def main() -> None:
+    value = query {
+        FROM orders
+        SELECT
+            amount as total
+    }
+"#,
+        )?;
+
+        let artifact_root = producer_root.join("target").join("lib");
+        assert!(
+            !artifact_root.exists(),
+            "regression must start from a clean source dependency without prebuilt library artifacts"
+        );
+
+        let fmt_output = super::incan_command()
+            .args(["fmt", main_path.to_string_lossy().as_ref()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .env(INTERNAL_MANIFEST_OVERRIDE_ENV, consumer_root.join("incan.toml"))
+            .env(INTERNAL_PROJECT_ROOT_OVERRIDE_ENV, &consumer_root)
+            .output()?;
+        assert!(
+            fmt_output.status.success(),
+            "expected fmt to prepare source dependency vocab before parsing clean query block, even when the parent command carries an internal manifest override.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&fmt_output.stdout),
+            String::from_utf8_lossy(&fmt_output.stderr)
+        );
+        assert!(
+            artifact_root.join("querykit.incnlib").is_file(),
+            "expected clean dependency artifact to be prepared for parser vocab activation"
+        );
+
         Ok(())
     }
 

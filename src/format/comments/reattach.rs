@@ -189,14 +189,32 @@ fn leading_block_match_kind(
         return Some(LeadingBlockMatch::InlineSuffix);
     }
 
-    if block.indent == current_indent
-        && matches!(normalized.chars().last(), Some('(' | '[' | '{'))
-        && block.anchor.starts_with(normalized)
-    {
+    if block.indent == current_indent && wrapped_statement_prefix_matches(&block.anchor, normalized) {
         return Some(LeadingBlockMatch::WrappedPrefix);
     }
 
     None
+}
+
+/// Return whether a formatted line is the first line of a wrapped source statement.
+///
+/// Constructor/call wrapping keeps the opening delimiter on the first formatted line. Fluent method-chain wrapping
+/// splits after the receiver, so the formatted line is a same-indent prefix and the remaining source anchor starts
+/// with the next method segment.
+fn wrapped_statement_prefix_matches(source_anchor: &str, formatted_anchor: &str) -> bool {
+    if source_anchor == formatted_anchor {
+        return false;
+    }
+
+    if let Some(stripped) = source_anchor.strip_prefix(formatted_anchor) {
+        if matches!(formatted_anchor.chars().last(), Some('(' | '[' | '{')) {
+            return true;
+        }
+
+        return stripped.starts_with('.');
+    }
+
+    formatted_anchor.starts_with(source_anchor) && matches!(source_anchor.chars().last(), Some('(' | '[' | '{'))
 }
 
 /// Expand an inline `match` arm body back into block form so a preserved leading comment can stay attached to it.

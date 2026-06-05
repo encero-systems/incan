@@ -208,12 +208,14 @@ impl<'a> Parser<'a> {
         self.consume_vocab_compound_tokens(&spec_compound_tokens)?;
 
         let mut header_args = Vec::new();
-        let body = if parses_inline_clause && !has_header_colon {
-            self.parse_inline_vocab_clause_body(
+        let (body, body_item_trailing_commas) = if parses_inline_clause && !has_header_colon {
+            let body = self.parse_inline_vocab_clause_body(
                 &keyword_name,
                 spec_clause_body_kind,
                 spec_expression_item_modifiers,
-            )?
+            )?;
+            let body_item_trailing_commas = vec![false; body.len()];
+            (body, body_item_trailing_commas)
         } else {
             if !self.check_punct(PunctuationId::Colon) {
                 header_args.push(self.expression()?);
@@ -256,7 +258,8 @@ impl<'a> Parser<'a> {
             self.vocab_expression_item_modifier_stack.pop();
             let body = body?;
             self.expect(&TokenKind::Dedent, "Expected dedent after vocab block body")?;
-            body
+            let body_item_trailing_commas = vec![false; body.len()];
+            (body, body_item_trailing_commas)
         };
 
         Ok(Some(Statement::VocabBlock(VocabBlockStmt {
@@ -272,6 +275,7 @@ impl<'a> Parser<'a> {
             decorators,
             header_args,
             body,
+            body_item_trailing_commas,
         })))
     }
 

@@ -21,6 +21,7 @@ use super::super::types::IrType;
 use super::AstLowering;
 use super::errors::LoweringError;
 use crate::frontend::ast::{self, Spanned};
+use crate::frontend::library_manifest_index::LibraryManifestIndexEntry;
 use crate::frontend::typechecker::{IdentKind, ResolvedMethodDispatch, ResolvedOperatorKind};
 use incan_core::interop::RustCollectionFamily;
 use incan_core::lang::magic_methods::{self, MagicMethodId};
@@ -32,6 +33,70 @@ use incan_core::lang::types::collections::{self as collection_types, CollectionT
 use incan_semantics_core::SurfaceExprLoweringAction;
 
 impl AstLowering {
+    /// Return the public dependency owner for a method receiver when lowering can prove one.
+    fn public_library_for_method_receiver(&self, receiver: &TypedExpr) -> Option<String> {
+        match &receiver.kind {
+            IrExprKind::Call {
+                canonical_path: Some(path),
+                ..
+            } => Self::public_library_from_canonical_path(path),
+            IrExprKind::InteropCoerce { expr, .. } => self.public_library_for_method_receiver(expr),
+            _ => self.public_library_for_nominal_receiver_type(&receiver.ty),
+        }
+    }
+
+    /// Return the library key from a canonical `pub::<library>::...` path.
+    fn public_library_from_canonical_path(path: &[String]) -> Option<String> {
+        if path.first().map(String::as_str) == Some("pub") {
+            path.get(1).cloned()
+        } else {
+            None
+        }
+    }
+
+    /// Return the public dependency owner for an explicitly imported nominal receiver type.
+    ///
+    /// If the receiver type is not directly imported, this falls back only when exactly one loaded public dependency
+    /// exports that nominal type and no local declaration shadows it.
+    fn public_library_for_nominal_receiver_type(&self, ty: &IrType) -> Option<String> {
+        let name = match ty {
+            IrType::Struct(name) | IrType::NamedGeneric(name, _) => name.rsplit("::").next().unwrap_or(name),
+            IrType::Ref(inner) | IrType::RefMut(inner) => {
+                return self.public_library_for_nominal_receiver_type(inner);
+            }
+            _ => return None,
+        };
+
+        if let Some(path) = self.import_aliases.get(name)
+            && path.first().map(String::as_str) == Some("pub")
+        {
+            return path.get(1).cloned();
+        }
+
+        if self.struct_names.contains_key(name) || self.enum_names.contains_key(name) {
+            return None;
+        }
+
+        let manifest_index = self.library_manifest_index.as_ref()?;
+        let matches = manifest_index
+            .known_libraries()
+            .into_iter()
+            .filter(|library| {
+                let Some(LibraryManifestIndexEntry::Loaded { manifest, .. }) = manifest_index.get(library) else {
+                    return false;
+                };
+                manifest.exports.models.iter().any(|item| item.name == name)
+                    || manifest.exports.classes.iter().any(|item| item.name == name)
+                    || manifest.exports.newtypes.iter().any(|item| item.name == name)
+                    || manifest.exports.enums.iter().any(|item| item.name == name)
+            })
+            .collect::<Vec<_>>();
+        match matches.as_slice() {
+            [library] => Some(library.clone()),
+            _ => None,
+        }
+    }
+
     /// Return the source-defined `std.logging.Logger.<method>` signature, including default expressions.
     fn std_logging_logger_method_signature(&mut self, method: &str) -> Option<super::super::FunctionSignature> {
         self.callable_signature_for_imported_stdlib_type_method_path(
@@ -970,6 +1035,10 @@ impl AstLowering {
                             }),
                             _ => None,
                         };
+                    let public_receiver_library = self.public_library_for_method_receiver(&receiver);
+                    let imported_pub_method_signature = public_receiver_library.as_deref().and_then(|library| {
+                        self.callable_signature_for_imported_pub_type_method(library, &receiver.ty, m)
+                    });
                     let call_site_signature = self.callable_signature_for_call_span(expr_span);
                     let std_logging_signature = if matches!(
                         &receiver.ty,
@@ -981,7 +1050,7 @@ impl AstLowering {
                     };
                     let callable_signature = match (
                         std_logging_signature.or(call_site_signature),
-                        imported_type_method_signature,
+                        imported_type_method_signature.or(imported_pub_method_signature),
                     ) {
                         (Some(mut call_site), Some(imported)) => {
                             for (param, imported_param) in call_site.params.iter_mut().zip(imported.params.iter()) {
@@ -993,6 +1062,10 @@ impl AstLowering {
                         }
                         (Some(call_site), None) => Some(call_site),
                         (None, imported) => imported,
+                    };
+                    let callable_signature = match (public_receiver_library.clone(), callable_signature) {
+                        (Some(library), Some(signature)) => Some(self.pub_external_signature(&library, signature)),
+                        (_, signature) => signature,
                     };
                     // Unknown method - keep as string-based call
                     (

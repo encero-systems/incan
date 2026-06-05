@@ -6,6 +6,12 @@ use incan_semantics_core::SurfaceFeatureKey;
 
 use super::Formatter;
 
+struct MethodChainSegment<'a> {
+    method: &'a str,
+    type_args: &'a [Spanned<Type>],
+    args: &'a [CallArg],
+}
+
 impl Formatter {
     /// Return whether a binary operator is a logical chain breakpoint.
     fn is_logical_binary_op(op: &BinaryOp) -> bool {
@@ -122,6 +128,84 @@ impl Formatter {
         }
     }
 
+    /// Collect a nested method-call chain into its root expression plus source-ordered method segments.
+    fn collect_method_chain<'a>(expr: &'a Expr, segments: &mut Vec<MethodChainSegment<'a>>) -> &'a Expr {
+        let Expr::MethodCall(receiver, method, type_args, args) = expr else {
+            return expr;
+        };
+
+        let root = Self::collect_method_chain(&receiver.node, segments);
+        segments.push(MethodChainSegment {
+            method,
+            type_args,
+            args,
+        });
+        root
+    }
+
+    /// Return whether a fluent chain root can be printed without adding precedence-protecting parentheses.
+    fn fluent_chain_root_is_simple(expr: &Expr) -> bool {
+        matches!(
+            expr,
+            Expr::Ident(_) | Expr::SelfExpr | Expr::Call(_, _, _) | Expr::Field(_, _) | Expr::Index(_, _)
+        )
+    }
+
+    /// Try inline method-chain formatting first, then fall back to a leading-dot fluent layout when it overflows.
+    fn format_fluent_method_chain_if_needed(&mut self, expr: &Expr) -> bool {
+        let mut segments = Vec::new();
+        let root = Self::collect_method_chain(expr, &mut segments);
+        if segments.len() < 2 || !Self::fluent_chain_root_is_simple(root) {
+            return false;
+        }
+
+        let checkpoint = self.writer.checkpoint();
+        self.format_method_chain_inline(root, &segments);
+        if !self.writer.output_since_contains_newline(checkpoint) && !self.writer.line_length_exceeded() {
+            return true;
+        }
+
+        self.writer.restore(checkpoint);
+        self.format_expr(root);
+        self.writer.newline();
+        self.writer.indent();
+        for (idx, segment) in segments.iter().enumerate() {
+            if idx > 0 {
+                self.writer.newline();
+            }
+            self.format_method_chain_segment(segment);
+        }
+        self.writer.dedent();
+        true
+    }
+
+    /// Write a full method chain without inserting fluent line breaks.
+    fn format_method_chain_inline(&mut self, root: &Expr, segments: &[MethodChainSegment<'_>]) {
+        self.format_expr(root);
+        for segment in segments {
+            self.format_method_chain_segment(segment);
+        }
+    }
+
+    /// Write one `.method[...]?()` segment of a method chain.
+    fn format_method_chain_segment(&mut self, segment: &MethodChainSegment<'_>) {
+        self.writer.write(".");
+        self.writer.write(segment.method);
+        if !segment.type_args.is_empty() {
+            self.writer.write("[");
+            for (idx, arg) in segment.type_args.iter().enumerate() {
+                if idx > 0 {
+                    self.writer.write(", ");
+                }
+                self.format_type(&arg.node);
+            }
+            self.writer.write("]");
+        }
+        self.writer.write("(");
+        self.format_call_args_with_wrapping(segment.args);
+        self.writer.write(")");
+    }
+
     /// Format one expression node, preserving call/collection entry structure and surface-expression payload syntax.
     pub(super) fn format_expr(&mut self, expr: &Expr) {
         match expr {
@@ -183,22 +267,15 @@ impl Formatter {
                 self.writer.write(field);
             }
             Expr::MethodCall(receiver, method, type_args, args) => {
-                self.format_expr(&receiver.node);
-                self.writer.write(".");
-                self.writer.write(method);
-                if !type_args.is_empty() {
-                    self.writer.write("[");
-                    for (i, arg) in type_args.iter().enumerate() {
-                        if i > 0 {
-                            self.writer.write(", ");
-                        }
-                        self.format_type(&arg.node);
-                    }
-                    self.writer.write("]");
+                if !self.format_fluent_method_chain_if_needed(expr) {
+                    let segment = MethodChainSegment {
+                        method,
+                        type_args,
+                        args,
+                    };
+                    self.format_expr(&receiver.node);
+                    self.format_method_chain_segment(&segment);
                 }
-                self.writer.write("(");
-                self.format_call_args_with_wrapping(args);
-                self.writer.write(")");
             }
             Expr::Partial(partial) => {
                 self.writer.write("partial ");
@@ -253,26 +330,7 @@ impl Formatter {
                 }
                 _ => self.writer.write("<surface_expr>"),
             },
-            Expr::VocabBlock(block) => {
-                self.writer.write(&block.keyword);
-                for token in &block.keyword_binding.compound_tokens {
-                    self.writer.write(" ");
-                    self.writer.write(token);
-                }
-                for arg in &block.header_args {
-                    self.writer.write(" ");
-                    self.format_expr(&arg.node);
-                }
-                self.writer.writeln(":");
-                self.writer.indent();
-                for stmt in &block.body {
-                    self.format_statement(stmt);
-                }
-                if block.body.is_empty() {
-                    self.writer.writeln("pass");
-                }
-                self.writer.dedent();
-            }
+            Expr::VocabBlock(block) => self.format_expression_vocab_block_braced(block),
             Expr::Try(inner) => {
                 self.format_expr(&inner.node);
                 self.writer.write("?");

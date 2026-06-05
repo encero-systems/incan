@@ -1226,6 +1226,7 @@ mod tests {
                 ast::Span::default(),
             )],
             body: Vec::new(),
+            body_item_trailing_commas: Vec::new(),
         };
         let declaration_block = ast::VocabBlockStmt {
             keyword: "query".to_string(),
@@ -1236,6 +1237,7 @@ mod tests {
                 ast::Statement::VocabBlock(clause_block),
                 ast::Span::default(),
             )],
+            body_item_trailing_commas: vec![false],
         };
 
         let bridged = internal_vocab_block_to_public(&declaration_block, ast::Span::default())?;
@@ -1262,6 +1264,7 @@ mod tests {
             decorators: Vec::new(),
             header_args: Vec::new(),
             body: Vec::new(),
+            body_item_trailing_commas: Vec::new(),
         };
 
         let bridged = internal_vocab_block_to_public(&block, ast::Span::default())?;
@@ -1348,6 +1351,7 @@ mod tests {
                     ast::Span::new(30, 36),
                 ),
             ],
+            body_item_trailing_commas: vec![false, false],
         };
 
         let clause = internal_vocab_clause_to_public(&clause_block, ast::Span::default())?;
@@ -1383,6 +1387,7 @@ mod tests {
                 ),
             ],
             body: Vec::new(),
+            body_item_trailing_commas: Vec::new(),
         };
 
         let bridged = internal_vocab_block_to_public(&block, ast::Span::default())?;
