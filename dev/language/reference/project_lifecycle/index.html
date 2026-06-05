@@ -6137,10 +6137,10 @@ incan<span class="w"> </span>new<span class="w"> </span>--dir<span class="w"> </
 <div class="language-toml highlight"><pre><span></span><code><span class="k">[project]</span>
 <span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;greeter&quot;</span>
 <span class="n">version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.1.0&quot;</span>
-<span class="n">requires-incan</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;&gt;=0.3,&lt;0.4&quot;</span>
+<span class="n">requires-incan</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;&gt;=0.4,&lt;0.5&quot;</span>
 </code></pre></div>
 <p>If the active compiler is outside the range, <code>incan run</code> in project mode, <code>incan build</code>, <code>incan test</code>, <code>incan lock</code>, and <code>incan env run</code> fail early with a diagnostic that names the active compiler version and the contributing constraint layers. Single-file and inline commands without a discovered <code>incan.toml</code> remain manifest-free and do not infer a requirement.</p>
-<p>Development compilers identify themselves with prerelease versions such as <code>0.3.0-dev.49</code>. For lifecycle compatibility, that development build is treated as part of the <code>0.3</code> line, so a requirement such as <code>&gt;=0.3,&lt;0.4</code> admits it.</p>
+<p>Development compilers identify themselves with prerelease versions such as <code>0.4.0-dev.0</code>. For lifecycle compatibility, that development build is treated as part of the <code>0.4</code> line, so a requirement such as <code>&gt;=0.4,&lt;0.5</code> admits it.</p>
 <h2 id="projectscripts"><code>[project.scripts]</code><a class="headerlink" href="#projectscripts" title="Permanent link">&para;</a></h2>
 <p><code>[project.scripts]</code> maps script names to Incan source files:</p>
 <div class="language-toml highlight"><pre><span></span><code><span class="k">[project.scripts]</span>
@@ -6277,7 +6277,7 @@ incan<span class="w"> </span>version<span class="w"> </span>--set<span class="w"
 
 <span class="k">[tool.incan.envs.ci]</span>
 <span class="n">extends</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;unit&quot;</span><span class="p">]</span>
-<span class="n">requires-incan</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;&gt;=0.3,&lt;0.4&quot;</span>
+<span class="n">requires-incan</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;&gt;=0.4,&lt;0.5&quot;</span>
 
 <span class="k">[tool.incan.envs.ci.scripts]</span>
 <span class="n">test</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;incan&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;test&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;--locked&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;tests/&quot;</span><span class="p">]</span>
