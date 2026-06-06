@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: editors/vscode
+        working-directory: workspaces/ide/vscode
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -30,4 +30,4 @@ jobs:
       - name: Upload VSIX to GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          files: editors/vscode/*.vsix
+          files: workspaces/ide/vscode/*.vsix

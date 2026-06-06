@@ -1201,6 +1201,7 @@ fn lifecycle_new_version_and_env_commands_work() -> Result<(), Box<dyn std::erro
     assert!(initial_manifest.contains(r#"description = "A generated greeting app""#));
     assert!(initial_manifest.contains(r#"authors = ["Danny <danny@example.com>"]"#));
     assert!(initial_manifest.contains(r#"license = "MIT""#));
+    assert!(initial_manifest.contains(r#"requires-incan = ">=0.4.0-0,<0.5.0""#));
     assert!(project_dir.join("src/main.incn").exists());
     assert!(project_dir.join("tests/test_main.incn").exists());
 
@@ -1482,6 +1483,82 @@ fn lifecycle_new_version_and_env_commands_work() -> Result<(), Box<dyn std::erro
         String::from_utf8_lossy(&run_env.stderr)
     );
     assert!(String::from_utf8_lossy(&run_env.stdout).starts_with("incan "));
+    Ok(())
+}
+
+#[test]
+fn zero_clone_starter_project_runs_tests_and_release_builds() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let project_name = unique_test_project_name("starter");
+    let project_dir = tmp.path().join(&project_name);
+
+    let new_output = incan_command()
+        .args(["new", &project_name, "--yes", "--dir"])
+        .arg(&project_dir)
+        .output()?;
+    assert!(
+        new_output.status.success(),
+        "incan new failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&new_output.stdout),
+        String::from_utf8_lossy(&new_output.stderr)
+    );
+    let new_stdout = String::from_utf8_lossy(&new_output.stdout);
+    assert!(new_stdout.contains("Run it:     incan run"));
+    assert!(new_stdout.contains("Test it:    incan test"));
+    assert!(new_stdout.contains("Release it: incan build --release"));
+
+    let main_source = fs::read_to_string(project_dir.join("src/main.incn"))?;
+    assert!(
+        main_source.contains("pub def greeting() -> str:"),
+        "starter source should expose a small testable function, got:\n{main_source}"
+    );
+    let test_source = fs::read_to_string(project_dir.join("tests/test_main.incn"))?;
+    assert!(
+        test_source.contains("assert_eq(greeting()"),
+        "starter test should assert generated behavior, got:\n{test_source}"
+    );
+
+    let run_output = incan_command()
+        .arg("run")
+        .current_dir(&project_dir)
+        .env("CARGO_NET_OFFLINE", "true")
+        .output()?;
+    assert!(
+        run_output.status.success(),
+        "starter incan run failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&run_output.stdout),
+        String::from_utf8_lossy(&run_output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&run_output.stdout).contains(&format!("Hello from {project_name}!")),
+        "unexpected starter run output:\n{}",
+        String::from_utf8_lossy(&run_output.stdout)
+    );
+
+    let test_output = incan_command()
+        .arg("test")
+        .current_dir(&project_dir)
+        .env("CARGO_NET_OFFLINE", "true")
+        .output()?;
+    assert!(
+        test_output.status.success(),
+        "starter incan test failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&test_output.stdout),
+        String::from_utf8_lossy(&test_output.stderr)
+    );
+
+    let build_output = incan_command()
+        .args(["build", "--release"])
+        .current_dir(&project_dir)
+        .env("CARGO_NET_OFFLINE", "true")
+        .output()?;
+    assert!(
+        build_output.status.success(),
+        "starter incan build --release failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
     Ok(())
 }
 
@@ -6615,7 +6692,7 @@ def main() -> None:
 
     #[test]
     fn test_benchmark_quicksort_codegen_compiles() {
-        let path = Path::new("benchmarks/sorting/quicksort/quicksort.incn");
+        let path = Path::new("workspaces/benchmarks/sorting/quicksort/quicksort.incn");
         if !path.exists() {
             return;
         }

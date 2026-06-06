@@ -2,6 +2,30 @@
 
 Incan is a statically typed language for writing clear, high-level application code that compiles to native Rust. It aims to feel lightweight and expressive while keeping the things that matter in large codebases explicit: types, errors, and mutability.
 
+## Getting started
+
+Install the latest SDK release, create a starter project, run it, test it, and produce a release build:
+
+```bash
+curl -fsSL https://github.com/dannys-code-corner/incan/releases/latest/download/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
+incan new hello --yes
+cd hello
+incan run
+incan test
+incan build --release
+```
+
+You can also install through package-manager adapters that use the same release manifest and verified SDK archives:
+
+```bash
+brew install https://github.com/dannys-code-corner/incan/releases/latest/download/incan.rb
+npm install -g incan-sdk
+pipx install incan-sdk
+```
+
+If you are contributing to the compiler itself, clone this repository and use `make install` instead of the SDK installer.
+
 ## Positioning
 
 Python won because it made application code readable and fast to write. Incan starts from that same readability premise, but changes the foundation: static types, explicit errors, explicit mutability, and Rust-native compilation.
@@ -31,16 +55,6 @@ As AI tools generate more code, those constraints matter more. Incan gives devel
 > Feedback and contributions are of course welcome!
 
 Docs policy: [Stability policy](workspaces/docs-site/docs/stability.md)
-
-## Quickstart (from this repo)
-
-```bash
-# Install the compiler to ~/.cargo/bin/incan
-make install
-
-# Run an example
-incan run examples/simple/hello.incn
-```
 
 ## A small example
 
@@ -97,8 +111,8 @@ make docs-serve
 
 Incan compiles to Rust and then to a native binary. Runtime performance can be close to Rust for many workloads, depending on current codegen and library behavior.
 
-- Benchmarks: `benchmarks/`
-- Results: `benchmarks/results/results.md`
+- Benchmarks: `workspaces/benchmarks/`
+- Results: `workspaces/benchmarks/results/results.md`
 
 | Benchmark                 | Incan | Rust  | Python   | Incan vs Python   |
 |---------------------------|------:|------:|---------:|------------------:|

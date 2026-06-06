@@ -20,7 +20,7 @@ The Python `dict` baseline has no extra dependency. To include `fastconstmap`, i
 ```bash
 python3 -m venv /private/tmp/incan-fastconstmap-venv
 /private/tmp/incan-fastconstmap-venv/bin/python -m pip install fastconstmap
-PYTHON=/private/tmp/incan-fastconstmap-venv/bin/python bash benchmarks/collections/ordinal_map/run.sh
+PYTHON=/private/tmp/incan-fastconstmap-venv/bin/python bash workspaces/benchmarks/collections/ordinal_map/run.sh
 ```
 
 Without `fastconstmap`, `run.sh` still runs Python `dict` and Incan and reports the optional dependency as skipped.
@@ -49,5 +49,5 @@ The latest 1,000,000-key local run in `results.md` is a single directional run, 
 
 ## Notes
 
-- This benchmark remains standalone rather than part of `benchmarks/run_all.sh` because `fastconstmap` is an optional Python dependency.
+- This benchmark remains standalone rather than part of `workspaces/benchmarks/run_all.sh` because `fastconstmap` is an optional Python dependency.
 - The benchmark uses deterministic present-key probes. It does not measure missing-key behavior, mixed workloads, construction from serialized bytes, or total process RSS.

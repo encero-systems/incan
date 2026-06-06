@@ -34,17 +34,17 @@ cargo build --release
 make benchmarks
 
 # Or run the benchmark runner directly
-./benchmarks/run_all.sh
+./workspaces/benchmarks/run_all.sh
 ```
 
 ### Running an individual benchmark
 
 ```bash
-cd benchmarks/compute/fib
+cd workspaces/benchmarks/compute/fib
 
 # Build Incan version
-../../../target/release/incan build fib.incn
-cp ../../../target/incan/.cargo-target/release/fib ./fib_incan
+../../../../target/release/incan build fib.incn
+cp ../../../../target/incan/.cargo-target/release/fib ./fib_incan
 
 # Build Rust baseline
 rustc -O fib.rs -o fib_rust
@@ -58,7 +58,7 @@ hyperfine --warmup 2 --min-runs 5 \
 
 ### Results
 
-For current measured results, see `benchmarks/results/results.md` in the repository.
+For current measured results, see `workspaces/benchmarks/results/results.md` in the repository.
 
 ## Profiling
 
@@ -89,8 +89,7 @@ samply record ./target/release/incan build large_program.incn
 
 ## Adding a new benchmark
 
-1. Create a directory under `benchmarks/compute/` or `benchmarks/sorting/`.
+1. Create a directory under `workspaces/benchmarks/compute/` or `workspaces/benchmarks/sorting/`.
 2. Add three implementations: `name.incn`, `name.rs`, `name.py`.
 3. Each should print a single result line for verification.
-4. Run `./benchmarks/run_all.sh` to include it in the suite.
-
+4. Run `./workspaces/benchmarks/run_all.sh` to include it in the suite.

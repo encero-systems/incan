@@ -3,7 +3,7 @@
 Generated locally on 2026-05-20 with:
 
 ```bash
-PYTHON=/private/tmp/incan-fastconstmap-venv/bin/python bash benchmarks/collections/ordinal_map/run.sh --keys 1000000 --probes 1000000
+PYTHON=/private/tmp/incan-fastconstmap-venv/bin/python bash workspaces/benchmarks/collections/ordinal_map/run.sh --keys 1000000 --probes 1000000
 ```
 
 Corpus: 1,000,000 string keys and 1,000,000 deterministic present-key probes.

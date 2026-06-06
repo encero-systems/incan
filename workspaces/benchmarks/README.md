@@ -41,7 +41,7 @@ cargo build --release
 ### Run All Benchmarks
 
 ```bash
-./benchmarks/run_all.sh
+./workspaces/benchmarks/run_all.sh
 ```
 
 Or via Make:
@@ -53,9 +53,9 @@ make benchmarks
 ### Run Individual Benchmark
 
 ```bash
-cd benchmarks/compute/fib
-../../../target/release/incan build fib.incn
-cp ../../../target/incan/.cargo-target/release/fib ./fib_incan
+cd workspaces/benchmarks/compute/fib
+../../../../target/release/incan build fib.incn
+cp ../../../../target/incan/.cargo-target/release/fib ./fib_incan
 rustc -O fib.rs -o fib_rust
 hyperfine --warmup 2 --min-runs 5 './fib_incan' './fib_rust' 'python3 fib.py'
 ```

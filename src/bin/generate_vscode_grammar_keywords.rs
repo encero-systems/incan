@@ -1,7 +1,7 @@
 //! Sync VS Code/TextMate keyword regexes from `incan_core::lang` registries.
 //!
-//! This updates only the keyword-related regex lines inside `editors/vscode/incan.tmLanguage.json`. The grammar file
-//! remains a checked-in artifact, but its keyword buckets are derived from stable `KeywordId`-based helpers.
+//! This updates only the keyword-related regex lines inside `workspaces/ide/vscode/incan.tmLanguage.json`. The grammar
+//! file remains a checked-in artifact, but its keyword buckets are derived from stable `KeywordId`-based helpers.
 
 use std::fs;
 use std::io;
@@ -14,7 +14,7 @@ use incan_core::lang::highlighting;
 /// This is intended for repository maintenance and should be run after changing `incan_core::lang::highlighting` or the
 /// underlying keyword metadata.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let grammar_path = workspace_root().join("editors/vscode/incan.tmLanguage.json");
+    let grammar_path = workspace_root().join("workspaces/ide/vscode/incan.tmLanguage.json");
     let contents = fs::read_to_string(&grammar_path)?;
     let updated = sync_vscode_grammar(&contents)?;
 
@@ -91,7 +91,7 @@ mod tests {
 
     #[test]
     fn committed_grammar_is_synced_with_registry_buckets() -> Result<(), Box<dyn std::error::Error>> {
-        let grammar_path = workspace_root().join("editors/vscode/incan.tmLanguage.json");
+        let grammar_path = workspace_root().join("workspaces/ide/vscode/incan.tmLanguage.json");
         let contents = fs::read_to_string(grammar_path)?;
         let updated = sync_vscode_grammar(&contents)?;
         assert_eq!(updated, contents);

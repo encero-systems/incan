@@ -1,16 +1,18 @@
-=== "Recommended: install to PATH"
+=== "Recommended: SDK install"
 
     ```bash
-    make install
+    curl -fsSL https://github.com/dannys-code-corner/incan/releases/latest/download/install.sh | sh
+    export PATH="$HOME/.local/bin:$PATH"
     incan --version
     ```
 
     Notes:
 
-    - `make install` installs `incan` to `~/.cargo/bin`.
-    - If `incan` is not found, make sure `~/.cargo/bin` is on your `PATH`.
+    - The SDK installer links `incan` and `incan-lsp` into `~/.local/bin` by default.
+    - Homebrew, npm, and pipx install the same SDK binaries through package-manager adapters.
+    - If `incan` is not found, make sure `~/.local/bin` is on your `PATH`.
 
-=== "Fallback: no install"
+=== "Contributor: source checkout"
 
     ```bash
     make release

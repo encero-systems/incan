@@ -266,17 +266,17 @@ examples: release
 .PHONY: benchmarks  ## test - Run benchmark suite (requires hyperfine)
 benchmarks: release
 	@echo "\033[1mRunning benchmarks...\033[0m"
-	@INCAN_NO_BANNER=1 bash benchmarks/run_all.sh
+	@INCAN_NO_BANNER=1 bash workspaces/benchmarks/run_all.sh
 
 .PHONY: benchmarks-rust  ## test - Run benchmarks (Incan vs Rust only; no Python)
 benchmarks-rust: release
 	@echo "\033[1mRunning benchmarks (Incan vs Rust; no Python)...\033[0m"
-	@INCAN_NO_BANNER=1 SKIP_PYTHON=true bash benchmarks/run_all.sh
+	@INCAN_NO_BANNER=1 SKIP_PYTHON=true bash workspaces/benchmarks/run_all.sh
 
 .PHONY: benchmarks-incan  ## test - Smoke-check benchmark .incn files (build only; no Python/Rust runs)
 benchmarks-incan: release
 	@echo "\033[1mChecking benchmarks (Incan build only)...\033[0m"
-	@INCAN_NO_BANNER=1 bash benchmarks/check_incan.sh
+	@INCAN_NO_BANNER=1 bash workspaces/benchmarks/check_incan.sh
 
 .PHONY: smoke-test-release
 smoke-test-release:
@@ -320,7 +320,7 @@ smoke-test-examples:
 smoke-test-benchmarks-incan:
 	@$(MAKE) -s smoke-test-require-release-bin
 	@echo "\033[1mChecking benchmarks (Incan build only)...\033[0m"
-	@INCAN_NO_BANNER=1 bash benchmarks/check_incan.sh
+	@INCAN_NO_BANNER=1 bash workspaces/benchmarks/check_incan.sh
 
 .PHONY: smoke-test-core
 smoke-test-core:
@@ -412,9 +412,9 @@ examples-nested-project-build: release
 .PHONY: vscode-package  ## tool - Package VS Code extension
 vscode-package:
 	@echo "\033[1mPackaging VS Code extension...\033[0m"
-	@cd editors/vscode && npm ci
-	@cd editors/vscode && npm run compile
-	@cd editors/vscode && npx @vscode/vsce package
+	@cd workspaces/ide/vscode && npm ci
+	@cd workspaces/ide/vscode && npm run compile
+	@cd workspaces/ide/vscode && npx @vscode/vsce package
 	@echo "\033[32m✓ Extension packaged\033[0m"
 
 .PHONY: watch  ## tool - Watch for changes and rebuild (requires cargo-watch)

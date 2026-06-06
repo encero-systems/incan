@@ -75,7 +75,7 @@ Floats are excluded because NaN payloads, negative zero, infinities, and cross-l
 
 `OrdinalMap` is optimized for known key domains and repeated lookup, not for incremental mutation. Construction pays validation cost up front. Lookup then works against compact payload sections plus runtime caches.
 
-The repository benchmark in `benchmarks/collections/ordinal_map` compares:
+The repository benchmark in `workspaces/benchmarks/collections/ordinal_map` compares:
 
 - Python `dict`;
 - Python `fastconstmap.ConstMap`;

@@ -175,9 +175,9 @@ Use this only when the feature is genuinely syntactic/control-flow.
 
 - Emit correct Rust for the new IR node
 
-**Editor tooling (optional but recommended)**: `editors/*`
+**Editor tooling (optional but recommended)**: `workspaces/ide/*`
 
-- `editors/vscode/*`: keyword highlighting / indentation patterns
+- `workspaces/ide/vscode/*`: keyword highlighting / indentation patterns
 
 <!-- markdownlint-disable MD036 -->
 **Docs + tests**

@@ -33,10 +33,10 @@ If you’re working from a clone of this repo, you can copy the extension folder
 
 ```bash
 # macOS/Linux
-cp -r editors/vscode ~/.vscode/extensions/incan-language
+cp -r workspaces/ide/vscode ~/.vscode/extensions/incan-language
 
 # Or for Cursor
-cp -r editors/vscode ~/.cursor/extensions/incan-language
+cp -r workspaces/ide/vscode ~/.cursor/extensions/incan-language
 ```
 
 **Features:**
@@ -50,7 +50,7 @@ cp -r editors/vscode ~/.cursor/extensions/incan-language
 - Markdown code block highlighting for `incan` language
 - **LSP integration** - Diagnostics, hover, go-to-definition (requires incan-lsp)
 
-See [`editors/vscode/README.md`](https://github.com/dannys-code-corner/incan/blob/main/editors/vscode/README.md) for full details.
+See [`workspaces/ide/vscode/README.md`](https://github.com/dannys-code-corner/incan/blob/main/workspaces/ide/vscode/README.md) for full details.
 
 **Alternative**: Use Python highlighting
 

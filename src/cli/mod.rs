@@ -217,6 +217,10 @@ pub enum Command {
         /// Enable all Cargo features
         #[arg(long = "cargo-all-features")]
         cargo_all_features: bool,
+        /// Explicitly request the release build profile. This is the default for `incan build` and exists for
+        /// first-contact command symmetry.
+        #[arg(long)]
+        release: bool,
         /// Emit a machine-readable build report
         #[arg(long = "report", value_enum)]
         report: Option<BuildReportFormat>,
@@ -694,6 +698,7 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             cargo_features,
             cargo_no_default_features,
             cargo_all_features,
+            release: _,
             report,
             report_output,
             cargo_passthrough,
@@ -727,7 +732,7 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                     report_options,
                 )
             } else {
-                let file = file.ok_or_else(|| CliError::failure("Error: build requires FILE unless `--lib` is set"))?;
+                let file = resolve_build_entry_file(file)?;
                 commands::build_file(
                     &file.to_string_lossy(),
                     out.as_ref(),
@@ -974,8 +979,12 @@ struct RunOptions {
     release: bool,
 }
 
-/// Resolve the run target for `incan run`, falling back to project metadata when available.
-fn resolve_run_entry_file(file: Option<PathBuf>) -> CliResult<PathBuf> {
+/// Resolve an explicit file or the project `main` script for project-aware commands.
+fn resolve_main_script_entry_file(
+    file: Option<PathBuf>,
+    command_name: &str,
+    explicit_target: &str,
+) -> CliResult<PathBuf> {
     if let Some(file) = file {
         return Ok(file);
     }
@@ -991,9 +1000,19 @@ fn resolve_run_entry_file(file: Option<PathBuf>) -> CliResult<PathBuf> {
         return Ok(manifest.project_root().join(main));
     }
 
-    Err(CliError::failure(
-        "Error: run requires a file path, -c/--command, or [project.scripts].main",
-    ))
+    Err(CliError::failure(format!(
+        "Error: {command_name} requires {explicit_target} or [project.scripts].main"
+    )))
+}
+
+/// Resolve the build target for `incan build`, falling back to project metadata when available.
+fn resolve_build_entry_file(file: Option<PathBuf>) -> CliResult<PathBuf> {
+    resolve_main_script_entry_file(file, "build", "FILE unless `--lib` is set")
+}
+
+/// Resolve the run target for `incan run`, falling back to project metadata when available.
+fn resolve_run_entry_file(file: Option<PathBuf>) -> CliResult<PathBuf> {
+    resolve_main_script_entry_file(file, "run", "a file path, -c/--command")
 }
 
 /// Handle the `run` subcommand with its various forms.

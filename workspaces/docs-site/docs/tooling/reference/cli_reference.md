@@ -141,6 +141,7 @@ Dependency flags:
 - `--cargo-features <FEATURES>`: Enable specific Cargo features (comma-separated).
 - `--cargo-no-default-features`: Disable default Cargo features.
 - `--cargo-all-features`: Enable all Cargo features.
+- `--release`: Explicitly request the release Cargo profile. This is the default for `incan build`, and the flag exists so first-contact flows can spell out that they are producing an optimized build.
 - `--report json`: Emit a versioned machine-readable build report.
 - `--report-output <PATH>`: Write the build report to a file instead of stdout.
 
@@ -168,6 +169,7 @@ incan build src/main.incn --frozen
 incan build src/main.incn --cargo-features fancy_logging
 incan build src/main.incn -- --timings
 incan build --lib
+incan build --release
 incan build src/main.incn --report json
 incan build --lib --report json --report-output target/build-report.json
 ```
@@ -373,7 +375,7 @@ Usage:
 incan new [OPTIONS] [NAME]
 ```
 
-Creates a new project directory with `incan.toml`, `src/main.incn`, `tests/test_main.incn`, `README.md`, and `.gitignore`. When run in an interactive terminal without `--yes`, it prompts for project metadata. In non-interactive contexts, pass `NAME` or `--dir`.
+Creates a new project directory with `incan.toml`, `src/main.incn`, `tests/test_main.incn`, `README.md`, and `.gitignore`. The starter source includes a small public `greeting()` function plus a test that imports and checks it, so `incan run`, `incan test`, and `incan build --release` work immediately after project creation. When run in an interactive terminal without `--yes`, it prompts for project metadata. In non-interactive contexts, pass `NAME` or `--dir`.
 
 Options:
 

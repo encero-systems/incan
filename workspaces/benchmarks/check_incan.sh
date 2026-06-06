@@ -7,7 +7,7 @@ set -euo pipefail
 # (typecheck + codegen + Rust build) by the Incan compiler.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 echo "Incan benchmark smoke-check (build only)"
 echo "  root:  $PROJECT_ROOT"

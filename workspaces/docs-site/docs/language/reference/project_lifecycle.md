@@ -49,7 +49,7 @@ Minimal application manifest:
 [project]
 name = "greeter"
 version = "0.1.0"
-requires-incan = ">=0.2.0"
+requires-incan = ">=0.4.0-0,<0.5.0"
 
 [project.scripts]
 main = "src/main.incn"
@@ -82,6 +82,8 @@ Both `incan new` and `incan init` accept metadata flags:
 | `--yes` / `-y`          | Skip prompts and use defaults/flag values    |
 
 `incan new` derives the project name from `NAME`, then from `--dir`, then from an interactive prompt. In non-interactive mode it requires either `NAME` or `--dir`.
+
+The generated scaffold includes `src/main.incn`, `tests/test_main.incn`, `README.md`, `.gitignore`, a `main` script, and a release-line `requires-incan` constraint. The starter test imports the generated public `greeting()` function, so the project is immediately runnable and testable instead of containing only a placeholder assertion.
 
 ## `[project]`
 
@@ -116,12 +118,12 @@ Both `incan new` and `incan init` accept metadata flags:
 [project]
 name = "greeter"
 version = "0.1.0"
-requires-incan = ">=0.4,<0.5"
+requires-incan = ">=0.4.0-0,<0.5.0"
 ```
 
 If the active compiler is outside the range, `incan run` in project mode, `incan build`, `incan test`, `incan lock`, and `incan env run` fail early with a diagnostic that names the active compiler version and the contributing constraint layers. Single-file and inline commands without a discovered `incan.toml` remain manifest-free and do not infer a requirement.
 
-Development compilers identify themselves with prerelease versions such as `0.4.0-dev.N`. For lifecycle compatibility, that development build is treated as part of the `0.4` line, so a requirement such as `>=0.4,<0.5` admits it.
+Development compilers identify themselves with prerelease versions such as `0.4.0-dev.N`. Generated 0.4 projects therefore use a prerelease-aware lower bound (`>=0.4.0-0,<0.5.0`) so local development builds and final 0.4 releases both satisfy the starter constraint.
 
 ## `[project.scripts]`
 

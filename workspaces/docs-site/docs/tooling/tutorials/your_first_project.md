@@ -73,7 +73,7 @@ greeter/
 └── incan.toml             # Manifest with project metadata and [project.scripts] main set
 ```
 
-The generated `incan.toml` can also carry `requires-incan` to document the minimum supported Incan toolchain version. Commit `incan.lock` once the project generates it so builds stay reproducible.
+The generated `incan.toml` carries a `requires-incan` constraint for the current release line. Commit `incan.lock` once the project generates it so builds stay reproducible.
 
 Try it immediately:
 
@@ -94,6 +94,7 @@ version = "0.1.0"
 description = "A small greeting command"
 license = "MIT"
 readme = "README.md"
+requires-incan = ">=0.4.0,<0.5.0"
 
 [project.scripts]
 main = "src/main.incn"
@@ -120,8 +121,11 @@ Now update `src/main.incn` to use the `greet` function from the `greet.incn` mod
 ```incan title="src/main.incn"
 from greet import greet
 
+pub def greeting() -> str:
+    return greet("World")
+
 def main() -> None:
-    println(greet("World"))
+    println(greeting())
 ```
 
 Run again:
@@ -155,8 +159,11 @@ And update `src/main.incn` to use both:
 ```incan title="src/main.incn"
 from greet import greet, farewell
 
+pub def greeting() -> str:
+    return greet("World")
+
 def main() -> None:
-    println(greet("World"))
+    println(greeting())
     println(farewell("World"))
 ```
 

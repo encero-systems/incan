@@ -99,14 +99,14 @@ Run **Incan: Doctor** from the command palette to see which `incan` and `incan-l
 1. Build the VSIX package:
 
     ```bash
-    cd editors/vscode
+    cd workspaces/ide/vscode
     npm install
     npm run compile
     npm install -g @vscode/vsce
     vsce package
     ```
 
-    This will create a file like `incan-0.1.0.vsix` in the `editors/vscode` directory.
+    This will create a file like `incan-0.1.0.vsix` in the `workspaces/ide/vscode` directory.
 
 2. Open VS Code, go to the Extensions sidebar (Cmd+Shift+X), click the three-dot menu (…), and choose **Install from VSIX…**. Select your `.vsix` file.
 
@@ -120,10 +120,10 @@ Run **Incan: Doctor** from the command palette to see which `incan` and `incan-l
 
 ```bash
 # For Cursor
-ln -sf /path/to/incan-programming-language/editors/vscode ~/.cursor/extensions/incan-language
+ln -sf /path/to/incan-programming-language/workspaces/ide/vscode ~/.cursor/extensions/incan-language
 
 # For VS Code (only if you know the extension folder naming rules)
-ln -sf /path/to/incan-programming-language/editors/vscode ~/.vscode/extensions/<name-from-package.json>
+ln -sf /path/to/incan-programming-language/workspaces/ide/vscode ~/.vscode/extensions/<name-from-package.json>
 ```
 
 Make sure the symlink name matches the `name` field in `package.json`. Then restart your editor.
@@ -132,7 +132,7 @@ Make sure the symlink name matches the `name` field in `package.json`. Then rest
 
 ### Option 3: Copy Extension Folder (Development)
 
-Copy the `editors/vscode` folder to:
+Copy the `workspaces/ide/vscode` folder to:
 
 - **Cursor**: `~/.cursor/extensions/incan-language`
 - **VS Code**: `~/.vscode/extensions/<name-from-package.json>`

@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/dannys-code-corner/incan/releases/latest/download/sdk-manifest.schema.v1.json",
+  "title": "Incan SDK release manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "sdk_version", "release", "channel", "rust_toolchain", "commands", "hosts"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "sdk_version": { "type": "string", "minLength": 1 },
+    "release": { "type": "string", "minLength": 1 },
+    "channel": { "type": "string", "enum": ["stable", "preview", "dev"] },
+    "generated_at": { "type": "string" },
+    "manifest_url": { "type": "string" },
+    "rust_toolchain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["channel", "min_rust", "targets", "policy"],
+      "properties": {
+        "channel": { "type": "string", "minLength": 1 },
+        "min_rust": { "type": "string", "minLength": 1 },
+        "targets": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "policy": { "type": "string", "minLength": 1 }
+      }
+    },
+    "commands": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true,
+      "minItems": 1
+    },
+    "hosts": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["archive_url", "archive_sha256", "archive_format", "commands"],
+        "properties": {
+          "archive_url": { "type": "string", "minLength": 1 },
+          "archive_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "archive_format": { "type": "string", "enum": ["tar.gz"] },
+          "commands": {
+            "type": "object",
+            "additionalProperties": { "type": "string", "minLength": 1 },
+            "minProperties": 1
+          }
+        }
+      }
+    }
+  }
+}

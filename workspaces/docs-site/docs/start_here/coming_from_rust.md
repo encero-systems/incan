@@ -4,7 +4,7 @@ This page is a routing guide for Rust-first evaluators.
 
 ## What you should do next
 
-- Quickstart: [Getting Started](../tooling/tutorials/getting_started.md) (make-first, with fallback when needed)
+- Quickstart: [Getting Started](../tooling/tutorials/getting_started.md) (SDK install, starter project, and source-build fallback for contributors)
 - Explanation:
     - [Why Incan?](../language/explanation/why_incan.md)
     - [Why not just Rust?](../language/explanation/why_not_just_rust.md)

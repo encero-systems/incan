@@ -4,7 +4,7 @@ This page is a routing guide for Python developers building apps/services.
 
 ## What you should do next
 
-- Install/build/run (make-first): [Getting Started](../tooling/tutorials/getting_started.md)
+- Install the SDK and create a starter project: [Getting Started](../tooling/tutorials/getting_started.md)
 - If anything fails: [Troubleshooting](../tooling/how-to/troubleshooting.md)
 - Learn the basics: [The Incan Book (Basics)](../language/tutorials/book/index.md)
 - Build your first API: [Build your first API](../language/tutorials/build_your_first_api.md)

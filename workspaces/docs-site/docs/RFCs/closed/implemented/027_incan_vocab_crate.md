@@ -1510,7 +1510,7 @@ Phases 1-3 are already public history and remain unchanged here. They establishe
 - `src/frontend/`: hosts the public-AST bridge and later end-to-end desugar runtime integration.
 - `src/backend/project/`: replaces `needs_*` booleans with collected dependency/feature sets where vocab metadata suffices.
 - `src/lsp/` and `src/format/`: remain registry-backed and later consume the richer declaration metadata where relevant.
-- `editors/vscode/`: continues build-time grammar generation for the static fallback story.
+- `workspaces/ide/vscode/`: continues build-time grammar generation for the static fallback story.
 
 ## Implementation log
 
