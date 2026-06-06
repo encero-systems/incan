@@ -19,6 +19,19 @@ use ::byteorder::LittleEndian;
 use ::byteorder::ReadBytesExt;
 use ::byteorder::WriteBytesExt;
 pub use crate::__incan_std::traits::error::Error;
+/// Binary I/O failure.
+///
+/// `kind` is stable enough for branching on common failures such as `invalid_input`, `unexpected_eof`, and `other`.
+/// `detail` keeps the human-readable context. `operation`, `position`, and `path` add optional context for stream and
+/// filesystem implementors that share the same `BinaryReader` contract.
+///
+/// Example:
+///
+/// ```ignore
+/// match BytesIO(b"AB").read_exact(4):
+///     Ok(data) => println(len(data))
+///     Err(err) => println(err.kind)
+/// ```
 #[derive(Clone, Debug, incan_derive::FieldInfo, incan_derive::IncanClass)]
 pub struct IoError {
     pub kind: String,
@@ -99,6 +112,10 @@ impl incan_stdlib::reflection::HasTypeFieldMetadata for IoError {
     }
 }
 impl IoError {
+    /// Return the human-readable error detail.
+    ///
+    /// Returns:
+    ///     The detail text attached to the failed operation.
     pub fn message(&self) -> String {
         "\n        Return the human-readable error detail.\n\n        Returns:\n            The detail text attached to the failed operation.\n        ";
         return self.detail.clone();
@@ -167,15 +184,46 @@ impl Error for IoError {
         return None::<_>;
     }
 }
+/// Trait-backed typed binary reads from a byte stream.
+///
+/// `read` is overloaded by expected result type. Callers should provide static type context for reads, for example
+/// `value: u32 = buf.read(Endian.Little)?`.
+///
+/// Example:
+///
+/// ```ignore
+/// from std.io import BytesIO, Endian
+///
+/// buf = BytesIO(b"\x02\0\0\0")
+/// value: u32 = buf.read(Endian.Little)?
+/// ```
 pub trait BinaryRead<T> {
     fn read(&self, endian: Endian) -> Result<T, IoError>;
 }
+/// Trait-backed byte reads from a binary stream.
+///
+/// Implementors expose bounded byte reads that advance their cursor. A zero-length successful read marks EOF for
+/// consumers such as `std.hash.reader_digest`.
 pub trait BinaryReader {
     fn read_bytes(&self, size: i64) -> Result<Vec<u8>, IoError>;
 }
+/// Trait-backed typed binary writes to a byte stream.
+///
+/// `write` is overloaded by value argument type.
+///
+/// Example:
+///
+/// ```ignore
+/// from std.io import BytesIO, Endian
+///
+/// out = BytesIO()
+/// value: u32 = 2
+/// out.write(value, Endian.Little)?
+/// ```
 pub trait BinaryWrite<T> {
     fn write(&self, value: T, endian: Endian) -> Result<(), IoError>;
 }
+/// Byte order for exact-width numeric I/O.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Endian {
     Little,
@@ -189,6 +237,20 @@ impl Endian {
         }
     }
 }
+/// Writable and seekable byte stream over an in-memory buffer.
+///
+/// Construct values with `BytesIO(initial=b"...")` or `BytesIO(b"...")`. Reads advance the cursor. Writes overwrite
+/// from the current cursor position unless the caller seeks to the end first.
+///
+/// Example:
+///
+/// ```ignore
+/// from std.io import BytesIO, Endian
+///
+/// buf = BytesIO(b"GGUF\x03\0\0\0")
+/// magic = buf.read_exact(4)?
+/// version: u32 = buf.read(Endian.Little)?
+/// ```
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 pub struct _BytesIO {
     pub handle: Rc<RefCell<Cursor<Vec<u8>>>>,
@@ -231,6 +293,16 @@ impl incan_stdlib::reflection::HasTypeFieldMetadata for _BytesIO {
     }
 }
 impl _BytesIO {
+    /// Read up to `size` bytes from the current cursor.
+    ///
+    /// Args:
+    ///     size: Maximum bytes to read. Use a negative value to read through EOF.
+    ///
+    /// Returns:
+    ///     The bytes read, or `Err(IoError)`.
+    ///
+    /// Example:
+    ///     `BytesIO(b"abc").read(2)?` returns `b"ab"`.
     pub fn read(&self, size: i64) -> Result<Vec<u8>, IoError> {
         "\n        Read up to `size` bytes from the current cursor.\n\n        Args:\n            size: Maximum bytes to read. Use a negative value to read through EOF.\n\n        Returns:\n            The bytes read, or `Err(IoError)`.\n\n        Example:\n            `BytesIO(b\"abc\").read(2)?` returns `b\"ab\"`.\n        ";
         let mut out: Vec<u8> = b"".to_vec();
@@ -284,10 +356,21 @@ impl _BytesIO {
             }
         };
     }
+    /// Read up to `size` bytes through the `BinaryReader` trait surface.
     pub fn read_bytes(&self, size: i64) -> Result<Vec<u8>, IoError> {
         "\n        Read up to `size` bytes through the `BinaryReader` trait surface.\n        ";
         return self.read(size);
     }
+    /// Read exactly `size` bytes.
+    ///
+    /// Args:
+    ///     size: Number of bytes required.
+    ///
+    /// Returns:
+    ///     Exactly `size` bytes, or `Err(IoError)` with kind `unexpected_eof` if the buffer ends early.
+    ///
+    /// Example:
+    ///     `BytesIO(b"ABCD").read_exact(4)?` returns `b"ABCD"`.
     pub fn read_exact(&self, size: i64) -> Result<Vec<u8>, IoError> {
         "\n        Read exactly `size` bytes.\n\n        Args:\n            size: Number of bytes required.\n\n        Returns:\n            Exactly `size` bytes, or `Err(IoError)` with kind `unexpected_eof` if the buffer ends early.\n\n        Example:\n            `BytesIO(b\"ABCD\").read_exact(4)?` returns `b\"ABCD\"`.\n        ";
         if size < 0 {
@@ -317,6 +400,16 @@ impl _BytesIO {
         }
         return Ok::<Vec<u8>, IoError>(chunk);
     }
+    /// Read through `byte` or EOF.
+    ///
+    /// Args:
+    ///     byte: Delimiter byte to include when found.
+    ///
+    /// Returns:
+    ///     Bytes up to and including the delimiter, or the remaining bytes at EOF.
+    ///
+    /// Example:
+    ///     `BytesIO(b"name\0rest").read_until(0)?` returns `b"name\0"`.
     pub fn read_until(&self, byte: u8) -> Result<Vec<u8>, IoError> {
         "\n        Read through `byte` or EOF.\n\n        Args:\n            byte: Delimiter byte to include when found.\n\n        Returns:\n            Bytes up to and including the delimiter, or the remaining bytes at EOF.\n\n        Example:\n            `BytesIO(b\"name\\0rest\").read_until(0)?` returns `b\"name\\0\"`.\n        ";
         let out = _empty_stream();
@@ -329,6 +422,17 @@ impl _BytesIO {
         }
         return Ok::<Vec<u8>, IoError>(out.getvalue());
     }
+    ///         Discard bytes through `byte` or EOF.
+    ///
+    ///         Args:
+    ///             byte: Delimiter byte to include in the skipped count when found.
+    ///
+    ///         Returns:
+    ///             Number of discarded bytes, including the delimiter when present.
+    ///
+    ///         Example:
+    ///             `BytesIO(b"header
+    /// body").skip_until(10)?` returns `7`.
     pub fn skip_until(&self, byte: u8) -> Result<i64, IoError> {
         "\n        Discard bytes through `byte` or EOF.\n\n        Args:\n            byte: Delimiter byte to include in the skipped count when found.\n\n        Returns:\n            Number of discarded bytes, including the delimiter when present.\n\n        Example:\n            `BytesIO(b\"header\nbody\").skip_until(10)?` returns `7`.\n        ";
         let mut count = 0;
@@ -341,11 +445,26 @@ impl _BytesIO {
         }
         return Ok::<i64, IoError>(count);
     }
+    /// Return the current byte cursor position.
+    ///
+    /// Returns:
+    ///     Current offset from the start of the buffer.
     pub fn tell(&self) -> i64 {
         "\n        Return the current byte cursor position.\n\n        Returns:\n            Current offset from the start of the buffer.\n        ";
         let cursor = self.handle.borrow();
         return (cursor.position()) as i64;
     }
+    /// Move the cursor and return the new position.
+    ///
+    /// Args:
+    ///     offset: Byte offset interpreted relative to `whence`.
+    ///     whence: `0` for start, `1` for current position, and `2` for end.
+    ///
+    /// Returns:
+    ///     New cursor position, or `Err(IoError)` for invalid positions or `whence` values.
+    ///
+    /// Example:
+    ///     `buf.seek(0, 2)?` moves to the end of the buffer.
     pub fn seek(&self, offset: i64, whence: i64) -> Result<i64, IoError> {
         "\n        Move the cursor and return the new position.\n\n        Args:\n            offset: Byte offset interpreted relative to `whence`.\n            whence: `0` for start, `1` for current position, and `2` for end.\n\n        Returns:\n            New cursor position, or `Err(IoError)` for invalid positions or `whence` values.\n\n        Example:\n            `buf.seek(0, 2)?` moves to the end of the buffer.\n        ";
         let mut cursor = self.handle.borrow_mut();
@@ -424,16 +543,37 @@ impl _BytesIO {
             ),
         );
     }
+    /// Move the cursor to the start of the buffer.
+    ///
+    /// Returns:
+    ///     `Ok(None)` after rewinding, or `Err(IoError)`.
     pub fn rewind(&self) -> Result<(), IoError> {
         "\n        Move the cursor to the start of the buffer.\n\n        Returns:\n            `Ok(None)` after rewinding, or `Err(IoError)`.\n        ";
         self.seek(0, 0)?;
         return Ok::<(), IoError>(());
     }
+    /// Move the cursor relative to its current position.
+    ///
+    /// Args:
+    ///     offset: Relative byte offset.
+    ///
+    /// Returns:
+    ///     `Ok(None)` after moving, or `Err(IoError)` when the result would be invalid.
     pub fn seek_relative(&self, offset: i64) -> Result<(), IoError> {
         "\n        Move the cursor relative to its current position.\n\n        Args:\n            offset: Relative byte offset.\n\n        Returns:\n            `Ok(None)` after moving, or `Err(IoError)` when the result would be invalid.\n        ";
         self.seek(offset, 1)?;
         return Ok::<(), IoError>(());
     }
+    /// Write bytes at the current cursor position.
+    ///
+    /// Args:
+    ///     data: Bytes to write.
+    ///
+    /// Returns:
+    ///     Number of bytes written, or `Err(IoError)`.
+    ///
+    /// Example:
+    ///     `BytesIO().write(b"ok")?` returns `2`.
     pub fn write_bytes(&self, data: Vec<u8>) -> Result<i64, IoError> {
         "\n        Write bytes at the current cursor position.\n\n        Args:\n            data: Bytes to write.\n\n        Returns:\n            Number of bytes written, or `Err(IoError)`.\n\n        Example:\n            `BytesIO().write(b\"ok\")?` returns `2`.\n        ";
         let mut cursor = self.handle.borrow_mut();
@@ -455,10 +595,30 @@ impl _BytesIO {
             }
         };
     }
+    /// Write bytes at the current cursor position.
+    ///
+    /// Args:
+    ///     data: Bytes to write.
+    ///
+    /// Returns:
+    ///     Number of bytes written, or `Err(IoError)`.
+    ///
+    /// Example:
+    ///     `BytesIO().write(b"ok")?` returns `2`.
     pub fn write(&self, data: Vec<u8>) -> Result<i64, IoError> {
         "\n        Write bytes at the current cursor position.\n\n        Args:\n            data: Bytes to write.\n\n        Returns:\n            Number of bytes written, or `Err(IoError)`.\n\n        Example:\n            `BytesIO().write(b\"ok\")?` returns `2`.\n        ";
         return self.write_bytes(data);
     }
+    /// Resize the buffer.
+    ///
+    /// Args:
+    ///     size: Target size, or `None` to truncate at the current cursor.
+    ///
+    /// Returns:
+    ///     The new buffer size, or `Err(IoError)`.
+    ///
+    /// Example:
+    ///     After reading two bytes from `BytesIO(b"abcd")`, `truncate()?` leaves `b"ab"`.
     pub fn truncate(&self, size: Option<i64>) -> Result<i64, IoError> {
         "\n        Resize the buffer.\n\n        Args:\n            size: Target size, or `None` to truncate at the current cursor.\n\n        Returns:\n            The new buffer size, or `Err(IoError)`.\n\n        Example:\n            After reading two bytes from `BytesIO(b\"abcd\")`, `truncate()?` leaves `b\"ab\"`.\n        ";
         let position = self.tell();
@@ -490,15 +650,28 @@ impl _BytesIO {
         }
         return Ok::<i64, IoError>(target);
     }
+    /// Return a snapshot of the buffer contents.
+    ///
+    /// Returns:
+    ///     Current buffer bytes without changing the cursor.
     pub fn getvalue(&self) -> Vec<u8> {
         "\n        Return a snapshot of the buffer contents.\n\n        Returns:\n            Current buffer bytes without changing the cursor.\n        ";
         let cursor = self.handle.borrow();
         return cursor.get_ref().clone();
     }
+    /// Return the buffer bytes.
+    ///
+    /// Returns:
+    ///     Current buffer bytes without changing the cursor. The current implementation returns a snapshot because
+    ///     `BytesIO` uses shared interior mutability for method calls.
     pub fn into_bytes(&self) -> Vec<u8> {
         "\n        Return the buffer bytes.\n\n        Returns:\n            Current buffer bytes without changing the cursor. The current implementation returns a snapshot because\n            `BytesIO` uses shared interior mutability for method calls.\n        ";
         return self.getvalue();
     }
+    /// Return the unread byte count from the current cursor to the end.
+    ///
+    /// Returns:
+    ///     Number of bytes remaining in the buffer.
     pub fn remaining(&self) -> i64 {
         "\n        Return the unread byte count from the current cursor to the end.\n\n        Returns:\n            Number of bytes remaining in the buffer.\n        ";
         let cursor = self.handle.borrow();
@@ -661,6 +834,16 @@ impl BinaryWrite<f64> for _BytesIO {
         return _write_f64_value(self.clone(), value, endian, "write".to_string());
     }
 }
+/// Construct a writable, seekable in-memory byte stream.
+///
+/// Args:
+///     initial: Initial buffer contents. The cursor starts at `0`.
+///
+/// Returns:
+///     A `BytesIO` stream over `initial`.
+///
+/// Example:
+///     `BytesIO(b"abc").read(1)?` returns `b"a"`.
 #[allow(non_snake_case)]
 pub fn BytesIO(initial: Vec<u8>) -> _BytesIO {
     "\n    Construct a writable, seekable in-memory byte stream.\n\n    Args:\n        initial: Initial buffer contents. The cursor starts at `0`.\n\n    Returns:\n        A `BytesIO` stream over `initial`.\n\n    Example:\n        `BytesIO(b\"abc\").read(1)?` returns `b\"a\"`.\n    ";

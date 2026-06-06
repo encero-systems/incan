@@ -15,6 +15,8 @@ mod models;
 mod newtypes;
 mod traits;
 
+pub(in crate::backend::ir::lower) use functions::callable_docstring;
+
 use super::super::IrSpan;
 use super::super::decl::{
     IrDecl, IrDeclKind, IrImportOrigin, IrImportQualifier, IrInteropAdapterKind, IrInteropDirection, IrInteropEdge,

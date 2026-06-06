@@ -195,6 +195,8 @@ pub struct IrImportItem {
 #[derive(Debug, Clone)]
 pub struct IrTrait {
     pub name: String,
+    /// Source docstring attached to the trait, when present.
+    pub docstring: Option<String>,
     /// Generic parameters (`trait Foo[T]: ...`), including `with` bounds from the source (RFC 023 / RFC 042).
     pub type_params: Vec<IrTypeParam>,
     /// Direct supertraits for the generated Rust trait header (`trait Foo: Bar + Baz<T> {}`), RFC 042.
@@ -235,6 +237,8 @@ pub struct IrAssociatedType {
 #[derive(Debug, Clone)]
 pub struct IrFunction {
     pub name: String,
+    /// Source docstring attached to the callable, when present.
+    pub docstring: Option<String>,
     pub params: Vec<FunctionParam>,
     pub return_type: IrType,
     pub body: Vec<IrStmt>,
@@ -274,6 +278,8 @@ pub struct FunctionParam {
 #[derive(Debug, Clone)]
 pub struct IrStruct {
     pub name: String,
+    /// Source docstring attached to the type declaration, when present.
+    pub docstring: Option<String>,
     pub fields: Vec<StructField>,
     pub derives: Vec<String>,
     pub visibility: Visibility,
@@ -303,6 +309,8 @@ pub struct StructField {
 #[derive(Debug, Clone)]
 pub struct IrEnum {
     pub name: String,
+    /// Source docstring attached to the enum declaration, when present.
+    pub docstring: Option<String>,
     pub variants: Vec<EnumVariant>,
     /// Alias name to canonical variant name.
     pub variant_aliases: Vec<EnumVariantAlias>,

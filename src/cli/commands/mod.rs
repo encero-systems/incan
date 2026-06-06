@@ -16,6 +16,7 @@
 //! - `tools` — Local toolchain inspection and metadata helpers
 
 pub mod build;
+pub mod build_report;
 pub mod common;
 pub mod debug;
 pub mod diagnostics;
@@ -28,7 +29,7 @@ pub mod tools;
 pub(crate) mod vocab_extraction;
 
 // Re-export public API so callers can use `commands::build_file()` etc.
-pub use build::{build_file, build_library, run_file};
+pub use build::{build_file, build_library, inspect_rust, run_file};
 pub use common::{collect_modules, read_source};
 pub use debug::{check_file, emit_rust, lex_file, parse_file};
 pub use diagnostics::{DiagnosticOutputFormat, check_path, explain_diagnostic};

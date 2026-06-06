@@ -154,6 +154,25 @@ impl ProjectGenerator {
         self.run_profile = profile;
     }
 
+    /// Return the generated Rust project directory.
+    pub fn output_dir(&self) -> &Path {
+        &self.output_dir
+    }
+
+    /// Return the generated Cargo manifest path.
+    pub fn cargo_manifest_path(&self) -> PathBuf {
+        self.output_dir.join("Cargo.toml")
+    }
+
+    /// Return the generated Rust crate root file.
+    pub fn crate_root_path(&self) -> PathBuf {
+        if self.is_binary {
+            self.output_dir.join("src").join("main.rs")
+        } else {
+            self.output_dir.join("src").join("lib.rs")
+        }
+    }
+
     /// Resolve the optional generated-project Cargo target override.
     ///
     /// This is primarily used by integration tests and smoke gates that compile many generated Rust projects from one

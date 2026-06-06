@@ -8,27 +8,165 @@ expression: rust_code
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 pub use ::incan_stdlib::errors::raise_value_error;
+/// Contains trait - Enables `item in collection` membership testing
+/// Python equivalent: __contains__
+///
+/// Example:
+///
+/// ```ignore
+/// model UniqueSet[T] with Contains[T]:
+///     items: List[T]
+///
+///     def __contains__(self, item: T) -> bool:
+///         for x in self.items:
+///             if x == item:
+///                 return true
+///         return false
+///
+/// numbers = UniqueSet(items=[1, 2, 3, 4, 5])
+///
+/// if 3 in numbers:
+///     println("Found 3!")
+///
+/// if 99 not in numbers:
+///     println("99 not found")
+/// ```
+///
+/// Note: Built-in types (List, Set, Dict, str) already support `in`.
+/// Implement __contains__ for custom collection types.
 pub trait Contains<T> {
     fn __contains__(&self, item: T) -> bool;
 }
+/// Bool trait - Names the truthiness capability for custom types
+/// Hook: __bool__(self) -> bool
+///
+/// Discouraged as a blanket substitute for explicit checks.
+///
+/// Incan encourages explicit patterns:
+///
+/// ```ignore
+/// if user is Some(u):          # Option unwrapping
+/// if result is Ok(value):      # Result unwrapping
+/// if len(items) > 0:           # Length check
+/// if name != "":               # Empty check
+/// if conn.is_connected:        # Named boolean state
+/// ```
+///
+/// These are clearer than `if obj:`, which hides what is being checked.
+///
+/// If truthiness genuinely matches your type's domain model, implement
+/// the hook directly:
+///
+/// ```ignore
+/// model NonEmptyString with Bool:
+///     value: str
+///
+///     def __bool__(self) -> bool:
+///         return len(self.value) > 0
+/// ```
+///
+/// Note: Bool cannot be derived with @derive(Bool). You must implement
+/// `__bool__` manually.
 pub trait Bool {
     fn __bool__(&self) -> bool;
 }
+/// Len trait - Enables len() builtin for custom types
+/// Python equivalent: __len__
+///
+/// ⚠️ Note: Len cannot be auto-derived — you must implement __len__ manually because the compiler can't know what
+/// "length" means for your type.
+///
+/// Examples:
+///
+/// ```ignore
+/// model Queue[T] with Len:
+///     items: List[T]
+///
+///     def __len__(self) -> int:
+///         return len(self.items)
+///
+/// q = Queue(items=[1, 2, 3])
+/// println(f"Queue has {len(q)} items")  # Queue has 3 items
+/// ```
+///
+/// Common patterns:
+///
+/// ```ignore
+/// # Wrapper around collection
+/// def __len__(self) -> int:
+///     return len(self.items)
+///
+/// # Computed length
+/// def __len__(self) -> int:
+///     return self.end - self.start
+/// ```
 pub trait Len {
     fn __len__(&self) -> i64;
 }
+/// Iterable trait - Enables `for item in obj:` syntax
+/// Python equivalent: __iter__
+///
+/// Returns an iterator that can be used in for loops.
+///
+/// Example:
+///
+/// ```ignore
+/// model NumberRange with Iterable[int]:
+///     start: int
+///     end: int
+///
+///     def __iter__(self) -> Iterator[int]:
+///         return RangeIterator(current=self.start, end=self.end)
+///
+/// nums = NumberRange(start=0, end=5)
+/// for n in nums:
+///     println(n)  # 0, 1, 2, 3, 4
+/// ```
 pub trait Iterable<T> {
     fn __iter__(&self) -> impl Iterator<T>;
     fn iter(&self) -> impl Iterator<T>;
 }
+/// Iterator trait - The actual iteration mechanism
+/// Python equivalent: __next__
+///
+/// Returns the next item, or None when exhausted.
+///
+/// Examples:
+///
+/// ```ignore
+/// model RangeIterator with Iterator[int]:
+///     current: int
+///     end: int
+///
+///     def __next__(mut self) -> Option[int]:
+///         if self.current >= self.end:
+///             return None
+///         value = self.current
+///         self.current += 1
+///         return Some(value)
+/// ```
+///
+/// Note: In Incan, __next__ returns Option[T] instead of raising StopIteration.
+/// This is more Rust-like and avoids exception overhead.
 pub trait Iterator<T> {
     fn __next__(&mut self) -> Option<T>;
 }
+/// Sum trait - Names the capability to produce a value from summing iterator items.
+///
+/// This mirrors Rust's `std::iter::Sum`: types opt into zero-argument
+/// iterator summation by defining how an iterator of items becomes `Self`.
+/// Built-in numeric types provide the primitive implementation, and newtypes
+/// over summable underlying types lift that implementation through normal
+/// newtype construction.
 pub trait Sum<T> {
     fn sum<__IncanTrait0: Iterator<T>>(items: __IncanTrait0) -> Self
     where
         Self: Sized;
 }
+/// Lazy state for `list[T].iter()`.
+///
+/// Stores the source list and the next index to yield. The iterator owns the
+/// list snapshot used by the generated adapter chain.
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 pub struct ListIterator<T: Clone> {
     pub items: Vec<T>,
@@ -79,6 +217,7 @@ impl<T: Clone> incan_stdlib::reflection::HasTypeFieldMetadata for ListIterator<T
     }
 }
 impl<T: Clone> ListIterator<T> {
+    /// Return the next list item, or `None` after the final index.
     pub fn __next__(&mut self) -> Option<T> {
         "\n        Return the next list item, or `None` after the final index.\n        ";
         if self.index >= ::std::convert::identity(self.items.len() as i64) {
@@ -128,6 +267,10 @@ impl<T: Clone> Iterator<T> for ListIterator<T> {
         return Some(item);
     }
 }
+/// Lazy state for `Iterator.map()`.
+///
+/// Stores the source iterator and callback until the consumer requests the next
+/// mapped item.
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 pub struct MapIterator<T, Source: Iterator<T>, U> {
     pub source: Source,
@@ -182,6 +325,7 @@ for MapIterator<T, Source, U> {
     }
 }
 impl<T, Source: Iterator<T>, U> MapIterator<T, Source, U> {
+    /// Pull one source item and return its mapped value.
     pub fn __next__(&mut self) -> Option<U> {
         "\n        Pull one source item and return its mapped value.\n        ";
         match self.source.__next__() {
@@ -235,6 +379,10 @@ impl<T, Source: Iterator<T>, U> Iterator<U> for MapIterator<T, Source, U> {
         };
     }
 }
+/// Lazy state for `Iterator.filter()`.
+///
+/// Source items are requested until one satisfies the predicate or the source is
+/// exhausted.
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 pub struct FilterIterator<T, Source: Iterator<T>> {
     pub source: Source,
@@ -289,6 +437,7 @@ for FilterIterator<T, Source> {
     }
 }
 impl<T: Clone, Source: Iterator<T> + Clone> FilterIterator<T, Source> {
+    /// Return the next source item accepted by the predicate.
     pub fn __next__(&mut self) -> Option<T> {
         "\n        Return the next source item accepted by the predicate.\n        ";
         loop {
@@ -350,6 +499,10 @@ impl<T: Clone, Source: Iterator<T> + Clone> Iterator<T> for FilterIterator<T, So
         }
     }
 }
+/// Lazy state for `Iterator.flat_map()`.
+///
+/// Maintains the currently active nested iterator so nested values are yielded
+/// before another source item is expanded.
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 pub struct FlatMapIterator<T, Source: Iterator<T>, U> {
     pub source: Source,
@@ -424,6 +577,7 @@ for FlatMapIterator<T, Source, U> {
     }
 }
 impl<T: Clone, Source: Iterator<T> + Clone, U: Clone> FlatMapIterator<T, Source, U> {
+    /// Return the next item from the current nested list, or open a new one.
     pub fn __next__(&mut self) -> Option<U> {
         "\n        Return the next item from the current nested list, or open a new one.\n        ";
         loop {
@@ -520,6 +674,7 @@ for FlatMapIterator<T, Source, U> {
         }
     }
 }
+/// Lazy state for `Iterator.take()`.
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 pub struct TakeIterator<T, Source: Iterator<T>> {
     pub source: Source,
@@ -584,6 +739,7 @@ for TakeIterator<T, Source> {
     }
 }
 impl<T, Source: Iterator<T>> TakeIterator<T, Source> {
+    /// Yield one item while the remaining count is positive.
     pub fn __next__(&mut self) -> Option<T> {
         "\n        Yield one item while the remaining count is positive.\n        ";
         if self.remaining <= 0 {
@@ -652,6 +808,7 @@ impl<T, Source: Iterator<T>> Iterator<T> for TakeIterator<T, Source> {
         };
     }
 }
+/// Lazy state for `Iterator.skip()`.
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 pub struct SkipIterator<T, Source: Iterator<T>> {
     pub source: Source,
@@ -716,6 +873,7 @@ for SkipIterator<T, Source> {
     }
 }
 impl<T, Source: Iterator<T>> SkipIterator<T, Source> {
+    /// Discard source items until the remaining skip count reaches zero.
     pub fn __next__(&mut self) -> Option<T> {
         "\n        Discard source items until the remaining skip count reaches zero.\n        ";
         while self.remaining > 0 {
@@ -782,6 +940,7 @@ impl<T, Source: Iterator<T>> Iterator<T> for SkipIterator<T, Source> {
         return self.source.__next__();
     }
 }
+/// Lazy state for `Iterator.chain()`.
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 pub struct ChainIterator<T, First: Iterator<T>, Second: Iterator<T>> {
     pub first: First,
@@ -865,6 +1024,7 @@ impl<
     }
 }
 impl<T, First: Iterator<T>, Second: Iterator<T>> ChainIterator<T, First, Second> {
+    /// Yield from the first iterator until exhausted, then from the second.
     pub fn __next__(&mut self) -> Option<T> {
         "\n        Yield from the first iterator until exhausted, then from the second.\n        ";
         if !self.in_second {
@@ -941,6 +1101,7 @@ for ChainIterator<T, First, Second> {
         return self.second.__next__();
     }
 }
+/// Lazy state for `Iterator.enumerate()`.
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 pub struct EnumerateIterator<T, Source: Iterator<T>> {
     pub source: Source,
@@ -1005,6 +1166,7 @@ for EnumerateIterator<T, Source> {
     }
 }
 impl<T, Source: Iterator<T>> EnumerateIterator<T, Source> {
+    /// Return the current index with the next source item.
     pub fn __next__(&mut self) -> Option<(i64, T)> {
         "\n        Return the current index with the next source item.\n        ";
         match self.source.__next__() {
@@ -1069,6 +1231,7 @@ impl<T, Source: Iterator<T>> Iterator<(i64, T)> for EnumerateIterator<T, Source>
         };
     }
 }
+/// Lazy state for `Iterator.zip()`.
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 pub struct ZipIterator<T, Left: Iterator<T>, U, Right: Iterator<U>> {
     pub left: Left,
@@ -1155,6 +1318,7 @@ impl<
     }
 }
 impl<T, Left: Iterator<T>, U, Right: Iterator<U>> ZipIterator<T, Left, U, Right> {
+    /// Pull one item from each side and return the pair.
     pub fn __next__(&mut self) -> Option<(T, U)> {
         "\n        Pull one item from each side and return the pair.\n        ";
         match self.left.__next__() {
@@ -1239,6 +1403,7 @@ for ZipIterator<T, Left, U, Right> {
         };
     }
 }
+/// Lazy state for `Iterator.take_while()`.
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 pub struct TakeWhileIterator<T: Clone, Source: Iterator<T>> {
     pub source: Source,
@@ -1303,6 +1468,7 @@ for TakeWhileIterator<T, Source> {
     }
 }
 impl<T: Clone, Source: Iterator<T>> TakeWhileIterator<T, Source> {
+    /// Yield source items until the predicate rejects one.
     pub fn __next__(&mut self) -> Option<T> {
         "\n        Yield source items until the predicate rejects one.\n        ";
         if self.done {
@@ -1381,6 +1547,7 @@ impl<T: Clone, Source: Iterator<T>> Iterator<T> for TakeWhileIterator<T, Source>
         };
     }
 }
+/// Lazy state for `Iterator.skip_while()`.
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 pub struct SkipWhileIterator<T: Clone, Source: Iterator<T>> {
     pub source: Source,
@@ -1445,6 +1612,7 @@ for SkipWhileIterator<T, Source> {
     }
 }
 impl<T: Clone, Source: Iterator<T> + Clone> SkipWhileIterator<T, Source> {
+    /// Discard source items until the predicate rejects one, then yield normally.
     pub fn __next__(&mut self) -> Option<T> {
         "\n        Discard source items until the predicate rejects one, then yield normally.\n        ";
         while self.skipping {
@@ -1520,6 +1688,10 @@ for SkipWhileIterator<T, Source> {
         return self.source.__next__();
     }
 }
+/// Lazy state for `Iterator.batch()`.
+///
+/// Each yielded item is a list with at most `size` elements. The final short
+/// list is yielded when it is non-empty.
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 pub struct BatchIterator<T, Source: Iterator<T>> {
     pub source: Source,
@@ -1584,6 +1756,7 @@ for BatchIterator<T, Source> {
     }
 }
 impl<T: Clone, Source: Iterator<T> + Clone> BatchIterator<T, Source> {
+    /// Build and return the next non-empty batch.
     pub fn __next__(&mut self) -> Option<Vec<T>> {
         "\n        Build and return the next non-empty batch.\n        ";
         if self.size <= 0 {

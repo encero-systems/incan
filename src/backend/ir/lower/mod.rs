@@ -47,6 +47,7 @@ use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::symbols::{CallableParam, NewtypePrimitiveConstraint};
 use crate::frontend::typechecker::TypeCheckInfo;
 use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
+use decl::callable_docstring;
 use incan_core::lang::conventions;
 use incan_core::lang::stdlib;
 use incan_core::lang::trait_capabilities;
@@ -2034,6 +2035,7 @@ impl AstLowering {
 
         Ok(super::decl::IrFunction {
             name: wrapper_name.to_string(),
+            docstring: None,
             params,
             return_type,
             body: vec![
@@ -2128,6 +2130,7 @@ impl AstLowering {
 
         super::decl::IrFunction {
             name: wrapper_name.to_string(),
+            docstring: callable_docstring(&f.body),
             params,
             return_type,
             body: vec![IrStmt::new(IrStmtKind::Return(Some(call)))],

@@ -7,6 +7,26 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+/// Decorator to register a function as an HTTP route handler.
+///
+/// Args:
+///     path: URL path pattern (e.g., "/users/{id}").
+///           Path parameters use {name} syntax.
+///     methods: List of HTTP methods this route handles (default: [GET]).
+///
+/// Path parameters are extracted and passed to the handler function.
+/// The parameter name in the path must match the function argument name.
+///
+/// At Rust compile time this emits ``#[incan_web_macros::route(...)]``, which
+/// registers the handler with the Axum router via the ``inventory`` crate.
+///
+/// Example:
+///     from std.web.routing import route, GET, DELETE
+///     from std.web import Response, Json
+///
+///     @route("/api/items/{id}", methods=[GET, DELETE])
+///     async def item_handler(id: int) -> Response:
+///         return Response.ok()
 pub fn route(path: String, methods: Vec<String>) {
     incan_stdlib::errors::__private::raise_runtime_misuse(
         "decorator marker 'incan_web_macros::route' cannot be called at runtime",

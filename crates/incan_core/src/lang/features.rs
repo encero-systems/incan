@@ -54,6 +54,7 @@ pub enum FeatureId {
     AsyncRace,
     ProjectLifecycle,
     StableDiagnostics,
+    BuildReportsAndRustInspection,
     CheckedApiMetadata,
     FormatterContract,
 }
@@ -962,6 +963,26 @@ pub const FEATURES: &[FeatureDescriptor] = &[
         summary: "Type-check diagnostics can be emitted as versioned JSON with stable codes, source spans, and catalog-backed explanations.",
         canonical_forms: &["incan check src/main.incn --format json", "incan explain INCAN-T0001"],
         prefer_over: "Scraping terminal diagnostics or building tool-specific error-code maps.",
+        references: links![
+            ("CLI reference", "../../tooling/reference/cli_reference.md"),
+            ("Release 0.4", "../../release_notes/0_4.md"),
+        ],
+    },
+    FeatureDescriptor {
+        id: FeatureId::BuildReportsAndRustInspection,
+        name: "Build reports and generated Rust inspection",
+        category: FeatureCategory::Tooling,
+        since: Since(0, 4),
+        introduced_in_rfc: RFC::_015,
+        stability: Stability::Stable,
+        activation: "Use `incan build --report json` or `incan inspect rust`.",
+        summary: "Builds can emit versioned machine-readable reports, and generated Rust can be inspected intentionally as current backend output.",
+        canonical_forms: &[
+            "incan build src/main.incn --report json",
+            "incan build --lib --report json --report-output build.json",
+            "incan inspect rust src/main.incn --format json",
+        ],
+        prefer_over: "Scraping terminal progress output or treating `--emit-rust` debug output as a stable artifact contract.",
         references: links![
             ("CLI reference", "../../tooling/reference/cli_reference.md"),
             ("Release 0.4", "../../release_notes/0_4.md"),

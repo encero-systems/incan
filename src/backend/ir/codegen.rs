@@ -1866,6 +1866,7 @@ def main() -> None:
         let rng_ty = IrType::Struct(String::from("rand::rngs::ThreadRng"));
         program.declarations.push(IrDecl::new(IrDeclKind::Function(IrFunction {
             name: String::from("main"),
+            docstring: None,
             params: Vec::<FunctionParam>::new(),
             return_type: IrType::Unit,
             body: vec![
@@ -1986,6 +1987,7 @@ def main() -> None:
         }));
         program.declarations.push(IrDecl::new(IrDeclKind::Struct(IrStruct {
             name: String::from("Widget"),
+            docstring: None,
             fields: Vec::new(),
             derives: Vec::new(),
             visibility: Visibility::Private,
@@ -1996,6 +1998,7 @@ def main() -> None:
         let widget_ty = IrType::Struct(String::from("Widget"));
         program.declarations.push(IrDecl::new(IrDeclKind::Function(IrFunction {
             name: String::from("main"),
+            docstring: None,
             params: Vec::<FunctionParam>::new(),
             return_type: IrType::Unit,
             body: vec![
@@ -2088,6 +2091,7 @@ def main() -> None:
         let rng_ty = IrType::Struct(String::from("rand::rngs::ThreadRng"));
         program.declarations.push(IrDecl::new(IrDeclKind::Function(IrFunction {
             name: String::from("main"),
+            docstring: None,
             params: Vec::<FunctionParam>::new(),
             return_type: IrType::Unit,
             body: vec![
@@ -2205,6 +2209,7 @@ def main() -> None:
         }));
         program.declarations.push(IrDecl::new(IrDeclKind::Function(IrFunction {
             name: String::from("main"),
+            docstring: None,
             params: Vec::<FunctionParam>::new(),
             return_type: IrType::Unit,
             body: vec![IrStmt::new(IrStmtKind::Expr(TypedExpr::new(

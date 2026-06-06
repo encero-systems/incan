@@ -253,6 +253,236 @@ fn explain_reports_known_and_unknown_diagnostic_codes() -> Result<(), Box<dyn st
 }
 
 #[test]
+fn build_report_json_describes_executable_build() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let source_path = tmp.path().join("main.incn");
+    fs::write(
+        &source_path,
+        r#"def main() -> None:
+    println("report ok")
+"#,
+    )?;
+
+    let output = run_incan(
+        tmp.path(),
+        &[
+            "build",
+            source_path.to_str().ok_or("source path was not valid UTF-8")?,
+            "--offline",
+            "--report",
+            "json",
+        ],
+    )?;
+    assert_success(&output, "incan build --report json executable");
+    let report = parse_json_stdout(&output)?;
+    assert_eq!(report["schema_version"], serde_json::json!(1));
+    assert_eq!(report["status"], serde_json::json!("success"));
+    assert_eq!(report["mode"], serde_json::json!("executable"));
+    assert_eq!(report["profile"], serde_json::json!("release"));
+    assert!(
+        report["generated"]["project_path"]
+            .as_str()
+            .is_some_and(|path| path.contains("target/incan"))
+    );
+    assert!(
+        report["generated"]["manifest_path"]
+            .as_str()
+            .is_some_and(|path| path.ends_with("Cargo.toml"))
+    );
+    assert!(report["source_files"].as_array().is_some_and(|files| {
+        files.iter().any(|file| {
+            file["path"].as_str().is_some_and(|path| path.ends_with("main.incn"))
+                && file["module_path"]
+                    .as_array()
+                    .is_some_and(|segments| segments.as_slice() == [serde_json::json!("main")])
+        })
+    }));
+    assert_eq!(report["cargo"]["offline"], serde_json::json!(true));
+    assert!(report["artifacts"].as_array().is_some_and(|artifacts| {
+        artifacts.iter().any(|artifact| {
+            artifact["kind"] == serde_json::json!("binary") && artifact["exists"] == serde_json::json!(true)
+        })
+    }));
+    assert!(report["timings_ms"]["total"].as_u64().is_some());
+    assert!(report["notes"].as_array().is_some_and(|notes| {
+        notes
+            .iter()
+            .any(|note| note.as_str().is_some_and(|text| text.contains("not a stable Rust ABI")))
+    }));
+
+    Ok(())
+}
+
+#[test]
+fn build_report_output_file_describes_library_build() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let src_dir = tmp.path().join("src");
+    fs::create_dir_all(&src_dir)?;
+    fs::write(
+        tmp.path().join("incan.toml"),
+        r#"[project]
+name = "report_lib"
+version = "0.1.0"
+"#,
+    )?;
+    fs::write(
+        src_dir.join("lib.incn"),
+        r#"pub def answer() -> int:
+    return 42
+"#,
+    )?;
+    let report_path = tmp.path().join("target").join("build-report.json");
+    let output = run_incan(
+        tmp.path(),
+        &[
+            "build",
+            "--lib",
+            "--offline",
+            "--report",
+            "json",
+            "--report-output",
+            report_path.to_str().ok_or("report path was not valid UTF-8")?,
+        ],
+    )?;
+    assert_success(&output, "incan build --lib --report-output");
+    assert!(
+        output.stdout.is_empty(),
+        "report-output should keep machine JSON out of stdout, got:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let report: serde_json::Value = serde_json::from_str(&fs::read_to_string(&report_path)?)?;
+    assert_eq!(report["mode"], serde_json::json!("library"));
+    assert_eq!(report["project"]["name"], serde_json::json!("report_lib"));
+    assert_eq!(
+        report["entrypoint"].as_str().map(|path| path.ends_with("src/lib.incn")),
+        Some(true)
+    );
+    assert!(report["source_files"].as_array().is_some_and(|files| {
+        files
+            .iter()
+            .any(|file| file["path"].as_str().is_some_and(|path| path.ends_with("src/lib.incn")))
+    }));
+    assert!(report["artifacts"].as_array().is_some_and(|artifacts| {
+        artifacts.iter().any(|artifact| {
+            artifact["kind"] == serde_json::json!("incan_library_manifest")
+                && artifact["exists"] == serde_json::json!(true)
+        })
+    }));
+    assert!(report["artifacts"].as_array().is_some_and(|artifacts| {
+        artifacts.iter().any(|artifact| {
+            artifact["kind"] == serde_json::json!("generated_cargo_manifest")
+                && artifact["exists"] == serde_json::json!(true)
+        })
+    }));
+
+    Ok(())
+}
+
+#[test]
+fn inspect_rust_reports_current_generated_rust_files() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let source_path = tmp.path().join("main.incn");
+    fs::write(
+        &source_path,
+        r#"def main() -> None:
+    println("inspect ok")
+"#,
+    )?;
+    let executable = run_incan(
+        tmp.path(),
+        &[
+            "inspect",
+            "rust",
+            source_path.to_str().ok_or("source path was not valid UTF-8")?,
+            "--format",
+            "json",
+        ],
+    )?;
+    assert_success(&executable, "incan inspect rust executable");
+    let executable_report = parse_json_stdout(&executable)?;
+    assert_eq!(executable_report["mode"], serde_json::json!("executable"));
+    assert!(executable_report["source_files"].as_array().is_some_and(|files| {
+        files
+            .iter()
+            .any(|file| file["path"].as_str().is_some_and(|path| path.ends_with("main.incn")))
+    }));
+    assert!(
+        executable_report["rust_files"]
+            .as_array()
+            .is_some_and(|files| { files.iter().any(|file| file["crate_root"] == serde_json::json!(true)) })
+    );
+
+    let project = tempfile::tempdir()?;
+    let src_dir = project.path().join("src");
+    fs::create_dir_all(&src_dir)?;
+    fs::write(
+        project.path().join("incan.toml"),
+        r#"[project]
+name = "inspect_lib"
+version = "0.1.0"
+"#,
+    )?;
+    fs::write(
+        src_dir.join("lib.incn"),
+        r#"pub model Widget:
+    """Widget docs survive into generated Rust."""
+    value: int
+
+pub def answer() -> int:
+    """Answer docs survive into generated Rust."""
+    return 42
+"#,
+    )?;
+    let library = run_incan(
+        project.path(),
+        &[
+            "inspect",
+            "rust",
+            project.path().to_str().ok_or("project path was not valid UTF-8")?,
+            "--lib",
+            "--format",
+            "json",
+        ],
+    )?;
+    assert_success(&library, "incan inspect rust --lib");
+    let library_report = parse_json_stdout(&library)?;
+    assert_eq!(library_report["mode"], serde_json::json!("library"));
+    assert!(library_report["source_files"].as_array().is_some_and(|files| {
+        files
+            .iter()
+            .any(|file| file["path"].as_str().is_some_and(|path| path.ends_with("src/lib.incn")))
+    }));
+    assert!(
+        library_report["generated"]["project_path"]
+            .as_str()
+            .is_some_and(|path| path.ends_with("target/lib"))
+    );
+    assert!(
+        library_report["rust_files"]
+            .as_array()
+            .is_some_and(|files| { files.iter().any(|file| file["crate_root"] == serde_json::json!(true)) })
+    );
+    let crate_root_path = library_report["rust_files"]
+        .as_array()
+        .and_then(|files| files.iter().find(|file| file["crate_root"] == serde_json::json!(true)))
+        .and_then(|file| file["path"].as_str())
+        .ok_or("library inspection report did not include a crate root file")?;
+    let crate_root = fs::read_to_string(crate_root_path)?;
+    assert!(
+        crate_root.contains(r#"#[doc = "Widget docs survive into generated Rust."]"#)
+            || crate_root.contains("/// Widget docs survive into generated Rust."),
+        "expected generated Rust to include public model docs, got:\n{crate_root}"
+    );
+    assert!(
+        crate_root.contains(r#"#[doc = "Answer docs survive into generated Rust."]"#)
+            || crate_root.contains("/// Answer docs survive into generated Rust."),
+        "expected generated Rust to include public function docs, got:\n{crate_root}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn requires_incan_allows_compatible_project_commands() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let src_dir = tmp.path().join("src");

@@ -26,7 +26,7 @@ use quote::quote;
 use crate::frontend::symbols::is_overload_emitted_name;
 use incan_core::lang::stdlib;
 
-use super::super::decl::{IrDecl, IrDeclKind, IrImportOrigin, IrImportQualifier};
+use super::super::decl::{IrDecl, IrDeclKind, IrImportOrigin, IrImportQualifier, Visibility};
 use super::super::expr::{IrDictEntry, IrExprKind, IrListEntry};
 use super::super::ownership::{ValueUseSite, plan_value_use};
 use super::super::types::IrType;
@@ -47,6 +47,27 @@ pub(in crate::backend::ir::emit) fn join_path_tokens(segments: &[TokenStream]) -
 }
 
 impl<'a> IrEmitter<'a> {
+    /// Emit source docstrings as Rust doc attributes on generated public/backend items.
+    fn emit_rustdoc_attrs(&self, docstring: Option<&str>) -> Vec<TokenStream> {
+        normalized_rustdoc_lines(docstring.unwrap_or_default())
+            .into_iter()
+            .map(|line| {
+                let doc_line = if line.is_empty() { line } else { format!(" {line}") };
+                let literal = Literal::string(&doc_line);
+                quote! { #[doc = #literal] }
+            })
+            .collect()
+    }
+
+    /// Emit source docstrings only for public generated Rust items.
+    fn emit_public_rustdoc_attrs(&self, visibility: &Visibility, docstring: Option<&str>) -> Vec<TokenStream> {
+        if matches!(visibility, Visibility::Public) {
+            self.emit_rustdoc_attrs(docstring)
+        } else {
+            Vec::new()
+        }
+    }
+
     /// Emit a declaration as Rust tokens.
     pub(super) fn emit_decl(&self, decl: &IrDecl) -> Result<TokenStream, EmitError> {
         match &decl.kind {
@@ -584,9 +605,75 @@ impl<'a> IrEmitter<'a> {
     }
 }
 
+/// Normalize docstring body lines for Rust doc attributes without wrapping or editing prose.
+fn normalized_rustdoc_lines(docstring: &str) -> Vec<String> {
+    let lines: Vec<&str> = docstring.lines().collect();
+    let Some(start) = lines.iter().position(|line| !line.trim().is_empty()) else {
+        return Vec::new();
+    };
+    let end = lines
+        .iter()
+        .rposition(|line| !line.trim().is_empty())
+        .map(|idx| idx + 1)
+        .unwrap_or(start);
+    let body = &lines[start..end];
+    let dedent_start = if body.len() > 1 && leading_indent(body[0]) == 0 {
+        1
+    } else {
+        0
+    };
+    let common_indent = body[dedent_start..]
+        .iter()
+        .filter_map(|line| {
+            if line.trim().is_empty() {
+                None
+            } else {
+                Some(leading_indent(line))
+            }
+        })
+        .min()
+        .unwrap_or(0);
+
+    let mut normalized = Vec::with_capacity(body.len());
+    let mut in_fenced_block = false;
+    for (idx, line) in body.iter().enumerate() {
+        let line = if idx < dedent_start {
+            line.trim_start().to_string()
+        } else if line.len() >= common_indent {
+            line[common_indent..].to_string()
+        } else {
+            line.trim_start().to_string()
+        };
+        normalized.push(rustdoc_safe_doc_line(&line, &mut in_fenced_block));
+    }
+    normalized
+}
+
+/// Count leading whitespace bytes for docstring indentation normalization.
+fn leading_indent(line: &str) -> usize {
+    line.len() - line.trim_start().len()
+}
+
+/// Keep Incan-authored examples readable in generated Rustdoc without letting Rustdoc compile them as Rust doctests.
+fn rustdoc_safe_doc_line(line: &str, in_fenced_block: &mut bool) -> String {
+    let trimmed = line.trim_start();
+    if !trimmed.starts_with("```") {
+        return line.to_string();
+    }
+
+    if *in_fenced_block {
+        *in_fenced_block = false;
+        return line.to_string();
+    }
+
+    *in_fenced_block = true;
+    let leading_len = line.len() - trimmed.len();
+    format!("{}{}", &line[..leading_len], "```ignore")
+}
+
 #[cfg(test)]
 mod tests {
-    use super::ZEN_TEXT;
+    use super::{ZEN_TEXT, normalized_rustdoc_lines};
 
     #[test]
     fn zen_text_contains_one_obvious_way_once() {
@@ -595,6 +682,68 @@ mod tests {
             count, 1,
             "Zen text should contain 'One obvious way' once, found {}",
             count
+        );
+    }
+
+    #[test]
+    fn rustdoc_lines_dedent_body_after_unindented_summary() {
+        let lines = normalized_rustdoc_lines(
+            r#"Explicitly fail a test with a message.
+
+    Fail makes the program raise a panic.
+
+    Example:
+
+    ```incan
+    fail("this test should not reach here")
+    ```"#,
+        );
+
+        assert_eq!(
+            lines,
+            vec![
+                "Explicitly fail a test with a message.",
+                "",
+                "Fail makes the program raise a panic.",
+                "",
+                "Example:",
+                "",
+                "```ignore",
+                "fail(\"this test should not reach here\")",
+                "```",
+            ]
+        );
+    }
+
+    #[test]
+    fn rustdoc_lines_render_source_fences_as_ignored_blocks() {
+        let lines = normalized_rustdoc_lines(
+            r#"
+                Summary.
+
+                ```incan
+                print("hello")
+                ```
+
+                ```
+                also source, not Rust
+                ```
+            "#,
+        );
+
+        assert_eq!(
+            lines,
+            vec![
+                "Summary.",
+                "",
+                "```ignore",
+                "print(\"hello\")",
+                "```",
+                "",
+                "```ignore",
+                "also source, not Rust",
+                "```",
+            ]
         );
     }
 }
