@@ -291,6 +291,7 @@ nav:
           - "std.testing internals": contributing/explanation/stdlib_testing_internals.md
       - Reference:
           - Generated Rust stdlib coverage: contributing/reference/generated_rust_stdlib_coverage.md
+          - Release surface gates: contributing/reference/release_surface_gates.md
       - RFCs: RFCs/index.md
   - Release notes:
       - Overview: release_notes/index.md

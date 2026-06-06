@@ -28,6 +28,7 @@ If you’re new, start with:
 
 - [Layering rules](explanation/layering.md) — dependency boundaries and guardrails
 - [Generated Rust stdlib coverage](reference/generated_rust_stdlib_coverage.md) — generated-Rust coverage inventory for stdlib modules
+- [Release surface gates](reference/release_surface_gates.md) — lightweight checks that keep release notes, docs, generated references, and regression coverage connected
 
 ## Design (RFCs and roadmap)
 

@@ -226,6 +226,11 @@ pre-commit:
 	@$(MAKE) smoke-test-fast
 	@echo "\033[32m✓ Pre-commit passed\033[0m"
 
+.PHONY: release-0-4-surface-gate  ## quality - Check 0.4 release docs, tests, and feature inventory stay wired together
+release-0-4-surface-gate:
+	@echo "\033[1mChecking 0.4 release surface...\033[0m"
+	@python3 scripts/check_release_surface.py
+
 .PHONY: ci-full  ## quality - Full CI check: fmt, lint, udeps, test, and release build
 ci-full: fmt lint udeps
 	@echo "\033[1mRunning tests...\033[0m"
