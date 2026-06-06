@@ -16,6 +16,8 @@ incan [OPTIONS] [FILE] [COMMAND]
 
 Commands:
 
+- `check` - Type-check a file or project entrypoint, with optional stable JSON diagnostics
+- `explain` - Explain a stable diagnostic code
 - `build` - Compile to Rust and build an executable
 - `run` - Compile and run a program
 - `fmt` - Format Incan source files
@@ -48,6 +50,8 @@ incan --check path/to/file.incn
 incan --emit-rust path/to/file.incn
 ```
 
+`incan --check path/to/file.incn --format json` remains supported for compatibility, but new tooling should prefer `incan check path/to/file.incn --format json`.
+
 Strict mode:
 
 ```bash
@@ -55,6 +59,59 @@ incan --strict --emit-rust path/to/file.incn
 ```
 
 ## Commands
+
+### `incan check`
+
+Usage:
+
+```text
+incan check [OPTIONS] <PATH>
+```
+
+Type-checks a file or project entrypoint without building or running it. This is the canonical type-check command for humans, CI, editor integrations, and agents. Passing a file without a subcommand still type-checks it for compatibility, and the legacy debug spelling `incan --check <FILE>` remains available.
+
+Options:
+
+- `--format text|json`: Output human diagnostics or a stable machine-readable JSON report (default: `text`).
+
+JSON output uses `schema_version: 1` and prints a deterministic report with `ok` and `diagnostics`. Each diagnostic includes a stable `code`, `severity`, compiler `phase`, primary source span, message, notes, hints, related spans, and an `incan explain <CODE>` hook. Human output remains the default and continues to use source-highlighted compiler diagnostics.
+
+Examples:
+
+```bash
+incan check src/main.incn
+incan check src/main.incn --format json
+incan --check src/main.incn --format json
+```
+
+### `incan explain`
+
+Usage:
+
+```text
+incan explain [OPTIONS] <CODE>
+```
+
+Explains a stable diagnostic code from `incan check --format json` or LSP diagnostics. The catalog is compiler-owned and versioned with the diagnostic schema, so tools can link users to an explanation without scraping terminal prose.
+
+Options:
+
+- `--format text|json`: Output a human explanation or the catalog entry as JSON (default: `text`).
+
+Seeded catalog codes:
+
+- `INCAN-P0001`: Syntax error.
+- `INCAN-T0001`: Type checking error.
+- `INCAN-I0001`: Import or module resolution error.
+- `INCAN-C0001`: CLI or tooling error.
+- `INCAN-U0001`: Unknown diagnostic code.
+
+Examples:
+
+```bash
+incan explain INCAN-T0001
+incan explain INCAN-T0001 --format json
+```
 
 ### `incan build`
 
@@ -550,10 +607,10 @@ Specific behavior:
     - returns 1 if no test files are discovered under the provided path
     - returns 1 if any tests fail or an xfail unexpectedly passes (XPASS)
 - **`incan fmt --check`**: returns 1 if any files would be reformatted.
-- **`incan build` / `incan --check` / debug flags**: return 1 on compile/build errors.
+- **`incan build` / `incan check` / `incan --check` / debug flags**: return 1 on compile/build errors.
 
 ## Drift prevention (maintainers)
 
 Before a release, verify the docs stay aligned with the real CLI surface:
 
-- Compare `incan --help` and `incan {build,run,fmt,test,init,lock,tools} --help` against this page.
+- Compare `incan --help` and `incan {check,explain,build,run,fmt,test,init,lock,tools} --help` against this page.

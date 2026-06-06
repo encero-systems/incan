@@ -53,6 +53,7 @@ pub enum FeatureId {
     AsyncAwait,
     AsyncRace,
     ProjectLifecycle,
+    StableDiagnostics,
     CheckedApiMetadata,
     FormatterContract,
 }
@@ -948,6 +949,22 @@ pub const FEATURES: &[FeatureDescriptor] = &[
             ("Project lifecycle", "project_lifecycle.md"),
             ("Project lifecycle how-to", "../how-to/project_lifecycle.md"),
             ("Release 0.3", "../../release_notes/0_3.md"),
+        ],
+    },
+    FeatureDescriptor {
+        id: FeatureId::StableDiagnostics,
+        name: "Stable diagnostics commands",
+        category: FeatureCategory::Tooling,
+        since: Since(0, 4),
+        introduced_in_rfc: RFC::_015,
+        stability: Stability::Stable,
+        activation: "Use `incan check` or `incan explain`.",
+        summary: "Type-check diagnostics can be emitted as versioned JSON with stable codes, source spans, and catalog-backed explanations.",
+        canonical_forms: &["incan check src/main.incn --format json", "incan explain INCAN-T0001"],
+        prefer_over: "Scraping terminal diagnostics or building tool-specific error-code maps.",
+        references: links![
+            ("CLI reference", "../../tooling/reference/cli_reference.md"),
+            ("Release 0.4", "../../release_notes/0_4.md"),
         ],
     },
     FeatureDescriptor {
