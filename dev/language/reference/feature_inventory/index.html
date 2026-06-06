@@ -2343,6 +2343,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#build-reports-and-generated-rust-inspection" class="md-nav__link">
+    <span class="md-ellipsis">
+      Build reports and generated Rust inspection
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#checked-api-metadata" class="md-nav__link">
     <span class="md-ellipsis">
       Checked API metadata
@@ -6593,6 +6602,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#build-reports-and-generated-rust-inspection" class="md-nav__link">
+    <span class="md-ellipsis">
+      Build reports and generated Rust inspection
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#checked-api-metadata" class="md-nav__link">
     <span class="md-ellipsis">
       Checked API metadata
@@ -7109,6 +7127,16 @@
 <td><code>incan check src/main.incn --format json</code><br><code>incan explain INCAN-T0001</code></td>
 <td>Type-check diagnostics can be emitted as versioned JSON with stable codes, source spans, and catalog-backed explanations.</td>
 <td>Scraping terminal diagnostics or building tool-specific error-code maps.</td>
+<td><a href="../../../tooling/reference/cli_reference/">CLI reference</a>, <a href="../../../release_notes/0_4/">Release 0.4</a></td>
+</tr>
+<tr>
+<td>Build reports and generated Rust inspection</td>
+<td>Tooling</td>
+<td style="text-align: right;">0.4</td>
+<td>Use <code>incan build --report json</code> or <code>incan inspect rust</code>.</td>
+<td><code>incan build src/main.incn --report json</code><br><code>incan build --lib --report json --report-output build.json</code><br><code>incan inspect rust src/main.incn --format json</code></td>
+<td>Builds can emit versioned machine-readable reports, generated Rust can be inspected intentionally as current backend output, and generated public Rust items preserve checked source docstrings as Rust doc comments when available.</td>
+<td>Scraping terminal progress output or treating <code>--emit-rust</code> debug output as a stable artifact contract.</td>
 <td><a href="../../../tooling/reference/cli_reference/">CLI reference</a>, <a href="../../../release_notes/0_4/">Release 0.4</a></td>
 </tr>
 <tr>
@@ -7928,6 +7956,24 @@
 <ul>
 <li><code>incan check src/main.incn --format json</code></li>
 <li><code>incan explain INCAN-T0001</code></li>
+</ul>
+<h3 id="build-reports-and-generated-rust-inspection">Build reports and generated Rust inspection<a class="headerlink" href="#build-reports-and-generated-rust-inspection" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Id:</strong> <code>BuildReportsAndRustInspection</code></li>
+<li><strong>Category:</strong> <code>Tooling</code></li>
+<li><strong>Since:</strong> <code>0.4</code></li>
+<li><strong>RFC:</strong> <code>RFC 015</code></li>
+<li><strong>Stability:</strong> <code>Stable</code></li>
+<li><strong>Activation:</strong> Use <code>incan build --report json</code> or <code>incan inspect rust</code>.</li>
+<li><strong>Use instead of:</strong> Scraping terminal progress output or treating <code>--emit-rust</code> debug output as a stable artifact contract.</li>
+<li><strong>References:</strong> <a href="../../../tooling/reference/cli_reference/">CLI reference</a>, <a href="../../../release_notes/0_4/">Release 0.4</a></li>
+</ul>
+<p>Builds can emit versioned machine-readable reports, generated Rust can be inspected intentionally as current backend output, and generated public Rust items preserve checked source docstrings as Rust doc comments when available.</p>
+<p>Canonical forms:</p>
+<ul>
+<li><code>incan build src/main.incn --report json</code></li>
+<li><code>incan build --lib --report json --report-output build.json</code></li>
+<li><code>incan inspect rust src/main.incn --format json</code></li>
 </ul>
 <h3 id="checked-api-metadata">Checked API metadata<a class="headerlink" href="#checked-api-metadata" title="Permanent link">&para;</a></h3>
 <ul>

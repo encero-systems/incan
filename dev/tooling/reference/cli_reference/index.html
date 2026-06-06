@@ -4493,6 +4493,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#incan-inspect-rust" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan inspect rust
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#incan-run" class="md-nav__link">
     <span class="md-ellipsis">
       incan run
@@ -5972,6 +5981,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#incan-inspect-rust" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan inspect rust
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#incan-run" class="md-nav__link">
     <span class="md-ellipsis">
       incan run
@@ -6157,6 +6175,7 @@
 <li><code>check</code> - Type-check a file or project entrypoint, with optional stable JSON diagnostics</li>
 <li><code>explain</code> - Explain a stable diagnostic code</li>
 <li><code>build</code> - Compile to Rust and build an executable</li>
+<li><code>inspect</code> - Inspect compiler artifacts such as generated Rust output</li>
 <li><code>run</code> - Compile and run a program</li>
 <li><code>fmt</code> - Format Incan source files</li>
 <li><code>test</code> - Run tests (pytest-style)</li>
@@ -6248,9 +6267,12 @@ incan build --lib [OPTIONS] [OUTPUT_DIR]
 <li><code>--cargo-features &lt;FEATURES&gt;</code>: Enable specific Cargo features (comma-separated).</li>
 <li><code>--cargo-no-default-features</code>: Disable default Cargo features.</li>
 <li><code>--cargo-all-features</code>: Enable all Cargo features.</li>
+<li><code>--report json</code>: Emit a versioned machine-readable build report.</li>
+<li><code>--report-output &lt;PATH&gt;</code>: Write the build report to a file instead of stdout.</li>
 </ul>
 <p>Without <code>--locked</code> or <code>--frozen</code>, <code>incan build</code> creates <code>incan.lock</code> when it is missing. If an existing lockfile is stale, the command warns and reuses the embedded <code>Cargo.lock</code> payload without rewriting <code>incan.lock</code>; run <code>incan lock</code> to refresh the committed lockfile intentionally.</p>
 <p>For <code>incan build --lib</code>, dependency preheat uses the generated lock workspace and the same release-profile Cargo target directory as the real generated library build. If the dependency graph is unchanged, the preheat stamp is reused; if it has to run, the command prints the target/profile domain before invoking Cargo and streams Cargo's progress while the preheat compiles.</p>
+<p>Build reports use <code>schema_version: 1</code> and describe the successful build rather than restating terminal prose. They include the compiler version, build mode, profile, project identity, entrypoint or library root, source-file breadcrumbs, generated Rust project paths, emitted artifacts, Rust and Incan dependency summaries, Cargo policy flags, interop summary, coarse timings, and notes. When <code>--report json</code> writes to stdout, human progress moves to stderr so tooling can parse stdout directly; when <code>--report-output &lt;PATH&gt;</code> is supplied, the report is written to that file and ordinary progress remains human-facing.</p>
 <p>Environment defaults:</p>
 <ul>
 <li><code>INCAN_OFFLINE=1</code>, <code>INCAN_LOCKED=1</code>, and <code>INCAN_FROZEN=1</code> behave like their matching flags.</li>
@@ -6267,6 +6289,24 @@ incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span cla
 incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span class="w"> </span>--cargo-features<span class="w"> </span>fancy_logging
 incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span class="w"> </span>--<span class="w"> </span>--timings
 incan<span class="w"> </span>build<span class="w"> </span>--lib
+incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span class="w"> </span>--report<span class="w"> </span>json
+incan<span class="w"> </span>build<span class="w"> </span>--lib<span class="w"> </span>--report<span class="w"> </span>json<span class="w"> </span>--report-output<span class="w"> </span>target/build-report.json
+</code></pre></div>
+<h3 id="incan-inspect-rust"><code>incan inspect rust</code><a class="headerlink" href="#incan-inspect-rust" title="Permanent link">&para;</a></h3>
+<p>Usage:</p>
+<div class="language-text highlight"><pre><span></span><code>incan inspect rust [OPTIONS] &lt;PATH&gt;
+</code></pre></div>
+<p>Generates the same Rust project that the current backend would build, then reports the emitted Rust files without invoking Cargo. Use this when you need to inspect backend output, debug generated paths, or hand artifact locations to tooling without treating <code>--emit-rust</code> as a structured interface.</p>
+<p>Options:</p>
+<ul>
+<li><code>--lib</code>: Inspect the library build surface rooted at <code>src/lib.incn</code>; <code>PATH</code> may be the project root or a source path inside the project.</li>
+<li><code>--format text|json</code>: Output a human file list or a versioned JSON report (default: <code>text</code>).</li>
+</ul>
+<p>JSON output uses <code>schema_version: 1</code> and includes the compiler version, mode, source-file breadcrumbs, generated project paths, emitted Rust file paths, crate-root markers, file sizes, and notes. Source declarations with checked docstrings preserve those docs as generated Rust doc comments for public emitted items when the compiler has checked API metadata available. Generated Rust is inspectable current backend output, not a stable Rust ABI contract; tools may use it for debugging and reporting, but public compatibility should be based on Incan source, manifests, checked API metadata, and documented CLI report schemas.</p>
+<p>Examples:</p>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>inspect<span class="w"> </span>rust<span class="w"> </span>src/main.incn
+incan<span class="w"> </span>inspect<span class="w"> </span>rust<span class="w"> </span>src/main.incn<span class="w"> </span>--format<span class="w"> </span>json
+incan<span class="w"> </span>inspect<span class="w"> </span>rust<span class="w"> </span>.<span class="w"> </span>--lib<span class="w"> </span>--format<span class="w"> </span>json
 </code></pre></div>
 <h3 id="incan-run"><code>incan run</code><a class="headerlink" href="#incan-run" title="Permanent link">&para;</a></h3>
 <p>Usage:</p>
