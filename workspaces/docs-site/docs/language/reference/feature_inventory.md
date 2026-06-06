@@ -64,6 +64,7 @@ Use it when deciding whether code should use an existing Incan surface before ad
 | Project lifecycle tooling | Tooling | 0.3 | Use `incan init`, `incan new`, `incan version`, or `incan env`. | `incan new greeter --yes`<br>`incan version patch`<br>`incan env test` | Project commands create scaffolds, manage versions, and run configured environments from `incan.toml`. | One-off project scaffolding scripts or manual version-file edits. | [Project lifecycle](project_lifecycle.md), [Project lifecycle how-to](../how-to/project_lifecycle.md), [Release 0.3](../../release_notes/0_3.md) |
 | Stable diagnostics commands | Tooling | 0.4 | Use `incan check` or `incan explain`. | `incan check src/main.incn --format json`<br>`incan explain INCAN-T0001` | Type-check diagnostics can be emitted as versioned JSON with stable codes, source spans, and catalog-backed explanations. | Scraping terminal diagnostics or building tool-specific error-code maps. | [CLI reference](../../tooling/reference/cli_reference.md), [Release 0.4](../../release_notes/0_4.md) |
 | Build reports and generated Rust inspection | Tooling | 0.4 | Use `incan build --report json` or `incan inspect rust`. | `incan build src/main.incn --report json`<br>`incan build --lib --report json --report-output build.json`<br>`incan inspect rust src/main.incn --format json` | Builds can emit versioned machine-readable reports, generated Rust can be inspected intentionally as current backend output, and generated public Rust items preserve checked source docstrings as Rust doc comments when available. | Scraping terminal progress output or treating `--emit-rust` debug output as a stable artifact contract. | [CLI reference](../../tooling/reference/cli_reference.md), [Release 0.4](../../release_notes/0_4.md) |
+| Compiler-backed codegraph inspection | Tooling | 0.4 | Use `incan inspect codegraph`. | `incan inspect codegraph src/main.incn --format jsonl`<br>`incan inspect codegraph src --format jsonl --allow-errors` | Source files, modules, declarations, imports, exports, body-level reference and call syntax, containment, spans, provenance, and diagnostics can be exported as deterministic JSONL records. | Repeated grep/read loops or tool-specific source scrapers when agents and tooling need basic Incan structure. | [Codegraph inspection](../../tooling/reference/codegraph_inspection.md), [CLI reference](../../tooling/reference/cli_reference.md), [Release 0.4](../../release_notes/0_4.md) |
 | Checked API metadata | Tooling | 0.3 | Use `incan tools metadata api` or LSP metadata commands. | `incan tools metadata api src/lib.incn`<br>`incan tools metadata model emit` | Typechecked public APIs can emit structured metadata for docs, manifests, hovers, and model bundle tooling. | Scraping source text or generated Rust when tooling needs API contracts. | [Release 0.3](../../release_notes/0_3.md), [Project lifecycle](project_lifecycle.md) |
 | Formatter spacing and wrapping contract | Tooling | 0.3 | Run `incan fmt`. | `incan fmt src/main.incn`<br>`incan fmt --check` | Formatter output has explicit vertical-spacing buckets, docstring normalization, comment attachment, and common wrapping rules. | Hand-maintained whitespace conventions that drift from the formatter. | [Code style](code_style.md), [Formatting how-to](../../tooling/how-to/formatting.md), [Release 0.3](../../release_notes/0_3.md) |
 
@@ -927,6 +928,24 @@ Canonical forms:
 - `incan build src/main.incn --report json`
 - `incan build --lib --report json --report-output build.json`
 - `incan inspect rust src/main.incn --format json`
+
+### Compiler-backed codegraph inspection
+
+- **Id:** `CodegraphInspection`
+- **Category:** `Tooling`
+- **Since:** `0.4`
+- **RFC:** `RFC 106`
+- **Stability:** `Stable`
+- **Activation:** Use `incan inspect codegraph`.
+- **Use instead of:** Repeated grep/read loops or tool-specific source scrapers when agents and tooling need basic Incan structure.
+- **References:** [Codegraph inspection](../../tooling/reference/codegraph_inspection.md), [CLI reference](../../tooling/reference/cli_reference.md), [Release 0.4](../../release_notes/0_4.md)
+
+Source files, modules, declarations, imports, exports, body-level reference and call syntax, containment, spans, provenance, and diagnostics can be exported as deterministic JSONL records.
+
+Canonical forms:
+
+- `incan inspect codegraph src/main.incn --format jsonl`
+- `incan inspect codegraph src --format jsonl --allow-errors`
 
 ### Checked API metadata
 
