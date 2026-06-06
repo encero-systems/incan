@@ -1,6 +1,6 @@
 # RFC 102: Incan Semantic Layer Inspection Surface
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-05-23
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -23,11 +23,13 @@
 - **Issue:** https://github.com/dannys-code-corner/incan/issues/666
 - **RFC PR:** —
 - **Written against:** v0.3
-- **Shipped in:** —
+- **Shipped in:** 0.4 baseline; full RFC scope remains future work
 
 ## Summary
 
 This RFC defines the Incan Semantic Layer Inspection Surface: a local, versioned, machine-readable project model that joins checked source facts, project lifecycle facts, actions, capabilities, policy outcomes, provenance, artifacts, schema descriptors, AI assets, evals, and agent guidance into one inspectable contract for CLI, LSP, CI, docs tooling, registries, and agents. The goal is not to replace the subsystem RFCs that own those facts; the goal is to make their outputs converge into one semantic layer so tools do not scrape source files, generated Rust, manifests, README conventions, or unrelated command output to understand an Incan project.
+
+The 0.4 release accepts this RFC as the semantic-inspection direction and ships the first baseline surfaces: `incan check --format json`, `incan build --report json`, `incan inspect rust --format json`, and `incan inspect codegraph --format jsonl`. Those commands are deliberately focused rather than a full semantic package. They establish versioned JSON contracts, shared project/source identity expectations, explicit diagnostics, generated artifact breadcrumbs, and degraded-state graph output that later phases can join into the broader model described here.
 
 ## Core model
 
@@ -361,7 +363,7 @@ Implementations should support focused queries so LSP and CI can request only th
 - **Registry / package integration**: should map local artifact identities and relationship edges to registry artifact graph metadata when publishing or inspecting packages.
 - **Agentic tooling**: may consume the semantic package for context selection and proposal generation, but must respect policy outcomes and approval boundaries.
 
-## Unresolved questions
+## Future design questions
 
 - Should the canonical command be `incan inspect`, `incan project inspect`, `incan graph inspect`, or another spelling?
 - Should graph explanation be a subcommand of inspection, such as `incan inspect explain`, or a separate `incan graph explain` command?
@@ -371,6 +373,3 @@ Implementations should support focused queries so LSP and CI can request only th
 - How should semantic package fragments be cached and invalidated without standardizing compiler-internal storage?
 - Should exported package artifacts embed a semantic package fragment, or should they embed only RFC 048 metadata plus artifact graph metadata until a later publishing RFC?
 - What compatibility policy should apply when an older tool consumes a newer semantic package with unknown object or edge kinds?
-
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
