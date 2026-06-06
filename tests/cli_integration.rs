@@ -88,6 +88,62 @@ fn parse_jsonl_stdout(output: &Output) -> Result<Vec<serde_json::Value>, Box<dyn
         .collect()
 }
 
+fn assert_codegraph_v04_record_contract(records: &[serde_json::Value]) {
+    assert!(!records.is_empty(), "codegraph export should include a header record");
+    assert_eq!(records[0]["record"], serde_json::json!("header"));
+    assert_eq!(records[0]["schema_version"], serde_json::json!(1));
+    assert_eq!(records[0]["languages"], serde_json::json!(["incan"]));
+    assert!(
+        records[0]["degraded"].is_boolean(),
+        "codegraph header should carry degraded state: {}",
+        records[0]
+    );
+
+    for record in records.iter().skip(1) {
+        assert_eq!(
+            record["language"],
+            serde_json::json!("incan"),
+            "v0.4 codegraph fact records should be explicitly Incan-language facts: {record}"
+        );
+        assert!(
+            record["provenance"].is_string(),
+            "codegraph fact records should carry provenance: {record}"
+        );
+        assert!(
+            record["degraded"].is_boolean(),
+            "codegraph fact records should carry degraded state: {record}"
+        );
+
+        if let Some(span) = record.get("span").filter(|span| span.is_object()) {
+            assert_source_span_shape(span, record);
+        }
+        if let Some(span) = record.get("primary_span").filter(|span| span.is_object()) {
+            assert_source_span_shape(span, record);
+        }
+    }
+
+    assert!(
+        records
+            .iter()
+            .skip(1)
+            .all(|record| record["language"] != serde_json::json!("rust")),
+        "v0.4 should not emit Rust codegraph facts before first-class Rust support lands"
+    );
+}
+
+fn assert_source_span_shape(span: &serde_json::Value, record: &serde_json::Value) {
+    assert!(
+        span["file"].is_string()
+            && span["start"].is_number()
+            && span["end"].is_number()
+            && span["start_line"].is_number()
+            && span["start_column"].is_number()
+            && span["end_line"].is_number()
+            && span["end_column"].is_number(),
+        "source-backed codegraph records should carry stable file and span identity: {record}"
+    );
+}
+
 #[test]
 fn check_json_reports_parser_diagnostics() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
@@ -547,6 +603,7 @@ pub def entrypoint() -> int:
     assert_eq!(first.stdout, second.stdout, "codegraph JSONL should be deterministic");
 
     let records = parse_jsonl_stdout(&first)?;
+    assert_codegraph_v04_record_contract(&records);
     assert_eq!(records[0]["record"], serde_json::json!("header"));
     assert_eq!(records[0]["package"]["name"], serde_json::json!("graph_demo"));
     assert!(records.iter().any(|record| {
@@ -641,6 +698,7 @@ fn inspect_codegraph_tolerant_directory_keeps_parseable_facts_and_diagnostics() 
     )?;
     assert_success(&tolerant, "tolerant incan inspect codegraph");
     let records = parse_jsonl_stdout(&tolerant)?;
+    assert_codegraph_v04_record_contract(&records);
     assert_eq!(records[0]["degraded"], serde_json::json!(true));
     assert!(records.iter().any(|record| {
         record["record"] == serde_json::json!("declaration")
@@ -706,6 +764,7 @@ fn inspect_codegraph_strict_directory_rejects_semantic_diagnostics() -> Result<(
         "tolerant incan inspect codegraph should keep syntax facts for directory typecheck diagnostics",
     );
     let records = parse_jsonl_stdout(&tolerant)?;
+    assert_codegraph_v04_record_contract(&records);
     assert_eq!(records[0]["degraded"], serde_json::json!(true));
     assert!(records.iter().any(|record| {
         record["record"] == serde_json::json!("declaration")

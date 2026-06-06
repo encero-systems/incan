@@ -14,8 +14,8 @@ use clap::ValueEnum;
 use incan_codegraph::{
     CODEGRAPH_SCHEMA_VERSION, CodegraphCallRecord, CodegraphContainmentRecord, CodegraphDeclarationRecord,
     CodegraphDiagnosticRecord, CodegraphExportRecord, CodegraphFileRecord, CodegraphHeaderRecord,
-    CodegraphImportRecord, CodegraphMode, CodegraphModuleRecord, CodegraphPackage, CodegraphProvenance,
-    CodegraphRecord, CodegraphReferenceRecord, CodegraphSourceSpan, to_jsonl,
+    CodegraphImportRecord, CodegraphLanguage, CodegraphMode, CodegraphModuleRecord, CodegraphPackage,
+    CodegraphProvenance, CodegraphRecord, CodegraphReferenceRecord, CodegraphSourceSpan, to_jsonl,
 };
 
 use crate::cli::prelude::ParsedModule;
@@ -394,6 +394,7 @@ impl CodegraphBuilder {
             let module_span = source_span(&module.file_path, &module.source, Span::new(0, module.source.len()));
             self.records.push(CodegraphRecord::Module(CodegraphModuleRecord {
                 id: module_id.clone(),
+                language: CodegraphLanguage::Incan,
                 file_id: file_id.to_string(),
                 module_path: module.path_segments.clone(),
                 name: module.name.clone(),
@@ -404,6 +405,7 @@ impl CodegraphBuilder {
             self.records
                 .push(CodegraphRecord::Containment(CodegraphContainmentRecord {
                     id: format!("contains:{file_id}:{module_id}"),
+                    language: CodegraphLanguage::Incan,
                     parent_id: file_id.to_string(),
                     child_id: module_id.clone(),
                     kind: "file_contains_module".to_string(),
@@ -461,6 +463,7 @@ impl CodegraphBuilder {
                     self.records
                         .push(CodegraphRecord::Declaration(CodegraphDeclarationRecord {
                             id: declaration_id.clone(),
+                            language: CodegraphLanguage::Incan,
                             module_id: module_id.to_string(),
                             kind: summary.kind,
                             name: summary.name.clone(),
@@ -1040,6 +1043,7 @@ impl CodegraphBuilder {
         let id = self.next_body_fact_id("reference", module, span, name);
         self.records.push(CodegraphRecord::Reference(CodegraphReferenceRecord {
             id: id.clone(),
+            language: CodegraphLanguage::Incan,
             module_id: module_id.to_string(),
             owner_id: owner_id.map(str::to_string),
             name: name.to_string(),
@@ -1079,6 +1083,7 @@ impl CodegraphBuilder {
         let id = self.next_body_fact_id("call", module, span, callee);
         self.records.push(CodegraphRecord::Call(CodegraphCallRecord {
             id: id.clone(),
+            language: CodegraphLanguage::Incan,
             module_id: module_id.to_string(),
             owner_id: owner_id.map(str::to_string),
             callee: callee.to_string(),
@@ -1124,6 +1129,7 @@ impl CodegraphBuilder {
         let id = format!("file:{path}");
         self.records.push(CodegraphRecord::File(CodegraphFileRecord {
             id: id.clone(),
+            language: CodegraphLanguage::Incan,
             path: path.clone(),
             size_bytes: source.len(),
             provenance: CodegraphProvenance::Source,
@@ -1166,6 +1172,7 @@ impl CodegraphBuilder {
             compiler_version: INCAN_VERSION.to_string(),
             mode: self.mode,
             root_path: self.root_path,
+            languages: vec![CodegraphLanguage::Incan],
             package: self.package,
             degraded,
         })];
@@ -1240,6 +1247,7 @@ fn import_record(
     let (kind, path, items) = import_shape(import);
     CodegraphImportRecord {
         id: import_id.to_string(),
+        language: CodegraphLanguage::Incan,
         module_id: module_id.to_string(),
         kind,
         path,
@@ -1264,6 +1272,7 @@ fn containment_record(
 ) -> CodegraphContainmentRecord {
     CodegraphContainmentRecord {
         id: format!("contains:{parent_id}:{child_id}"),
+        language: CodegraphLanguage::Incan,
         parent_id: parent_id.to_string(),
         child_id: child_id.to_string(),
         kind: kind.to_string(),
@@ -1285,6 +1294,7 @@ fn export_record(
 ) -> CodegraphExportRecord {
     CodegraphExportRecord {
         id: format!("export:{module_id}:{name}:{kind}"),
+        language: CodegraphLanguage::Incan,
         module_id: module_id.to_string(),
         name: name.to_string(),
         kind: kind.to_string(),
@@ -1302,6 +1312,7 @@ fn diagnostic_record(index: usize, diagnostic: &StableDiagnostic) -> CodegraphDi
             "diagnostic:{}:{}:{}",
             diagnostic.primary_span.file, diagnostic.primary_span.start.offset, index
         ),
+        language: CodegraphLanguage::Incan,
         code: diagnostic.code.to_string(),
         severity: diagnostic.severity.to_string(),
         phase: diagnostic.phase.as_str().to_string(),

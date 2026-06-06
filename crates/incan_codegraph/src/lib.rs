@@ -30,6 +30,16 @@ pub enum CodegraphMode {
     AllowErrors,
 }
 
+/// Source language represented by a graph fact.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CodegraphLanguage {
+    /// Incan source or compiler-owned Incan metadata.
+    Incan,
+    /// Rust source, manifest, generated artifact, or interop metadata.
+    Rust,
+}
+
 /// Provenance for one emitted graph fact.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -74,6 +84,8 @@ pub struct CodegraphHeaderRecord {
     pub mode: CodegraphMode,
     /// User-requested root path after CLI normalization.
     pub root_path: String,
+    /// Languages represented by graph facts in this export.
+    pub languages: Vec<CodegraphLanguage>,
     /// Project identity, when available.
     pub package: Option<CodegraphPackage>,
     /// Whether any emitted record is degraded or diagnostic-backed.
@@ -85,6 +97,8 @@ pub struct CodegraphHeaderRecord {
 pub struct CodegraphFileRecord {
     /// Stable id unique within the export.
     pub id: String,
+    /// Source language for this graph fact.
+    pub language: CodegraphLanguage,
     /// Source file path.
     pub path: String,
     /// File size in bytes.
@@ -100,6 +114,8 @@ pub struct CodegraphFileRecord {
 pub struct CodegraphModuleRecord {
     /// Stable id unique within the export.
     pub id: String,
+    /// Source language for this graph fact.
+    pub language: CodegraphLanguage,
     /// Parent file id.
     pub file_id: String,
     /// Module path segments.
@@ -119,6 +135,8 @@ pub struct CodegraphModuleRecord {
 pub struct CodegraphDeclarationRecord {
     /// Stable id unique within the export.
     pub id: String,
+    /// Source language for this graph fact.
+    pub language: CodegraphLanguage,
     /// Parent module id.
     pub module_id: String,
     /// Declaration kind such as `function`, `model`, or `type_alias`.
@@ -144,6 +162,8 @@ pub struct CodegraphDeclarationRecord {
 pub struct CodegraphImportRecord {
     /// Stable id unique within the export.
     pub id: String,
+    /// Source language for this graph fact.
+    pub language: CodegraphLanguage,
     /// Parent module id.
     pub module_id: String,
     /// Import kind such as `from`, `module`, `pub_from`, or `rust_from`.
@@ -169,6 +189,8 @@ pub struct CodegraphImportRecord {
 pub struct CodegraphExportRecord {
     /// Stable id unique within the export.
     pub id: String,
+    /// Source language for this graph fact.
+    pub language: CodegraphLanguage,
     /// Module that owns the export.
     pub module_id: String,
     /// Public symbol name.
@@ -190,6 +212,8 @@ pub struct CodegraphExportRecord {
 pub struct CodegraphReferenceRecord {
     /// Stable id unique within the export.
     pub id: String,
+    /// Source language for this graph fact.
+    pub language: CodegraphLanguage,
     /// Parent module id.
     pub module_id: String,
     /// Containing declaration id when the reference belongs to a declaration body.
@@ -213,6 +237,8 @@ pub struct CodegraphReferenceRecord {
 pub struct CodegraphCallRecord {
     /// Stable id unique within the export.
     pub id: String,
+    /// Source language for this graph fact.
+    pub language: CodegraphLanguage,
     /// Parent module id.
     pub module_id: String,
     /// Containing declaration id when the call belongs to a declaration body.
@@ -240,6 +266,8 @@ pub struct CodegraphCallRecord {
 pub struct CodegraphContainmentRecord {
     /// Stable id unique within the export.
     pub id: String,
+    /// Source language for this graph fact.
+    pub language: CodegraphLanguage,
     /// Parent record id.
     pub parent_id: String,
     /// Child record id.
@@ -259,6 +287,8 @@ pub struct CodegraphContainmentRecord {
 pub struct CodegraphDiagnosticRecord {
     /// Stable id unique within the export.
     pub id: String,
+    /// Source language for this graph fact.
+    pub language: CodegraphLanguage,
     /// Public diagnostic code.
     pub code: String,
     /// Severity such as `error`, `warning`, or `hint`.
@@ -320,8 +350,8 @@ pub fn to_jsonl(records: &[CodegraphRecord]) -> Result<String, serde_json::Error
 #[cfg(test)]
 mod tests {
     use super::{
-        CODEGRAPH_SCHEMA_VERSION, CodegraphFileRecord, CodegraphHeaderRecord, CodegraphMode, CodegraphProvenance,
-        CodegraphRecord, to_jsonl,
+        CODEGRAPH_SCHEMA_VERSION, CodegraphFileRecord, CodegraphHeaderRecord, CodegraphLanguage, CodegraphMode,
+        CodegraphProvenance, CodegraphRecord, to_jsonl,
     };
 
     #[test]
@@ -332,11 +362,13 @@ mod tests {
                 compiler_version: "0.4.0-dev.5".to_string(),
                 mode: CodegraphMode::Strict,
                 root_path: "src/main.incn".to_string(),
+                languages: vec![CodegraphLanguage::Incan],
                 package: None,
                 degraded: false,
             }),
             CodegraphRecord::File(CodegraphFileRecord {
                 id: "file:src/main.incn".to_string(),
+                language: CodegraphLanguage::Incan,
                 path: "src/main.incn".to_string(),
                 size_bytes: 12,
                 provenance: CodegraphProvenance::Source,

@@ -87,7 +87,7 @@ Repowise adds a useful adjacent lesson for architecture tooling: structural sour
 A developer can export graph facts for a source file, package, workspace, or directory:
 
 ```bash
-incan tools agent-graph export src --format jsonl
+incan inspect codegraph src --format jsonl
 ```
 
 By default, export is checked. If the project contains semantic errors, the command fails with diagnostics rather than pretending the graph is fully trusted.
@@ -95,10 +95,12 @@ By default, export is checked. If the project contains semantic errors, the comm
 During active development, the same developer can request a tolerant graph:
 
 ```bash
-incan tools agent-graph export src --format jsonl --allow-errors
+incan inspect codegraph src --format jsonl --allow-errors
 ```
 
 In tolerant mode, parseable modules still produce package, file, module, declaration, import, and source-span facts. Facts that require successful semantic checking are omitted or marked with lower provenance. Diagnostics become graph facts so an agent can see why the graph is partial.
+
+The v0.4 implementation is this checked/tolerant JSONL export only. It does not include MCP serving, task-ranked context packing, process-risk scoring, architecture findings, or first-class Rust records yet; those are consumers or follow-up graph layers that build on the same schema contract.
 
 ### Exploring graph structure
 
@@ -164,13 +166,14 @@ An Incan agent graph document must declare:
 
 - `schema_version`
 - package or workspace identity when available
+- languages represented by the export
 - source root and path normalization mode
 - graph generation mode: `checked` or `allow-errors`
 - toolchain version
 - graph snapshot identity when available
 - records containing nodes, edges, diagnostics, and metadata
 
-The document must be deterministic for equivalent inputs under the same toolchain version, ignoring timestamps unless explicitly requested.
+The document must be deterministic for equivalent inputs under the same toolchain version, ignoring timestamps unless explicitly requested. Every source-backed graph fact record should carry an explicit language, provenance tier, source identity where applicable, and degraded-state flag.
 
 ### Node kinds
 
@@ -449,7 +452,7 @@ The task-context ranker should start simple: exact identifiers, module/name/doc 
 
 ## Unresolved questions
 
-- Should the public CLI spell this surface `agent-graph`, `context-graph`, `codegraph`, or another term?
+- Should higher-level graph service commands reuse `codegraph` or introduce a separate `context`/`agent` namespace once MCP and task packing exist?
 - Which graph JSONL fields are stable enough for v0.4, and which should remain experimental?
 - Should Incan provide a SCIP exporter in addition to the native graph schema?
 - What exact content-addressing inputs should define node, edge, diagnostic, and context-pack identity?
