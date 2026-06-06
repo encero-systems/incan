@@ -475,7 +475,8 @@ impl<'a> LibraryReexportResolver<'a> {
         Self { module_exports }
     }
 
-    /// Resolve `pub from ... import ...` declarations in a library entrypoint into checked public exports.
+    /// Resolve direct public declarations and `pub from ... import ...` declarations in a library entrypoint into
+    /// checked public exports.
     ///
     /// A single source name can map to several checked exports when the provider exposes same-name overloads. The
     /// resolver therefore preserves all matching exports and only applies the consumer-facing alias to each one.
@@ -487,6 +488,18 @@ impl<'a> LibraryReexportResolver<'a> {
         let mut resolved = Vec::new();
         let mut exported_names: HashSet<String> = HashSet::new();
         let known_modules: Vec<String> = self.module_exports.keys().cloned().collect();
+
+        if let Some(exports_by_name) = self.module_exports.get(&module_key(&lib_module.path_segments)) {
+            for (export_name, export_span) in Self::direct_public_exports(lib_module) {
+                if !exported_names.insert(export_name.clone()) {
+                    errors.push(diagnostics::errors::duplicate_library_export(&export_name, export_span));
+                    continue;
+                }
+                if let Some(exports) = exports_by_name.get(&export_name) {
+                    resolved.extend(exports.iter().cloned());
+                }
+            }
+        }
 
         for decl in &lib_module.ast.declarations {
             let Declaration::Import(import) = &decl.node else {
@@ -538,6 +551,66 @@ impl<'a> LibraryReexportResolver<'a> {
         }
 
         if errors.is_empty() { Ok(resolved) } else { Err(errors) }
+    }
+
+    /// Return public names declared directly by the library entrypoint, excluding public imports that are resolved from
+    /// their source module below.
+    fn direct_public_exports(lib_module: &ParsedModule) -> Vec<(String, crate::frontend::ast::Span)> {
+        lib_module
+            .ast
+            .declarations
+            .iter()
+            .filter_map(|decl| match &decl.node {
+                Declaration::Function(function)
+                    if matches!(function.visibility, crate::frontend::ast::Visibility::Public) =>
+                {
+                    Some((function.name.clone(), decl.span))
+                }
+                Declaration::Model(model) if matches!(model.visibility, crate::frontend::ast::Visibility::Public) => {
+                    Some((model.name.clone(), decl.span))
+                }
+                Declaration::Class(class) if matches!(class.visibility, crate::frontend::ast::Visibility::Public) => {
+                    Some((class.name.clone(), decl.span))
+                }
+                Declaration::Trait(trait_decl)
+                    if matches!(trait_decl.visibility, crate::frontend::ast::Visibility::Public) =>
+                {
+                    Some((trait_decl.name.clone(), decl.span))
+                }
+                Declaration::Enum(enum_decl)
+                    if matches!(enum_decl.visibility, crate::frontend::ast::Visibility::Public) =>
+                {
+                    Some((enum_decl.name.clone(), decl.span))
+                }
+                Declaration::Newtype(newtype_decl)
+                    if matches!(newtype_decl.visibility, crate::frontend::ast::Visibility::Public) =>
+                {
+                    Some((newtype_decl.name.clone(), decl.span))
+                }
+                Declaration::TypeAlias(alias)
+                    if matches!(alias.visibility, crate::frontend::ast::Visibility::Public) =>
+                {
+                    Some((alias.name.clone(), decl.span))
+                }
+                Declaration::Const(konst) if matches!(konst.visibility, crate::frontend::ast::Visibility::Public) => {
+                    Some((konst.name.clone(), decl.span))
+                }
+                Declaration::Static(static_decl)
+                    if matches!(static_decl.visibility, crate::frontend::ast::Visibility::Public) =>
+                {
+                    Some((static_decl.name.clone(), decl.span))
+                }
+                Declaration::Alias(alias) if matches!(alias.visibility, crate::frontend::ast::Visibility::Public) => {
+                    Some((alias.name.clone(), decl.span))
+                }
+                Declaration::Partial(partial)
+                    if matches!(partial.visibility, crate::frontend::ast::Visibility::Public) =>
+                {
+                    Some((partial.name.clone(), decl.span))
+                }
+                _ => None,
+            })
+            .collect()
     }
 }
 

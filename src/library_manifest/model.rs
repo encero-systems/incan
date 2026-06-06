@@ -895,7 +895,10 @@ fn type_bound_from_checked(bound: &CheckedTypeBound) -> TypeBoundExport {
 }
 
 /// Convert checked callable parameters into library-manifest parameter records.
-fn params_from_checked(params: &[CallableParam], defaults: &[Option<CheckedParamDefault>]) -> Vec<ParamExport> {
+pub(crate) fn params_from_checked(
+    params: &[CallableParam],
+    defaults: &[Option<CheckedParamDefault>],
+) -> Vec<ParamExport> {
     params
         .iter()
         .enumerate()
@@ -944,7 +947,7 @@ fn method_from_checked(method: &crate::frontend::library_exports::CheckedMethod)
         alias_of: method.alias_of.clone(),
         type_params: method.type_params.iter().map(type_param_from_checked).collect(),
         receiver: receiver_from_checked(method.receiver),
-        params: params_from_checked(&method.params, &[]),
+        params: params_from_checked(&method.params, &method.param_defaults),
         return_type: type_ref_from_resolved(&method.return_type),
         is_async: method.is_async,
         has_body: method.has_body,

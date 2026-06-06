@@ -16,7 +16,7 @@ use crate::frontend::symbols::{
     CallableParam, ClassInfo, FieldInfo, FunctionInfo, MethodInfo, ModelInfo, NewtypeInfo, ResolvedType, SymbolKind,
     TraitInfo, TypeBoundInfo, TypeInfo, ValueEnumBacking, ValueEnumValue, VariableInfo, resolve_type,
 };
-use crate::frontend::typechecker::TypeChecker;
+use crate::frontend::typechecker::{PartialProjectionTargetKind, TypeChecker};
 
 #[derive(Clone, Copy)]
 struct DefaultPathContext<'a> {
@@ -104,6 +104,7 @@ pub struct CheckedMethod {
     pub type_params: Vec<CheckedTypeParam>,
     pub receiver: Option<crate::frontend::ast::Receiver>,
     pub params: Vec<CallableParam>,
+    pub param_defaults: Vec<Option<CheckedParamDefault>>,
     pub return_type: ResolvedType,
     pub is_async: bool,
     pub has_body: bool,
@@ -583,6 +584,7 @@ fn checked_partial_export(partial: &PartialDecl, checker: &TypeChecker) -> Optio
     let SymbolKind::Function(info) = &symbol.kind else {
         return None;
     };
+    let projection = checker.type_info.partial_projection(&partial.name);
     let default_context = DefaultPathContext::for_checker(checker);
     let presets = partial
         .args
@@ -600,8 +602,14 @@ fn checked_partial_export(partial: &PartialDecl, checker: &TypeChecker) -> Optio
         .collect();
     Some(CheckedPartialExport {
         name: partial.name.clone(),
-        target_path: partial.target.segments.clone(),
-        target_kind: checked_partial_target_kind(partial, checker),
+        target_path: projection.map_or_else(
+            || partial.target.segments.clone(),
+            |projection| projection.target_path.clone(),
+        ),
+        target_kind: projection.map_or_else(
+            || checked_partial_target_kind(partial, checker),
+            |projection| checked_partial_target_kind_from_projection(projection.target_kind),
+        ),
         presets,
         type_params: info
             .type_params
@@ -618,6 +626,17 @@ fn checked_partial_export(partial: &PartialDecl, checker: &TypeChecker) -> Optio
         return_type: info.return_type.clone(),
         is_async: info.is_async,
     })
+}
+
+/// Convert collection-time partial projection metadata into public export metadata.
+fn checked_partial_target_kind_from_projection(kind: PartialProjectionTargetKind) -> CheckedPartialTargetKind {
+    match kind {
+        PartialProjectionTargetKind::Function => CheckedPartialTargetKind::Function,
+        PartialProjectionTargetKind::ModelConstructor => CheckedPartialTargetKind::ModelConstructor,
+        PartialProjectionTargetKind::ClassConstructor => CheckedPartialTargetKind::ClassConstructor,
+        PartialProjectionTargetKind::NewtypeConstructor => CheckedPartialTargetKind::NewtypeConstructor,
+        PartialProjectionTargetKind::Unknown => CheckedPartialTargetKind::Unknown,
+    }
 }
 
 /// Classify the direct target kind for manifest/API partial provenance.
@@ -970,7 +989,7 @@ fn checked_model_export(model: &ModelDecl, checker: &TypeChecker) -> Option<Chec
         trait_adoptions: sorted_type_bounds(map_type_bound_infos(trait_adoptions)),
         derives: sorted_vec(derives.to_vec()),
         fields: map_fields(fields, field_order),
-        methods: map_method_overloads(method_overloads),
+        methods: map_method_overloads_with_defaults(method_overloads, &model.methods, checker),
     })
 }
 
@@ -999,7 +1018,7 @@ fn checked_class_export(class: &ClassDecl, checker: &TypeChecker) -> Option<Chec
         trait_adoptions: sorted_type_bounds(map_type_bound_infos(trait_adoptions)),
         derives: sorted_vec(derives.to_vec()),
         fields: map_fields(fields, field_order),
-        methods: map_method_overloads(method_overloads),
+        methods: map_method_overloads_with_defaults(method_overloads, &class.methods, checker),
     })
 }
 
@@ -1019,7 +1038,7 @@ fn checked_trait_export(trait_decl: &TraitDecl, checker: &TypeChecker) -> Option
         type_params: checked_type_params(&trait_decl.type_params, checker),
         supertraits: sorted_type_bounds(checked_spanned_trait_bounds(&trait_decl.traits, checker)),
         requires: sorted_requires,
-        methods: map_methods(methods),
+        methods: map_methods_with_defaults(methods, &trait_decl.methods, checker),
     })
 }
 
@@ -1072,7 +1091,7 @@ fn checked_enum_export(enum_decl: &EnumDecl, checker: &TypeChecker) -> Option<Ch
                 target: alias.node.target.clone(),
             })
             .collect(),
-        methods: map_method_overloads(&enum_info.method_overloads),
+        methods: map_method_overloads_with_defaults(&enum_info.method_overloads, &enum_decl.methods, checker),
         derives: sorted_vec(enum_info.derives.clone()),
     })
 }
@@ -1099,7 +1118,7 @@ fn checked_newtype_export(newtype_decl: &NewtypeDecl, checker: &TypeChecker) -> 
         trait_adoptions: sorted_type_bounds(map_type_bound_infos(trait_adoptions)),
         is_rusttype: *is_rusttype,
         underlying: underlying.clone(),
-        methods: map_method_overloads(method_overloads),
+        methods: map_method_overloads_with_defaults(method_overloads, &newtype_decl.methods, checker),
     })
 }
 
@@ -1225,23 +1244,33 @@ fn map_fields(fields: &HashMap<String, FieldInfo>, field_order: &[String]) -> Ve
 }
 
 /// Convert legacy one-method-per-name metadata into checked export methods.
-fn map_methods(methods: &HashMap<String, MethodInfo>) -> Vec<CheckedMethod> {
+fn map_methods_with_defaults(
+    methods: &HashMap<String, MethodInfo>,
+    ast_methods: &[Spanned<crate::frontend::ast::MethodDecl>],
+    checker: &TypeChecker,
+) -> Vec<CheckedMethod> {
     let mut entries: Vec<_> = methods
         .iter()
         .filter(|(name, _)| is_exported_method_name(name))
         .map(|(name, info)| checked_method_from_info(name, info))
         .collect();
+    attach_method_defaults(&mut entries, ast_methods, checker);
     entries.sort_by(|left, right| left.name.cmp(&right.name));
     entries
 }
 
 /// Flatten same-name overload groups into manifest-ready checked methods without losing RFC 025 trait implementations.
-fn map_method_overloads(method_overloads: &HashMap<String, Vec<MethodInfo>>) -> Vec<CheckedMethod> {
+fn map_method_overloads_with_defaults(
+    method_overloads: &HashMap<String, Vec<MethodInfo>>,
+    ast_methods: &[Spanned<crate::frontend::ast::MethodDecl>],
+    checker: &TypeChecker,
+) -> Vec<CheckedMethod> {
     let mut entries: Vec<_> = method_overloads
         .iter()
         .filter(|(name, _)| is_exported_method_name(name))
         .flat_map(|(name, overloads)| overloads.iter().map(|info| checked_method_from_info(name, info)))
         .collect();
+    attach_method_defaults(&mut entries, ast_methods, checker);
     entries.sort_by(|left, right| {
         left.name
             .cmp(&right.name)
@@ -1282,10 +1311,114 @@ fn checked_method_from_info(name: &str, info: &MethodInfo) -> CheckedMethod {
             .collect(),
         receiver: info.receiver,
         params: info.params.clone(),
+        param_defaults: vec![None; info.params.len()],
         return_type: info.return_type.clone(),
         is_async: info.is_async,
         has_body: info.has_body,
     }
+}
+
+/// Attach source-level method defaults to checked semantic method entries.
+fn attach_method_defaults(
+    entries: &mut [CheckedMethod],
+    ast_methods: &[Spanned<crate::frontend::ast::MethodDecl>],
+    checker: &TypeChecker,
+) {
+    let mut used = vec![false; ast_methods.len()];
+    let default_context = DefaultPathContext::for_checker(checker);
+    for entry in entries {
+        let Some(idx) = matching_ast_method_index(entry, ast_methods, &used, checker) else {
+            continue;
+        };
+        used[idx] = true;
+        entry.param_defaults = ast_methods[idx]
+            .node
+            .params
+            .iter()
+            .map(|param| {
+                param
+                    .node
+                    .default
+                    .as_ref()
+                    .map(|default| checked_param_default(default, default_context))
+            })
+            .collect();
+    }
+}
+
+/// Find the source method that corresponds to one checked method entry.
+fn matching_ast_method_index(
+    checked: &CheckedMethod,
+    ast_methods: &[Spanned<crate::frontend::ast::MethodDecl>],
+    used: &[bool],
+    checker: &TypeChecker,
+) -> Option<usize> {
+    ast_methods
+        .iter()
+        .enumerate()
+        .find(|(idx, method)| {
+            !used.get(*idx).copied().unwrap_or(false) && ast_method_shape_matches_checked(method, checked, checker)
+        })
+        .map(|(idx, _)| idx)
+        .or_else(|| {
+            ast_methods
+                .iter()
+                .enumerate()
+                .find(|(idx, method)| {
+                    !used.get(*idx).copied().unwrap_or(false) && ast_method_param_names_match_checked(method, checked)
+                })
+                .map(|(idx, _)| idx)
+        })
+}
+
+/// Return whether an AST method and checked method have the same parameter names.
+fn ast_method_param_names_match_checked(
+    ast_method: &Spanned<crate::frontend::ast::MethodDecl>,
+    checked: &CheckedMethod,
+) -> bool {
+    ast_method.node.name == checked.name
+        && ast_method.node.params.len() == checked.params.len()
+        && ast_method
+            .node
+            .params
+            .iter()
+            .zip(checked.params.iter())
+            .all(|(ast_param, checked_param)| checked_param.name() == Some(ast_param.node.name.as_str()))
+}
+
+/// Return whether an AST method and checked method have the same callable shape.
+fn ast_method_shape_matches_checked(
+    ast_method: &Spanned<crate::frontend::ast::MethodDecl>,
+    checked: &CheckedMethod,
+    checker: &TypeChecker,
+) -> bool {
+    let ast_type_params = ast_method
+        .node
+        .type_params
+        .iter()
+        .map(|type_param| type_param.name.as_str())
+        .collect::<Vec<_>>();
+    ast_method.node.name == checked.name
+        && ast_method.node.params.len() == checked.params.len()
+        && ast_method.node.receiver == checked.receiver
+        && ast_method.node.is_async() == checked.is_async
+        && ast_type_params
+            == checked
+                .type_params
+                .iter()
+                .map(|param| param.name.as_str())
+                .collect::<Vec<_>>()
+        && ast_method
+            .node
+            .params
+            .iter()
+            .zip(checked.params.iter())
+            .all(|(ast_param, checked_param)| {
+                checked_param.name() == Some(ast_param.node.name.as_str())
+                    && checked_param.kind == ast_param.node.kind
+                    && checked_param.has_default == ast_param.node.default.is_some()
+                    && checked_param.ty == resolve_type(&ast_param.node.ty.node, &checker.symbols)
+            })
 }
 
 /// Render a deterministic method-signature sort key for overload groups.

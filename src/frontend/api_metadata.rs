@@ -26,9 +26,9 @@ use crate::frontend::typechecker::{ConstValue, TypeChecker};
 use crate::library_manifest::{
     ClassExport, EnumExport, EnumValueExport, EnumValueTypeExport, EnumVariantAliasExport, EnumVariantExport,
     FieldExport, FieldRequirementExport, FunctionExport, MethodExport, ModelExport, NewtypeExport, ParamExport,
-    ParamKindExport, PartialExport, PartialPresetExport, PartialTargetKindExport, PresetDictEntryExport,
-    PresetModelFieldExport, PresetValueExport, ReceiverExport, TraitExport, TypeAliasExport, TypeBoundExport,
-    TypeParamExport, TypeRef, type_ref_from_resolved,
+    PartialExport, PartialPresetExport, PartialTargetKindExport, PresetDictEntryExport, PresetModelFieldExport,
+    PresetValueExport, ReceiverExport, TraitExport, TypeAliasExport, TypeBoundExport, TypeParamExport, TypeRef,
+    params_from_checked, type_ref_from_resolved,
 };
 
 pub const CHECKED_API_METADATA_SCHEMA_VERSION: u32 = 1;
@@ -813,7 +813,7 @@ fn api_partial(export: &CheckedPartialExport, span: Span, module_path: &[String]
             })
             .collect(),
         type_params: type_params(&export.type_params),
-        params: params(&export.params),
+        params: params_from_checked(&export.params, &[]),
         return_type: type_ref_from_resolved(&export.return_type),
         is_async: export.is_async,
     }
@@ -901,36 +901,10 @@ fn api_callable_for_function(
         anchor: anchor(module_path, &export.name, span),
         type_params: type_params(&export.type_params),
         receiver: None,
-        params: source_function_params(function, checker),
+        params: params_from_checked(&source_function_params(function, checker), &export.param_defaults),
         return_type: source_function_return_type(function, checker),
         is_async: function.is_async(),
     }
-}
-
-/// Build the source-declared callable parameter surface for API documentation metadata.
-///
-/// User-defined decorators can rebind a public function symbol to an ordinary callable value. That callable type is the
-/// right contract for lowering and invocation, but function API docs are attached to the source declaration and should
-/// validate against the declaration's named parameters instead of an anonymous function-type projection.
-fn source_function_params(function: &FunctionDecl, checker: &TypeChecker) -> Vec<ParamExport> {
-    function
-        .params
-        .iter()
-        .map(|param| ParamExport {
-            name: param.node.name.clone(),
-            ty: type_ref_from_resolved(&crate::frontend::symbols::resolve_type(
-                &param.node.ty.node,
-                &checker.symbols,
-            )),
-            kind: match param.node.kind {
-                crate::frontend::ast::ParamKind::Normal => ParamKindExport::Normal,
-                crate::frontend::ast::ParamKind::RestPositional => ParamKindExport::RestPositional,
-                crate::frontend::ast::ParamKind::RestKeyword => ParamKindExport::RestKeyword,
-            },
-            has_default: param.node.default.is_some(),
-            default: None,
-        })
-        .collect()
 }
 
 /// Resolve the source return type used by function API metadata.
@@ -939,6 +913,25 @@ fn source_function_return_type(function: &FunctionDecl, checker: &TypeChecker) -
         &function.return_type.node,
         &checker.symbols,
     ))
+}
+
+/// Resolve the source-declared callable parameters used by API documentation metadata.
+fn source_function_params(
+    function: &FunctionDecl,
+    checker: &TypeChecker,
+) -> Vec<crate::frontend::symbols::CallableParam> {
+    function
+        .params
+        .iter()
+        .map(|param| {
+            crate::frontend::symbols::CallableParam::named_with_default(
+                param.node.name.clone(),
+                crate::frontend::symbols::resolve_type(&param.node.ty.node, &checker.symbols),
+                param.node.kind,
+                param.node.default.is_some(),
+            )
+        })
+        .collect()
 }
 
 /// Convert a source model declaration into API metadata.
@@ -1208,7 +1201,7 @@ fn methods(
                 crate::frontend::ast::Receiver::Immutable => ReceiverExport::Immutable,
                 crate::frontend::ast::Receiver::Mutable => ReceiverExport::Mutable,
             }),
-            params: params(&checked.params),
+            params: params_from_checked(&checked.params, &checked.param_defaults),
             return_type: type_ref_from_resolved(&checked.return_type),
             is_async: checked.is_async,
         };
@@ -1316,26 +1309,6 @@ fn type_bound(bound: &CheckedTypeBound) -> TypeBoundExport {
         module_path: bound.module_path.clone(),
         type_args: bound.type_args.iter().map(type_ref_from_resolved).collect(),
     }
-}
-
-/// Convert checked callable parameters into API metadata exports.
-fn params(params: &[crate::frontend::symbols::CallableParam]) -> Vec<ParamExport> {
-    params
-        .iter()
-        .filter_map(|param| {
-            Some(ParamExport {
-                name: param.name.clone()?,
-                ty: type_ref_from_resolved(&param.ty),
-                kind: match param.kind {
-                    crate::frontend::ast::ParamKind::Normal => ParamKindExport::Normal,
-                    crate::frontend::ast::ParamKind::RestPositional => ParamKindExport::RestPositional,
-                    crate::frontend::ast::ParamKind::RestKeyword => ParamKindExport::RestKeyword,
-                },
-                has_default: param.has_default,
-                default: None,
-            })
-        })
-        .collect()
 }
 
 /// Convert a checked field into API metadata.
@@ -2753,6 +2726,7 @@ pub class Writer:
                         crate::frontend::ast::ParamKind::Normal,
                     ),
                 ],
+                param_defaults: vec![None, None],
                 return_type: crate::frontend::symbols::ResolvedType::Unit,
                 is_async: false,
                 has_body: true,
@@ -2767,6 +2741,7 @@ pub class Writer:
                     crate::frontend::symbols::ResolvedType::Bytes,
                     crate::frontend::ast::ParamKind::Normal,
                 )],
+                param_defaults: vec![None],
                 return_type: crate::frontend::symbols::ResolvedType::Int,
                 is_async: false,
                 has_body: true,
@@ -2837,6 +2812,7 @@ pub class Parser:
                     crate::frontend::symbols::ResolvedType::Bytes,
                     crate::frontend::ast::ParamKind::Normal,
                 )],
+                param_defaults: vec![None],
                 return_type: crate::frontend::symbols::ResolvedType::Bytes,
                 is_async: false,
                 has_body: true,
@@ -2851,6 +2827,7 @@ pub class Parser:
                     crate::frontend::symbols::ResolvedType::Str,
                     crate::frontend::ast::ParamKind::Normal,
                 )],
+                param_defaults: vec![None],
                 return_type: crate::frontend::symbols::ResolvedType::Str,
                 is_async: false,
                 has_body: true,

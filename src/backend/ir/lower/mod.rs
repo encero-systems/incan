@@ -44,6 +44,7 @@ use super::{FunctionReexport, FunctionSignature, IrProgram, Mutability};
 use crate::frontend::ast;
 use crate::frontend::decorator_resolution;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
+use crate::frontend::symbols::ResolvedType;
 use crate::frontend::symbols::{CallableParam, NewtypePrimitiveConstraint};
 use crate::frontend::typechecker::TypeCheckInfo;
 use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
@@ -451,9 +452,104 @@ impl AstLowering {
         ast::Spanned::new(ast::Expr::Ident(name.into()), span)
     }
 
+    /// Construct a spanned expression for a possibly qualified target path.
+    fn target_path_expr(path: &[String], span: ast::Span) -> Option<ast::Spanned<ast::Expr>> {
+        let mut segments = path.iter();
+        let first = segments.next()?;
+        let mut expr = Self::ident_expr(first.clone(), span);
+        for segment in segments {
+            expr = ast::Spanned::new(ast::Expr::Field(Box::new(expr), segment.clone()), span);
+        }
+        Some(expr)
+    }
+
     /// Construct a spanned simple type annotation for synthetic constructor wrappers.
     fn simple_type(name: impl Into<String>, span: ast::Span) -> ast::Spanned<ast::Type> {
         ast::Spanned::new(ast::Type::Simple(name.into()), span)
+    }
+
+    /// Convert a typechecker-resolved type back into the source type syntax needed by synthetic partial wrappers.
+    fn type_from_resolved_type(ty: &ResolvedType, span: ast::Span) -> ast::Spanned<ast::Type> {
+        let node = match ty {
+            ResolvedType::Unit => ast::Type::Unit,
+            ResolvedType::Int => ast::Type::Simple("int".to_string()),
+            ResolvedType::Float => ast::Type::Simple("float".to_string()),
+            ResolvedType::Numeric(id) => ast::Type::Simple(incan_core::lang::types::numerics::as_str(*id).to_string()),
+            ResolvedType::Bool => ast::Type::Simple("bool".to_string()),
+            ResolvedType::Str => ast::Type::Simple("str".to_string()),
+            ResolvedType::Bytes => ast::Type::Simple("bytes".to_string()),
+            ResolvedType::FrozenStr => ast::Type::Simple("FrozenStr".to_string()),
+            ResolvedType::FrozenBytes => ast::Type::Simple("FrozenBytes".to_string()),
+            ResolvedType::FrozenList(inner) => ast::Type::Generic(
+                collections::as_str(CollectionTypeId::FrozenList).to_string(),
+                vec![Self::type_from_resolved_type(inner, span)],
+            ),
+            ResolvedType::FrozenDict(key, value) => ast::Type::Generic(
+                collections::as_str(CollectionTypeId::FrozenDict).to_string(),
+                vec![
+                    Self::type_from_resolved_type(key, span),
+                    Self::type_from_resolved_type(value, span),
+                ],
+            ),
+            ResolvedType::FrozenSet(inner) => ast::Type::Generic(
+                collections::as_str(CollectionTypeId::FrozenSet).to_string(),
+                vec![Self::type_from_resolved_type(inner, span)],
+            ),
+            ResolvedType::Named(name) | ResolvedType::TypeVar(name) => ast::Type::Simple(name.clone()),
+            ResolvedType::Generic(name, args) => ast::Type::Generic(
+                name.clone(),
+                args.iter()
+                    .map(|arg| Self::type_from_resolved_type(arg, span))
+                    .collect(),
+            ),
+            ResolvedType::Tuple(items) => ast::Type::Tuple(
+                items
+                    .iter()
+                    .map(|item| Self::type_from_resolved_type(item, span))
+                    .collect(),
+            ),
+            ResolvedType::Function(params, ret) => ast::Type::Function(
+                params
+                    .iter()
+                    .map(|param| Self::type_from_resolved_type(&param.ty, span))
+                    .collect(),
+                Box::new(Self::type_from_resolved_type(ret, span)),
+            ),
+            ResolvedType::Ref(inner) => ast::Type::Ref(Box::new(Self::type_from_resolved_type(inner, span))),
+            ResolvedType::RefMut(inner) => ast::Type::RefMut(Box::new(Self::type_from_resolved_type(inner, span))),
+            ResolvedType::TypeToken(inner) => {
+                ast::Type::Generic("Type".to_string(), vec![Self::type_from_resolved_type(inner, span)])
+            }
+            ResolvedType::SelfType => ast::Type::SelfType,
+            ResolvedType::RustPath(path) => ast::Type::Simple(path.clone()),
+            ResolvedType::CallSiteInfer | ResolvedType::Unknown => ast::Type::Infer,
+        };
+        ast::Spanned::new(node, span)
+    }
+
+    /// Build synthetic wrapper parameters from the typechecked partial callable surface.
+    fn partial_params_from_callable_surface(
+        params: &[CallableParam],
+        presets: &HashMap<String, ast::Spanned<ast::Expr>>,
+        span: ast::Span,
+    ) -> Vec<ast::Spanned<ast::Param>> {
+        params
+            .iter()
+            .enumerate()
+            .map(|(idx, param)| {
+                let name = param.name.clone().unwrap_or_else(|| format!("__incan_arg_{idx}"));
+                ast::Spanned::new(
+                    ast::Param {
+                        is_mut: false,
+                        kind: param.kind,
+                        name: name.clone(),
+                        ty: Self::type_from_resolved_type(&param.ty, span),
+                        default: presets.get(&name).cloned(),
+                    },
+                    span,
+                )
+            })
+            .collect()
     }
 
     /// Clone target parameters and replace preset parameters with partial-provided defaults.
@@ -517,6 +613,17 @@ impl AstLowering {
         let presets = Self::partial_arg_map(&partial.args);
         let params = Self::partial_projected_params(&target_params, &presets);
         let callee = Self::ident_expr(target_name.to_string(), span);
+        Self::constructor_partial_wrapper_with_callee(partial, callee, params, return_type, span)
+    }
+
+    /// Build a synthetic function declaration that forwards a constructor partial through an explicit callee.
+    fn constructor_partial_wrapper_with_callee(
+        partial: &ast::PartialDecl,
+        callee: ast::Spanned<ast::Expr>,
+        params: Vec<ast::Spanned<ast::Param>>,
+        return_type: ast::Spanned<ast::Type>,
+        span: ast::Span,
+    ) -> ast::FunctionDecl {
         let call = ast::Spanned::new(
             ast::Expr::Call(Box::new(callee), Vec::new(), Self::partial_forward_args(&params, span)),
             span,
@@ -566,6 +673,35 @@ impl AstLowering {
         )]
     }
 
+    /// Build a synthetic wrapper from typechecker partial metadata when the target lives across a source-module
+    /// boundary and therefore is not present as a declaration in the current AST.
+    fn metadata_partial_wrapper(&self, partial: &ast::PartialDecl, span: ast::Span) -> Option<ast::FunctionDecl> {
+        let type_info = self.type_info.as_ref()?;
+        let projection = type_info.partial_projection(&partial.name)?;
+        let binding = type_info.declarations.function_bindings.get(&partial.name)?;
+        let callee = match projection.target_kind {
+            crate::frontend::typechecker::PartialProjectionTargetKind::ModelConstructor
+            | crate::frontend::typechecker::PartialProjectionTargetKind::ClassConstructor
+            | crate::frontend::typechecker::PartialProjectionTargetKind::NewtypeConstructor => {
+                Self::ident_expr(projection.target_path.last()?.clone(), span)
+            }
+            crate::frontend::typechecker::PartialProjectionTargetKind::Function
+            | crate::frontend::typechecker::PartialProjectionTargetKind::Unknown => {
+                Self::target_path_expr(&projection.target_path, span)?
+            }
+        };
+        let presets = Self::partial_arg_map(&partial.args);
+        let params = Self::partial_params_from_callable_surface(&binding.params, &presets, span);
+        let return_type = Self::type_from_resolved_type(&binding.return_type, span);
+        Some(Self::constructor_partial_wrapper_with_callee(
+            partial,
+            callee,
+            params,
+            return_type,
+            span,
+        ))
+    }
+
     /// Resolve a top-level partial declaration to the synthetic wrapper function used by IR lowering.
     fn partial_wrapper_function(
         &self,
@@ -573,12 +709,9 @@ impl AstLowering {
         partial: &ast::PartialDecl,
         span: ast::Span,
     ) -> Result<ast::FunctionDecl, LoweringError> {
-        let [target_name] = partial.target.segments.as_slice() else {
+        let Some(target_name) = partial.target.segments.last() else {
             return Err(LoweringError {
-                message: format!(
-                    "Partial '{}' lowers only for local callable targets in this implementation",
-                    partial.name
-                ),
+                message: format!("Partial '{}' targets unknown callable", partial.name),
                 span: span.into(),
             });
         };
@@ -617,10 +750,55 @@ impl AstLowering {
                 _ => {}
             }
         }
+        if let Some(wrapper) = self.metadata_partial_wrapper(partial, span) {
+            return Ok(wrapper);
+        }
         Err(LoweringError {
             message: format!("Partial '{}' targets unknown callable '{}'", partial.name, target_name),
             span: span.into(),
         })
+    }
+
+    /// Return the constructor name that must be visible while lowering a synthetic partial wrapper body.
+    fn partial_wrapper_constructor_seed(&self, partial_name: &str) -> Option<String> {
+        let projection = self.type_info.as_ref()?.partial_projection(partial_name)?;
+        if !matches!(
+            projection.target_kind,
+            crate::frontend::typechecker::PartialProjectionTargetKind::ModelConstructor
+                | crate::frontend::typechecker::PartialProjectionTargetKind::ClassConstructor
+                | crate::frontend::typechecker::PartialProjectionTargetKind::NewtypeConstructor
+        ) {
+            return None;
+        }
+        projection.target_path.last().cloned()
+    }
+
+    /// Lower one synthetic partial wrapper with any metadata-backed constructor identity made visible to expression
+    /// lowering.
+    fn lower_partial_wrapper_declaration(
+        &mut self,
+        partial: &ast::PartialDecl,
+        wrapper: ast::FunctionDecl,
+    ) -> Result<IrDecl, LoweringError> {
+        let constructor_seed = self.partial_wrapper_constructor_seed(&partial.name).map(|name| {
+            let ty = self.lower_type(&wrapper.return_type.node);
+            (name, ty)
+        });
+        let previous = constructor_seed
+            .as_ref()
+            .and_then(|(name, ty)| self.struct_names.insert(name.clone(), ty.clone()));
+        let lowered = self.lower_declaration(&ast::Declaration::Function(wrapper));
+        if let Some((name, _)) = constructor_seed {
+            match previous {
+                Some(previous) => {
+                    self.struct_names.insert(name, previous);
+                }
+                None => {
+                    self.struct_names.remove(&name);
+                }
+            }
+        }
+        lowered
     }
 
     /// Build synthetic same-type method wrappers for method partial declarations.
@@ -1763,7 +1941,7 @@ impl AstLowering {
                 },
                 ast::Declaration::Partial(partial) => {
                     match self.partial_wrapper_function(program, partial, decl.span) {
-                        Ok(wrapper) => match self.lower_declaration(&ast::Declaration::Function(wrapper)) {
+                        Ok(wrapper) => match self.lower_partial_wrapper_declaration(partial, wrapper) {
                             Ok(ir_decl) => {
                                 if let IrDeclKind::Function(ref func) = ir_decl.kind {
                                     ir_program.function_registry.register(

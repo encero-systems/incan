@@ -573,7 +573,9 @@ impl AstLowering {
     /// Return the nominal receiver type name used for manifest method lookup.
     fn nominal_receiver_type_name(receiver_ty: &IrType) -> Option<&str> {
         match receiver_ty {
-            IrType::Struct(name) | IrType::NamedGeneric(name, _) => Some(name.rsplit("::").next().unwrap_or(name)),
+            IrType::Struct(name) | IrType::Enum(name) | IrType::NamedGeneric(name, _) => {
+                Some(name.rsplit("::").next().unwrap_or(name))
+            }
             IrType::Ref(inner) | IrType::RefMut(inner) => Self::nominal_receiver_type_name(inner),
             _ => None,
         }

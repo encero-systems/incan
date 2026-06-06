@@ -361,7 +361,11 @@ impl<'a> IrCodegen<'a> {
     }
 
     /// Apply dependency symbol metadata to generated Rust codegen state.
-    fn apply_dependency_symbol_metadata(emitter: &mut IrEmitter<'_>, metadata: &DependencySymbolMetadata) {
+    fn apply_dependency_symbol_metadata(
+        emitter: &mut IrEmitter<'_>,
+        metadata: &DependencySymbolMetadata,
+        library_manifest_index: Option<&Arc<LibraryManifestIndex>>,
+    ) {
         emitter.set_type_module_paths(metadata.module_paths.clone(), metadata.ambiguous_type_names.clone());
         emitter.set_value_module_paths(
             metadata.value_module_paths.clone(),
@@ -369,6 +373,9 @@ impl<'a> IrCodegen<'a> {
         );
         emitter.set_dependency_enum_types(metadata.enum_type_names.clone());
         emitter.set_external_error_trait_types(metadata.error_trait_type_names.clone());
+        if let Some(index) = library_manifest_index {
+            emitter.seed_public_dependency_nominal_metadata(index);
+        }
     }
 
     /// Enable strict generated Rust lint validation for `--emit-rust --strict`.
@@ -808,7 +815,11 @@ impl<'a> IrCodegen<'a> {
             if self.emit_zen_in_main {
                 inner.set_emit_zen(true);
             }
-            Self::apply_dependency_symbol_metadata(inner, &dependency_symbol_metadata);
+            Self::apply_dependency_symbol_metadata(
+                inner,
+                &dependency_symbol_metadata,
+                self.library_manifest_index.as_ref(),
+            );
             inner.set_needs_serde(self.needs_serde);
             inner.set_external_rust_functions(self.external_rust_functions.clone());
             inner.set_strict_generated_lints(self.strict_generated_lints);
@@ -831,7 +842,11 @@ impl<'a> IrCodegen<'a> {
             if self.emit_zen_in_main {
                 emitter.set_emit_zen(true);
             }
-            Self::apply_dependency_symbol_metadata(&mut emitter, &dependency_symbol_metadata);
+            Self::apply_dependency_symbol_metadata(
+                &mut emitter,
+                &dependency_symbol_metadata,
+                self.library_manifest_index.as_ref(),
+            );
             emitter.set_needs_serde(self.needs_serde);
             emitter.set_external_rust_functions(self.external_rust_functions.clone());
             emitter.set_strict_generated_lints(self.strict_generated_lints);
@@ -1117,7 +1132,11 @@ impl<'a> IrCodegen<'a> {
                 inner.set_internal_module_roots(internal_roots.clone());
                 inner.set_preserve_public_items(preserve_public_items);
                 inner.set_externally_reachable_items(reachable_items.clone());
-                Self::apply_dependency_symbol_metadata(inner, &dependency_symbol_metadata);
+                Self::apply_dependency_symbol_metadata(
+                    inner,
+                    &dependency_symbol_metadata,
+                    self.library_manifest_index.as_ref(),
+                );
                 inner.set_external_rust_functions(self.external_rust_functions.clone());
                 inner.set_qualify_union_types_from_crate(true);
                 inner.set_emit_generated_union_definitions(false);
@@ -1135,7 +1154,11 @@ impl<'a> IrCodegen<'a> {
                 emitter.set_internal_module_roots(internal_roots.clone());
                 emitter.set_preserve_public_items(preserve_public_items);
                 emitter.set_externally_reachable_items(reachable_items);
-                Self::apply_dependency_symbol_metadata(&mut emitter, &dependency_symbol_metadata);
+                Self::apply_dependency_symbol_metadata(
+                    &mut emitter,
+                    &dependency_symbol_metadata,
+                    self.library_manifest_index.as_ref(),
+                );
                 emitter.set_external_rust_functions(self.external_rust_functions.clone());
                 emitter.set_qualify_union_types_from_crate(true);
                 emitter.set_emit_generated_union_definitions(false);
@@ -1349,7 +1372,11 @@ impl<'a> IrCodegen<'a> {
                 inner.set_internal_module_roots(internal_roots.clone());
                 inner.set_preserve_public_items(preserve_public_items);
                 inner.set_externally_reachable_items(reachable_items.clone());
-                Self::apply_dependency_symbol_metadata(inner, &dependency_symbol_metadata);
+                Self::apply_dependency_symbol_metadata(
+                    inner,
+                    &dependency_symbol_metadata,
+                    self.library_manifest_index.as_ref(),
+                );
                 inner.set_external_rust_functions(self.external_rust_functions.clone());
                 inner.set_qualify_union_types_from_crate(true);
                 inner.set_emit_generated_union_definitions(false);
@@ -1367,7 +1394,11 @@ impl<'a> IrCodegen<'a> {
                 emitter.set_internal_module_roots(internal_roots.clone());
                 emitter.set_preserve_public_items(preserve_public_items);
                 emitter.set_externally_reachable_items(reachable_items);
-                Self::apply_dependency_symbol_metadata(&mut emitter, &dependency_symbol_metadata);
+                Self::apply_dependency_symbol_metadata(
+                    &mut emitter,
+                    &dependency_symbol_metadata,
+                    self.library_manifest_index.as_ref(),
+                );
                 emitter.set_external_rust_functions(self.external_rust_functions.clone());
                 emitter.set_qualify_union_types_from_crate(true);
                 emitter.set_emit_generated_union_definitions(false);

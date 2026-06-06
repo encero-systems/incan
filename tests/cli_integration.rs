@@ -4737,6 +4737,71 @@ def main() -> None:
 }
 
 #[test]
+fn test_qualified_partial_constructor_presets_cross_package_const_metadata_issue699()
+-> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let provider_root = tmp.path().join("partialkit_provider");
+    fs::create_dir_all(provider_root.join("src"))?;
+    fs::write(
+        provider_root.join("incan.toml"),
+        "[project]\nname = \"partialkit\"\nversion = \"0.1.0\"\n",
+    )?;
+    fs::write(
+        provider_root.join("src/models.incn"),
+        r#"pub model Policy:
+    pub family: FrozenStr
+    pub role: FrozenStr
+    pub enabled: bool
+"#,
+    )?;
+    fs::write(
+        provider_root.join("src/lib.incn"),
+        r#"import models
+pub from models import Policy
+
+
+pub policy = partial models.Policy(family="cross-package", enabled=true)
+"#,
+    )?;
+
+    let provider_output = run_incan(&provider_root, &["build", "--lib"])?;
+    assert_success(
+        &provider_output,
+        "provider build for qualified partial constructor metadata issue699",
+    );
+
+    let consumer_root = tmp.path().join("consumer");
+    fs::create_dir_all(consumer_root.join("src"))?;
+    fs::write(
+        consumer_root.join("incan.toml"),
+        "[project]\nname = \"consumer\"\n\n[dependencies]\npartialkit = { path = \"../partialkit_provider\" }\n",
+    )?;
+    let main_path = consumer_root.join("src/main.incn");
+    fs::write(
+        &main_path,
+        r#"from pub::partialkit import Policy, policy
+
+
+const DEFAULT_POLICY: Policy = policy(role="consumer")
+
+
+def main() -> None:
+    assert DEFAULT_POLICY.enabled
+"#,
+    )?;
+
+    let consumer_output = run_incan(
+        &consumer_root,
+        &["build", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(
+        &consumer_output,
+        "consumer build for qualified partial constructor metadata issue699",
+    );
+    Ok(())
+}
+
+#[test]
 fn test_decorated_functions_preserve_default_argument_calls_issue703() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "decorated_default_argument_calls", "")?;

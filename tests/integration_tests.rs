@@ -10741,6 +10741,41 @@ pub def registered_spec_name(index: int) -> str:
             producer_root.join("src/lib.incn"),
             "pub from facade import FunctionSpec, deterministic_spec, registered_count, registered_name, registered_spec_name, scale, scale_alias\n",
         )?;
+        std::fs::create_dir_all(producer_root.join("tests"))?;
+        std::fs::write(
+            producer_root.join("tests/test_direct_identity.incn"),
+            r#"from registry import registered_count, registered_name, registered_spec_name, scale, scale_alias
+
+
+def test_direct_source_import_identity() -> None:
+  assert scale(3) == 6
+  assert scale_alias(4) == 8
+  assert registered_count() == 1
+  assert registered_name(0) == "scale"
+  assert registered_spec_name(0) == "scale"
+"#,
+        )?;
+        std::fs::write(
+            producer_root.join("tests/test_facade_identity.incn"),
+            r#"from facade import registered_count, registered_name, registered_spec_name, scale, scale_alias
+
+
+def test_facade_source_import_identity() -> None:
+  assert scale(5) == 10
+  assert scale_alias(6) == 12
+  assert registered_count() == 1
+  assert registered_name(0) == "scale"
+  assert registered_spec_name(0) == "scale"
+"#,
+        )?;
+
+        let producer_tests = run_test(&producer_root.join("tests"))?;
+        assert!(
+            producer_tests.status.success(),
+            "expected decorated alias partial identity source and facade test batch to succeed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&producer_tests.stdout),
+            String::from_utf8_lossy(&producer_tests.stderr)
+        );
 
         let producer_build = run_build_lib(&producer_root)?;
         assert!(
@@ -10777,6 +10812,61 @@ def main() -> None:
         assert!(
             consumer_build.status.success(),
             "expected decorated alias partial identity consumer build to succeed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&consumer_build.stdout),
+            String::from_utf8_lossy(&consumer_build.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn boundary_parity_preserves_enum_method_defaults_through_facade() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let producer_root = tmp.path().join("enumkit_provider");
+        std::fs::create_dir_all(producer_root.join("src"))?;
+        std::fs::write(
+            producer_root.join("incan.toml"),
+            "[project]\nname = \"enumkit\"\nversion = \"0.1.0\"\n",
+        )?;
+        std::fs::write(
+            producer_root.join("src/status.incn"),
+            r#"pub enum Status(str):
+  Ready = "ready"
+  Paused = "paused"
+
+  def label(self, prefix: str = "state") -> str:
+    match self:
+      Status.Ready => return f"{prefix}:ready"
+      Status.Paused => return f"{prefix}:paused"
+"#,
+        )?;
+        std::fs::write(producer_root.join("src/facade.incn"), "pub from status import Status\n")?;
+        std::fs::write(producer_root.join("src/lib.incn"), "pub from facade import Status\n")?;
+
+        let producer_build = run_build_lib(&producer_root)?;
+        assert!(
+            producer_build.status.success(),
+            "expected enumkit provider library build to succeed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&producer_build.stdout),
+            String::from_utf8_lossy(&producer_build.stderr)
+        );
+
+        let consumer_root = tmp.path().join("consumer");
+        let main_path = write_project_files(
+            &consumer_root,
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nenumkit = { path = \"../enumkit_provider\" }\n",
+            r#"from pub::enumkit import Status
+
+
+def main() -> None:
+  assert Status.Ready.label() == "state:ready"
+  assert Status.Paused.label(prefix="custom") == "custom:paused"
+"#,
+        )?;
+        let out_dir = consumer_root.join("out");
+        let consumer_build = run_build(&main_path, &out_dir)?;
+        assert!(
+            consumer_build.status.success(),
+            "expected enum method defaults to survive provider/facade/consumer boundary.\nstdout:\n{}\nstderr:\n{}",
             String::from_utf8_lossy(&consumer_build.stdout),
             String::from_utf8_lossy(&consumer_build.stderr)
         );

@@ -816,6 +816,7 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
             match (&expr.kind, target_ty) {
                 // String literals → .into() (works for String, &str, PlSmallStr, and any From<&str>)
                 (IrExprKind::String(_), _) => Conversion::Into,
+                (IrExprKind::Literal(super::expr::Literal::StaticStr(_)), Some(_)) => Conversion::Into,
                 // String variables → borrow for external calls (&str param)
                 (IrExprKind::StaticRead { .. }, _) if matches!(expr.ty, IrType::StaticStr) => Conversion::Into,
                 (IrExprKind::Var { .. }, _) if matches!(expr.ty, IrType::StaticStr) => Conversion::Into,
