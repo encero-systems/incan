@@ -10,7 +10,8 @@ use crate::manifest::ProjectManifest;
 use std::env;
 use std::path::{Path, PathBuf};
 
-use super::common::{collect_modules, read_source, resolve_project_root, typecheck_modules_with_import_graph};
+use super::common::{collect_modules, read_source, resolve_project_root};
+use super::diagnostics::{DiagnosticOutputFormat, check_path};
 
 /// Lex and display tokens.
 pub fn lex_file(file_path: &str) -> CliResult<ExitCode> {
@@ -63,31 +64,7 @@ pub fn parse_file(file_path: &str) -> CliResult<ExitCode> {
 
 /// Type check a file.
 pub fn check_file(file_path: &str) -> CliResult<ExitCode> {
-    let modules = collect_modules(file_path)?;
-
-    let normalized_file_path = if Path::new(file_path).is_absolute() {
-        PathBuf::from(file_path)
-    } else {
-        env::current_dir()
-            .map_err(|e| CliError::failure(format!("failed to determine current directory: {e}")))?
-            .join(file_path)
-    };
-    let project_root = resolve_project_root(&normalized_file_path);
-    let manifest = ProjectManifest::discover(&project_root).map_err(|e| CliError::failure(e.to_string()))?;
-    let library_manifest_index = manifest
-        .as_ref()
-        .map(LibraryManifestIndex::from_project_manifest)
-        .unwrap_or_default();
-    typecheck_modules_with_import_graph(
-        &modules,
-        manifest.as_ref(),
-        &library_manifest_index,
-        #[cfg(feature = "rust_inspect")]
-        None,
-    )?;
-
-    println!("✓ Type check passed!");
-    Ok(ExitCode::SUCCESS)
+    check_path(Path::new(file_path), DiagnosticOutputFormat::Text)
 }
 
 /// Emit generated Rust code.

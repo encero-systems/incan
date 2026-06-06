@@ -2,7 +2,7 @@
 
 This section covers the Incan tooling experience:
 
-- CLI (build/run/fmt/test)
+- CLI (check/build/run/fmt/test)
 - editor setup and LSP
 
 If you’re not sure where you fit, start at [Start here](../start_here/index.md).

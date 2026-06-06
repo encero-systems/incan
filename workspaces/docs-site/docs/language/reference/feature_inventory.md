@@ -62,6 +62,7 @@ Use it when deciding whether code should use an existing Incan surface before ad
 | Async and await | Async | 0.2 | Import `std.async` or one of its submodules. | `from std.async.time import sleep`<br>`async def main() -> None:`<br>`await sleep(1)` | `async` and `await` are import-activated soft-keyword surfaces backed by `std.async` modules. | Threading async behavior through synchronous wrappers or relying on pre-0.2 ambient async syntax. | [Async programming](../how-to/async_programming.md), [std.async](stdlib/async.md), [Release 0.2](../../release_notes/0_2.md) |
 | Async race and awaitability | Async | 0.3 | Import `std.async.race` or the relevant async prelude helpers. | `race for value:`<br>`arm(task)`<br>`race(arms)` | `Awaitable[T]`, `race for`, and helper-style race composition support first-ready async workflows. | Legacy `std.async.select` or hand-rolled polling loops. | [Awaitable trait](stdlib_traits/awaitable.md), [Async programming](../how-to/async_programming.md), [Release 0.3](../../release_notes/0_3.md) |
 | Project lifecycle tooling | Tooling | 0.3 | Use `incan init`, `incan new`, `incan version`, or `incan env`. | `incan new greeter --yes`<br>`incan version patch`<br>`incan env test` | Project commands create scaffolds, manage versions, and run configured environments from `incan.toml`. | One-off project scaffolding scripts or manual version-file edits. | [Project lifecycle](project_lifecycle.md), [Project lifecycle how-to](../how-to/project_lifecycle.md), [Release 0.3](../../release_notes/0_3.md) |
+| Stable diagnostics commands | Tooling | 0.4 | Use `incan check` or `incan explain`. | `incan check src/main.incn --format json`<br>`incan explain INCAN-T0001` | Type-check diagnostics can be emitted as versioned JSON with stable codes, source spans, and catalog-backed explanations. | Scraping terminal diagnostics or building tool-specific error-code maps. | [CLI reference](../../tooling/reference/cli_reference.md), [Release 0.4](../../release_notes/0_4.md) |
 | Checked API metadata | Tooling | 0.3 | Use `incan tools metadata api` or LSP metadata commands. | `incan tools metadata api src/lib.incn`<br>`incan tools metadata model emit` | Typechecked public APIs can emit structured metadata for docs, manifests, hovers, and model bundle tooling. | Scraping source text or generated Rust when tooling needs API contracts. | [Release 0.3](../../release_notes/0_3.md), [Project lifecycle](project_lifecycle.md) |
 | Formatter spacing and wrapping contract | Tooling | 0.3 | Run `incan fmt`. | `incan fmt src/main.incn`<br>`incan fmt --check` | Formatter output has explicit vertical-spacing buckets, docstring normalization, comment attachment, and common wrapping rules. | Hand-maintained whitespace conventions that drift from the formatter. | [Code style](code_style.md), [Formatting how-to](../../tooling/how-to/formatting.md), [Release 0.3](../../release_notes/0_3.md) |
 
@@ -888,6 +889,24 @@ Canonical forms:
 - `incan new greeter --yes`
 - `incan version patch`
 - `incan env test`
+
+### Stable diagnostics commands
+
+- **Id:** `StableDiagnostics`
+- **Category:** `Tooling`
+- **Since:** `0.4`
+- **RFC:** `RFC 015`
+- **Stability:** `Stable`
+- **Activation:** Use `incan check` or `incan explain`.
+- **Use instead of:** Scraping terminal diagnostics or building tool-specific error-code maps.
+- **References:** [CLI reference](../../tooling/reference/cli_reference.md), [Release 0.4](../../release_notes/0_4.md)
+
+Type-check diagnostics can be emitted as versioned JSON with stable codes, source spans, and catalog-backed explanations.
+
+Canonical forms:
+
+- `incan check src/main.incn --format json`
+- `incan explain INCAN-T0001`
 
 ### Checked API metadata
 

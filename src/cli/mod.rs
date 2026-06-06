@@ -4,6 +4,8 @@
 //!
 //! ## Commands
 //!
+//! - `check <file>` - Type-check with optional stable JSON diagnostics
+//! - `explain <code>` - Explain stable diagnostic codes
 //! - `build <file>` - Compile to Rust and build executable
 //! - `build --lib` - Validate library-mode preconditions
 //! - `run [file]` - Compile and run the program, defaulting to `[project.scripts].main`
@@ -45,6 +47,7 @@ use std::process;
 use crate::manifest::ProjectManifest;
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use commands::common::{CargoPolicy, CargoPolicyCliFlags};
+use commands::diagnostics::DiagnosticOutputFormat;
 use commands::lifecycle::{EnvOutputFormat, VersionBumpArg};
 use commands::tools::{ToolsDoctorFormat, ToolsMetadataFormat, ToolsModelMetadataFormat};
 
@@ -139,6 +142,10 @@ pub struct Cli {
     #[arg(long = "check", value_name = "FILE", conflicts_with = "file")]
     pub check_file: Option<PathBuf>,
 
+    /// Output format for the legacy --check debug path
+    #[arg(long = "format", value_enum, default_value = "text", requires = "check_file")]
+    pub check_format: DiagnosticOutputFormat,
+
     /// Emit generated Rust code (debug)
     #[arg(long = "emit-rust", value_name = "FILE", conflicts_with = "file")]
     pub emit_rust_file: Option<PathBuf>,
@@ -209,6 +216,26 @@ pub enum Command {
         /// Extra arguments forwarded to Cargo after `--`
         #[arg(last = true)]
         cargo_passthrough: Vec<String>,
+    },
+
+    /// Type check a file or project entrypoint
+    Check {
+        /// File or project entrypoint to check
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
+        /// Output format
+        #[arg(long = "format", value_enum, default_value = "text")]
+        format: DiagnosticOutputFormat,
+    },
+
+    /// Explain a diagnostic code
+    Explain {
+        /// Diagnostic code, for example INCAN-P0001
+        #[arg(value_name = "CODE")]
+        code: String,
+        /// Output format
+        #[arg(long = "format", value_enum, default_value = "text")]
+        format: DiagnosticOutputFormat,
     },
 
     /// Compile and run the program (debug profile by default; opt into release with `--release`)
@@ -601,7 +628,7 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
         return commands::parse_file(&file.to_string_lossy());
     }
     if let Some(file) = cli.check_file {
-        return commands::check_file(&file.to_string_lossy());
+        return commands::check_path(&file, cli.check_format);
     }
     if let Some(file) = cli.emit_rust_file {
         return commands::emit_rust(&file.to_string_lossy(), cli.strict);
@@ -660,6 +687,8 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 )
             }
         }
+        Some(Command::Check { path, format }) => commands::check_path(&path, format),
+        Some(Command::Explain { code, format }) => commands::explain_diagnostic(&code, format),
         Some(Command::Run {
             file,
             command,
@@ -852,7 +881,7 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
         None => {
             // Default: type check the file if provided
             if let Some(file) = cli.file {
-                commands::check_file(&file.to_string_lossy())
+                commands::check_path(&file, DiagnosticOutputFormat::Text)
             } else {
                 // No command and no file - show help
                 Err(CliError::new(render_cli_help_text(), ExitCode::FAILURE))

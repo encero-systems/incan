@@ -10,10 +10,10 @@
 //! not bytes. LSP positions are 0-based (line 0, character 0 is the first).
 
 use tower_lsp::lsp_types::{
-    Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, Location, Position, Range, Url,
+    Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, Location, NumberOrString, Position, Range, Url,
 };
 
-use crate::frontend::diagnostics::{CompileError, ErrorKind};
+use crate::frontend::diagnostics::{CompileError, DiagnosticPhase, ErrorKind, code_for_error};
 
 // ============================================================================
 // Position/Offset Conversion Utilities
@@ -142,7 +142,9 @@ pub fn compile_error_to_diagnostic(error: &CompileError, source: &str, uri: &Url
     Diagnostic {
         range,
         severity: Some(severity),
-        code: None,
+        code: Some(NumberOrString::String(
+            code_for_error(error, DiagnosticPhase::Unknown).to_string(),
+        )),
         code_description: None,
         source: Some("incan".to_string()),
         message,
