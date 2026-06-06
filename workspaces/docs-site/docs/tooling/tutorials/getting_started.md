@@ -1,83 +1,73 @@
-# Getting Started with Incan
+# Getting started with Incan
 
-## Prerequisites
+This tutorial is the shortest public path from an installed SDK to running, testing, and release-building a project. It does not require cloning the compiler repository.
 
-- Rust (1.92+): install via [rustup](https://rustup.rs/)
-- `git`: to clone the repository
-- `make`: for the canonical make-first workflow
+## Install and verify
 
-These instructions assume a Unix-like shell environment (macOS/Linux). If you’re on Windows, use WSL:
+Install the SDK, then make sure the command is on `PATH`:
 
-- WSL install guide: `https://learn.microsoft.com/windows/wsl/install`
+```bash
+curl -fsSL https://incan.pub/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
+incan --version
+```
 
-## Install/build/run (canonical)
+Native Windows is not supported by the initial SDK installer. Use WSL2 for now if you are on Windows.
 
-Follow: [Install, build, and run](../how-to/install_and_run.md).
+## Create your first project
 
-## Your First Program
+Create a small starter project:
 
-Create a file `hello.incn`:
+```bash
+incan new hello --yes
+cd hello
+```
 
-```incan
-def main() -> None:
-    println("Hello, Incan!")
+This creates:
+
+```text
+hello/
+├── src/
+│   └── main.incn          # Entry point and a small greeting function
+├── tests/
+│   └── test_main.incn     # Starter test for the greeting function
+├── README.md
+├── .gitignore
+└── incan.toml             # Project manifest with a main script and requires-incan constraint
 ```
 
 Run it:
 
-If you used `make install`:
-
-```bash
-incan run hello.incn
-```
-
-If you used the no-install fallback:
-
-```bash
-./target/release/incan run hello.incn
-```
-
-## Project Structure
-
-To scaffold a full project with an entry point, test file, and manifest, use the standard project lifecycle path. It is the simplest path for most first projects.
-
-```bash
-incan new my_project --yes
-cd my_project
-```
-
-This creates a ready-to-run layout:
-
-```text
-my_project/
-├── src/
-│   └── main.incn          # Entry point ("Hello from my_project!")
-├── tests/
-│   └── test_main.incn     # Starter test
-├── README.md
-├── .gitignore
-└── incan.toml             # Project manifest
-```
-
-You can run it immediately:
-
 ```bash
 incan run
+```
+
+Test it:
+
+```bash
 incan test
 ```
 
-When you run `incan new` in an interactive terminal without `--yes`, it prompts for the project name, version, description, author, and license. Use `incan init` instead when you are already inside an existing directory and want to add Incan project files there.
+Build the release binary:
 
-For the full walkthrough — adding modules and tests — see: [Your first project](your_first_project.md).
+```bash
+incan build --release
+```
 
-## Next Steps
+`incan build` already uses the release Cargo profile; `--release` is accepted so the first-contact command spells out the intent.
 
-- [Your first project](your_first_project.md) - Set up a real project with modules and tests
-- [Incan Code Style Guide](../../language/reference/code_style.md) - Canonical source layout rules
-- [Formatting with `incan fmt`](../how-to/formatting.md) - Formatter command usage
-- [CLI Reference](../reference/cli_reference.md) - Commands, flags, and environment variables
-- [Projects today](../explanation/projects_today.md) - Where builds go, what is regenerated, and what’s planned
-- [Troubleshooting](../how-to/troubleshooting.md) - Common setup and “it didn’t work” fixes
-- [Language: Start here](../../language/index.md) - Learn Incan syntax and patterns
-- [Stability policy](../../stability.md) - Versioning expectations and “Since” semantics
-- [Examples](https://github.com/dannys-code-corner/incan/tree/main/examples) - Sample programs
+## What 0.4 is good for
+
+0.4 is intended for trying Incan as an installed SDK, creating small projects, running tests, checking diagnostics, inspecting generated artifacts, and evaluating how Incan fits into Rust-backed application tooling.
+
+## What 0.4 is not yet good for
+
+0.4 is not a Python compatibility runtime, a native Windows installer release, a full package registry, or a promise that generated Rust is a stable ABI. Generated Rust is inspectable current backend output; public compatibility should be based on Incan source, manifests, checked metadata, and documented CLI report schemas.
+
+## Next steps
+
+- [Your first project](your_first_project.md): split the starter project into modules and add real tests.
+- [CLI reference](../reference/cli_reference.md): commands, flags, and machine-readable outputs.
+- [Incan vs Python](../../comparisons/python.md): where Incan tries to win and where Python is still the better choice.
+- [Incan vs Rust](../../comparisons/rust.md): why Incan compiles through Rust but does not replace Rust.
+- [Encero stack](../../start_here/encero_stack.md): where Incan sits relative to InQL, Pallay, Omerus, Hees.ai, and Hees.io.

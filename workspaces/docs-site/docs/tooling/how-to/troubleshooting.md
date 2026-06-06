@@ -1,40 +1,34 @@
 # Troubleshooting
 
-This page collects common “it didn’t work” fixes when getting started with Incan from this repository.
+This page collects common setup and first-run fixes for the installed SDK path. Contributor-only source-build notes are called out separately.
 
-## `incan: command not found` after `make install`
+## `incan: command not found` after SDK install
 
-- `make install` installs `incan` into `~/.cargo/bin`.
-- Ensure `~/.cargo/bin` is on your `PATH`.
-
-Check:
+The SDK installer links `incan` and `incan-lsp` into `INCAN_BIN_DIR`, defaulting to `~/.local/bin`. Make sure that directory is on your `PATH`:
 
 ```bash
-ls -la ~/.cargo/bin/incan
-echo "$PATH"
-which incan || true
+export PATH="$HOME/.local/bin:$PATH"
+command -v incan
+incan --version
+```
+
+If you installed with a custom bin directory, use that path instead:
+
+```bash
+INCAN_BIN_DIR="$HOME/bin" sh install.sh
+export PATH="$HOME/bin:$PATH"
 ```
 
 ## Shell or editor is using an old `incan` / `incan-lsp`
 
-This usually means your shell and editor are resolving different binaries. For local development from a clone, prefer:
-
-```bash
-cd /path/to/incan
-make build
-```
-
-On local machines, `make build` builds the compiler and LSP with `cargo build --features lsp`, then links `~/.cargo/bin/incan` to `target/debug/incan` and `~/.cargo/bin/incan-lsp` to `target/debug/incan-lsp`. Keep `~/.cargo/bin` early enough in your `PATH` that both tools resolve there:
+This usually means your shell and editor resolve different binaries. Check both commands:
 
 ```bash
 command -v incan
 command -v incan-lsp
-ls -l ~/.cargo/bin/incan ~/.cargo/bin/incan-lsp
 incan --version
 incan tools doctor
 ```
-
-If `command -v incan` or `command -v incan-lsp` points somewhere unexpected, fix your `PATH` or remove the stale binary from the earlier location. If the `ls -l` target points at a different checkout, rerun `make build` from the checkout you want to use.
 
 For VS Code/Cursor, also check the Incan settings:
 
@@ -45,36 +39,40 @@ For VS Code/Cursor, also check the Incan settings:
 }
 ```
 
-Leaving these empty makes the extension use workspace binary discovery or `PATH`. If you set `incan.lsp.path`, use a literal executable path such as `/path/to/incan/target/debug/incan-lsp`; the setting does not expand `$HOME`, `~`, or shell commands. The extension warns when either path setting contains shell syntax, points at a missing file, or points at a non-executable file.
+Leaving these empty makes the extension use workspace binary discovery or `PATH`. If you set `incan.lsp.path`, use a literal executable path such as `/Users/me/.local/bin/incan-lsp`; the setting does not expand `$HOME`, `~`, or shell commands. The extension warns when either path setting contains shell syntax, points at a missing file, or points at a non-executable file.
 
-After changing paths or rebuilding, reload the editor window so it starts a new language-server process:
+After changing paths or reinstalling, reload the editor window so it starts a new language-server process:
 
 1. Run **Incan: Doctor** from the command palette and check the **Incan** output channel.
 2. Run **Developer: Reload Window** from the command palette.
 3. Reopen a `.incn` file.
 4. Re-run **Incan: Doctor** if diagnostics still look stale.
 
-## I didn’t run `make install` (no-install fallback)
+## Contributor source builds
 
-If you’re using the no-install fallback, run commands from the repository root and invoke:
+If you are working from a compiler checkout, use repository `make` targets instead of the SDK installer:
 
 ```bash
-./target/release/incan ...
+cd /path/to/incan
+make build
 ```
 
-If `./target/release/incan` does not exist yet, build it first:
+On local machines, `make build` builds the compiler and LSP with `cargo build --features lsp`, then links `~/.cargo/bin/incan` to `target/debug/incan` and `~/.cargo/bin/incan-lsp` to `target/debug/incan-lsp`. Keep `~/.cargo/bin` early enough in your `PATH` that both tools resolve there.
+
+If you intentionally want the release binary from a checkout:
 
 ```bash
 make release
+./target/release/incan --version
 ```
 
 ## Builds are slow the first time
 
-The first `make release` (or first `incan build`) will compile Rust dependencies and can take a few minutes.
+The first `incan build`, `incan test`, or generated project run may compile Rust dependencies and can take a few minutes. Later runs should reuse Cargo artifacts unless dependency inputs, profile, target directory, or lock data changed.
 
 ## Cargo needs internet access for dependencies
 
-Some builds may download Rust crates via Cargo on first run. Ensure your environment can reach crates.io (or your configured proxy/mirror).
+Some builds may download Rust crates via Cargo on first run. Ensure your environment can reach crates.io or your configured proxy/mirror.
 
 For restricted or offline environments, run the supported preflight before the build:
 
@@ -87,8 +85,8 @@ The doctor report includes offline-readiness diagnostics for local dependency in
 Run once while online to populate Cargo's cache and generate `incan.lock`, then use:
 
 ```bash
-incan build src/main.incn --frozen
-incan test tests/ --frozen
+incan build --frozen
+incan test --frozen
 ```
 
 Offline policy prevents fetching; it does not remove crate dependencies, so crates that are not already available to Cargo locally can still make an offline build fail. Use `--offline` when you want Cargo to fail instead of using the network without also requiring a lockfile. Use `--locked` when the lockfile must exist and match current dependency inputs.
@@ -103,11 +101,4 @@ xcode-select --install
 
 ## Still stuck?
 
-If you’re still stuck, please [open an issue](https://github.com/dannys-code-corner/incan/issues) and include:
-
-- your OS and architecture
-- the exact commands you ran
-- the full error output
-- `command -v incan`, `command -v incan-lsp`, and `ls -l ~/.cargo/bin/incan ~/.cargo/bin/incan-lsp`
-- `incan tools doctor --format json`
-- whether `incan.lsp.path` or `incan.compiler.path` is set in VS Code/Cursor
+If you’re still stuck, please [open an issue](https://github.com/dannys-code-corner/incan/issues) and include your OS, architecture, exact commands, and full error output.

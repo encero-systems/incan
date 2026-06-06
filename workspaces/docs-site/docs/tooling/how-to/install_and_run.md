@@ -1,38 +1,58 @@
-# Install, build, and run (make-first)
+# Install and run Incan
 
-This page documents the canonical way to build/install/run Incan from this repository.
+This page documents the public 0.4 install path. Use the SDK installer when you want to try Incan as a user. Use the source-build path only when you are contributing to the compiler or testing an unreleased branch.
 
-## Prerequisites
+## Supported hosts
 
-- Rust (1.92+): install via [rustup](https://rustup.rs/)
-- `git`: to clone the repository
-- `make`: for the canonical make-first workflow
+The 0.4 SDK installer targets macOS and Linux first. Native Windows is not part of the initial SDK installer; use WSL2 for now. Generated Rust projects still use the local Rust toolchain, so install Rust with `rustup` before running projects that build binaries.
 
-These instructions assume a Unix-like shell environment (macOS/Linux). If you’re on Windows, use WSL or adapt the commands.
+The SDK manifest also records the Rust backend policy for the release, including the `wasm32-wasip1` target used by packages that ship vocabulary companions.
 
-## Get the repo (run from repo root)
+## Install the SDK
 
-Run the commands on this page from the repository root (the directory containing `Makefile`):
+The hosted installer path is:
+
+```bash
+curl -fsSL https://incan.pub/install.sh | sh
+```
+
+For a dry run that resolves the manifest and target without writing files:
+
+```bash
+curl -fsSL https://incan.pub/install.sh | sh -s -- --dry-run
+```
+
+The installer reads the release manifest, selects the archive for your host target, verifies the archive checksum, installs into `INCAN_HOME` (default `~/.incan`), and links `incan` plus `incan-lsp` into `INCAN_BIN_DIR` (default `~/.local/bin`). Make sure the bin directory is on `PATH`.
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+incan --version
+incan-lsp --version
+```
+
+## Create a starter project
+
+After installation, the shortest first run is:
+
+```bash
+incan new hello --yes
+cd hello
+incan run
+incan test
+incan build --release
+```
+
+`incan new` creates an `incan.toml`, `src/main.incn`, `tests/test_main.incn`, `README.md`, and `.gitignore`. The generated project is intentionally small: one function, one entrypoint, and one test that checks the generated behavior.
+
+## Source-build fallback for contributors
+
+If you are working on Incan itself, build from the repository instead:
 
 ```bash
 git clone https://github.com/dannys-code-corner/incan.git
 cd incan
+make install
+incan run examples/simple/hello.incn
 ```
 
-## Canonical command flow
-
---8<-- "_snippets/commands/install_build_run.md"
-
-## Run a file
-
-If you used `make install`:
-
-```bash
-incan run hello.incn
-```
-
-If you used the no-install fallback:
-
-```bash
-./target/release/incan run hello.incn
-```
+The source-build path links the compiler from the checkout and is useful for development. It is not the public first-contact path for evaluating an SDK release.

@@ -21,34 +21,26 @@ Tip: Incan uses indentation for blocks. The canonical style is **4 spaces** per 
 
 ## Run it
 
-If you installed to PATH:
-
 ```bash
 incan run hello.incn
 ```
 
-If you used the no-install fallback:
-
-```bash
-./target/release/incan run hello.incn
-```
-
 ## When to make it a project
 
-A single `hello.incn` file is the fastest way to try the language. Once you want tests, dependencies, a stable source root, release metadata, or repeatable project commands, create an Incan project. This is easy to do using the incan cli:
+A single `hello.incn` file is the fastest way to try one language construct. Once you want tests, dependencies, a stable source root, release metadata, or repeatable project commands, create an Incan project:
 
 ```bash
-mkdir hello_project
+incan new hello_project --yes
 cd hello_project
-incan init --name hello_project --yes
 ```
 
-This creates `incan.toml`, `src/main.incn`, `tests/test_main.incn`, `README.md`, and `.gitignore`. The manifest is the project metadata file; it names the project, records the project version, and declares the default entry point under `[project.scripts]`.
+This creates `incan.toml`, `src/main.incn`, `tests/test_main.incn`, `README.md`, and `.gitignore`. The manifest is the project metadata file; it names the project, records the project version and toolchain requirement, and declares the default entry point under `[project.scripts]`.
 
 ```toml title="incan.toml"
 [project]
 name = "hello_project"
 version = "0.1.0"
+requires-incan = ">=0.4.0-0,<0.5.0"
 
 [project.scripts]
 main = "src/main.incn"
@@ -58,6 +50,7 @@ Run the project entry point:
 
 ```bash
 incan run
+incan test
 ```
 
 For the full lifecycle workflow, see [Project lifecycle](../../how-to/project_lifecycle.md).

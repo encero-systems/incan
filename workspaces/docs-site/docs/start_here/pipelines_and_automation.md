@@ -4,7 +4,7 @@ This page is a routing guide for step/pipeline-style workflows (automation, repr
 
 ## What you should do next
 
-- Quickstart: [Getting Started](../tooling/tutorials/getting_started.md) (make-first)
+- Quickstart: [Getting Started](../tooling/tutorials/getting_started.md) (SDK install and starter project)
 - Pipeline tutorial: [Pipeline mini-project](../tooling/tutorials/pipeline_mini_project.md)
 - CI entrypoint (projects): [CI & automation](../tooling/how-to/ci_and_automation.md)
 - CI entrypoint (contributors): [CI & automation (repository)](../contributing/how-to/ci_and_automation.md)
@@ -32,6 +32,6 @@ If you are contributing to the Incan repository itself, the CI entrypoints are `
 
 ## Not yet / planned (don’t rely on it for automation)
 
-- Project config + lockfiles (`incan.toml`, dependency pinning, reproducible dependency resolution)
-- First-class “project lifecycle” commands (`incan init/new/doctor`)
-- Offline/locked build workflows built into the CLI (enterprise constraints)
+- Package registry publishing and remote project templates
+- Native Windows installer support
+- Enterprise deployment policy beyond locked/offline command flags

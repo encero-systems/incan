@@ -2,7 +2,8 @@
 
 This section covers the Incan tooling experience:
 
-- CLI (check/build/run/fmt/test)
+- SDK install and project creation
+- CLI (`check`, `build`, `run`, `fmt`, `test`, `inspect`, and `tools`)
 - editor setup and LSP
 
 If you’re not sure where you fit, start at [Start here](../start_here/index.md).
@@ -22,13 +23,17 @@ If you’re not sure where you fit, start at [Start here](../start_here/index.md
 
 Single source of truth pages under Tooling:
 
-- [Install/build/run](how-to/install_and_run.md) (make-first)
+- [Install and run](how-to/install_and_run.md) (SDK-first)
 - [CLI reference](reference/cli_reference.md) (commands/flags/env vars)
 
-## Canonical commands (make-first)
+## Canonical first-contact flow
 
---8<-- "_snippets/commands/install_build_run.md"
+```bash
+incan new hello --yes
+cd hello
+incan run
+incan test
+incan build --release
+```
 
-## Notes
-
-- We prefer repository `make` targets in docs wherever possible.
+Repository `make` targets remain the contributor path for working on Incan itself.

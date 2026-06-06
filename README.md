@@ -32,15 +32,19 @@ As AI tools generate more code, those constraints matter more. Incan gives devel
 
 Docs policy: [Stability policy](workspaces/docs-site/docs/stability.md)
 
-## Quickstart (from this repo)
+## Quickstart
 
 ```bash
-# Install the compiler to ~/.cargo/bin/incan
-make install
-
-# Run an example
-incan run examples/simple/hello.incn
+curl -fsSL https://incan.pub/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
+incan new hello --yes
+cd hello
+incan run
+incan test
+incan build --release
 ```
+
+If you are contributing to the compiler itself, clone this repository and use `make install` instead of the SDK installer.
 
 ## A small example
 

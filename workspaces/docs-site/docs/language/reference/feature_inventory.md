@@ -62,6 +62,8 @@ Use it when deciding whether code should use an existing Incan surface before ad
 | Async and await | Async | 0.2 | Import `std.async` or one of its submodules. | `from std.async.time import sleep`<br>`async def main() -> None:`<br>`await sleep(1)` | `async` and `await` are import-activated soft-keyword surfaces backed by `std.async` modules. | Threading async behavior through synchronous wrappers or relying on pre-0.2 ambient async syntax. | [Async programming](../how-to/async_programming.md), [std.async](stdlib/async.md), [Release 0.2](../../release_notes/0_2.md) |
 | Async race and awaitability | Async | 0.3 | Import `std.async.race` or the relevant async prelude helpers. | `race for value:`<br>`arm(task)`<br>`race(arms)` | `Awaitable[T]`, `race for`, and helper-style race composition support first-ready async workflows. | Legacy `std.async.select` or hand-rolled polling loops. | [Awaitable trait](stdlib_traits/awaitable.md), [Async programming](../how-to/async_programming.md), [Release 0.3](../../release_notes/0_3.md) |
 | Project lifecycle tooling | Tooling | 0.3 | Use `incan init`, `incan new`, `incan version`, or `incan env`. | `incan new greeter --yes`<br>`incan version patch`<br>`incan env test` | Project commands create scaffolds, manage versions, and run configured environments from `incan.toml`. | One-off project scaffolding scripts or manual version-file edits. | [Project lifecycle](project_lifecycle.md), [Project lifecycle how-to](../how-to/project_lifecycle.md), [Release 0.3](../../release_notes/0_3.md) |
+| SDK installer and release manifest | Tooling | 0.4 | Use the hosted SDK installer or the versioned SDK manifest. | `curl -fsSL https://incan.pub/install.sh \| sh`<br>`scripts/install-incan-sdk.sh --dry-run` | The SDK install path is manifest-driven, checksum-verified, and installs `incan` plus `incan-lsp` into an Incan-owned SDK layout. | Treating Cargo, repository checkouts, and package-manager adapters as separate sources of install truth. | [Install and run](../../tooling/how-to/install_and_run.md), [Release 0.4](../../release_notes/0_4.md) |
+| Zero-clone starter project flow | Tooling | 0.4 | Use `incan new`, then run project commands from the generated directory. | `incan new hello --yes`<br>`cd hello`<br>`incan run`<br>`incan test`<br>`incan build --release` | `incan new` creates a runnable, testable project with a manifest, entrypoint, starter test, README, `.gitignore`, and release-line toolchain constraint. | Cloning the compiler repository or copying examples manually before a first run. | [Getting started](../../tooling/tutorials/getting_started.md), [Project lifecycle](project_lifecycle.md), [Release 0.4](../../release_notes/0_4.md) |
 | Stable diagnostics commands | Tooling | 0.4 | Use `incan check` or `incan explain`. | `incan check src/main.incn --format json`<br>`incan explain INCAN-T0001` | Type-check diagnostics can be emitted as versioned JSON with stable codes, source spans, and catalog-backed explanations. | Scraping terminal diagnostics or building tool-specific error-code maps. | [CLI reference](../../tooling/reference/cli_reference.md), [Release 0.4](../../release_notes/0_4.md) |
 | Build reports and generated Rust inspection | Tooling | 0.4 | Use `incan build --report json` or `incan inspect rust`. | `incan build src/main.incn --report json`<br>`incan build --lib --report json --report-output build.json`<br>`incan inspect rust src/main.incn --format json` | Builds can emit versioned machine-readable reports, and generated Rust can be inspected intentionally as current backend output. | Scraping terminal progress output or treating `--emit-rust` debug output as a stable artifact contract. | [CLI reference](../../tooling/reference/cli_reference.md), [Release 0.4](../../release_notes/0_4.md) |
 | Compiler-backed codegraph inspection | Tooling | 0.4 | Use `incan inspect codegraph`. | `incan inspect codegraph src/main.incn --format jsonl`<br>`incan inspect codegraph src --format jsonl --allow-errors` | Source files, modules, declarations, imports, exports, containment, spans, provenance, and diagnostics can be exported as deterministic JSONL records. | Repeated grep/read loops or tool-specific source scrapers when agents and tooling need basic Incan structure. | [Codegraph inspection](../../tooling/reference/codegraph_inspection.md), [CLI reference](../../tooling/reference/cli_reference.md), [Release 0.4](../../release_notes/0_4.md) |
@@ -891,6 +893,45 @@ Canonical forms:
 - `incan new greeter --yes`
 - `incan version patch`
 - `incan env test`
+
+### SDK installer and release manifest
+
+- **Id:** `SdkInstallerManifest`
+- **Category:** `Tooling`
+- **Since:** `0.4`
+- **RFC:** `RFC 015`
+- **Stability:** `Stable`
+- **Activation:** Use the hosted SDK installer or the versioned SDK manifest.
+- **Use instead of:** Treating Cargo, repository checkouts, and package-manager adapters as separate sources of install truth.
+- **References:** [Install and run](../../tooling/how-to/install_and_run.md), [Release 0.4](../../release_notes/0_4.md)
+
+The SDK install path is manifest-driven, checksum-verified, and installs `incan` plus `incan-lsp` into an Incan-owned SDK layout.
+
+Canonical forms:
+
+- `curl -fsSL https://incan.pub/install.sh | sh`
+- `scripts/install-incan-sdk.sh --dry-run`
+
+### Zero-clone starter project flow
+
+- **Id:** `ZeroCloneStarterFlow`
+- **Category:** `Tooling`
+- **Since:** `0.4`
+- **RFC:** `RFC 015`
+- **Stability:** `Stable`
+- **Activation:** Use `incan new`, then run project commands from the generated directory.
+- **Use instead of:** Cloning the compiler repository or copying examples manually before a first run.
+- **References:** [Getting started](../../tooling/tutorials/getting_started.md), [Project lifecycle](project_lifecycle.md), [Release 0.4](../../release_notes/0_4.md)
+
+`incan new` creates a runnable, testable project with a manifest, entrypoint, starter test, README, `.gitignore`, and release-line toolchain constraint.
+
+Canonical forms:
+
+- `incan new hello --yes`
+- `cd hello`
+- `incan run`
+- `incan test`
+- `incan build --release`
 
 ### Stable diagnostics commands
 

@@ -1,5 +1,5 @@
-!!! note "No-install fallback"
-    If you did not run `make install`, you can still run the `incan` binary directly:
+!!! note "Contributor source-build fallback"
+    If you are working from a compiler checkout instead of an SDK install, you can run the repository-built binary directly:
 
     - from the repository root:
 

@@ -93,6 +93,7 @@ nav:
       - Coming from Python (apps): start_here/coming_from_python.md
       - Coming from Rust (evaluator): start_here/coming_from_rust.md
       - Pipelines & automation: start_here/pipelines_and_automation.md
+      - Encero stack: start_here/encero_stack.md
       - Beginner: start_here/beginner.md
   - Comparisons:
       - Overview: comparisons/index.md
