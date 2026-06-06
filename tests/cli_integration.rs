@@ -145,6 +145,130 @@ fn assert_source_span_shape(span: &serde_json::Value, record: &serde_json::Value
 }
 
 #[test]
+fn semantic_inspection_surfaces_share_project_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let src_dir = tmp.path().join("src");
+    fs::create_dir_all(&src_dir)?;
+    fs::write(
+        tmp.path().join("incan.toml"),
+        r#"[project]
+name = "semantic_probe"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+"#,
+    )?;
+    fs::write(
+        src_dir.join("helpers.incn"),
+        r#"pub model Widget:
+    """A documented value that should appear in reports and graph facts."""
+    value: int
+
+pub def make_widget(value: int) -> Widget:
+    """Create a value for semantic inspection smoke tests."""
+    return Widget(value=value)
+"#,
+    )?;
+    let main_path = src_dir.join("main.incn");
+    fs::write(
+        &main_path,
+        r#"from helpers import make_widget
+
+pub def entrypoint() -> int:
+    return make_widget(42).value
+
+def main() -> None:
+    println(f"semantic {entrypoint()}")
+"#,
+    )?;
+
+    let main_arg = main_path.to_str().ok_or("main path was not valid UTF-8")?;
+    let check = run_incan(tmp.path(), &["check", main_arg, "--format", "json"])?;
+    assert_success(&check, "incan check --format json semantic inspection fixture");
+    let check_json = parse_json_stdout(&check)?;
+    assert_eq!(check_json["schema_version"], serde_json::json!(1));
+    assert_eq!(check_json["ok"], serde_json::json!(true));
+    assert_eq!(check_json["diagnostics"], serde_json::json!([]));
+
+    let build = run_incan(tmp.path(), &["build", main_arg, "--offline", "--report", "json"])?;
+    assert_success(&build, "incan build --report json semantic inspection fixture");
+    let build_json = parse_json_stdout(&build)?;
+    assert_eq!(build_json["schema_version"], check_json["schema_version"]);
+    assert_eq!(build_json["project"]["name"], serde_json::json!("semantic_probe"));
+    assert_source_files_include(&build_json, &["src/main.incn", "src/helpers.incn"]);
+
+    let inspect = run_incan(tmp.path(), &["inspect", "rust", main_arg, "--format", "json"])?;
+    assert_success(&inspect, "incan inspect rust --format json semantic inspection fixture");
+    let inspect_json = parse_json_stdout(&inspect)?;
+    assert_eq!(inspect_json["schema_version"], build_json["schema_version"]);
+    assert_eq!(inspect_json["compiler_version"], build_json["compiler_version"]);
+    assert_eq!(
+        inspect_json["generated"]["project_path"],
+        build_json["generated"]["project_path"]
+    );
+    assert_eq!(
+        inspect_json["generated"]["manifest_path"],
+        build_json["generated"]["manifest_path"]
+    );
+    assert_eq!(
+        inspect_json["generated"]["crate_root"],
+        build_json["generated"]["crate_root"]
+    );
+    assert_source_files_include(&inspect_json, &["src/main.incn", "src/helpers.incn"]);
+
+    let codegraph = run_incan(tmp.path(), &["inspect", "codegraph", main_arg, "--format", "jsonl"])?;
+    assert_success(
+        &codegraph,
+        "incan inspect codegraph --format jsonl semantic inspection fixture",
+    );
+    let records = parse_jsonl_stdout(&codegraph)?;
+    assert_codegraph_v04_record_contract(&records);
+    assert_eq!(records[0]["schema_version"], build_json["schema_version"]);
+    assert_eq!(records[0]["compiler_version"], build_json["compiler_version"]);
+    assert_eq!(records[0]["package"]["name"], serde_json::json!("semantic_probe"));
+    assert!(records.iter().any(|record| {
+        record["record"] == serde_json::json!("file")
+            && record["path"]
+                .as_str()
+                .is_some_and(|path| path.ends_with("src/main.incn"))
+    }));
+    assert!(records.iter().any(|record| {
+        record["record"] == serde_json::json!("file")
+            && record["path"]
+                .as_str()
+                .is_some_and(|path| path.ends_with("src/helpers.incn"))
+    }));
+    assert!(records.iter().any(|record| {
+        record["record"] == serde_json::json!("declaration")
+            && record["kind"] == serde_json::json!("function")
+            && record["name"] == serde_json::json!("entrypoint")
+            && record["visibility"] == serde_json::json!("public")
+    }));
+    assert!(records.iter().any(|record| {
+        record["record"] == serde_json::json!("call")
+            && record["callee"] == serde_json::json!("make_widget")
+            && record["provenance"] == serde_json::json!("syntax")
+    }));
+
+    Ok(())
+}
+
+fn assert_source_files_include(report: &serde_json::Value, suffixes: &[&str]) {
+    let files = report["source_files"]
+        .as_array()
+        .unwrap_or_else(|| panic!("report source_files should be an array: {report}"));
+    for suffix in suffixes {
+        assert!(
+            files
+                .iter()
+                .any(|file| file["path"].as_str().is_some_and(|path| path.ends_with(suffix))),
+            "expected report to include source file ending with {suffix}: {report}"
+        );
+    }
+}
+
+#[test]
 fn check_json_reports_parser_diagnostics() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let source_path = tmp.path().join("broken.incn");

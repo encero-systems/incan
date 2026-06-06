@@ -30,6 +30,12 @@ Commands:
 - `lock` - Generate or update `incan.lock`
 - `tools` - Inspect local toolchain, editor integration state, and checked metadata
 
+## Semantic inspection surfaces
+
+Incan 0.4 exposes several machine-readable inspection commands that are meant to agree on schema version, compiler version, project identity, source-file breadcrumbs, generated artifact paths, diagnostics, and provenance where their scopes overlap. Use `incan check --format json` for the stable diagnostic plane, `incan build --report json` for successful build and artifact metadata, `incan inspect rust --format json` for current generated Rust output, and `incan inspect codegraph --format jsonl` for source-structure graph facts.
+
+These commands are intentionally not a single full semantic database yet. They are the 0.4 baseline for the broader RFC 102 semantic inspection direction: stable public JSON surfaces that tools can join without scraping terminal prose, generated Rust, or source text independently. When a fact appears in more than one surface, consumers should prefer compiler-owned identity fields, source paths, schema versions, and explicit degraded-state or diagnostic records over human output.
+
 ## Global options
 
 - `--no-banner`: suppress the ASCII logo banner when a command would otherwise show it (also via `INCAN_NO_BANNER=1`).

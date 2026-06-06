@@ -4,6 +4,8 @@
 
 Use it when an editor, CI job, architecture review tool, or agent needs basic Incan structure with compiler-owned provenance. Do not treat it as a graph database, full reference index, resolved call graph, or stable generated-Rust ABI. The command reports source and syntax facts today, with diagnostics in tolerant mode; later releases can add richer checked relationships and target ids on the same record stream.
 
+Codegraph inspection is one piece of the 0.4 semantic-inspection baseline. Pair it with `incan check --format json` for stable diagnostics, `incan build --report json` for build and artifact metadata, and `incan inspect rust --format json` for current generated Rust output. The four surfaces should agree on schema version, compiler version, project identity, source breadcrumbs, and explicit degraded-state or diagnostic reporting where their scopes overlap.
+
 ```bash
 incan inspect codegraph src/main.incn --format jsonl
 incan inspect codegraph src --format jsonl --allow-errors
