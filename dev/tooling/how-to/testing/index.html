@@ -6240,6 +6240,7 @@
 <p>Run tests:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>tests/
 </code></pre></div>
+<p>For long suites, use <code>incan test -v</code> to see generated-harness planning, preparation-cache hits or misses, preheat timing, and Cargo test phase timing. Ordinary console runs still show the collected test count and any generated-harness preheat that has to run; when a cold preheat invokes Cargo, Cargo's own progress is streamed instead of hidden until the end. Verbose mode is the better troubleshooting view when you need to tell whether time is going into package preparation, Rust metadata prewarm, Cargo preheat, or actual test execution.</p>
 <h2 id="test-discovery">Test Discovery<a class="headerlink" href="#test-discovery" title="Permanent link">&para;</a></h2>
 <p>Tests are discovered automatically from two sources:</p>
 <ul>
