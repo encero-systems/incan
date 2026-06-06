@@ -79,6 +79,71 @@ fn parse_json_stdout(output: &Output) -> Result<serde_json::Value, Box<dyn std::
     Ok(serde_json::from_slice(&output.stdout)?)
 }
 
+fn parse_jsonl_stdout(output: &Output) -> Result<Vec<serde_json::Value>, Box<dyn std::error::Error>> {
+    let stdout = String::from_utf8(output.stdout.clone())?;
+    stdout
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| Ok(serde_json::from_str(line)?))
+        .collect()
+}
+
+fn assert_codegraph_v04_record_contract(records: &[serde_json::Value]) {
+    assert!(!records.is_empty(), "codegraph export should include a header record");
+    assert_eq!(records[0]["record"], serde_json::json!("header"));
+    assert_eq!(records[0]["schema_version"], serde_json::json!(1));
+    assert_eq!(records[0]["languages"], serde_json::json!(["incan"]));
+    assert!(
+        records[0]["degraded"].is_boolean(),
+        "codegraph header should carry degraded state: {}",
+        records[0]
+    );
+
+    for record in records.iter().skip(1) {
+        assert_eq!(
+            record["language"],
+            serde_json::json!("incan"),
+            "v0.4 codegraph fact records should be explicitly Incan-language facts: {record}"
+        );
+        assert!(
+            record["provenance"].is_string(),
+            "codegraph fact records should carry provenance: {record}"
+        );
+        assert!(
+            record["degraded"].is_boolean(),
+            "codegraph fact records should carry degraded state: {record}"
+        );
+
+        if let Some(span) = record.get("span").filter(|span| span.is_object()) {
+            assert_source_span_shape(span, record);
+        }
+        if let Some(span) = record.get("primary_span").filter(|span| span.is_object()) {
+            assert_source_span_shape(span, record);
+        }
+    }
+
+    assert!(
+        records
+            .iter()
+            .skip(1)
+            .all(|record| record["language"] != serde_json::json!("rust")),
+        "v0.4 should not emit Rust codegraph facts before first-class Rust support lands"
+    );
+}
+
+fn assert_source_span_shape(span: &serde_json::Value, record: &serde_json::Value) {
+    assert!(
+        span["file"].is_string()
+            && span["start"].is_number()
+            && span["end"].is_number()
+            && span["start_line"].is_number()
+            && span["start_column"].is_number()
+            && span["end_line"].is_number()
+            && span["end_column"].is_number(),
+        "source-backed codegraph records should carry stable file and span identity: {record}"
+    );
+}
+
 #[test]
 fn check_json_reports_parser_diagnostics() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
@@ -478,6 +543,240 @@ pub def answer() -> int:
             || crate_root.contains("/// Answer docs survive into generated Rust."),
         "expected generated Rust to include public function docs, got:\n{crate_root}"
     );
+
+    Ok(())
+}
+
+#[test]
+fn inspect_codegraph_exports_multifile_imports_and_public_symbols() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let src_dir = tmp.path().join("src");
+    fs::create_dir_all(&src_dir)?;
+    fs::write(
+        tmp.path().join("incan.toml"),
+        r#"[project]
+name = "graph_demo"
+version = "0.1.0"
+"#,
+    )?;
+    fs::write(
+        src_dir.join("helpers.incn"),
+        r#"pub model Widget:
+    value: int
+
+pub def make_widget(value: int) -> Widget:
+    return Widget(value=value)
+"#,
+    )?;
+    let main_path = src_dir.join("main.incn");
+    fs::write(
+        &main_path,
+        r#"from helpers import make_widget
+
+pub def entrypoint() -> int:
+    return make_widget(7).value
+"#,
+    )?;
+
+    let first = run_incan(
+        tmp.path(),
+        &[
+            "inspect",
+            "codegraph",
+            main_path.to_str().ok_or("main path was not valid UTF-8")?,
+            "--format",
+            "jsonl",
+        ],
+    )?;
+    assert_success(&first, "incan inspect codegraph");
+    let second = run_incan(
+        tmp.path(),
+        &[
+            "inspect",
+            "codegraph",
+            main_path.to_str().ok_or("main path was not valid UTF-8")?,
+            "--format",
+            "jsonl",
+        ],
+    )?;
+    assert_success(&second, "second incan inspect codegraph");
+    assert_eq!(first.stdout, second.stdout, "codegraph JSONL should be deterministic");
+
+    let records = parse_jsonl_stdout(&first)?;
+    assert_codegraph_v04_record_contract(&records);
+    assert_eq!(records[0]["record"], serde_json::json!("header"));
+    assert_eq!(records[0]["package"]["name"], serde_json::json!("graph_demo"));
+    assert!(records.iter().any(|record| {
+        record["record"] == serde_json::json!("import")
+            && record["path"] == serde_json::json!("helpers")
+            && record["items"].as_array().is_some_and(|items| {
+                items
+                    .iter()
+                    .any(|item| item.as_str().is_some_and(|value| value == "make_widget"))
+            })
+    }));
+    assert!(records.iter().any(|record| {
+        record["record"] == serde_json::json!("declaration")
+            && record["kind"] == serde_json::json!("function")
+            && record["name"] == serde_json::json!("entrypoint")
+            && record["visibility"] == serde_json::json!("public")
+    }));
+    assert!(records.iter().any(|record| {
+        record["record"] == serde_json::json!("export")
+            && record["name"] == serde_json::json!("entrypoint")
+            && record["kind"] == serde_json::json!("declaration")
+    }));
+    assert!(records.iter().any(|record| {
+        record["record"] == serde_json::json!("containment")
+            && record["kind"] == serde_json::json!("module_contains_declaration")
+    }));
+    assert!(records.iter().any(|record| {
+        record["record"] == serde_json::json!("call")
+            && record["kind"] == serde_json::json!("function")
+            && record["callee"] == serde_json::json!("make_widget")
+            && record["argument_count"] == serde_json::json!(1)
+            && record["target_id"] == serde_json::Value::Null
+            && record["provenance"] == serde_json::json!("syntax")
+    }));
+    assert!(records.iter().any(|record| {
+        record["record"] == serde_json::json!("reference")
+            && record["kind"] == serde_json::json!("field")
+            && record["name"] == serde_json::json!("value")
+            && record["target_id"] == serde_json::Value::Null
+            && record["provenance"] == serde_json::json!("syntax")
+    }));
+    assert!(records.iter().any(|record| {
+        record["record"] == serde_json::json!("containment")
+            && record["kind"] == serde_json::json!("declaration_contains_call")
+    }));
+
+    Ok(())
+}
+
+#[test]
+fn inspect_codegraph_tolerant_directory_keeps_parseable_facts_and_diagnostics() -> Result<(), Box<dyn std::error::Error>>
+{
+    let tmp = tempfile::tempdir()?;
+    fs::write(
+        tmp.path().join("ok.incn"),
+        r#"pub def ok() -> int:
+    return 1
+"#,
+    )?;
+    let nested = tmp.path().join("nested");
+    fs::create_dir_all(&nested)?;
+    fs::write(
+        nested.join("extra.incn"),
+        r#"pub def extra() -> int:
+    return 2
+"#,
+    )?;
+    fs::write(tmp.path().join("broken.incn"), "def broken(:\n")?;
+
+    let strict = run_incan(
+        tmp.path(),
+        &[
+            "inspect",
+            "codegraph",
+            tmp.path().to_str().ok_or("directory path was not valid UTF-8")?,
+            "--format",
+            "jsonl",
+        ],
+    )?;
+    assert_failure(&strict, "strict incan inspect codegraph should reject broken source");
+
+    let tolerant = run_incan(
+        tmp.path(),
+        &[
+            "inspect",
+            "codegraph",
+            tmp.path().to_str().ok_or("directory path was not valid UTF-8")?,
+            "--format",
+            "jsonl",
+            "--allow-errors",
+        ],
+    )?;
+    assert_success(&tolerant, "tolerant incan inspect codegraph");
+    let records = parse_jsonl_stdout(&tolerant)?;
+    assert_codegraph_v04_record_contract(&records);
+    assert_eq!(records[0]["degraded"], serde_json::json!(true));
+    assert!(records.iter().any(|record| {
+        record["record"] == serde_json::json!("declaration")
+            && record["name"] == serde_json::json!("ok")
+            && record["provenance"] == serde_json::json!("syntax")
+    }));
+    assert!(records.iter().any(|record| {
+        record["record"] == serde_json::json!("module")
+            && record["module_path"] == serde_json::json!(["nested", "extra"])
+    }));
+    assert!(records.iter().any(|record| {
+        record["record"] == serde_json::json!("diagnostic")
+            && record["code"] == serde_json::json!("INCAN-P0001")
+            && record["phase"] == serde_json::json!("parse")
+    }));
+
+    Ok(())
+}
+
+#[test]
+fn inspect_codegraph_strict_directory_rejects_semantic_diagnostics() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    fs::write(
+        tmp.path().join("bad.incn"),
+        r#"pub def bad() -> int:
+    return missing()
+"#,
+    )?;
+
+    let strict = run_incan(
+        tmp.path(),
+        &[
+            "inspect",
+            "codegraph",
+            tmp.path().to_str().ok_or("directory path was not valid UTF-8")?,
+            "--format",
+            "jsonl",
+        ],
+    )?;
+    assert_failure(
+        &strict,
+        "strict incan inspect codegraph should reject directory typecheck diagnostics",
+    );
+    let strict_stderr = String::from_utf8_lossy(&strict.stderr);
+    assert!(
+        strict_stderr.contains("Unknown symbol 'missing'"),
+        "expected strict directory codegraph to report typecheck diagnostic, got:\n{strict_stderr}"
+    );
+
+    let tolerant = run_incan(
+        tmp.path(),
+        &[
+            "inspect",
+            "codegraph",
+            tmp.path().to_str().ok_or("directory path was not valid UTF-8")?,
+            "--format",
+            "jsonl",
+            "--allow-errors",
+        ],
+    )?;
+    assert_success(
+        &tolerant,
+        "tolerant incan inspect codegraph should keep syntax facts for directory typecheck diagnostics",
+    );
+    let records = parse_jsonl_stdout(&tolerant)?;
+    assert_codegraph_v04_record_contract(&records);
+    assert_eq!(records[0]["degraded"], serde_json::json!(true));
+    assert!(records.iter().any(|record| {
+        record["record"] == serde_json::json!("declaration")
+            && record["name"] == serde_json::json!("bad")
+            && record["provenance"] == serde_json::json!("syntax")
+    }));
+    assert!(records.iter().any(|record| {
+        record["record"] == serde_json::json!("diagnostic")
+            && record["code"] == serde_json::json!("INCAN-T0001")
+            && record["phase"] == serde_json::json!("typecheck")
+            && record["message"] == serde_json::json!("Unknown symbol 'missing'")
+    }));
 
     Ok(())
 }

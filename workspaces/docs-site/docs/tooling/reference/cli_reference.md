@@ -197,6 +197,30 @@ incan inspect rust src/main.incn --format json
 incan inspect rust . --lib --format json
 ```
 
+### `incan inspect codegraph`
+
+Usage:
+
+```text
+incan inspect codegraph [OPTIONS] <PATH>
+```
+
+Exports compiler-backed codegraph records for an Incan source file or directory. The 0.4 export is a deterministic JSONL stream of Incan-language files, modules, top-level declarations, imports, public exports, body-level reference and call syntax, containment relationships, source spans, provenance, degraded state, and diagnostics. It is intended for tools and agents that need Incan structure without scraping source text.
+
+Options:
+
+- `--format jsonl`: Emit newline-delimited JSON records. JSONL is the only supported 0.4 format.
+- `--allow-errors`: Emit a degraded partial graph and diagnostic records when the source is broken. Without this flag, diagnostics fail the command.
+
+`incan inspect codegraph` is tooling output, not runtime `std.graph`, not a generated-Rust ABI, and not a full reference/call graph in 0.4. The header lists the represented languages, and every fact record carries `language`, `provenance`, and `degraded` fields. The 0.4 exporter emits `language: "incan"` only; first-class Rust graph records and MCP/task-context consumers are follow-up work.
+
+Examples:
+
+```bash
+incan inspect codegraph src/main.incn --format jsonl
+incan inspect codegraph src --format jsonl --allow-errors
+```
+
 ### `incan run`
 
 Usage:

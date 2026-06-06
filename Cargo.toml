@@ -5,6 +5,7 @@ members = [
     "crates/incan_vocab",
     "crates/incan_stdlib",
     "crates/incan_core",
+    "crates/incan_codegraph",
     "crates/incan_syntax",
     "crates/incan_semantics_core",
     "crates/incan_semantics_stdlib",
@@ -22,7 +23,7 @@ resolver = "2"
 ra_ap_proc_macro_api = { path = "crates/third_party/ra_ap_proc_macro_api" }
 
 [workspace.package]
-version = "0.4.0-dev.4"
+version = "0.4.0-dev.5"
 description = "The Incan programming language compiler"
 edition = "2024"
 rust-version = "1.92"
@@ -63,6 +64,7 @@ rust_inspect = ["dep:rust_inspect"]
 [dependencies]
 # Shared language/semantic helpers (canonical vocab)
 incan_core = { path = "crates/incan_core" }
+incan_codegraph = { path = "crates/incan_codegraph" }
 incan_vocab = { path = "crates/incan_vocab" }
 # Shared syntax frontend (lexer, parser, AST, diagnostics)
 incan_syntax = { path = "crates/incan_syntax" }

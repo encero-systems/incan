@@ -9,6 +9,7 @@
 //! - `build <file>` - Compile to Rust and build executable
 //! - `build --lib` - Validate library-mode preconditions
 //! - `inspect rust <file|project>` - Inspect current generated Rust backend output
+//! - `inspect codegraph <file|dir>` - Export compiler-backed codegraph records as JSONL
 //! - `run [file]` - Compile and run the program, defaulting to `[project.scripts].main`
 //! - `init [path]` - Create a starter project scaffold in an existing directory
 //! - `new [name]` - Create a new Incan project directory, prompting when no name is provided
@@ -48,6 +49,7 @@ use std::process;
 use crate::manifest::ProjectManifest;
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use commands::build_report::{BuildReportFormat, BuildReportOptions, RustInspectionFormat};
+use commands::codegraph::CodegraphInspectionFormat;
 use commands::common::{CargoPolicy, CargoPolicyCliFlags};
 use commands::diagnostics::DiagnosticOutputFormat;
 use commands::lifecycle::{EnvOutputFormat, VersionBumpArg};
@@ -523,6 +525,18 @@ pub enum InspectCommand {
         #[arg(long = "format", value_enum, default_value = "text")]
         format: RustInspectionFormat,
     },
+    /// Export compiler-backed codegraph records
+    Codegraph {
+        /// Source file or directory to inspect
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
+        /// Output format
+        #[arg(long = "format", value_enum, default_value = "jsonl")]
+        format: CodegraphInspectionFormat,
+        /// Emit partial graph records and diagnostics for broken source
+        #[arg(long = "allow-errors")]
+        allow_errors: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -729,6 +743,11 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
         Some(Command::Explain { code, format }) => commands::explain_diagnostic(&code, format),
         Some(Command::Inspect { command }) => match command {
             InspectCommand::Rust { path, lib_mode, format } => commands::inspect_rust(&path, lib_mode, format),
+            InspectCommand::Codegraph {
+                path,
+                format,
+                allow_errors,
+            } => commands::inspect_codegraph(&path, format, allow_errors),
         },
         Some(Command::Run {
             file,

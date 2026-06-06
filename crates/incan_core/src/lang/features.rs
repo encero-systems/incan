@@ -55,6 +55,7 @@ pub enum FeatureId {
     ProjectLifecycle,
     StableDiagnostics,
     BuildReportsAndRustInspection,
+    CodegraphInspection,
     CheckedApiMetadata,
     FormatterContract,
 }
@@ -984,6 +985,29 @@ pub const FEATURES: &[FeatureDescriptor] = &[
         ],
         prefer_over: "Scraping terminal progress output or treating `--emit-rust` debug output as a stable artifact contract.",
         references: links![
+            ("CLI reference", "../../tooling/reference/cli_reference.md"),
+            ("Release 0.4", "../../release_notes/0_4.md"),
+        ],
+    },
+    FeatureDescriptor {
+        id: FeatureId::CodegraphInspection,
+        name: "Compiler-backed codegraph inspection",
+        category: FeatureCategory::Tooling,
+        since: Since(0, 4),
+        introduced_in_rfc: RFC::_106,
+        stability: Stability::Stable,
+        activation: "Use `incan inspect codegraph`.",
+        summary: "Source files, modules, declarations, imports, exports, containment, spans, provenance, and diagnostics can be exported as deterministic JSONL records.",
+        canonical_forms: &[
+            "incan inspect codegraph src/main.incn --format jsonl",
+            "incan inspect codegraph src --format jsonl --allow-errors",
+        ],
+        prefer_over: "Repeated grep/read loops or tool-specific source scrapers when agents and tooling need basic Incan structure.",
+        references: links![
+            (
+                "Codegraph inspection",
+                "../../tooling/reference/codegraph_inspection.md"
+            ),
             ("CLI reference", "../../tooling/reference/cli_reference.md"),
             ("Release 0.4", "../../release_notes/0_4.md"),
         ],
