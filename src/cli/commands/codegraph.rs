@@ -1,0 +1,924 @@
+//! Compiler-backed codegraph inspection.
+//!
+//! `incan inspect codegraph` emits the first durable RFC 106 graph slice under the broader RFC 102 semantic inspection
+//! umbrella. The export is intentionally source- and syntax-fact oriented in 0.4: it gives tools stable files,
+//! modules, declarations, imports, exports, containment, and diagnostics without introducing a storage/indexing engine
+//! into the compiler.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::env;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use clap::ValueEnum;
+use incan_codegraph::{
+    CODEGRAPH_SCHEMA_VERSION, CodegraphContainmentRecord, CodegraphDeclarationRecord, CodegraphDiagnosticRecord,
+    CodegraphExportRecord, CodegraphFileRecord, CodegraphHeaderRecord, CodegraphImportRecord, CodegraphMode,
+    CodegraphModuleRecord, CodegraphPackage, CodegraphProvenance, CodegraphRecord, CodegraphSourceSpan, to_jsonl,
+};
+
+use crate::cli::prelude::ParsedModule;
+use crate::cli::{CliError, CliResult, ExitCode};
+use crate::frontend::ast::{
+    Declaration, FunctionDecl, ImportDecl, ImportItem, ImportKind, ImportPath, Span, Spanned, TypeParam, Visibility,
+};
+use crate::frontend::diagnostics::{self, StableDiagnostic};
+use crate::frontend::library_manifest_index::LibraryManifestIndex;
+use crate::manifest::ProjectManifest;
+use crate::version::INCAN_VERSION;
+
+use super::common::{
+    CliDiagnosticFailure, CompilationSession, collect_modules_detailed, read_source, resolve_project_root,
+    typecheck_modules_with_import_graph_detailed,
+};
+
+/// Output format for `incan inspect codegraph`.
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodegraphInspectionFormat {
+    /// Newline-delimited JSON records.
+    Jsonl,
+}
+
+/// Emit compiler-backed codegraph facts for one Incan file or directory.
+pub fn inspect_codegraph(path: &Path, format: CodegraphInspectionFormat, allow_errors: bool) -> CliResult<ExitCode> {
+    let normalized = normalize_input_path(path)?;
+    let records = collect_codegraph_records(&normalized, allow_errors)?;
+    match format {
+        CodegraphInspectionFormat::Jsonl => {
+            let jsonl = to_jsonl(&records)
+                .map_err(|error| CliError::failure(format!("failed to serialize codegraph JSONL: {error}")))?;
+            print!("{jsonl}");
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn collect_codegraph_records(path: &Path, allow_errors: bool) -> CliResult<Vec<CodegraphRecord>> {
+    let package = package_identity(path)?;
+    let mut builder = CodegraphBuilder::new(path, package, allow_errors);
+
+    if path.is_dir() {
+        for file in discover_incan_files(path)? {
+            builder.collect_tolerant_file(&file)?;
+        }
+        if !allow_errors && builder.has_diagnostics() {
+            return Err(CliError::failure(render_diagnostics(builder.diagnostics())));
+        }
+    } else {
+        match collect_modules_detailed(&path.to_string_lossy()) {
+            Ok(modules) => {
+                let diagnostics = typecheck_diagnostics(path, &modules)?;
+                if !diagnostics.is_empty() && !allow_errors {
+                    return Err(CliError::failure(render_diagnostics(&diagnostics)));
+                }
+                for module in &modules {
+                    builder.collect_parsed_module(module, diagnostics_for_file(&diagnostics, &module.file_path));
+                }
+                builder.collect_diagnostics(diagnostics);
+            }
+            Err(failure) if allow_errors => {
+                builder.collect_tolerant_failure(path, failure)?;
+            }
+            Err(failure) => return Err(CliError::failure(failure.render_human())),
+        }
+    }
+
+    Ok(builder.finish())
+}
+
+/// Run the normal entrypoint typecheck and convert failures into stable diagnostics that the graph layer can either
+/// reject or emit in tolerant mode.
+fn typecheck_diagnostics(path: &Path, modules: &[ParsedModule]) -> CliResult<Vec<StableDiagnostic>> {
+    let project_root = resolve_project_root(path);
+    let manifest = ProjectManifest::discover(&project_root)
+        .map_err(|error| CliError::failure(format!("failed to load project manifest: {error}")))?;
+    let library_manifest_index = manifest
+        .as_ref()
+        .map(LibraryManifestIndex::from_project_manifest)
+        .unwrap_or_default();
+    match typecheck_modules_with_import_graph_detailed(
+        modules,
+        manifest.as_ref(),
+        &library_manifest_index,
+        #[cfg(feature = "rust_inspect")]
+        None,
+    ) {
+        Ok(()) => Ok(Vec::new()),
+        Err(failure) => Ok(stable_diagnostics(failure)),
+    }
+}
+
+/// Convert shared CLI diagnostic failures into the public diagnostic projection used by both `incan check` and
+/// codegraph records.
+fn stable_diagnostics(failure: CliDiagnosticFailure) -> Vec<StableDiagnostic> {
+    failure
+        .diagnostics
+        .iter()
+        .map(|diagnostic| {
+            diagnostics::stable_diagnostic(
+                &diagnostic.file_path,
+                &diagnostic.source,
+                &diagnostic.error,
+                diagnostic.phase,
+            )
+        })
+        .collect()
+}
+
+/// Return the diagnostics whose primary span belongs to one parsed module file.
+fn diagnostics_for_file(diagnostics: &[StableDiagnostic], file_path: &Path) -> Vec<StableDiagnostic> {
+    let file_path = file_path.to_string_lossy();
+    diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.primary_span.file == file_path)
+        .cloned()
+        .collect()
+}
+
+/// Render a compact strict-mode failure summary without duplicating the full human diagnostic renderer in
+/// JSONL-specific code.
+fn render_diagnostics(diagnostics: &[StableDiagnostic]) -> String {
+    let mut output = String::from("codegraph export failed because the checked graph has diagnostics");
+    for diagnostic in diagnostics {
+        output.push_str("\n- ");
+        output.push_str(diagnostic.code);
+        output.push_str(": ");
+        output.push_str(&diagnostic.message);
+    }
+    output
+}
+
+/// Discover `.incn` files below a directory in deterministic path order.
+fn discover_incan_files(root: &Path) -> CliResult<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    collect_incan_files(root, &mut files)?;
+    files.sort();
+    Ok(files)
+}
+
+/// Recursively collect Incan source files while skipping build, VCS, and agent state directories that are not source
+/// roots.
+fn collect_incan_files(dir: &Path, files: &mut Vec<PathBuf>) -> CliResult<()> {
+    for entry in fs::read_dir(dir)
+        .map_err(|error| CliError::failure(format!("failed to read directory {}: {error}", dir.display())))?
+    {
+        let entry = entry.map_err(|error| CliError::failure(format!("failed to read directory entry: {error}")))?;
+        let path = entry.path();
+        if path.is_dir() {
+            if should_skip_directory(&path) {
+                continue;
+            }
+            collect_incan_files(&path, files)?;
+        } else if path.extension().is_some_and(|extension| extension == "incn") {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+
+/// Return whether a directory should be ignored by broad directory codegraph inspection.
+fn should_skip_directory(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| matches!(name, ".git" | ".agents" | ".venv" | "node_modules" | "target"))
+}
+
+/// Read package identity from the nearest manifest so exported graph headers can be joined with build reports and
+/// metadata exports.
+fn package_identity(path: &Path) -> CliResult<Option<CodegraphPackage>> {
+    let project_root = resolve_project_root(path);
+    let manifest = ProjectManifest::discover(&project_root)
+        .map_err(|error| CliError::failure(format!("failed to load project manifest: {error}")))?;
+    Ok(manifest.map(|manifest| CodegraphPackage {
+        name: manifest.project.as_ref().and_then(|project| project.name.clone()),
+        version: manifest.project.as_ref().and_then(|project| project.version.clone()),
+        root_path: Some(path_string(manifest.project_root())),
+    }))
+}
+
+/// Normalize a user-provided CLI path relative to the current working directory.
+fn normalize_input_path(path: &Path) -> CliResult<PathBuf> {
+    if path.is_absolute() {
+        Ok(path.to_path_buf())
+    } else {
+        Ok(env::current_dir()
+            .map_err(|error| CliError::failure(format!("failed to determine current directory: {error}")))?
+            .join(path))
+    }
+}
+
+struct CodegraphBuilder {
+    records: Vec<CodegraphRecord>,
+    diagnostics: Vec<StableDiagnostic>,
+    file_ids: BTreeMap<String, String>,
+    module_ids: BTreeSet<String>,
+    mode: CodegraphMode,
+    root_path: String,
+    root_path_buf: PathBuf,
+    package: Option<CodegraphPackage>,
+}
+
+/// Compact source declaration facts used before serializing a public declaration record.
+struct DeclarationSummary {
+    kind: String,
+    name: String,
+    visibility: Visibility,
+    type_params: Vec<String>,
+    signature: Option<String>,
+}
+
+impl CodegraphBuilder {
+    /// Create a record builder for one strict or tolerant export.
+    fn new(root_path: &Path, package: Option<CodegraphPackage>, allow_errors: bool) -> Self {
+        Self {
+            records: Vec::new(),
+            diagnostics: Vec::new(),
+            file_ids: BTreeMap::new(),
+            module_ids: BTreeSet::new(),
+            mode: if allow_errors {
+                CodegraphMode::AllowErrors
+            } else {
+                CodegraphMode::Strict
+            },
+            root_path: path_string(root_path),
+            root_path_buf: root_path.to_path_buf(),
+            package,
+        }
+    }
+
+    /// Recover as much source structure as possible after the ordinary entrypoint collection path failed.
+    fn collect_tolerant_failure(&mut self, path: &Path, failure: CliDiagnosticFailure) -> CliResult<()> {
+        let before = self.diagnostics.len();
+        if path.is_file() {
+            self.collect_tolerant_file(path)?;
+        }
+        if self.diagnostics.len() == before {
+            self.collect_diagnostics(stable_diagnostics(failure));
+        }
+        Ok(())
+    }
+
+    /// Parse one file with project-aware vocabulary context and record either syntax facts or parse diagnostics.
+    fn collect_tolerant_file(&mut self, path: &Path) -> CliResult<()> {
+        let source = read_source(&path.to_string_lossy())?;
+        let session = CompilationSession::discover(path)?;
+        match session.parse_source_for_collection(path, &source) {
+            Ok(ast) => {
+                let file_id = self.ensure_file_record(path, &source, false);
+                let module = ParsedModule {
+                    name: module_name_for_file(path),
+                    path_segments: self.fallback_module_segments(path),
+                    file_path: path.to_path_buf(),
+                    source,
+                    ast,
+                };
+                self.collect_module_records(&module, &file_id, Vec::new());
+            }
+            Err(errors) => {
+                self.ensure_file_record(path, &source, true);
+                let diagnostics = errors
+                    .iter()
+                    .map(|error| {
+                        diagnostics::stable_diagnostic(
+                            &path.to_string_lossy(),
+                            &source,
+                            error,
+                            diagnostics::DiagnosticPhase::Parse,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                self.collect_diagnostics(diagnostics);
+            }
+        }
+        Ok(())
+    }
+
+    /// Add graph records for one module that was already parsed by the canonical collection path.
+    fn collect_parsed_module(&mut self, module: &ParsedModule, diagnostics: Vec<StableDiagnostic>) {
+        let degraded = !diagnostics.is_empty();
+        let file_id = self.ensure_file_record(&module.file_path, &module.source, degraded);
+        self.collect_module_records(module, &file_id, diagnostics);
+    }
+
+    /// Add file, module, and module-containment facts before descending into declarations.
+    fn collect_module_records(&mut self, module: &ParsedModule, file_id: &str, diagnostics: Vec<StableDiagnostic>) {
+        let degraded = !diagnostics.is_empty();
+        let module_id = module_id(module);
+        if self.module_ids.insert(module_id.clone()) {
+            let module_span = source_span(&module.file_path, &module.source, Span::new(0, module.source.len()));
+            self.records.push(CodegraphRecord::Module(CodegraphModuleRecord {
+                id: module_id.clone(),
+                file_id: file_id.to_string(),
+                module_path: module.path_segments.clone(),
+                name: module.name.clone(),
+                span: Some(module_span),
+                provenance: CodegraphProvenance::Syntax,
+                degraded,
+            }));
+            self.records
+                .push(CodegraphRecord::Containment(CodegraphContainmentRecord {
+                    id: format!("contains:{file_id}:{module_id}"),
+                    parent_id: file_id.to_string(),
+                    child_id: module_id.clone(),
+                    kind: "file_contains_module".to_string(),
+                    span: None,
+                    provenance: CodegraphProvenance::Source,
+                    degraded,
+                }));
+        }
+        self.collect_program_records(module, &module_id, degraded);
+    }
+
+    /// Add declaration, import, export, and containment records for a parsed module body.
+    fn collect_program_records(&mut self, module: &ParsedModule, module_id: &str, degraded: bool) {
+        for (index, declaration) in module.ast.declarations.iter().enumerate() {
+            match &declaration.node {
+                Declaration::Import(import) => {
+                    let import_id = import_id(module, index);
+                    self.records.push(CodegraphRecord::Import(import_record(
+                        module,
+                        module_id,
+                        &import_id,
+                        import,
+                        declaration.span,
+                        degraded,
+                    )));
+                    self.records.push(CodegraphRecord::Containment(containment_record(
+                        module_id,
+                        &import_id,
+                        "module_contains_import",
+                        &module.file_path,
+                        &module.source,
+                        declaration.span,
+                        degraded,
+                    )));
+                    if import.visibility == Visibility::Public {
+                        for name in import_export_names(import) {
+                            self.records.push(CodegraphRecord::Export(export_record(
+                                module,
+                                module_id,
+                                &import_id,
+                                &name,
+                                "import",
+                                declaration.span,
+                                degraded,
+                            )));
+                        }
+                    }
+                }
+                Declaration::Docstring(_) => {}
+                _ => {
+                    let declaration_id = declaration_id(module, declaration, index);
+                    let Some(summary) = declaration_summary(&declaration.node) else {
+                        continue;
+                    };
+                    self.records
+                        .push(CodegraphRecord::Declaration(CodegraphDeclarationRecord {
+                            id: declaration_id.clone(),
+                            module_id: module_id.to_string(),
+                            kind: summary.kind,
+                            name: summary.name.clone(),
+                            visibility: visibility_spelling(summary.visibility).to_string(),
+                            type_params: summary.type_params,
+                            signature: summary.signature,
+                            span: Some(source_span(&module.file_path, &module.source, declaration.span)),
+                            provenance: CodegraphProvenance::Syntax,
+                            degraded,
+                        }));
+                    self.records.push(CodegraphRecord::Containment(containment_record(
+                        module_id,
+                        &declaration_id,
+                        "module_contains_declaration",
+                        &module.file_path,
+                        &module.source,
+                        declaration.span,
+                        degraded,
+                    )));
+                    if summary.visibility == Visibility::Public {
+                        self.records.push(CodegraphRecord::Export(export_record(
+                            module,
+                            module_id,
+                            &declaration_id,
+                            &summary.name,
+                            "declaration",
+                            declaration.span,
+                            degraded,
+                        )));
+                    }
+                }
+            }
+        }
+    }
+
+    /// Insert one file record if it has not already been seen, returning the stable file id.
+    fn ensure_file_record(&mut self, path: &Path, source: &str, degraded: bool) -> String {
+        let path = path_string(path);
+        if let Some(id) = self.file_ids.get(&path) {
+            return id.clone();
+        }
+        let id = format!("file:{path}");
+        self.records.push(CodegraphRecord::File(CodegraphFileRecord {
+            id: id.clone(),
+            path: path.clone(),
+            size_bytes: source.len(),
+            provenance: CodegraphProvenance::Source,
+            degraded,
+        }));
+        self.file_ids.insert(path, id.clone());
+        id
+    }
+
+    /// Buffer diagnostics until `finish` appends them after syntax facts.
+    fn collect_diagnostics(&mut self, diagnostics: Vec<StableDiagnostic>) {
+        self.diagnostics.extend(diagnostics);
+    }
+
+    /// Return whether the export has diagnostics and should be considered degraded.
+    fn has_diagnostics(&self) -> bool {
+        !self.diagnostics.is_empty()
+    }
+
+    /// Return buffered diagnostics for strict-mode failure rendering.
+    fn diagnostics(&self) -> &[StableDiagnostic] {
+        &self.diagnostics
+    }
+
+    /// Infer module path segments for independently parsed files using the inspected root as the stable base.
+    fn fallback_module_segments(&self, path: &Path) -> Vec<String> {
+        let base = if self.root_path_buf.is_dir() {
+            self.root_path_buf.as_path()
+        } else {
+            self.root_path_buf.parent().unwrap_or_else(|| Path::new("."))
+        };
+        module_segments_for_file(path, base)
+    }
+
+    /// Assemble the final header, syntax records, and diagnostic records in stable JSONL order.
+    fn finish(mut self) -> Vec<CodegraphRecord> {
+        let degraded = self.records.iter().any(record_degraded) || !self.diagnostics.is_empty();
+        let mut records = vec![CodegraphRecord::Header(CodegraphHeaderRecord {
+            schema_version: CODEGRAPH_SCHEMA_VERSION,
+            compiler_version: INCAN_VERSION.to_string(),
+            mode: self.mode,
+            root_path: self.root_path,
+            package: self.package,
+            degraded,
+        })];
+        records.append(&mut self.records);
+        for (index, diagnostic) in self.diagnostics.iter().enumerate() {
+            records.push(CodegraphRecord::Diagnostic(diagnostic_record(index, diagnostic)));
+        }
+        records
+    }
+}
+
+/// Read the degraded flag from any codegraph record variant.
+fn record_degraded(record: &CodegraphRecord) -> bool {
+    match record {
+        CodegraphRecord::Header(record) => record.degraded,
+        CodegraphRecord::File(record) => record.degraded,
+        CodegraphRecord::Module(record) => record.degraded,
+        CodegraphRecord::Declaration(record) => record.degraded,
+        CodegraphRecord::Import(record) => record.degraded,
+        CodegraphRecord::Export(record) => record.degraded,
+        CodegraphRecord::Containment(record) => record.degraded,
+        CodegraphRecord::Diagnostic(record) => record.degraded,
+    }
+}
+
+/// Build one import record from source AST import syntax.
+fn import_record(
+    module: &ParsedModule,
+    module_id: &str,
+    import_id: &str,
+    import: &ImportDecl,
+    span: Span,
+    degraded: bool,
+) -> CodegraphImportRecord {
+    let (kind, path, items) = import_shape(import);
+    CodegraphImportRecord {
+        id: import_id.to_string(),
+        module_id: module_id.to_string(),
+        kind,
+        path,
+        items,
+        alias: import.alias.clone(),
+        visibility: visibility_spelling(import.visibility).to_string(),
+        span: Some(source_span(&module.file_path, &module.source, span)),
+        provenance: CodegraphProvenance::Syntax,
+        degraded,
+    }
+}
+
+/// Build one containment edge between two source-backed records.
+fn containment_record(
+    parent_id: &str,
+    child_id: &str,
+    kind: &str,
+    file_path: &Path,
+    source: &str,
+    span: Span,
+    degraded: bool,
+) -> CodegraphContainmentRecord {
+    CodegraphContainmentRecord {
+        id: format!("contains:{parent_id}:{child_id}"),
+        parent_id: parent_id.to_string(),
+        child_id: child_id.to_string(),
+        kind: kind.to_string(),
+        span: Some(source_span(file_path, source, span)),
+        provenance: CodegraphProvenance::Syntax,
+        degraded,
+    }
+}
+
+/// Build one public export fact from either a declaration or public import source record.
+fn export_record(
+    module: &ParsedModule,
+    module_id: &str,
+    source_id: &str,
+    name: &str,
+    kind: &str,
+    span: Span,
+    degraded: bool,
+) -> CodegraphExportRecord {
+    CodegraphExportRecord {
+        id: format!("export:{module_id}:{name}:{kind}"),
+        module_id: module_id.to_string(),
+        name: name.to_string(),
+        kind: kind.to_string(),
+        source_id: source_id.to_string(),
+        span: Some(source_span(&module.file_path, &module.source, span)),
+        provenance: CodegraphProvenance::Syntax,
+        degraded,
+    }
+}
+
+/// Convert a stable diagnostic into the codegraph diagnostic record shape.
+fn diagnostic_record(index: usize, diagnostic: &StableDiagnostic) -> CodegraphDiagnosticRecord {
+    CodegraphDiagnosticRecord {
+        id: format!(
+            "diagnostic:{}:{}:{}",
+            diagnostic.primary_span.file, diagnostic.primary_span.start.offset, index
+        ),
+        code: diagnostic.code.to_string(),
+        severity: diagnostic.severity.to_string(),
+        phase: diagnostic.phase.as_str().to_string(),
+        message: diagnostic.message.clone(),
+        primary_span: CodegraphSourceSpan {
+            file: diagnostic.primary_span.file.clone(),
+            start: diagnostic.primary_span.start.offset,
+            end: diagnostic.primary_span.end.offset,
+            start_line: diagnostic.primary_span.start.line,
+            start_column: diagnostic.primary_span.start.column,
+            end_line: diagnostic.primary_span.end.line,
+            end_column: diagnostic.primary_span.end.column,
+        },
+        notes: diagnostic.notes.clone(),
+        hints: diagnostic.hints.clone(),
+        explain: diagnostic.explain.clone(),
+        provenance: CodegraphProvenance::Diagnostic,
+        degraded: true,
+    }
+}
+
+/// Summarize a top-level source declaration for the baseline codegraph record set.
+fn declaration_summary(declaration: &Declaration) -> Option<DeclarationSummary> {
+    match declaration {
+        Declaration::Const(decl) => Some(DeclarationSummary {
+            kind: "const".to_string(),
+            name: decl.name.clone(),
+            visibility: decl.visibility,
+            type_params: Vec::new(),
+            signature: decl.ty.as_ref().map(|ty| format!("const {}: {}", decl.name, ty.node)),
+        }),
+        Declaration::Static(decl) => Some(DeclarationSummary {
+            kind: "static".to_string(),
+            name: decl.name.clone(),
+            visibility: decl.visibility,
+            type_params: Vec::new(),
+            signature: Some(format!("static {}: {}", decl.name, decl.ty.node)),
+        }),
+        Declaration::Model(decl) => Some(DeclarationSummary {
+            kind: "model".to_string(),
+            name: decl.name.clone(),
+            visibility: decl.visibility,
+            type_params: type_param_names(&decl.type_params),
+            signature: Some(format_type_decl_signature("model", &decl.name, &decl.type_params)),
+        }),
+        Declaration::Class(decl) => Some(DeclarationSummary {
+            kind: "class".to_string(),
+            name: decl.name.clone(),
+            visibility: decl.visibility,
+            type_params: type_param_names(&decl.type_params),
+            signature: Some(format_type_decl_signature("class", &decl.name, &decl.type_params)),
+        }),
+        Declaration::Trait(decl) => Some(DeclarationSummary {
+            kind: "trait".to_string(),
+            name: decl.name.clone(),
+            visibility: decl.visibility,
+            type_params: type_param_names(&decl.type_params),
+            signature: Some(format_type_decl_signature("trait", &decl.name, &decl.type_params)),
+        }),
+        Declaration::Alias(decl) => Some(DeclarationSummary {
+            kind: "alias".to_string(),
+            name: decl.name.clone(),
+            visibility: decl.visibility,
+            type_params: Vec::new(),
+            signature: Some(format!("{} = alias {}", decl.name, import_path_display(&decl.target))),
+        }),
+        Declaration::Partial(decl) => Some(DeclarationSummary {
+            kind: "partial".to_string(),
+            name: decl.name.clone(),
+            visibility: decl.visibility,
+            type_params: Vec::new(),
+            signature: Some(format!("{} = partial {}", decl.name, import_path_display(&decl.target))),
+        }),
+        Declaration::TypeAlias(decl) => Some(DeclarationSummary {
+            kind: "type_alias".to_string(),
+            name: decl.name.clone(),
+            visibility: decl.visibility,
+            type_params: type_param_names(&decl.type_params),
+            signature: Some(format!(
+                "type {}{} = {}",
+                decl.name,
+                format_type_params(&decl.type_params),
+                decl.target.node
+            )),
+        }),
+        Declaration::Newtype(decl) => Some(DeclarationSummary {
+            kind: if decl.is_rusttype { "rusttype" } else { "newtype" }.to_string(),
+            name: decl.name.clone(),
+            visibility: decl.visibility,
+            type_params: type_param_names(&decl.type_params),
+            signature: Some(format_type_decl_signature(
+                if decl.is_rusttype { "rusttype" } else { "newtype" },
+                &decl.name,
+                &decl.type_params,
+            )),
+        }),
+        Declaration::Enum(decl) => Some(DeclarationSummary {
+            kind: "enum".to_string(),
+            name: decl.name.clone(),
+            visibility: decl.visibility,
+            type_params: type_param_names(&decl.type_params),
+            signature: Some(format_type_decl_signature("enum", &decl.name, &decl.type_params)),
+        }),
+        Declaration::Function(decl) => Some(DeclarationSummary {
+            kind: "function".to_string(),
+            name: decl.name.clone(),
+            visibility: decl.visibility,
+            type_params: type_param_names(&decl.type_params),
+            signature: Some(function_signature(decl)),
+        }),
+        Declaration::TestModule(decl) => Some(DeclarationSummary {
+            kind: "test_module".to_string(),
+            name: decl.name.clone(),
+            visibility: Visibility::Private,
+            type_params: Vec::new(),
+            signature: Some(format!("module {}", decl.name)),
+        }),
+        Declaration::Import(_) | Declaration::Docstring(_) => None,
+    }
+}
+
+/// Format a source-level function signature from parsed parameter and return annotations.
+fn function_signature(decl: &FunctionDecl) -> String {
+    let params = decl
+        .params
+        .iter()
+        .map(|param| format!("{}: {}", param.node.name, param.node.ty.node))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "def {}{}({}) -> {}",
+        decl.name,
+        format_type_params(&decl.type_params),
+        params,
+        decl.return_type.node
+    )
+}
+
+/// Format a declaration signature prefix for type-bearing declarations.
+fn format_type_decl_signature(kind: &str, name: &str, type_params: &[TypeParam]) -> String {
+    format!("{kind} {name}{}", format_type_params(type_params))
+}
+
+/// Extract generic parameter names without serializing their full bounds yet.
+fn type_param_names(type_params: &[TypeParam]) -> Vec<String> {
+    type_params.iter().map(|param| param.name.clone()).collect()
+}
+
+/// Format generic parameters in source syntax for signature summaries.
+fn format_type_params(type_params: &[TypeParam]) -> String {
+    if type_params.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "[{}]",
+            type_params
+                .iter()
+                .map(|param| param.name.clone())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
+}
+
+/// Return the import kind, path, and item list for one parsed import declaration.
+fn import_shape(import: &ImportDecl) -> (String, String, Vec<String>) {
+    match &import.kind {
+        ImportKind::Module(path) => ("module".to_string(), import_path_display(path), Vec::new()),
+        ImportKind::From { module, items } => (
+            "from".to_string(),
+            import_path_display(module),
+            items.iter().map(import_item_display).collect(),
+        ),
+        ImportKind::PubLibrary { library } => ("pub_library".to_string(), format!("pub::{library}"), Vec::new()),
+        ImportKind::PubFrom { library, items } => (
+            "pub_from".to_string(),
+            format!("pub::{library}"),
+            items.iter().map(import_item_display).collect(),
+        ),
+        ImportKind::Python(module) => ("python".to_string(), module.clone(), Vec::new()),
+        ImportKind::RustCrate {
+            crate_name,
+            path,
+            version: _,
+            features: _,
+        } => (
+            "rust_crate".to_string(),
+            rust_path_display(crate_name, path),
+            Vec::new(),
+        ),
+        ImportKind::RustFrom {
+            crate_name,
+            path,
+            version: _,
+            features: _,
+            items,
+        } => (
+            "rust_from".to_string(),
+            rust_path_display(crate_name, path),
+            items.iter().map(import_item_display).collect(),
+        ),
+    }
+}
+
+/// Return the public names produced by a public import declaration.
+fn import_export_names(import: &ImportDecl) -> Vec<String> {
+    match &import.kind {
+        ImportKind::Module(path) => vec![import.alias.clone().unwrap_or_else(|| {
+            path.segments
+                .last()
+                .cloned()
+                .unwrap_or_else(|| import_path_display(path))
+        })],
+        ImportKind::From { items, .. } | ImportKind::PubFrom { items, .. } | ImportKind::RustFrom { items, .. } => {
+            items
+                .iter()
+                .map(|item| item.alias.clone().unwrap_or_else(|| item.name.clone()))
+                .collect()
+        }
+        ImportKind::PubLibrary { library } => vec![import.alias.clone().unwrap_or_else(|| library.clone())],
+        ImportKind::Python(module) => vec![import.alias.clone().unwrap_or_else(|| module.clone())],
+        ImportKind::RustCrate { crate_name, path, .. } => vec![
+            import
+                .alias
+                .clone()
+                .unwrap_or_else(|| path.last().cloned().unwrap_or_else(|| crate_name.clone())),
+        ],
+    }
+}
+
+/// Format one imported item, preserving local alias spelling when present.
+fn import_item_display(item: &ImportItem) -> String {
+    if let Some(alias) = &item.alias {
+        format!("{} as {alias}", item.name)
+    } else {
+        item.name.clone()
+    }
+}
+
+/// Format a parsed Incan import path without resolving it to a filesystem path.
+fn import_path_display(path: &ImportPath) -> String {
+    let mut parts = Vec::new();
+    if path.is_absolute {
+        parts.push("crate".to_string());
+    }
+    for _ in 0..path.parent_levels {
+        parts.push("..".to_string());
+    }
+    parts.extend(path.segments.clone());
+    parts.join("::")
+}
+
+/// Format a Rust import path with the `rust::` namespace marker used by Incan source.
+fn rust_path_display(crate_name: &str, path: &[String]) -> String {
+    if path.is_empty() {
+        format!("rust::{crate_name}")
+    } else {
+        format!("rust::{crate_name}::{}", path.join("::"))
+    }
+}
+
+/// Return the stable JSON spelling for source visibility.
+fn visibility_spelling(visibility: Visibility) -> &'static str {
+    match visibility {
+        Visibility::Private => "private",
+        Visibility::Public => "public",
+    }
+}
+
+/// Build a module id that keeps same-named modules in different files distinct.
+fn module_id(module: &ParsedModule) -> String {
+    format!(
+        "module:{}:{}",
+        module.file_path.to_string_lossy(),
+        module.path_segments.join("::")
+    )
+}
+
+/// Build a declaration id from file, span, and symbol name so declaration order changes do not alone rename ids.
+fn declaration_id(module: &ParsedModule, declaration: &Spanned<Declaration>, index: usize) -> String {
+    let name = declaration_summary(&declaration.node)
+        .map(|summary| summary.name)
+        .unwrap_or_else(|| format!("decl-{index}"));
+    format!(
+        "decl:{}:{}:{name}",
+        module.file_path.to_string_lossy(),
+        declaration.span.start
+    )
+}
+
+/// Build an import id from file and declaration index.
+fn import_id(module: &ParsedModule, index: usize) -> String {
+    format!("import:{}:{index}", module.file_path.to_string_lossy())
+}
+
+/// Infer a fallback module name for independently parsed directory files.
+fn module_name_for_file(path: &Path) -> String {
+    path.file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("module")
+        .to_string()
+}
+
+/// Infer fallback module path segments for independently parsed directory files.
+fn module_segments_for_file(path: &Path, base: &Path) -> Vec<String> {
+    let relative = path.strip_prefix(base).unwrap_or(path);
+    let mut segments = relative
+        .components()
+        .filter_map(|component| component.as_os_str().to_str().map(str::to_string))
+        .collect::<Vec<_>>();
+    if let Some(last) = segments.last_mut()
+        && let Some(stem) = last.strip_suffix(".incn")
+    {
+        *last = stem.to_string();
+    }
+    if segments.is_empty() {
+        vec![module_name_for_file(path)]
+    } else {
+        segments
+    }
+}
+
+/// Convert an AST byte span into the public codegraph source span shape.
+fn source_span(path: &Path, source: &str, span: Span) -> CodegraphSourceSpan {
+    let start = span.start.min(source.len());
+    let end = span.end.min(source.len()).max(start);
+    let (start_line, start_column) = line_column_for_offset(source, start);
+    let (end_line, end_column) = line_column_for_offset(source, end);
+    CodegraphSourceSpan {
+        file: path_string(path),
+        start,
+        end,
+        start_line,
+        start_column,
+        end_line,
+        end_column,
+    }
+}
+
+/// Convert a byte offset into 1-based line and column coordinates.
+fn line_column_for_offset(source: &str, offset: usize) -> (usize, usize) {
+    let offset = offset.min(source.len());
+    let mut line = 1usize;
+    let mut column = 1usize;
+    for (idx, ch) in source.char_indices() {
+        if idx >= offset {
+            break;
+        }
+        if ch == '\n' {
+            line += 1;
+            column = 1;
+        } else {
+            column += 1;
+        }
+    }
+    (line, column)
+}
+
+/// Format a filesystem path using the process-native display spelling.
+fn path_string(path: &Path) -> String {
+    path.to_string_lossy().to_string()
+}

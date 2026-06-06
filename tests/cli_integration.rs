@@ -79,6 +79,15 @@ fn parse_json_stdout(output: &Output) -> Result<serde_json::Value, Box<dyn std::
     Ok(serde_json::from_slice(&output.stdout)?)
 }
 
+fn parse_jsonl_stdout(output: &Output) -> Result<Vec<serde_json::Value>, Box<dyn std::error::Error>> {
+    let stdout = String::from_utf8(output.stdout.clone())?;
+    stdout
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| Ok(serde_json::from_str(line)?))
+        .collect()
+}
+
 #[test]
 fn check_json_reports_parser_diagnostics() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
@@ -457,6 +466,156 @@ version = "0.1.0"
             .as_array()
             .is_some_and(|files| { files.iter().any(|file| file["crate_root"] == serde_json::json!(true)) })
     );
+
+    Ok(())
+}
+
+#[test]
+fn inspect_codegraph_exports_multifile_imports_and_public_symbols() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let src_dir = tmp.path().join("src");
+    fs::create_dir_all(&src_dir)?;
+    fs::write(
+        tmp.path().join("incan.toml"),
+        r#"[project]
+name = "graph_demo"
+version = "0.1.0"
+"#,
+    )?;
+    fs::write(
+        src_dir.join("helpers.incn"),
+        r#"pub model Widget:
+    value: int
+
+pub def make_widget(value: int) -> Widget:
+    return Widget(value=value)
+"#,
+    )?;
+    let main_path = src_dir.join("main.incn");
+    fs::write(
+        &main_path,
+        r#"from helpers import make_widget
+
+pub def entrypoint() -> int:
+    return make_widget(7).value
+"#,
+    )?;
+
+    let first = run_incan(
+        tmp.path(),
+        &[
+            "inspect",
+            "codegraph",
+            main_path.to_str().ok_or("main path was not valid UTF-8")?,
+            "--format",
+            "jsonl",
+        ],
+    )?;
+    assert_success(&first, "incan inspect codegraph");
+    let second = run_incan(
+        tmp.path(),
+        &[
+            "inspect",
+            "codegraph",
+            main_path.to_str().ok_or("main path was not valid UTF-8")?,
+            "--format",
+            "jsonl",
+        ],
+    )?;
+    assert_success(&second, "second incan inspect codegraph");
+    assert_eq!(first.stdout, second.stdout, "codegraph JSONL should be deterministic");
+
+    let records = parse_jsonl_stdout(&first)?;
+    assert_eq!(records[0]["record"], serde_json::json!("header"));
+    assert_eq!(records[0]["package"]["name"], serde_json::json!("graph_demo"));
+    assert!(records.iter().any(|record| {
+        record["record"] == serde_json::json!("import")
+            && record["path"] == serde_json::json!("helpers")
+            && record["items"].as_array().is_some_and(|items| {
+                items
+                    .iter()
+                    .any(|item| item.as_str().is_some_and(|value| value == "make_widget"))
+            })
+    }));
+    assert!(records.iter().any(|record| {
+        record["record"] == serde_json::json!("declaration")
+            && record["kind"] == serde_json::json!("function")
+            && record["name"] == serde_json::json!("entrypoint")
+            && record["visibility"] == serde_json::json!("public")
+    }));
+    assert!(records.iter().any(|record| {
+        record["record"] == serde_json::json!("export")
+            && record["name"] == serde_json::json!("entrypoint")
+            && record["kind"] == serde_json::json!("declaration")
+    }));
+    assert!(records.iter().any(|record| {
+        record["record"] == serde_json::json!("containment")
+            && record["kind"] == serde_json::json!("module_contains_declaration")
+    }));
+
+    Ok(())
+}
+
+#[test]
+fn inspect_codegraph_tolerant_directory_keeps_parseable_facts_and_diagnostics() -> Result<(), Box<dyn std::error::Error>>
+{
+    let tmp = tempfile::tempdir()?;
+    fs::write(
+        tmp.path().join("ok.incn"),
+        r#"pub def ok() -> int:
+    return 1
+"#,
+    )?;
+    let nested = tmp.path().join("nested");
+    fs::create_dir_all(&nested)?;
+    fs::write(
+        nested.join("extra.incn"),
+        r#"pub def extra() -> int:
+    return 2
+"#,
+    )?;
+    fs::write(tmp.path().join("broken.incn"), "def broken(:\n")?;
+
+    let strict = run_incan(
+        tmp.path(),
+        &[
+            "inspect",
+            "codegraph",
+            tmp.path().to_str().ok_or("directory path was not valid UTF-8")?,
+            "--format",
+            "jsonl",
+        ],
+    )?;
+    assert_failure(&strict, "strict incan inspect codegraph should reject broken source");
+
+    let tolerant = run_incan(
+        tmp.path(),
+        &[
+            "inspect",
+            "codegraph",
+            tmp.path().to_str().ok_or("directory path was not valid UTF-8")?,
+            "--format",
+            "jsonl",
+            "--allow-errors",
+        ],
+    )?;
+    assert_success(&tolerant, "tolerant incan inspect codegraph");
+    let records = parse_jsonl_stdout(&tolerant)?;
+    assert_eq!(records[0]["degraded"], serde_json::json!(true));
+    assert!(records.iter().any(|record| {
+        record["record"] == serde_json::json!("declaration")
+            && record["name"] == serde_json::json!("ok")
+            && record["provenance"] == serde_json::json!("syntax")
+    }));
+    assert!(records.iter().any(|record| {
+        record["record"] == serde_json::json!("module")
+            && record["module_path"] == serde_json::json!(["nested", "extra"])
+    }));
+    assert!(records.iter().any(|record| {
+        record["record"] == serde_json::json!("diagnostic")
+            && record["code"] == serde_json::json!("INCAN-P0001")
+            && record["phase"] == serde_json::json!("parse")
+    }));
 
     Ok(())
 }
