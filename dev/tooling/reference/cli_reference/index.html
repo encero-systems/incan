@@ -4466,6 +4466,24 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#incan-check" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan check
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incan-explain" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan explain
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#incan-build" class="md-nav__link">
     <span class="md-ellipsis">
       incan build
@@ -5927,6 +5945,24 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#incan-check" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan check
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incan-explain" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan explain
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#incan-build" class="md-nav__link">
     <span class="md-ellipsis">
       incan build
@@ -6118,6 +6154,8 @@
 </ul>
 <p>Commands:</p>
 <ul>
+<li><code>check</code> - Type-check a file or project entrypoint, with optional stable JSON diagnostics</li>
+<li><code>explain</code> - Explain a stable diagnostic code</li>
 <li><code>build</code> - Compile to Rust and build an executable</li>
 <li><code>run</code> - Compile and run a program</li>
 <li><code>fmt</code> - Format Incan source files</li>
@@ -6146,10 +6184,47 @@ incan<span class="w"> </span>--parse<span class="w"> </span>path/to/file.incn
 incan<span class="w"> </span>--check<span class="w"> </span>path/to/file.incn
 incan<span class="w"> </span>--emit-rust<span class="w"> </span>path/to/file.incn
 </code></pre></div>
+<p><code>incan --check path/to/file.incn --format json</code> remains supported for compatibility, but new tooling should prefer <code>incan check path/to/file.incn --format json</code>.</p>
 <p>Strict mode:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>--strict<span class="w"> </span>--emit-rust<span class="w"> </span>path/to/file.incn
 </code></pre></div>
 <h2 id="commands">Commands<a class="headerlink" href="#commands" title="Permanent link">&para;</a></h2>
+<h3 id="incan-check"><code>incan check</code><a class="headerlink" href="#incan-check" title="Permanent link">&para;</a></h3>
+<p>Usage:</p>
+<div class="language-text highlight"><pre><span></span><code>incan check [OPTIONS] &lt;PATH&gt;
+</code></pre></div>
+<p>Type-checks a file or project entrypoint without building or running it. This is the canonical type-check command for humans, CI, editor integrations, and agents. Passing a file without a subcommand still type-checks it for compatibility, and the legacy debug spelling <code>incan --check &lt;FILE&gt;</code> remains available.</p>
+<p>Options:</p>
+<ul>
+<li><code>--format text|json</code>: Output human diagnostics or a stable machine-readable JSON report (default: <code>text</code>).</li>
+</ul>
+<p>JSON output uses <code>schema_version: 1</code> and prints a deterministic report with <code>ok</code> and <code>diagnostics</code>. Each diagnostic includes a stable <code>code</code>, <code>severity</code>, compiler <code>phase</code>, primary source span, message, notes, hints, related spans, and an <code>incan explain &lt;CODE&gt;</code> hook. Human output remains the default and continues to use source-highlighted compiler diagnostics.</p>
+<p>Examples:</p>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>check<span class="w"> </span>src/main.incn
+incan<span class="w"> </span>check<span class="w"> </span>src/main.incn<span class="w"> </span>--format<span class="w"> </span>json
+incan<span class="w"> </span>--check<span class="w"> </span>src/main.incn<span class="w"> </span>--format<span class="w"> </span>json
+</code></pre></div>
+<h3 id="incan-explain"><code>incan explain</code><a class="headerlink" href="#incan-explain" title="Permanent link">&para;</a></h3>
+<p>Usage:</p>
+<div class="language-text highlight"><pre><span></span><code>incan explain [OPTIONS] &lt;CODE&gt;
+</code></pre></div>
+<p>Explains a stable diagnostic code from <code>incan check --format json</code> or LSP diagnostics. The catalog is compiler-owned and versioned with the diagnostic schema, so tools can link users to an explanation without scraping terminal prose.</p>
+<p>Options:</p>
+<ul>
+<li><code>--format text|json</code>: Output a human explanation or the catalog entry as JSON (default: <code>text</code>).</li>
+</ul>
+<p>Seeded catalog codes:</p>
+<ul>
+<li><code>INCAN-P0001</code>: Syntax error.</li>
+<li><code>INCAN-T0001</code>: Type checking error.</li>
+<li><code>INCAN-I0001</code>: Import or module resolution error.</li>
+<li><code>INCAN-C0001</code>: CLI or tooling error.</li>
+<li><code>INCAN-U0001</code>: Unknown diagnostic code.</li>
+</ul>
+<p>Examples:</p>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>explain<span class="w"> </span>INCAN-T0001
+incan<span class="w"> </span>explain<span class="w"> </span>INCAN-T0001<span class="w"> </span>--format<span class="w"> </span>json
+</code></pre></div>
 <h3 id="incan-build"><code>incan build</code><a class="headerlink" href="#incan-build" title="Permanent link">&para;</a></h3>
 <p>Usage:</p>
 <div class="language-text highlight"><pre><span></span><code>incan build [OPTIONS] [FILE] [OUTPUT_DIR] [-- &lt;CARGO_PASSTHROUGH&gt;...]
@@ -6585,12 +6660,12 @@ incan<span class="w"> </span>tools<span class="w"> </span>metadata<span class="w
 </ul>
 </li>
 <li><strong><code>incan fmt --check</code></strong>: returns 1 if any files would be reformatted.</li>
-<li><strong><code>incan build</code> / <code>incan --check</code> / debug flags</strong>: return 1 on compile/build errors.</li>
+<li><strong><code>incan build</code> / <code>incan check</code> / <code>incan --check</code> / debug flags</strong>: return 1 on compile/build errors.</li>
 </ul>
 <h2 id="drift-prevention-maintainers">Drift prevention (maintainers)<a class="headerlink" href="#drift-prevention-maintainers" title="Permanent link">&para;</a></h2>
 <p>Before a release, verify the docs stay aligned with the real CLI surface:</p>
 <ul>
-<li>Compare <code>incan --help</code> and <code>incan {build,run,fmt,test,init,lock,tools} --help</code> against this page.</li>
+<li>Compare <code>incan --help</code> and <code>incan {check,explain,build,run,fmt,test,init,lock,tools} --help</code> against this page.</li>
 </ul>
 
 

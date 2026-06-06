@@ -5864,9 +5864,10 @@
 <p>If you’re running CI for the <strong>Incan compiler/tooling repository</strong>, see: <a href="../../../contributing/how-to/ci_and_automation/">CI &amp; automation (repository)</a>.</p>
 <h2 id="recommended-commands">Recommended commands<a class="headerlink" href="#recommended-commands" title="Permanent link">&para;</a></h2>
 <h3 id="type-check-fast-gate">Type check (fast gate)<a class="headerlink" href="#type-check-fast-gate" title="Permanent link">&para;</a></h3>
-<p>Type-check a program without building/running it (default action when no subcommand is provided):</p>
-<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>path/to/main.incn
+<p>Type-check a program without building/running it:</p>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>check<span class="w"> </span>path/to/main.incn
 </code></pre></div>
+<p>Use <code>incan check path/to/main.incn --format json</code> when CI, editor tooling, or agents need deterministic diagnostics with stable codes and source spans. Passing a file without a subcommand still type-checks it for compatibility, but <code>incan check</code> is the canonical command.</p>
 <h3 id="format-ci-mode">Format (CI mode)<a class="headerlink" href="#format-ci-mode" title="Permanent link">&para;</a></h3>
 <p>Check formatting without modifying files:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>fmt<span class="w"> </span>--check<span class="w"> </span>.

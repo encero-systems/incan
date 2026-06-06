@@ -2334,6 +2334,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#stable-diagnostics-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      Stable diagnostics commands
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#checked-api-metadata" class="md-nav__link">
     <span class="md-ellipsis">
       Checked API metadata
@@ -6575,6 +6584,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#stable-diagnostics-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      Stable diagnostics commands
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#checked-api-metadata" class="md-nav__link">
     <span class="md-ellipsis">
       Checked API metadata
@@ -7082,6 +7100,16 @@
 <td>Project commands create scaffolds, manage versions, and run configured environments from <code>incan.toml</code>.</td>
 <td>One-off project scaffolding scripts or manual version-file edits.</td>
 <td><a href="../project_lifecycle/">Project lifecycle</a>, <a href="../../how-to/project_lifecycle/">Project lifecycle how-to</a>, <a href="../../../release_notes/0_3/">Release 0.3</a></td>
+</tr>
+<tr>
+<td>Stable diagnostics commands</td>
+<td>Tooling</td>
+<td style="text-align: right;">0.4</td>
+<td>Use <code>incan check</code> or <code>incan explain</code>.</td>
+<td><code>incan check src/main.incn --format json</code><br><code>incan explain INCAN-T0001</code></td>
+<td>Type-check diagnostics can be emitted as versioned JSON with stable codes, source spans, and catalog-backed explanations.</td>
+<td>Scraping terminal diagnostics or building tool-specific error-code maps.</td>
+<td><a href="../../../tooling/reference/cli_reference/">CLI reference</a>, <a href="../../../release_notes/0_4/">Release 0.4</a></td>
 </tr>
 <tr>
 <td>Checked API metadata</td>
@@ -7883,6 +7911,23 @@
 <li><code>incan new greeter --yes</code></li>
 <li><code>incan version patch</code></li>
 <li><code>incan env test</code></li>
+</ul>
+<h3 id="stable-diagnostics-commands">Stable diagnostics commands<a class="headerlink" href="#stable-diagnostics-commands" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Id:</strong> <code>StableDiagnostics</code></li>
+<li><strong>Category:</strong> <code>Tooling</code></li>
+<li><strong>Since:</strong> <code>0.4</code></li>
+<li><strong>RFC:</strong> <code>RFC 015</code></li>
+<li><strong>Stability:</strong> <code>Stable</code></li>
+<li><strong>Activation:</strong> Use <code>incan check</code> or <code>incan explain</code>.</li>
+<li><strong>Use instead of:</strong> Scraping terminal diagnostics or building tool-specific error-code maps.</li>
+<li><strong>References:</strong> <a href="../../../tooling/reference/cli_reference/">CLI reference</a>, <a href="../../../release_notes/0_4/">Release 0.4</a></li>
+</ul>
+<p>Type-check diagnostics can be emitted as versioned JSON with stable codes, source spans, and catalog-backed explanations.</p>
+<p>Canonical forms:</p>
+<ul>
+<li><code>incan check src/main.incn --format json</code></li>
+<li><code>incan explain INCAN-T0001</code></li>
 </ul>
 <h3 id="checked-api-metadata">Checked API metadata<a class="headerlink" href="#checked-api-metadata" title="Permanent link">&para;</a></h3>
 <ul>
