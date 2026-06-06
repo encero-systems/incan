@@ -962,7 +962,7 @@ Canonical forms:
 - **Use instead of:** Scraping terminal progress output or treating `--emit-rust` debug output as a stable artifact contract.
 - **References:** [CLI reference](../../tooling/reference/cli_reference.md), [Release 0.4](../../release_notes/0_4.md)
 
-Builds can emit versioned machine-readable reports, and generated Rust can be inspected intentionally as current backend output.
+Builds can emit versioned machine-readable reports, and generated Rust can be inspected intentionally as current backend output. Generated public Rust items preserve checked source docstrings as Rust doc comments when those docstrings are available.
 
 Canonical forms:
 

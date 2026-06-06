@@ -58,6 +58,7 @@ impl AstLowering {
 
         Ok(IrEnum {
             name: e.name.clone(),
+            docstring: e.docstring.clone(),
             variants,
             variant_aliases: e
                 .variant_aliases

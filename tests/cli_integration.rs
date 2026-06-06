@@ -390,11 +390,31 @@ version = "0.1.0"
 #[test]
 fn inspect_rust_reports_current_generated_rust_files() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
-    let source_path = tmp.path().join("main.incn");
+    let src_dir = tmp.path().join("src");
+    fs::create_dir_all(&src_dir)?;
+    fs::write(
+        tmp.path().join("incan.toml"),
+        r#"[project]
+name = "inspect_docs"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+"#,
+    )?;
+    let source_path = src_dir.join("main.incn");
     fs::write(
         &source_path,
-        r#"def main() -> None:
-    println("inspect ok")
+        r#"pub model Widget:
+    """Widget docs survive into generated Rust."""
+    value: int
+
+pub def answer() -> int:
+    """Answer docs survive into generated Rust."""
+    return 42
+
+def main() -> None:
+    println(str(answer()))
 "#,
     )?;
     let executable = run_incan(
@@ -419,6 +439,33 @@ fn inspect_rust_reports_current_generated_rust_files() -> Result<(), Box<dyn std
         executable_report["rust_files"]
             .as_array()
             .is_some_and(|files| { files.iter().any(|file| file["crate_root"] == serde_json::json!(true)) })
+    );
+    let crate_root_path = executable_report["rust_files"]
+        .as_array()
+        .and_then(|files| files.iter().find(|file| file["crate_root"] == serde_json::json!(true)))
+        .and_then(|file| file["path"].as_str())
+        .ok_or("inspect rust report did not include a crate root file")?;
+    let crate_root_path = PathBuf::from(crate_root_path);
+    let crate_root_path = if crate_root_path.is_absolute() {
+        crate_root_path
+    } else {
+        tmp.path().join(crate_root_path)
+    };
+    assert!(
+        crate_root_path.exists(),
+        "reported crate root did not exist: {}",
+        crate_root_path.display()
+    );
+    let generated_rust = fs::read_to_string(crate_root_path)?;
+    assert!(
+        generated_rust.contains(r#"#[doc = "Widget docs survive into generated Rust."]"#)
+            || generated_rust.contains("/// Widget docs survive into generated Rust."),
+        "generated Rust lost model rustdoc:\n{generated_rust}"
+    );
+    assert!(
+        generated_rust.contains(r#"#[doc = "Answer docs survive into generated Rust."]"#)
+            || generated_rust.contains("/// Answer docs survive into generated Rust."),
+        "generated Rust lost function rustdoc:\n{generated_rust}"
     );
 
     let project = tempfile::tempdir()?;
@@ -944,7 +991,7 @@ pub def exported_value() -> int:
     );
     assert!(
         tmp.path()
-            .join("target/incan_lock/.incan_library_dependency_preheat_fingerprint")
+            .join("target/lib/.incan_library_dependency_preheat_fingerprint")
             .is_file(),
         "generated-library dependency preheat should write a fingerprint stamp"
     );

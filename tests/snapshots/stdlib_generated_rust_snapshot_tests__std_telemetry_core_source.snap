@@ -8,6 +8,7 @@ expression: rust_code
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 pub use crate::__incan_std::serde::json::Serialize;
+/// Structured telemetry value kind.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TelemetryValueKind {
     NONE,
@@ -102,6 +103,10 @@ impl serde::Serialize for TelemetryValueKind {
         }
     }
 }
+/// UTC timestamp used by telemetry records.
+///
+/// Values are encoded as strings so stdlib modules can carry RFC 3339-style timestamps without committing this data
+/// layer to one clock implementation.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct Timestamp(pub String);
 impl Serialize for Timestamp {
@@ -112,6 +117,10 @@ impl Serialize for Timestamp {
         );
     }
 }
+/// Structured telemetry value.
+///
+/// Exactly one value slot should be populated for ordinary values. `array_value` and `map_value` allow nested telemetry
+/// values, so callers do not need to silently stringify structured attributes before they reach the telemetry boundary.
 #[derive(
     Clone,
     serde::Serialize,
@@ -270,6 +279,7 @@ impl incan_stdlib::reflection::HasTypeFieldMetadata for TelemetryValue {
     }
 }
 impl TelemetryValue {
+    /// Return a telemetry null value.
     pub fn none() -> Self {
         "Return a telemetry null value.";
         return TelemetryValue {
@@ -283,6 +293,7 @@ impl TelemetryValue {
             map_value: std::collections::HashMap::new(),
         };
     }
+    /// Return a telemetry string value.
     pub fn string(value: String) -> Self {
         "Return a telemetry string value.";
         return TelemetryValue {
@@ -296,6 +307,7 @@ impl TelemetryValue {
             map_value: std::collections::HashMap::new(),
         };
     }
+    /// Return a telemetry boolean value.
     pub fn bool(value: bool) -> Self {
         "Return a telemetry boolean value.";
         return TelemetryValue {
@@ -309,6 +321,7 @@ impl TelemetryValue {
             map_value: std::collections::HashMap::new(),
         };
     }
+    /// Return a telemetry integer value.
     pub fn int(value: i64) -> Self {
         "Return a telemetry integer value.";
         return TelemetryValue {
@@ -322,6 +335,7 @@ impl TelemetryValue {
             map_value: std::collections::HashMap::new(),
         };
     }
+    /// Return a telemetry floating-point value.
     pub fn float(value: f64) -> Self {
         "Return a telemetry floating-point value.";
         return TelemetryValue {
@@ -335,6 +349,9 @@ impl TelemetryValue {
             map_value: std::collections::HashMap::new(),
         };
     }
+    /// Return a telemetry bytes value from an encoded string.
+    ///
+    /// The caller owns the encoding convention.
     pub fn bytes(value: String) -> Self {
         "\n        Return a telemetry bytes value from an encoded string.\n\n        The caller owns the encoding convention.\n        ";
         return TelemetryValue {
@@ -348,6 +365,7 @@ impl TelemetryValue {
             map_value: std::collections::HashMap::new(),
         };
     }
+    /// Return a telemetry array value.
     pub fn array(values: Vec<TelemetryValue>) -> Self {
         "Return a telemetry array value.";
         return TelemetryValue {
@@ -361,6 +379,7 @@ impl TelemetryValue {
             map_value: std::collections::HashMap::new(),
         };
     }
+    /// Return a telemetry map value.
     pub fn map(values: std::collections::HashMap<String, TelemetryValue>) -> Self {
         "Return a telemetry map value.";
         return TelemetryValue {
@@ -374,6 +393,10 @@ impl TelemetryValue {
             map_value: values,
         };
     }
+    /// Return a concise text representation for human-oriented output.
+    ///
+    /// String values render as their underlying text. Structured values render through their JSON representation so
+    /// callers do not lose shape when displaying nested telemetry data.
     pub fn display_text(&self) -> String {
         "\n        Return a concise text representation for human-oriented output.\n\n        String values render as their underlying text. Structured values render through their JSON representation so\n        callers do not lose shape when displaying nested telemetry data.\n        ";
         match self.string_value.clone() {
@@ -508,9 +531,17 @@ impl Serialize for TelemetryValue {
         );
     }
 }
+/// String-keyed telemetry attributes.
+///
+/// Attribute keys may use OpenTelemetry semantic-convention names such as `service.name`, `http.request.method`, or
+/// `gen_ai.request.model`. Values remain structured through the telemetry data-model boundary.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct Attributes(pub std::collections::HashMap<String, TelemetryValue>);
 impl Attributes {
+    /// Convert string fields into structured telemetry attributes.
+    ///
+    /// Args:
+    ///     fields: String-valued field map from ordinary logging call sites.
     pub fn from_string_fields(
         fields: std::collections::HashMap<String, String>,
     ) -> Attributes {
@@ -558,6 +589,9 @@ impl Serialize for Attributes {
         );
     }
 }
+/// Trace identifier for a correlated telemetry record.
+///
+/// Values use the OpenTelemetry/W3C trace-id spelling when a provider supplies active trace context.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct TraceId(pub String);
 impl Serialize for TraceId {
@@ -568,6 +602,9 @@ impl Serialize for TraceId {
         );
     }
 }
+/// Span identifier for a correlated telemetry record.
+///
+/// Values use the OpenTelemetry/W3C span-id spelling when a provider supplies active span context.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct SpanId(pub String);
 impl Serialize for SpanId {
@@ -578,6 +615,9 @@ impl Serialize for SpanId {
         );
     }
 }
+/// W3C trace flags for a correlated span context.
+///
+/// The value is kept as its wire spelling so propagation code can preserve flags without lossy conversion.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct TraceFlags(pub String);
 impl Serialize for TraceFlags {
@@ -588,6 +628,10 @@ impl Serialize for TraceFlags {
         );
     }
 }
+/// Entity that produced telemetry.
+///
+/// Resource attributes describe the process, service, deployment, or runtime that emitted a record. The minimal source
+/// model keeps attributes structured while full resource detection belongs to `std.telemetry`.
 #[derive(
     serde::Serialize,
     Debug,
@@ -669,6 +713,10 @@ impl Serialize for Resource {
         );
     }
 }
+/// Logical scope that emitted telemetry.
+///
+/// For `std.logging`, the scope name is the logger name. Future telemetry providers can add scope version and schema
+/// metadata without changing ordinary logging call sites.
 #[derive(
     serde::Serialize,
     Debug,
@@ -802,6 +850,9 @@ impl Serialize for InstrumentationScope {
         );
     }
 }
+/// Serializable span context identifiers.
+///
+/// This value type is inert until a configured telemetry provider supplies an active span context.
 #[derive(
     serde::Serialize,
     Debug,

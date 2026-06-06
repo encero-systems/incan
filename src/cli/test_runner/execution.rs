@@ -2640,6 +2640,7 @@ fn cargo_test_command(
 ) -> Command {
     let mut command = Command::new("cargo");
     command.arg("test");
+    command.arg("--lib");
     if no_run {
         command.arg("--no-run");
     }
@@ -3596,6 +3597,31 @@ mod tests {
         assert!(!parse_test_preheat_env(Some("0")));
         assert!(!parse_test_preheat_env(Some("false")));
         assert!(!parse_test_preheat_env(Some(" off ")));
+    }
+
+    fn command_args(command: &Command) -> Vec<String> {
+        command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn cargo_test_command_runs_generated_library_tests_without_doctests() {
+        let manifest_path = Path::new("/tmp/generated/Cargo.toml");
+        let shared_target = Path::new("/tmp/generated-target");
+        let project_root = Path::new("/tmp/project");
+
+        let run_command = cargo_test_command(manifest_path, &[], 1, shared_target, project_root, false, false);
+        let run_args = command_args(&run_command);
+        assert!(run_args.contains(&"--lib".to_string()));
+        assert!(run_args.contains(&"--test-threads=1".to_string()));
+
+        let preheat_command = cargo_test_command(manifest_path, &[], 1, shared_target, project_root, true, false);
+        let preheat_args = command_args(&preheat_command);
+        assert!(preheat_args.contains(&"--lib".to_string()));
+        assert!(preheat_args.contains(&"--no-run".to_string()));
+        assert!(!preheat_args.contains(&"--test-threads=1".to_string()));
     }
 
     fn parsed_module_for_import_context(

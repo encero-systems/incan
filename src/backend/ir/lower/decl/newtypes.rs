@@ -50,6 +50,7 @@ impl AstLowering {
         // selectively adds only the derives that are actually needed.
         Ok(IrStruct {
             name: n.name.clone(),
+            docstring: n.docstring.clone(),
             fields,
             derives,
             visibility: Self::map_visibility(n.visibility),

@@ -63,6 +63,7 @@ impl AstLowering {
 
         Ok(IrStruct {
             name: c.name.clone(),
+            docstring: c.docstring.clone(),
             fields,
             derives,
             visibility: Self::map_visibility(c.visibility),

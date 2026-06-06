@@ -68,6 +68,7 @@ impl<'a> IrEmitter<'a> {
             quote! { #[derive(#(#derives),*)] }
         };
         let lint_allows = self.emit_rust_lint_allows(&s.lint_allows);
+        let doc_attrs = self.emit_public_rustdoc_attrs(&s.visibility, s.docstring.as_deref());
 
         let has_serde = s
             .derives
@@ -96,6 +97,7 @@ impl<'a> IrEmitter<'a> {
 
             // Emit struct definition
             let struct_def = quote! {
+                #(#doc_attrs)*
                 #(#lint_allows)*
                 #derive_attr
                 #vis struct #name #generics (#(#tuple_fields),*);
@@ -163,6 +165,7 @@ impl<'a> IrEmitter<'a> {
             };
 
             Ok(quote! {
+                #(#doc_attrs)*
                 #(#lint_allows)*
                 #derive_attr
                 #vis struct #name #generics {
@@ -308,6 +311,7 @@ impl<'a> IrEmitter<'a> {
             quote! { #[derive(#(#derives),*)] }
         };
         let lint_allows = self.emit_rust_lint_allows(&e.lint_allows);
+        let doc_attrs = self.emit_public_rustdoc_attrs(&e.visibility, e.docstring.as_deref());
 
         let variant_match_arms: Vec<TokenStream> = e
             .variants
@@ -336,6 +340,7 @@ impl<'a> IrEmitter<'a> {
         let value_enum_helpers = self.emit_value_enum_helpers(e, &name, &generics, &generics_bare)?;
 
         Ok(quote! {
+            #(#doc_attrs)*
             #(#lint_allows)*
             #derive_attr
             #vis enum #name #generics {
@@ -624,6 +629,7 @@ mod tests {
     fn base_value_enum(name: &str, value_type: IrEnumValueType, variants: Vec<EnumVariant>) -> IrEnum {
         IrEnum {
             name: name.to_string(),
+            docstring: None,
             variants,
             variant_aliases: Vec::new(),
             value_type: Some(value_type),

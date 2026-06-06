@@ -33,6 +33,18 @@ fn body_contains_yield(body: &[ast::Spanned<ast::Statement>]) -> bool {
     })
 }
 
+/// Extract the leading function docstring expression, using the same source convention as API metadata extraction.
+pub(in crate::backend::ir::lower) fn callable_docstring(body: &[Spanned<ast::Statement>]) -> Option<String> {
+    let first = body.first()?;
+    let ast::Statement::Expr(expr) = &first.node else {
+        return None;
+    };
+    let Expr::Literal(ast::Literal::String(docstring)) = &expr.node else {
+        return None;
+    };
+    Some(docstring.clone())
+}
+
 /// Collect generic callable-name type parameters referenced by an expression.
 fn collect_generic_callable_name_type_params_from_expr(expr: &super::super::super::IrExpr, out: &mut Vec<String>) {
     match &expr.kind {
@@ -455,6 +467,7 @@ impl AstLowering {
 
         Ok(IrFunction {
             name,
+            docstring: callable_docstring(&f.body),
             params,
             return_type,
             body,

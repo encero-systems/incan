@@ -140,8 +140,16 @@ RELEASE_0_4_REQUIREMENTS: tuple[SurfaceRequirement, ...] = (
                 "workspaces/docs-site/docs/tooling/reference/cli_reference.md",
                 (
                     "incan test -v",
-                    "dependency preheat uses the generated lock workspace and the same release-profile Cargo target directory",
+                    "dependency preheat uses the generated library Cargo project and the same release-profile Cargo target directory",
                     "INCAN_LOCK_PREHEAT=0",
+                ),
+            ),
+            FileRequirement(
+                "workspaces/docs-site/docs/contributing/reference/release_surface_gates.md",
+                (
+                    "Downstream Timing Evidence",
+                    "generated-library dependency preheat targets the generated library Cargo project",
+                    "timing and observability evidence, not a downstream acceptance pass",
                 ),
             ),
             FileRequirement(
@@ -201,6 +209,7 @@ RELEASE_0_4_REQUIREMENTS: tuple[SurfaceRequirement, ...] = (
                     "build_report_json_describes_executable_build",
                     "build_report_output_file_describes_library_build",
                     "inspect_rust_reports_current_generated_rust_files",
+                    "Widget docs survive into generated Rust",
                 ),
             ),
             FileRequirement(
@@ -210,6 +219,7 @@ RELEASE_0_4_REQUIREMENTS: tuple[SurfaceRequirement, ...] = (
                     "--report-output <PATH>",
                     "### `incan inspect rust`",
                     "current backend output",
+                    "source declarations carry checked docstrings",
                 ),
             ),
             FileRequirement(
@@ -220,6 +230,7 @@ RELEASE_0_4_REQUIREMENTS: tuple[SurfaceRequirement, ...] = (
                 "workspaces/docs-site/docs/release_notes/0_4.md",
                 (
                     "Build reports and generated Rust inspection",
+                    "Generated public Rust items now preserve checked source docstrings",
                     "[#567]",
                     "[#591]",
                 ),

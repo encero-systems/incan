@@ -7,9 +7,46 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+/// Enables serialization of a type to a JSON string.
+///
+/// When derived, all fields are serialized in declaration order. Importing `Serialize` and adopting it with
+/// `with Serialize` also provides this default method body, which uses the compiler's direct serde interop path.
+/// Override `to_json` only when you need custom serialization behavior.
+///
+/// Example:
+///
+/// ```ignore
+/// from std.serde.json import Serialize
+///
+/// @derive(Serialize)
+/// model LogEntry:
+///     message: str
+///     level: str
+///     timestamp: datetime
+///
+/// entry = LogEntry(message="started", level="info", timestamp=now())
+/// println(entry.to_json())
+/// ```
 pub trait Serialize {
     fn to_json(&self) -> String;
 }
+/// Enables deserialization of a type from a JSON string.
+///
+/// When derived, all fields are deserialized by name. Import `Deserialize` and use `@derive(Deserialize)`, or adopt via
+/// `with Deserialize` and implement `from_json` for custom behavior.
+///
+/// Example:
+///
+/// ```ignore
+/// from std.serde.json import Deserialize
+///
+/// @derive(Deserialize)
+/// model Config:
+///     host: str
+///     port: int
+///
+/// config = Config.from_json('{"host":"localhost","port":8080}')?
+/// ```
 pub trait Deserialize {
     fn from_json(json_str: String) -> Result<Self, String>
     where

@@ -27,6 +27,15 @@ pub use ::incan_stdlib::r#async::channel::receiver_try_recv as rust_receiver_try
 pub use ::incan_stdlib::r#async::channel::receiver_close as rust_receiver_close;
 pub use ::incan_stdlib::r#async::channel::oneshot_sender_send as rust_oneshot_sender_send;
 pub use ::incan_stdlib::r#async::channel::oneshot_receiver_recv as rust_oneshot_receiver_recv;
+/// Error returned when a send operation fails.
+///
+/// Preserves the unsent value so callers can recover it or retry. This is used for closed-channel sends and for bounded
+/// `try_send()` calls that fail immediately instead of waiting.
+///
+/// Example:
+///     match await tx.send(my_data):
+///         Ok(_) => println("sent")
+///         Err(err) => println(f"channel closed, retry later: {err.value}")
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 pub struct SendError<T> {
     pub value: T,
@@ -99,6 +108,14 @@ impl<T> Error for SendError<T> {
         return None::<_>;
     }
 }
+/// Error returned when a one-shot receive fails because the sender was dropped.
+///
+/// `RecvError` is used by one-shot receivers, where the sender may disappear before producing its single value.
+///
+/// Example:
+///     match await rx.recv():
+///         Ok(value) => println(f"received: {value}")
+///         Err(err) => println(err.message())
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 pub struct RecvError {}
 impl incan_stdlib::reflection::HasClassName for RecvError {
@@ -149,9 +166,20 @@ impl Error for RecvError {
         return None::<_>;
     }
 }
+/// `Sender[T]` is the sending half of an MPSC channel.
+/// Multiple senders can be cloned from a single sender, allowing multiple
+/// producers to feed one receiver.
 #[derive(Debug, Clone)]
 pub struct Sender<T>(pub RawSender<T>);
 impl<T> Sender<T> {
+    /// Send a value through the channel.
+    ///
+    /// For bounded channels, this waits for capacity when the buffer is full.
+    /// Returns `Err(SendError(...))` if the receiver has been dropped.
+    ///
+    /// Cancellation contract: cancel-safe-but-lossy. If this wait is cancelled before capacity is reserved, the message
+    /// is not sent and `value` is dropped. Use `reserve()` first for critical sends that must not lose a value if an
+    /// outer cancellation boundary drops the send future.
     pub async fn send(&self, value: T) -> Result<(), SendError<T>> {
         "\n        Send a value through the channel.\n\n        For bounded channels, this waits for capacity when the buffer is full.\n        Returns `Err(SendError(...))` if the receiver has been dropped.\n\n        Cancellation contract: cancel-safe-but-lossy. If this wait is cancelled before capacity is reserved, the message\n        is not sent and `value` is dropped. Use `reserve()` first for critical sends that must not lose a value if an\n        outer cancellation boundary drops the send future.\n        ";
         match rust_sender_send(&self.0, value).await {
@@ -168,6 +196,14 @@ impl<T> Sender<T> {
             }
         };
     }
+    /// Reserve capacity for one future send.
+    ///
+    /// Bounded channels wait until a slot is available and return a `SenderPermit`; unbounded channels return an
+    /// immediately usable pseudo-permit when the receiver is open. The permit should be used with
+    /// `permit.send(value)`.
+    ///
+    /// Cancellation contract: cancel-safe for message values because no value is passed to `reserve()`. If a bounded
+    /// reservation wait is cancelled, no slot is reserved and the sender gives up its current wait position.
     pub async fn reserve(&self) -> Result<SenderPermit<T>, SendError<()>> {
         "\n        Reserve capacity for one future send.\n\n        Bounded channels wait until a slot is available and return a `SenderPermit`; unbounded channels return an\n        immediately usable pseudo-permit when the receiver is open. The permit should be used with\n        `permit.send(value)`.\n\n        Cancellation contract: cancel-safe for message values because no value is passed to `reserve()`. If a bounded\n        reservation wait is cancelled, no slot is reserved and the sender gives up its current wait position.\n        ";
         match rust_sender_reserve(&self.0).await {
@@ -184,6 +220,10 @@ impl<T> Sender<T> {
             }
         };
     }
+    /// Try to send without blocking.
+    ///
+    /// Returns immediately. On bounded channels it fails when the buffer is full;
+    /// on any channel it fails if the receiver has already closed.
     pub fn try_send(&self, value: T) -> Result<(), SendError<T>> {
         "\n        Try to send without blocking.\n\n        Returns immediately. On bounded channels it fails when the buffer is full;\n        on any channel it fails if the receiver has already closed.\n        ";
         match rust_sender_try_send(&self.0, value) {
@@ -200,10 +240,12 @@ impl<T> Sender<T> {
             }
         };
     }
+    /// Check whether the receiver side has been closed.
     pub fn is_closed(&self) -> bool {
         "Check whether the receiver side has been closed.";
         return rust_sender_is_closed(&self.0);
     }
+    /// Create another sending handle for the same channel.
     pub fn clone(&self) -> Self {
         "Create another sending handle for the same channel.";
         return Sender(self.0.clone());
@@ -226,9 +268,19 @@ impl<T> Sender<T> {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
+/// `SenderPermit[T]` is a single-use permit returned by `Sender.reserve()`.
+///
+/// A bounded permit holds one channel slot until it sends or is dropped. An unbounded pseudo-permit sends immediately
+/// and can still fail if the receiver closes after reservation.
 #[derive(Debug)]
 pub struct SenderPermit<T>(pub RawSenderPermit<T>);
 impl<T> SenderPermit<T> {
+    /// Send a value using this permit.
+    ///
+    /// Bounded permits use already-reserved capacity. Unbounded pseudo-permits send synchronously and return the value
+    /// on close.
+    ///
+    /// Cancellation contract: synchronous. The value is either delivered or returned in `SendError[T]`.
     pub fn send(&self, value: T) -> Result<(), SendError<T>> {
         "\n        Send a value using this permit.\n\n        Bounded permits use already-reserved capacity. Unbounded pseudo-permits send synchronously and return the value\n        on close.\n\n        Cancellation contract: synchronous. The value is either delivered or returned in `SendError[T]`.\n        ";
         match rust_sender_permit_send(&self.0, value) {
@@ -263,17 +315,32 @@ impl<T> SenderPermit<T> {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
+/// `Receiver[T]` is the receiving half of an MPSC channel.
+/// A channel has exactly one receiver, which pulls values in send order.
 #[derive(Debug)]
 pub struct Receiver<T>(pub RawReceiver<T>);
 impl<T> Receiver<T> {
+    /// Receive the next value.
+    ///
+    /// This waits until a value is available or the channel closes.
+    /// Returns `None` only after the channel is closed and fully drained.
+    ///
+    /// Cancellation contract: cancel-safe. If this wait is cancelled, no message is removed from the channel.
     pub async fn recv(&self) -> Option<T> {
         "\n        Receive the next value.\n\n        This waits until a value is available or the channel closes.\n        Returns `None` only after the channel is closed and fully drained.\n\n        Cancellation contract: cancel-safe. If this wait is cancelled, no message is removed from the channel.\n        ";
         return rust_receiver_recv(&self.0).await;
     }
+    /// Try to receive without blocking.
+    ///
+    /// Returns None immediately if no value is available.
     pub fn try_recv(&self) -> Option<T> {
         "\n        Try to receive without blocking.\n\n        Returns None immediately if no value is available.\n        ";
         return rust_receiver_try_recv(&self.0);
     }
+    /// Try to close the channel, preventing further sends.
+    ///
+    /// Returns `true` when the channel was closed. Returns `false` if another cloned receiver is actively waiting in
+    /// `recv()` and owns the receiver state; retry after that wait completes or is cancelled.
     pub fn close(&self) -> bool {
         "\n        Try to close the channel, preventing further sends.\n\n        Returns `true` when the channel was closed. Returns `false` if another cloned receiver is actively waiting in\n        `recv()` and owns the receiver state; retry after that wait completes or is cancelled.\n        ";
         return rust_receiver_close(&self.0);
@@ -296,6 +363,27 @@ impl<T> Receiver<T> {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
+/// Create a bounded MPSC channel.
+///
+/// The channel can hold up to `buffer` messages before `send()` waits for capacity.
+///
+/// Example:
+///     tx, rx = channel[str](32)
+///
+///     async def producer(tx: Sender[str]) -> None:
+///         match await tx.send("hello"):
+///             Ok(_) => println("sent hello")
+///             Err(err) => println(err.message())
+///
+///         match await tx.send("world"):
+///             Ok(_) => println("sent world")
+///             Err(err) => println(err.message())
+///
+///     async def consumer(rx: Receiver[str]) -> None:
+///         while True:
+///             match await rx.recv():
+///                 Some(msg) => println(f"got: {msg}")
+///                 None => break
 pub fn channel<T>(buffer: i64) -> (Sender<T>, Receiver<T>) {
     "\n    Create a bounded MPSC channel.\n\n    The channel can hold up to `buffer` messages before `send()` waits for capacity.\n\n    Example:\n        tx, rx = channel[str](32)\n\n        async def producer(tx: Sender[str]) -> None:\n            match await tx.send(\"hello\"):\n                Ok(_) => println(\"sent hello\")\n                Err(err) => println(err.message())\n\n            match await tx.send(\"world\"):\n                Ok(_) => println(\"sent world\")\n                Err(err) => println(err.message())\n\n        async def consumer(rx: Receiver[str]) -> None:\n            while True:\n                match await rx.recv():\n                    Some(msg) => println(f\"got: {msg}\")\n                    None => break\n    ";
     let __incan_tuple_unpack_raw_tx_raw_rx = rust_channel(buffer);
@@ -303,6 +391,16 @@ pub fn channel<T>(buffer: i64) -> (Sender<T>, Receiver<T>) {
     let raw_rx = __incan_tuple_unpack_raw_tx_raw_rx.1;
     return (Sender(raw_tx), Receiver(raw_rx));
 }
+/// Create an unbounded MPSC channel.
+///
+/// The channel has no capacity limit, so `send()` completes as long as the receiver still exists.
+/// Use with caution as it can cause memory issues if producers outpace consumers.
+///
+/// Example:
+///     tx, rx = unbounded_channel[int]()
+///     match await tx.send(1):
+///         Ok(_) => println("sent")
+///         Err(err) => println(err.message())
 pub fn unbounded_channel<T>() -> (Sender<T>, Receiver<T>) {
     "\n    Create an unbounded MPSC channel.\n\n    The channel has no capacity limit, so `send()` completes as long as the receiver still exists.\n    Use with caution as it can cause memory issues if producers outpace consumers.\n\n    Example:\n        tx, rx = unbounded_channel[int]()\n        match await tx.send(1):\n            Ok(_) => println(\"sent\")\n            Err(err) => println(err.message())\n    ";
     let __incan_tuple_unpack_raw_tx_raw_rx = rust_unbounded_channel();
@@ -310,9 +408,16 @@ pub fn unbounded_channel<T>() -> (Sender<T>, Receiver<T>) {
     let raw_rx = __incan_tuple_unpack_raw_tx_raw_rx.1;
     return (Sender(raw_tx), Receiver(raw_rx));
 }
+/// `OneshotSender[T]` is the sending half of a one-shot channel.
+/// It carries exactly one value from one sender to one receiver.
+/// This is useful for returning a single result from a background task.
 #[derive(Debug)]
 pub struct OneshotSender<T>(pub RawOneshotSender<T>);
 impl<T> OneshotSender<T> {
+    /// Send the single value carried by this one-shot sender.
+    /// Returns the value back if the receiver is already gone.
+    ///
+    /// Cancellation contract: this operation is synchronous, so it either delivers the value or returns it immediately.
     pub fn send(&self, value: T) -> Result<(), T> {
         "\n        Send the single value carried by this one-shot sender.\n        Returns the value back if the receiver is already gone.\n\n        Cancellation contract: this operation is synchronous, so it either delivers the value or returns it immediately.\n        ";
         match rust_oneshot_sender_send(&self.0, value) {
@@ -342,9 +447,15 @@ impl<T> OneshotSender<T> {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
+/// `OneshotReceiver[T]` is the receiving half of a one-shot channel.
+/// It waits for the one-shot value from the sender.
+/// This is useful for returning a single result from a background task.
 #[derive(Debug)]
 pub struct OneshotReceiver<T>(pub RawOneshotReceiver<T>);
 impl<T> OneshotReceiver<T> {
+    /// Wait for the one-shot value or return `RecvError` if the sender was dropped.
+    ///
+    /// Cancellation contract: cancel-safe. If this wait is cancelled, the one-shot value is not consumed.
     pub async fn recv(&self) -> Result<T, RecvError> {
         "\n        Wait for the one-shot value or return `RecvError` if the sender was dropped.\n\n        Cancellation contract: cancel-safe. If this wait is cancelled, the one-shot value is not consumed.\n        ";
         match rust_oneshot_receiver_recv(&self.0).await {
@@ -374,6 +485,22 @@ impl<T> OneshotReceiver<T> {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
+/// Create a one-shot channel for sending a single value.
+///
+/// This is useful for returning one result from a background task.
+///
+/// Example:
+///     tx, rx = oneshot[int]()
+///
+///     async def produce(tx: OneshotSender[int]) -> None:
+///         result = 42
+///         match tx.send(result):
+///             Ok(_) => println("delivered")
+///             Err(value) => println(f"receiver dropped before delivery: {value}")
+///
+///     match await rx.recv():
+///         Ok(value) => println(f"got: {value}")
+///         Err(err) => println(err.message())
 pub fn oneshot<T>() -> (OneshotSender<T>, OneshotReceiver<T>) {
     "\n    Create a one-shot channel for sending a single value.\n\n    This is useful for returning one result from a background task.\n\n    Example:\n        tx, rx = oneshot[int]()\n\n        async def produce(tx: OneshotSender[int]) -> None:\n            result = 42\n            match tx.send(result):\n                Ok(_) => println(\"delivered\")\n                Err(value) => println(f\"receiver dropped before delivery: {value}\")\n\n        match await rx.recv():\n            Ok(value) => println(f\"got: {value}\")\n            Err(err) => println(err.message())\n    ";
     let __incan_tuple_unpack_raw_tx_raw_rx = rust_oneshot();

@@ -8,9 +8,11 @@ expression: rust_code
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 pub use crate::__incan_std::traits::error::Error;
+/// Stable handle for one node in a graph instance.
 #[derive(Debug, Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
 pub struct NodeId(pub i64);
 impl NodeId {
+    /// Return the runtime numeric representation for diagnostics, storage, or display.
     pub fn to_int(&self) -> i64 {
         "Return the runtime numeric representation for diagnostics, storage, or display.";
         return self.0;
@@ -33,9 +35,11 @@ impl NodeId {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
+/// Stable handle for one edge in a graph instance.
 #[derive(Debug, Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
 pub struct EdgeId(pub i64);
 impl EdgeId {
+    /// Return the runtime numeric representation for diagnostics, storage, or display.
     pub fn to_int(&self) -> i64 {
         "Return the runtime numeric representation for diagnostics, storage, or display.";
         return self.0;
@@ -58,6 +62,7 @@ impl EdgeId {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
+/// Error returned by graph operations when ids are unknown, cycles are rejected, or removal cannot be completed.
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 pub struct GraphError {
     pub detail: String,
@@ -341,6 +346,7 @@ impl GraphEdge {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
+/// Directed graph with at most one active edge for each ordered node pair.
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 pub struct DiGraph<T> {
     pub next_node_id: i64,
@@ -411,6 +417,7 @@ impl<T> incan_stdlib::reflection::HasTypeFieldMetadata for DiGraph<T> {
     }
 }
 impl<T: Clone> DiGraph<T> {
+    /// Compiler hook for `DiGraph[T]()` constructor syntax.
     pub fn __incan_new() -> Self {
         "Compiler hook for `DiGraph[T]()` constructor syntax.";
         return DiGraph {
@@ -420,6 +427,7 @@ impl<T: Clone> DiGraph<T> {
             edges: vec![],
         };
     }
+    /// Add a node with `payload` and return its node id.
     pub fn add_node(&mut self, payload: T) -> NodeId {
         "Add a node with `payload` and return its node id.";
         let id = NodeId(self.next_node_id);
@@ -432,6 +440,7 @@ impl<T: Clone> DiGraph<T> {
             });
         return id;
     }
+    /// Remove `node` and any incident edges.
     pub fn remove_node(&mut self, node: NodeId) -> Result<(), GraphError> {
         "Remove `node` and any incident edges.";
         let index = self.node_index(node.clone());
@@ -462,10 +471,12 @@ impl<T: Clone> DiGraph<T> {
         }
         return Ok::<(), GraphError>(());
     }
+    /// Return whether `node` belongs to this graph.
     pub fn contains_node(&self, node: NodeId) -> bool {
         "Return whether `node` belongs to this graph.";
         return self.node_index(node) >= 0;
     }
+    /// Return the payload for `node`.
     pub fn node_payload(&self, node: NodeId) -> Result<T, GraphError> {
         "Return the payload for `node`.";
         let index = self.node_index(node.clone());
@@ -481,6 +492,7 @@ impl<T: Clone> DiGraph<T> {
                 .payload,
         );
     }
+    /// Add the directed edge `from_ -> to`.
     pub fn add_edge(&mut self, from_: NodeId, to: NodeId) -> Result<(), GraphError> {
         "Add the directed edge `from_ -> to`.";
         match self.insert_edge(from_, to, false) {
@@ -492,6 +504,7 @@ impl<T: Clone> DiGraph<T> {
             }
         };
     }
+    /// Remove the directed edge `from_ -> to`.
     pub fn remove_edge(&mut self, from_: NodeId, to: NodeId) -> Result<(), GraphError> {
         "Remove the directed edge `from_ -> to`.";
         if !self.contains_node(from_.clone()) {
@@ -517,6 +530,7 @@ impl<T: Clone> DiGraph<T> {
         }
         return Err::<(), GraphError>(missing_edge(from_, to));
     }
+    /// Return whether the directed edge `from_ -> to` exists.
     pub fn contains_edge(&self, from_: NodeId, to: NodeId) -> bool {
         "Return whether the directed edge `from_ -> to` exists.";
         for edge in self.edges.iter() {
@@ -526,6 +540,7 @@ impl<T: Clone> DiGraph<T> {
         }
         return false;
     }
+    /// Return outgoing neighbors for `node`.
     pub fn successors(&self, node: NodeId) -> Result<Vec<NodeId>, GraphError> {
         "Return outgoing neighbors for `node`.";
         if !self.contains_node(node.clone()) {
@@ -539,6 +554,7 @@ impl<T: Clone> DiGraph<T> {
         }
         return Ok::<Vec<NodeId>, GraphError>(nodes);
     }
+    /// Return incoming neighbors for `node`.
     pub fn predecessors(&self, node: NodeId) -> Result<Vec<NodeId>, GraphError> {
         "Return incoming neighbors for `node`.";
         if !self.contains_node(node.clone()) {
@@ -552,6 +568,7 @@ impl<T: Clone> DiGraph<T> {
         }
         return Ok::<Vec<NodeId>, GraphError>(nodes);
     }
+    /// Return all nodes with no incoming edges.
     pub fn roots(&self) -> Vec<NodeId> {
         "Return all nodes with no incoming edges.";
         let mut roots: Vec<NodeId> = vec![];
@@ -569,6 +586,7 @@ impl<T: Clone> DiGraph<T> {
         }
         return roots.clone();
     }
+    /// Return all nodes with no outgoing edges.
     pub fn sinks(&self) -> Vec<NodeId> {
         "Return all nodes with no outgoing edges.";
         let mut sinks: Vec<NodeId> = vec![];
@@ -586,6 +604,7 @@ impl<T: Clone> DiGraph<T> {
         }
         return sinks.clone();
     }
+    /// Return nodes reachable from `start` in breadth-first order.
     pub fn bfs_nodes(&self, start: NodeId) -> Result<Vec<NodeId>, GraphError> {
         "Return nodes reachable from `start` in breadth-first order.";
         if !self.contains_node(start.clone()) {
@@ -619,6 +638,7 @@ impl<T: Clone> DiGraph<T> {
         }
         return Ok::<Vec<NodeId>, GraphError>(order);
     }
+    /// Return nodes reachable from `start` in depth-first preorder.
     pub fn dfs_preorder_nodes(&self, start: NodeId) -> Result<Vec<NodeId>, GraphError> {
         "Return nodes reachable from `start` in depth-first preorder.";
         if !self.contains_node(start.clone()) {
@@ -654,6 +674,7 @@ impl<T: Clone> DiGraph<T> {
         }
         return Ok::<Vec<NodeId>, GraphError>(order);
     }
+    /// Return a topological order or `Err(GraphError)` when the graph contains a cycle.
     pub fn topological_order(&self) -> Result<Vec<NodeId>, GraphError> {
         "Return a topological order or `Err(GraphError)` when the graph contains a cycle.";
         let active = self.active_node_ids();
@@ -826,6 +847,7 @@ impl<T: Clone> DiGraph<T> {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
+/// Directed acyclic graph that rejects cycle-creating edge insertions.
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 pub struct Dag<T> {
     pub graph: DiGraph<T>,
@@ -866,28 +888,34 @@ impl<T> incan_stdlib::reflection::HasTypeFieldMetadata for Dag<T> {
     }
 }
 impl<T: Clone> Dag<T> {
+    /// Compiler hook for `Dag[T]()` constructor syntax.
     pub fn __incan_new() -> Self {
         "Compiler hook for `Dag[T]()` constructor syntax.";
         return Dag {
             graph: DiGraph::<T>::__incan_new(),
         };
     }
+    /// Add a node with `payload` and return its node id.
     pub fn add_node(&mut self, payload: T) -> NodeId {
         "Add a node with `payload` and return its node id.";
         return self.graph.add_node(payload);
     }
+    /// Remove `node` and any incident edges.
     pub fn remove_node(&mut self, node: NodeId) -> Result<(), GraphError> {
         "Remove `node` and any incident edges.";
         return self.graph.remove_node(node);
     }
+    /// Return whether `node` belongs to this DAG.
     pub fn contains_node(&self, node: NodeId) -> bool {
         "Return whether `node` belongs to this DAG.";
         return self.graph.contains_node(node);
     }
+    /// Return the payload for `node`.
     pub fn node_payload(&self, node: NodeId) -> Result<T, GraphError> {
         "Return the payload for `node`.";
         return self.graph.node_payload(node);
     }
+    /// Add `from_ -> to`, rejecting the edge if it would create a cycle.
     pub fn add_edge(&mut self, from_: NodeId, to: NodeId) -> Result<(), GraphError> {
         "Add `from_ -> to`, rejecting the edge if it would create a cycle.";
         if !self.graph.contains_node(from_.clone()) {
@@ -919,34 +947,42 @@ impl<T: Clone> Dag<T> {
         }
         return self.graph.add_edge(from_, to);
     }
+    /// Remove the directed edge `from_ -> to`.
     pub fn remove_edge(&mut self, from_: NodeId, to: NodeId) -> Result<(), GraphError> {
         "Remove the directed edge `from_ -> to`.";
         return self.graph.remove_edge(from_, to);
     }
+    /// Return outgoing neighbors for `node`.
     pub fn successors(&self, node: NodeId) -> Result<Vec<NodeId>, GraphError> {
         "Return outgoing neighbors for `node`.";
         return self.graph.successors(node);
     }
+    /// Return incoming neighbors for `node`.
     pub fn predecessors(&self, node: NodeId) -> Result<Vec<NodeId>, GraphError> {
         "Return incoming neighbors for `node`.";
         return self.graph.predecessors(node);
     }
+    /// Return all nodes with no incoming edges.
     pub fn roots(&self) -> Vec<NodeId> {
         "Return all nodes with no incoming edges.";
         return self.graph.roots();
     }
+    /// Return all nodes with no outgoing edges.
     pub fn sinks(&self) -> Vec<NodeId> {
         "Return all nodes with no outgoing edges.";
         return self.graph.sinks();
     }
+    /// Return nodes reachable from `start` in breadth-first order.
     pub fn bfs_nodes(&self, start: NodeId) -> Result<Vec<NodeId>, GraphError> {
         "Return nodes reachable from `start` in breadth-first order.";
         return self.graph.bfs_nodes(start);
     }
+    /// Return nodes reachable from `start` in depth-first preorder.
     pub fn dfs_preorder_nodes(&self, start: NodeId) -> Result<Vec<NodeId>, GraphError> {
         "Return nodes reachable from `start` in depth-first preorder.";
         return self.graph.dfs_preorder_nodes(start);
     }
+    /// Return the DAG's topological node order.
     pub fn topological_order(&self) -> Vec<NodeId> {
         "Return the DAG's topological node order.";
         match self.graph.topological_order() {
@@ -986,6 +1022,7 @@ impl<T: Clone> Dag<T> {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
+/// Directed multigraph whose edge insertions return stable `EdgeId` handles.
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 pub struct MultiDiGraph<T> {
     pub graph: DiGraph<T>,
@@ -1026,32 +1063,39 @@ impl<T> incan_stdlib::reflection::HasTypeFieldMetadata for MultiDiGraph<T> {
     }
 }
 impl<T: Clone> MultiDiGraph<T> {
+    /// Compiler hook for `MultiDiGraph[T]()` constructor syntax.
     pub fn __incan_new() -> Self {
         "Compiler hook for `MultiDiGraph[T]()` constructor syntax.";
         return MultiDiGraph {
             graph: DiGraph::<T>::__incan_new(),
         };
     }
+    /// Add a node with `payload` and return its node id.
     pub fn add_node(&mut self, payload: T) -> NodeId {
         "Add a node with `payload` and return its node id.";
         return self.graph.add_node(payload);
     }
+    /// Remove `node` and any incident edges.
     pub fn remove_node(&mut self, node: NodeId) -> Result<(), GraphError> {
         "Remove `node` and any incident edges.";
         return self.graph.remove_node(node);
     }
+    /// Return whether `node` belongs to this multigraph.
     pub fn contains_node(&self, node: NodeId) -> bool {
         "Return whether `node` belongs to this multigraph.";
         return self.graph.contains_node(node);
     }
+    /// Return the payload for `node`.
     pub fn node_payload(&self, node: NodeId) -> Result<T, GraphError> {
         "Return the payload for `node`.";
         return self.graph.node_payload(node);
     }
+    /// Add a directed edge and return its edge id.
     pub fn add_edge(&mut self, from_: NodeId, to: NodeId) -> Result<EdgeId, GraphError> {
         "Add a directed edge and return its edge id.";
         return self.graph.insert_edge(from_, to, true);
     }
+    /// Remove the edge identified by `edge`.
     pub fn remove_edge(&mut self, edge: EdgeId) -> Result<(), GraphError> {
         "Remove the edge identified by `edge`.";
         let index = self.graph.edge_index(edge.clone());
@@ -1079,10 +1123,12 @@ impl<T: Clone> MultiDiGraph<T> {
         ) = stored;
         return Ok::<(), GraphError>(());
     }
+    /// Return whether `edge` belongs to this multigraph.
     pub fn contains_edge(&self, edge: EdgeId) -> bool {
         "Return whether `edge` belongs to this multigraph.";
         return self.graph.edge_index(edge.clone()) >= 0;
     }
+    /// Return all edge ids connecting `from_ -> to`.
     pub fn edges_between(
         &self,
         from_: NodeId,
@@ -1103,6 +1149,7 @@ impl<T: Clone> MultiDiGraph<T> {
         }
         return Ok::<Vec<EdgeId>, GraphError>(edges);
     }
+    /// Return the source and target node ids for `edge`.
     pub fn edge_endpoints(&self, edge: EdgeId) -> Result<(NodeId, NodeId), GraphError> {
         "Return the source and target node ids for `edge`.";
         let index = self.graph.edge_index(edge.clone());
@@ -1128,30 +1175,37 @@ impl<T: Clone> MultiDiGraph<T> {
             GraphError,
         >((stored.from_.clone(), stored.to.clone()));
     }
+    /// Return outgoing neighbors for `node`.
     pub fn successors(&self, node: NodeId) -> Result<Vec<NodeId>, GraphError> {
         "Return outgoing neighbors for `node`.";
         return self.graph.successors(node);
     }
+    /// Return incoming neighbors for `node`.
     pub fn predecessors(&self, node: NodeId) -> Result<Vec<NodeId>, GraphError> {
         "Return incoming neighbors for `node`.";
         return self.graph.predecessors(node);
     }
+    /// Return all nodes with no incoming edges.
     pub fn roots(&self) -> Vec<NodeId> {
         "Return all nodes with no incoming edges.";
         return self.graph.roots();
     }
+    /// Return all nodes with no outgoing edges.
     pub fn sinks(&self) -> Vec<NodeId> {
         "Return all nodes with no outgoing edges.";
         return self.graph.sinks();
     }
+    /// Return nodes reachable from `start` in breadth-first order.
     pub fn bfs_nodes(&self, start: NodeId) -> Result<Vec<NodeId>, GraphError> {
         "Return nodes reachable from `start` in breadth-first order.";
         return self.graph.bfs_nodes(start);
     }
+    /// Return nodes reachable from `start` in depth-first preorder.
     pub fn dfs_preorder_nodes(&self, start: NodeId) -> Result<Vec<NodeId>, GraphError> {
         "Return nodes reachable from `start` in depth-first preorder.";
         return self.graph.dfs_preorder_nodes(start);
     }
+    /// Return a topological node order or `Err(GraphError)` when the multigraph contains a cycle.
     pub fn topological_order(&self) -> Result<Vec<NodeId>, GraphError> {
         "Return a topological node order or `Err(GraphError)` when the multigraph contains a cycle.";
         return self.graph.topological_order();

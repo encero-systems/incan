@@ -3045,6 +3045,7 @@ mod tests {
     fn function(name: &str, type_params: Vec<IrTypeParam>) -> IrFunction {
         IrFunction {
             name: name.to_string(),
+            docstring: None,
             params: Vec::new(),
             return_type: IrType::Unit,
             body: Vec::new(),
@@ -3077,6 +3078,7 @@ mod tests {
     fn impl_owner_generic_bounds_are_written_to_impl_header() -> Result<(), Box<dyn std::error::Error>> {
         let method = IrFunction {
             name: "render".to_string(),
+            docstring: None,
             params: Vec::new(),
             return_type: IrType::Unit,
             body: vec![IrStmt::new(IrStmtKind::Expr(TypedExpr::new(

@@ -542,12 +542,14 @@ impl<'a> IrEmitter<'a> {
         let lint_allow_values = func.lint_allows.clone();
         let lint_allows = self.emit_rust_lint_allows(&lint_allow_values);
         let rust_attrs = self.emit_rust_attributes(&func.rust_attributes);
+        let doc_attrs = self.emit_public_rustdoc_attrs(&func.visibility, func.docstring.as_deref());
 
         // RFC 023: emit generic type parameters with inferred/explicit trait bounds.
         let generics = self.emit_type_params(&func.type_params);
 
         if is_main && func.is_async {
             return Ok(quote! {
+                #(#doc_attrs)*
                 #(#lint_allows)*
                 #(#rust_attrs)*
                 #vis fn #name #generics (#(#params),*) {
@@ -567,6 +569,7 @@ impl<'a> IrEmitter<'a> {
         if func.is_generator {
             let ret_ty = self.emit_type(&func.return_type);
             return Ok(quote! {
+                #(#doc_attrs)*
                 #(#lint_allows)*
                 #(#rust_attrs)*
                 #vis fn #name #generics (#(#params),*) -> #ret_ty {
@@ -581,6 +584,7 @@ impl<'a> IrEmitter<'a> {
         let ret_ty_is_unit = matches!(func.return_type, IrType::Unit);
         if is_main || ret_ty_is_unit {
             Ok(quote! {
+                #(#doc_attrs)*
                 #(#lint_allows)*
                 #(#rust_attrs)*
                 #vis #async_kw fn #name #generics (#(#params),*) {
@@ -593,6 +597,7 @@ impl<'a> IrEmitter<'a> {
         } else {
             let ret_ty = self.emit_type(&func.return_type);
             Ok(quote! {
+                #(#doc_attrs)*
                 #(#lint_allows)*
                 #(#rust_attrs)*
                 #vis #async_kw fn #name #generics (#(#params),*) -> #ret_ty {
@@ -663,6 +668,7 @@ impl<'a> IrEmitter<'a> {
         };
         let static_init_stmt = self.emit_module_static_init_call();
         let lint_allows = self.emit_rust_lint_allows(&func.lint_allows);
+        let doc_attrs = self.emit_public_rustdoc_attrs(&func.visibility, func.docstring.as_deref());
 
         // Proc-macro crates expose macros, not callable Rust functions. Keep these decorator placeholders compilable,
         // but route runtime misuse through a named internal stdlib helper instead of emitting an open-coded `panic!`
@@ -676,6 +682,7 @@ impl<'a> IrEmitter<'a> {
             let ret_ty_is_unit = matches!(func.return_type, IrType::Unit);
             if ret_ty_is_unit {
                 return Ok(quote! {
+                    #(#doc_attrs)*
                     #(#lint_allows)*
                     #vis #async_kw fn #name #generics (#(#params),*) {
                         incan_stdlib::errors::__private::raise_runtime_misuse(#panic_message)
@@ -685,6 +692,7 @@ impl<'a> IrEmitter<'a> {
 
             let ret_ty = self.emit_type(&func.return_type);
             return Ok(quote! {
+                #(#doc_attrs)*
                 #(#lint_allows)*
                 #vis #async_kw fn #name #generics (#(#params),*) -> #ret_ty {
                     incan_stdlib::errors::__private::raise_runtime_misuse(#panic_message)
@@ -719,6 +727,7 @@ impl<'a> IrEmitter<'a> {
         let ret_ty_is_unit = matches!(func.return_type, IrType::Unit);
         if ret_ty_is_unit {
             Ok(quote! {
+                #(#doc_attrs)*
                 #(#lint_allows)*
                 #vis #async_kw fn #name #generics (#(#params),*) {
                     #static_init_stmt
@@ -728,6 +737,7 @@ impl<'a> IrEmitter<'a> {
         } else {
             let ret_ty = self.emit_type(&func.return_type);
             Ok(quote! {
+                #(#doc_attrs)*
                 #(#lint_allows)*
                 #vis #async_kw fn #name #generics (#(#params),*) -> #ret_ty {
                     #static_init_stmt
@@ -808,8 +818,10 @@ impl<'a> IrEmitter<'a> {
         *self.current_function_return_type.borrow_mut() = None;
         let lint_allows = self.emit_rust_lint_allows(&func.lint_allows);
         let rust_attrs = self.emit_rust_attributes(&func.rust_attributes);
+        let doc_attrs = self.emit_public_rustdoc_attrs(&func.visibility, func.docstring.as_deref());
 
         Ok(quote! {
+            #(#doc_attrs)*
             #(#lint_allows)*
             #(#rust_attrs)*
             #vis #async_kw fn #name #generics (#(#params),*) #ret {
@@ -899,6 +911,7 @@ impl<'a> IrEmitter<'a> {
             quote! {}
         };
         let lint_allows = self.emit_rust_lint_allows(&func.lint_allows);
+        let doc_attrs = self.emit_public_rustdoc_attrs(&func.visibility, func.docstring.as_deref());
 
         // RFC 023: emit generic type parameters with trait bounds.
         let generics = self.emit_type_params(&func.type_params);
@@ -919,6 +932,7 @@ impl<'a> IrEmitter<'a> {
         let ret_ty_is_unit = matches!(func.return_type, IrType::Unit);
         if ret_ty_is_unit {
             Ok(quote! {
+                #(#doc_attrs)*
                 #(#lint_allows)*
                 #vis #async_kw fn #name #generics (#(#params),*) {
                     #static_init_stmt
@@ -928,6 +942,7 @@ impl<'a> IrEmitter<'a> {
         } else {
             let ret_ty = self.emit_type(&func.return_type);
             Ok(quote! {
+                #(#doc_attrs)*
                 #(#lint_allows)*
                 #vis #async_kw fn #name #generics (#(#params),*) -> #ret_ty {
                     #static_init_stmt
@@ -937,6 +952,7 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Emit an Incan trait declaration, including source docstrings and direct supertrait bounds.
     pub(in crate::backend::ir::emit) fn emit_trait(
         &self,
         trait_decl: &super::super::super::decl::IrTrait,
@@ -950,6 +966,7 @@ impl<'a> IrEmitter<'a> {
 
         // RFC 023 / RFC 042: trait-level generics and direct supertrait bounds.
         let generics = self.emit_type_params(&trait_decl.type_params);
+        let doc_attrs = self.emit_public_rustdoc_attrs(&trait_decl.visibility, trait_decl.docstring.as_deref());
         let supertrait_colon: TokenStream = if trait_decl.supertraits.is_empty() {
             quote! {}
         } else {
@@ -966,6 +983,7 @@ impl<'a> IrEmitter<'a> {
         // Note: trait items are emitted as `pub trait` regardless of Incan visibility so generated single-file crates
         // keep stdlib and user traits addressable at crate root (matches pre–RFC-042 emission).
         Ok(quote! {
+            #(#doc_attrs)*
             pub trait #name #generics #supertrait_colon {
                 #(#methods)*
             }
@@ -1021,7 +1039,9 @@ impl<'a> IrEmitter<'a> {
 
         if func.body.is_empty() {
             let lint_allows = self.emit_rust_lint_allows(&func.lint_allows);
+            let doc_attrs = self.emit_public_rustdoc_attrs(&func.visibility, func.docstring.as_deref());
             Ok(quote! {
+                #(#doc_attrs)*
                 #(#lint_allows)*
                 fn #name #generics (#(#params),*) #ret #sized_where;
             })
@@ -1031,7 +1051,9 @@ impl<'a> IrEmitter<'a> {
             *self.current_function_return_type.borrow_mut() = None;
 
             let lint_allows = self.emit_rust_lint_allows(&func.lint_allows);
+            let doc_attrs = self.emit_public_rustdoc_attrs(&func.visibility, func.docstring.as_deref());
             Ok(quote! {
+                #(#doc_attrs)*
                 #(#lint_allows)*
                 fn #name #generics (#(#params),*) #ret #sized_where {
                     #(#body_stmts)*

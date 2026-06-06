@@ -130,6 +130,7 @@ impl AstLowering {
 
                 Ok(IrFunction {
                     name: m.node.name.clone(),
+                    docstring: m.node.body.as_ref().and_then(|body| super::callable_docstring(body)),
                     params,
                     return_type,
                     body,
@@ -169,6 +170,7 @@ impl AstLowering {
 
         Ok(IrTrait {
             name: t.name.clone(),
+            docstring: t.docstring.clone(),
             type_params: Self::lower_type_params(&t.type_params),
             supertraits,
             methods,

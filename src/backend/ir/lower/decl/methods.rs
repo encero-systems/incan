@@ -449,6 +449,7 @@ impl AstLowering {
         );
         Ok(IrFunction {
             name: method.name.clone(),
+            docstring: None,
             params: wrapper_params,
             return_type,
             body: vec![IrStmt::new(IrStmtKind::Return(Some(call)))],
@@ -530,6 +531,7 @@ impl AstLowering {
         );
         Ok(IrFunction {
             name: Self::decorator_original_method_adapter_name(&method.name),
+            docstring: None,
             params: adapter_params,
             return_type,
             body: vec![IrStmt::new(IrStmtKind::Return(Some(call)))],
@@ -1079,6 +1081,7 @@ impl AstLowering {
 
         Ok(IrFunction {
             name: m.name.clone(),
+            docstring: m.body.as_ref().and_then(|body| super::callable_docstring(body)),
             params,
             return_type,
             body,
@@ -1336,6 +1339,7 @@ impl AstLowering {
 
         Ok(IrFunction {
             name,
+            docstring: m.body.as_ref().and_then(|body| super::callable_docstring(body)),
             params,
             return_type,
             body,
@@ -1391,6 +1395,7 @@ impl AstLowering {
 
         Ok(IrFunction {
             name: property.name.clone(),
+            docstring: None,
             params: std::mem::take(&mut params),
             return_type,
             body,

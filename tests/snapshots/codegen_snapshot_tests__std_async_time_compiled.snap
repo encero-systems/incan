@@ -18,6 +18,12 @@ pub use ::incan_stdlib::r#async::time::timeout_join as rust_timeout_join;
 pub use ::incan_stdlib::r#async::time::timeout_join_ms as rust_timeout_join_ms;
 pub use ::incan_stdlib::__private::tokio::time::sleep as tokio_sleep;
 pub use ::incan_stdlib::__private::tokio::time::timeout as tokio_timeout;
+/// Error returned when a timeout expires before the awaited task completes.
+///
+/// Example:
+///     match await timeout(1.0, work()):
+///         Ok(value) => println(value)
+///         Err(err) => println(err.message())
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 pub struct TimeoutError {}
 impl incan_stdlib::reflection::HasClassName for TimeoutError {
@@ -68,6 +74,10 @@ impl Error for TimeoutError {
         return None::<_>;
     }
 }
+/// A simple duration value for user code and documentation examples.
+///
+/// `std.async.time` currently accepts primitive `float`/`int` delays directly, but `Duration` remains useful as a
+/// lightweight value object when your own APIs want to bundle a span of time explicitly.
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 pub struct Duration {
     pub secs: i64,
@@ -118,10 +128,12 @@ impl incan_stdlib::reflection::HasTypeFieldMetadata for Duration {
     }
 }
 impl Duration {
+    /// Create a duration from whole seconds.
     pub fn from_secs(secs: i64) -> Duration {
         "Create a duration from whole seconds.";
         return Duration { secs: secs, nanos: 0 };
     }
+    /// Create a duration from whole milliseconds.
     pub fn from_millis(millis: i64) -> Duration {
         "Create a duration from whole milliseconds.";
         let secs = (incan_stdlib::num::py_div((millis) as f64, (1000) as f64)) as i64;
@@ -131,6 +143,7 @@ impl Duration {
             nanos: nanos,
         };
     }
+    /// Create a duration from floating-point seconds, clamping negatives to zero.
     pub fn from_secs_f64(secs: f64) -> Duration {
         "Create a duration from floating-point seconds, clamping negatives to zero.";
         if secs <= (0) as f64 {
@@ -172,14 +185,26 @@ impl Duration {
     }
 }
 pub type TimeoutJoinOutcome<T> = RustTimeoutJoinOutcome<T>;
+/// Sleep for a floating-point second duration.
+///
+/// Example:
+///     await sleep(0.1)
 pub async fn sleep(seconds: f64) {
     "\n    Sleep for a floating-point second duration.\n\n    Example:\n        await sleep(0.1)\n    ";
     tokio_sleep(clamp_seconds(seconds)).await;
 }
+/// Sleep for an integer millisecond duration.
+///
+/// Example:
+///     await sleep_ms(100)
 pub async fn sleep_ms(milliseconds: i64) {
     "\n    Sleep for an integer millisecond duration.\n\n    Example:\n        await sleep_ms(100)\n    ";
     tokio_sleep(clamp_millis(milliseconds)).await;
 }
+/// Await `task` with a floating-point second timeout.
+///
+/// If the deadline expires, the supplied future is cancelled by being dropped. This is cancel-safe for futures that do
+/// not need to finish after their final suspension point; spawn the work first if it must be durable once spawned.
 pub async fn timeout<T: Send + 'static, TaskFuture: RuntimeFuture<T>>(
     seconds: f64,
     task: TaskFuture,
@@ -194,6 +219,10 @@ pub async fn timeout<T: Send + 'static, TaskFuture: RuntimeFuture<T>>(
         }
     };
 }
+/// Await `task` with an integer millisecond timeout.
+///
+/// If the deadline expires, the supplied future is cancelled by being dropped. This is cancel-safe for futures that do
+/// not need to finish after their final suspension point; spawn the work first if it must be durable once spawned.
 pub async fn timeout_ms<T: Send + 'static, TaskFuture: RuntimeFuture<T>>(
     milliseconds: i64,
     task: TaskFuture,
@@ -208,6 +237,13 @@ pub async fn timeout_ms<T: Send + 'static, TaskFuture: RuntimeFuture<T>>(
         }
     };
 }
+/// Wait up to `seconds` for a spawned task without cancelling it when the deadline expires.
+///
+/// Returns `TimeoutJoinOutcome.Completed(value)` when the task completes successfully,
+/// `TimeoutJoinOutcome.JoinFailed(err)` when the task finishes with a join error, and
+/// `TimeoutJoinOutcome.TimedOut(handle)` when the deadline wins. In the timeout case, `handle` remains live and can be
+/// awaited, stored, or aborted explicitly. For blocking work created with `spawn_blocking()`, `abort()` can only prevent
+/// work that has not started yet.
 pub async fn timeout_join<T: Send + 'static>(
     seconds: f64,
     handle: JoinHandle<T>,
@@ -215,6 +251,9 @@ pub async fn timeout_join<T: Send + 'static>(
     "\n    Wait up to `seconds` for a spawned task without cancelling it when the deadline expires.\n\n    Returns `TimeoutJoinOutcome.Completed(value)` when the task completes successfully,\n    `TimeoutJoinOutcome.JoinFailed(err)` when the task finishes with a join error, and\n    `TimeoutJoinOutcome.TimedOut(handle)` when the deadline wins. In the timeout case, `handle` remains live and can be\n    awaited, stored, or aborted explicitly. For blocking work created with `spawn_blocking()`, `abort()` can only prevent\n    work that has not started yet.\n    ";
     return rust_timeout_join(seconds, handle).await;
 }
+/// Wait up to `milliseconds` for a spawned task without cancelling it when the deadline expires.
+///
+/// This is the millisecond-duration form of `timeout_join()`.
 pub async fn timeout_join_ms<T: Send + 'static>(
     milliseconds: i64,
     handle: JoinHandle<T>,
