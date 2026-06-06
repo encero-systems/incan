@@ -17,7 +17,7 @@ use crate::cli::prelude::ParsedModule;
 use crate::cli::{CliError, CliResult};
 use crate::dependency_resolver::ResolvedDependencies;
 use crate::dependency_resolver::{DependencyError, InlineRustImport};
-use crate::frontend::ast::{ImportKind, Program, Span};
+use crate::frontend::ast::{Declaration, ImportKind, Program, Span};
 use crate::frontend::contract_metadata::{
     CanonicalModelBundle, materialize_contract_models, read_project_model_bundles,
 };
@@ -48,6 +48,89 @@ use sha2::{Digest, Sha256};
 /// Files larger than this are rejected to prevent out-of-memory conditions during compilation.
 const MAX_SOURCE_SIZE: u64 = 100 * 1024 * 1024;
 static PREPARED_LIBRARY_DEPENDENCIES: LazyLock<Mutex<HashSet<PathBuf>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
+
+/// One compiler diagnostic with enough source context for either human or machine-readable rendering.
+#[derive(Debug, Clone)]
+pub(crate) struct CliDiagnostic {
+    pub file_path: String,
+    pub source: String,
+    pub error: diagnostics::CompileError,
+    pub phase: diagnostics::DiagnosticPhase,
+}
+
+/// Structured failure produced by shared CLI collection/typechecking helpers.
+#[derive(Debug, Clone)]
+pub(crate) struct CliDiagnosticFailure {
+    pub diagnostics: Vec<CliDiagnostic>,
+}
+
+impl CliDiagnosticFailure {
+    pub(crate) fn single(
+        file_path: impl Into<String>,
+        source: impl Into<String>,
+        error: diagnostics::CompileError,
+        phase: diagnostics::DiagnosticPhase,
+    ) -> Self {
+        Self {
+            diagnostics: vec![CliDiagnostic {
+                file_path: file_path.into(),
+                source: source.into(),
+                error,
+                phase,
+            }],
+        }
+    }
+
+    pub(crate) fn from_errors(
+        file_path: impl Into<String>,
+        source: impl Into<String>,
+        errors: Vec<diagnostics::CompileError>,
+        phase: diagnostics::DiagnosticPhase,
+    ) -> Self {
+        let file_path = file_path.into();
+        let source = source.into();
+        Self {
+            diagnostics: errors
+                .into_iter()
+                .map(|error| CliDiagnostic {
+                    file_path: file_path.clone(),
+                    source: source.clone(),
+                    error,
+                    phase,
+                })
+                .collect(),
+        }
+    }
+
+    pub(crate) fn render_human(&self) -> String {
+        let mut rendered = String::new();
+        for diagnostic in &self.diagnostics {
+            rendered.push_str(&diagnostics::format_error(
+                &diagnostic.file_path,
+                &diagnostic.source,
+                &diagnostic.error,
+            ));
+            rendered.push('\n');
+        }
+        rendered.trim_end().to_string()
+    }
+}
+
+impl From<CliError> for CliDiagnosticFailure {
+    fn from(error: CliError) -> Self {
+        Self::single(
+            "<command>",
+            "",
+            diagnostics::CompileError::new(error.message, Span::default()),
+            diagnostics::DiagnosticPhase::Tooling,
+        )
+    }
+}
+
+#[derive(Debug, Clone)]
+struct SourceReadFailure {
+    message: String,
+}
 
 /// Unified project requirements collected from parsed modules and loaded provider manifests.
 #[derive(Debug, Clone, Default)]
@@ -1101,20 +1184,37 @@ pub(crate) fn resolve_stdlib_module_source_path(module_path: &[String]) -> CliRe
 /// - The file cannot be read (I/O error)
 /// - The file exceeds `MAX_SOURCE_SIZE` (100 MB)
 pub fn read_source(file_path: &str) -> CliResult<String> {
-    // Check file size before reading
-    let metadata =
-        fs::metadata(file_path).map_err(|e| CliError::failure(format!("Cannot access file '{}': {}", file_path, e)))?;
+    read_source_checked(file_path).map_err(|failure| CliError::failure(failure.message))
+}
 
-    if metadata.len() > MAX_SOURCE_SIZE {
-        return Err(CliError::failure(format!(
-            "Source file '{}' is too large ({} bytes, max {} bytes)",
+fn read_source_for_diagnostics(file_path: &str) -> Result<String, CliDiagnosticFailure> {
+    read_source_checked(file_path).map_err(|failure| {
+        CliDiagnosticFailure::single(
             file_path,
-            metadata.len(),
-            MAX_SOURCE_SIZE
-        )));
-    }
+            "",
+            diagnostics::CompileError::new(failure.message, Span::default()),
+            diagnostics::DiagnosticPhase::Tooling,
+        )
+    })
+}
 
-    fs::read_to_string(file_path).map_err(|e| CliError::failure(format!("Error reading file '{}': {}", file_path, e)))
+fn read_source_checked(file_path: &str) -> Result<String, SourceReadFailure> {
+    let metadata = fs::metadata(file_path).map_err(|error| SourceReadFailure {
+        message: format!("Cannot access file '{}': {}", file_path, error),
+    })?;
+    if metadata.len() > MAX_SOURCE_SIZE {
+        return Err(SourceReadFailure {
+            message: format!(
+                "Source file '{}' is too large ({} bytes, max {} bytes)",
+                file_path,
+                metadata.len(),
+                MAX_SOURCE_SIZE
+            ),
+        });
+    }
+    fs::read_to_string(file_path).map_err(|error| SourceReadFailure {
+        message: format!("Error reading file '{}': {}", file_path, error),
+    })
 }
 
 /// Return whether a parsed module uses RFC 088 iterator surface methods that require stdlib adapter modules.
@@ -1164,16 +1264,38 @@ pub(crate) fn uses_result_combinator_surface(program: &Program) -> bool {
 /// Source-backed stdlib trait modules and builtin fallback traits are still discovered explicitly when the parsed AST
 /// needs them.
 pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
+    collect_modules_detailed(entry_path).map_err(|failure| CliError::failure(failure.render_human()))
+}
+
+/// Collect and parse the entry file and all its dependencies, preserving structured diagnostic context.
+pub(crate) fn collect_modules_detailed(entry_path: &str) -> Result<Vec<ParsedModule>, CliDiagnosticFailure> {
     let path = if Path::new(entry_path).is_absolute() {
         PathBuf::from(entry_path)
     } else {
         std::env::current_dir()
-            .map_err(|e| CliError::failure(format!("failed to determine current directory: {e}")))?
+            .map_err(|error| {
+                CliDiagnosticFailure::single(
+                    entry_path,
+                    "",
+                    diagnostics::CompileError::new(
+                        format!("failed to determine current directory: {error}"),
+                        Span::default(),
+                    ),
+                    diagnostics::DiagnosticPhase::Tooling,
+                )
+            })?
             .join(entry_path)
     };
     let base_dir = path.parent().unwrap_or(Path::new("."));
 
-    let session = CompilationSession::discover(&path)?;
+    let session = CompilationSession::discover(&path).map_err(|error| {
+        CliDiagnosticFailure::single(
+            path.to_string_lossy(),
+            "",
+            diagnostics::CompileError::new(error.message, Span::default()),
+            diagnostics::DiagnosticPhase::Import,
+        )
+    })?;
 
     let mut modules = Vec::new();
     let mut processed = HashSet::new();
@@ -1193,7 +1315,7 @@ pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
         processed.insert(file_path.clone());
         dependency_edges.entry(file_path.clone()).or_default();
 
-        let source = read_source(&file_path)?;
+        let source = read_source_for_diagnostics(&file_path)?;
         let file_path_obj = Path::new(&file_path);
         let is_incan_source_stdlib_module = path_segments
             .first()
@@ -1208,12 +1330,12 @@ pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
                 a
             }
             Err(errs) => {
-                let mut msg = String::new();
-                for err in &errs {
-                    msg.push_str(&diagnostics::format_error(&file_path, &source, err));
-                    msg.push('\n');
-                }
-                return Err(CliError::failure(msg.trim_end()));
+                return Err(CliDiagnosticFailure::from_errors(
+                    file_path,
+                    source,
+                    errs,
+                    diagnostics::DiagnosticPhase::Parse,
+                ));
             }
         };
 
@@ -1302,7 +1424,7 @@ pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
         });
     }
 
-    topologically_sort_modules(modules, &dependency_edges)
+    Ok(topologically_sort_modules(modules, &dependency_edges)?)
 }
 
 /// Return modules in stable topological order (dependencies first).
@@ -1767,9 +1889,26 @@ pub(crate) fn typecheck_modules_with_import_graph(
     library_manifest_index: &LibraryManifestIndex,
     #[cfg(feature = "rust_inspect")] rust_inspect_manifest_dir: Option<&Path>,
 ) -> CliResult<()> {
+    typecheck_modules_with_import_graph_detailed(
+        modules,
+        manifest,
+        library_manifest_index,
+        #[cfg(feature = "rust_inspect")]
+        rust_inspect_manifest_dir,
+    )
+    .map_err(|failure| CliError::failure(failure.render_human()))
+}
+
+/// Typecheck all collected modules and preserve diagnostics as structured data for stable reporting.
+pub(crate) fn typecheck_modules_with_import_graph_detailed(
+    modules: &[ParsedModule],
+    manifest: Option<&ProjectManifest>,
+    library_manifest_index: &LibraryManifestIndex,
+    #[cfg(feature = "rust_inspect")] rust_inspect_manifest_dir: Option<&Path>,
+) -> Result<(), CliDiagnosticFailure> {
     let declared = manifest.map(|m| m.declared_rust_crate_names());
     let module_idx_by_key = module_key_index(modules);
-    let mut all_errors = String::new();
+    let mut diagnostics_out = Vec::new();
 
     for (idx, module) in modules.iter().enumerate() {
         let deps_for_module = imported_module_deps_for_with_index(modules, idx, &module_idx_by_key);
@@ -1794,22 +1933,42 @@ pub(crate) fn typecheck_modules_with_import_graph(
                 }
             }
             Err(errs) => {
-                for err in &errs {
-                    all_errors.push_str(&diagnostics::format_error(
-                        module.file_path.to_string_lossy().as_ref(),
-                        &module.source,
-                        err,
-                    ));
-                }
+                diagnostics_out.extend(errs.into_iter().map(|error| CliDiagnostic {
+                    file_path: module.file_path.to_string_lossy().to_string(),
+                    source: module.source.clone(),
+                    phase: typecheck_diagnostic_phase(module, error.span),
+                    error,
+                }));
             }
         }
     }
 
-    if all_errors.is_empty() {
+    if diagnostics_out.is_empty() {
         Ok(())
     } else {
-        Err(CliError::failure(all_errors.trim_end()))
+        Err(CliDiagnosticFailure {
+            diagnostics: diagnostics_out,
+        })
     }
+}
+
+fn typecheck_diagnostic_phase(module: &ParsedModule, span: Span) -> diagnostics::DiagnosticPhase {
+    if module
+        .ast
+        .declarations
+        .iter()
+        .any(|declaration| matches!(declaration.node, Declaration::Import(_)) && spans_overlap(span, declaration.span))
+    {
+        diagnostics::DiagnosticPhase::Import
+    } else {
+        diagnostics::DiagnosticPhase::Typecheck
+    }
+}
+
+fn spans_overlap(left: Span, right: Span) -> bool {
+    let left_end = left.end.max(left.start.saturating_add(1));
+    let right_end = right.end.max(right.start.saturating_add(1));
+    left.start < right_end && right.start < left_end
 }
 
 // ============================================================================

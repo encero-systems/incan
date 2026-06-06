@@ -8,11 +8,13 @@ If you’re running CI for the **Incan compiler/tooling repository**, see: [CI &
 
 ### Type check (fast gate)
 
-Type-check a program without building/running it (default action when no subcommand is provided):
+Type-check a program without building/running it:
 
 ```bash
-incan path/to/main.incn
+incan check path/to/main.incn
 ```
+
+Use `incan check path/to/main.incn --format json` when CI, editor tooling, or agents need deterministic diagnostics with stable codes and source spans. Passing a file without a subcommand still type-checks it for compatibility, but `incan check` is the canonical command.
 
 ### Format (CI mode)
 

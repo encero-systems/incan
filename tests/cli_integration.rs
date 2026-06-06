@@ -75,6 +75,183 @@ main = "src/main.incn"
     Ok(main_path)
 }
 
+fn parse_json_stdout(output: &Output) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    Ok(serde_json::from_slice(&output.stdout)?)
+}
+
+#[test]
+fn check_json_reports_parser_diagnostics() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let source_path = tmp.path().join("broken.incn");
+    fs::write(&source_path, "def broken(:\n")?;
+
+    let output = run_incan(
+        tmp.path(),
+        &[
+            "check",
+            source_path.to_str().ok_or("source path was not valid UTF-8")?,
+            "--format",
+            "json",
+        ],
+    )?;
+    assert_failure(&output, "incan check --format json parser diagnostic");
+    let json = parse_json_stdout(&output)?;
+    assert_eq!(json["schema_version"], serde_json::json!(1));
+    assert_eq!(json["ok"], serde_json::json!(false));
+    assert_eq!(json["diagnostics"][0]["code"], serde_json::json!("INCAN-P0001"));
+    assert_eq!(json["diagnostics"][0]["phase"], serde_json::json!("parse"));
+    assert_eq!(
+        json["diagnostics"][0]["primary_span"]["start"]["line"],
+        serde_json::json!(1)
+    );
+
+    Ok(())
+}
+
+#[test]
+fn check_json_reports_typechecker_diagnostics() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let source_path = tmp.path().join("main.incn");
+    fs::write(
+        &source_path,
+        r#"def main() -> None:
+    missing()
+"#,
+    )?;
+
+    let output = run_incan(
+        tmp.path(),
+        &[
+            "check",
+            source_path.to_str().ok_or("source path was not valid UTF-8")?,
+            "--format",
+            "json",
+        ],
+    )?;
+    assert_failure(&output, "incan check --format json typechecker diagnostic");
+    let json = parse_json_stdout(&output)?;
+    assert_eq!(json["diagnostics"][0]["code"], serde_json::json!("INCAN-T0001"));
+    assert_eq!(json["diagnostics"][0]["phase"], serde_json::json!("typecheck"));
+    assert_eq!(
+        json["diagnostics"][0]["message"],
+        serde_json::json!("Unknown symbol 'missing'")
+    );
+    assert_eq!(
+        json["diagnostics"][0]["explain"],
+        serde_json::json!("incan explain INCAN-T0001")
+    );
+
+    let legacy_output = run_incan(
+        tmp.path(),
+        &[
+            "--check",
+            source_path.to_str().ok_or("source path was not valid UTF-8")?,
+            "--format",
+            "json",
+        ],
+    )?;
+    assert_failure(&legacy_output, "incan --check --format json typechecker diagnostic");
+    let legacy_json = parse_json_stdout(&legacy_output)?;
+    assert_eq!(legacy_json["diagnostics"][0]["code"], serde_json::json!("INCAN-T0001"));
+
+    Ok(())
+}
+
+#[test]
+fn check_json_reports_tooling_diagnostics() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let missing_path = tmp.path().join("missing.incn");
+
+    let output = run_incan(
+        tmp.path(),
+        &[
+            "check",
+            missing_path.to_str().ok_or("missing path was not valid UTF-8")?,
+            "--format",
+            "json",
+        ],
+    )?;
+    assert_failure(&output, "incan check --format json tooling diagnostic");
+    let json = parse_json_stdout(&output)?;
+    assert_eq!(json["diagnostics"][0]["code"], serde_json::json!("INCAN-C0001"));
+    assert_eq!(json["diagnostics"][0]["phase"], serde_json::json!("tooling"));
+    assert!(
+        json["diagnostics"][0]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("Cannot access file")),
+        "expected missing file diagnostic, got:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    Ok(())
+}
+
+#[test]
+fn check_json_reports_import_diagnostics() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let src_dir = tmp.path().join("src");
+    fs::create_dir_all(&src_dir)?;
+    fs::write(
+        tmp.path().join("incan.toml"),
+        r#"[project]
+name = "diag_import"
+version = "0.1.0"
+"#,
+    )?;
+    let source_path = src_dir.join("main.incn");
+    fs::write(
+        &source_path,
+        r#"from pub::missinglib import Widget
+
+def main() -> None:
+    return
+"#,
+    )?;
+
+    let output = run_incan(
+        tmp.path(),
+        &[
+            "check",
+            source_path.to_str().ok_or("source path was not valid UTF-8")?,
+            "--format",
+            "json",
+        ],
+    )?;
+    assert_failure(&output, "incan check --format json import diagnostic");
+    let json = parse_json_stdout(&output)?;
+    assert_eq!(json["diagnostics"][0]["code"], serde_json::json!("INCAN-I0001"));
+    assert_eq!(json["diagnostics"][0]["phase"], serde_json::json!("import"));
+    assert!(
+        json["diagnostics"][0]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("Unknown `pub::` library")),
+        "expected pub library import diagnostic, got:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    Ok(())
+}
+
+#[test]
+fn explain_reports_known_and_unknown_diagnostic_codes() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+
+    let known = run_incan(tmp.path(), &["explain", "INCAN-P0001", "--format", "json"])?;
+    assert_success(&known, "incan explain known code json");
+    let known_json = parse_json_stdout(&known)?;
+    assert_eq!(known_json["schema_version"], serde_json::json!(1));
+    assert_eq!(known_json["found"], serde_json::json!(true));
+    assert_eq!(known_json["entry"]["code"], serde_json::json!("INCAN-P0001"));
+
+    let unknown = run_incan(tmp.path(), &["explain", "INCAN-NOPE", "--format", "json"])?;
+    assert_failure(&unknown, "incan explain unknown code json");
+    let unknown_json = parse_json_stdout(&unknown)?;
+    assert_eq!(unknown_json["found"], serde_json::json!(false));
+    assert_eq!(unknown_json["entry"]["code"], serde_json::json!("INCAN-U0001"));
+
+    Ok(())
+}
+
 #[test]
 fn requires_incan_allows_compatible_project_commands() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;

@@ -18,6 +18,7 @@
 pub mod build;
 pub mod common;
 pub mod debug;
+pub mod diagnostics;
 pub mod format;
 pub mod init;
 pub mod lifecycle;
@@ -30,6 +31,7 @@ pub(crate) mod vocab_extraction;
 pub use build::{build_file, build_library, run_file};
 pub use common::{collect_modules, read_source};
 pub use debug::{check_file, emit_rust, lex_file, parse_file};
+pub use diagnostics::{DiagnosticOutputFormat, check_path, explain_diagnostic};
 pub use format::format_files;
 pub use init::init_project;
 pub use lifecycle::{env_list, env_run, env_show, version_project};

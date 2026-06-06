@@ -1,0 +1,254 @@
+//! Stable diagnostic codes and machine-readable projection helpers.
+//!
+//! The compiler still has many specialized human diagnostic constructors. This module is the stable reporting layer
+//! used by CLI JSON output and explain/help surfaces. It intentionally starts with broad phase-level codes, then can
+//! grow narrower codes without making callers scrape terminal prose.
+
+use serde::Serialize;
+
+use super::{CompileError, ErrorKind};
+
+/// Schema version for machine-readable diagnostic reports.
+pub const DIAGNOSTIC_SCHEMA_VERSION: u32 = 1;
+
+/// Pipeline phase that produced a diagnostic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DiagnosticPhase {
+    Lex,
+    Parse,
+    Typecheck,
+    Import,
+    Tooling,
+    Unknown,
+}
+
+impl DiagnosticPhase {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DiagnosticPhase::Lex => "lex",
+            DiagnosticPhase::Parse => "parse",
+            DiagnosticPhase::Typecheck => "typecheck",
+            DiagnosticPhase::Import => "import",
+            DiagnosticPhase::Tooling => "tooling",
+            DiagnosticPhase::Unknown => "unknown",
+        }
+    }
+}
+
+/// Public diagnostic catalog entry returned by `incan explain`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct DiagnosticCatalogEntry {
+    pub code: &'static str,
+    pub title: &'static str,
+    pub severity: &'static str,
+    pub phase: &'static str,
+    pub summary: &'static str,
+    pub explanation: &'static str,
+    pub examples: &'static [&'static str],
+    pub common_causes: &'static [&'static str],
+    pub fixes: &'static [&'static str],
+    pub docs_url: Option<&'static str>,
+}
+
+/// 1-based source position plus original byte offset.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DiagnosticPosition {
+    pub line: usize,
+    pub column: usize,
+    pub offset: usize,
+}
+
+/// Primary diagnostic span.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DiagnosticSpan {
+    pub file: String,
+    pub start: DiagnosticPosition,
+    pub end: DiagnosticPosition,
+}
+
+/// Machine-readable diagnostic payload.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StableDiagnostic {
+    pub code: &'static str,
+    pub severity: &'static str,
+    pub phase: DiagnosticPhase,
+    pub message: String,
+    pub primary_span: DiagnosticSpan,
+    pub notes: Vec<String>,
+    pub hints: Vec<String>,
+    pub related_spans: Vec<DiagnosticSpan>,
+    pub explain: String,
+}
+
+const PARSER_SYNTAX: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-P0001",
+    title: "Syntax error",
+    severity: "error",
+    phase: "parse",
+    summary: "The source text does not match Incan syntax.",
+    explanation: "The lexer or parser could not turn the source into a valid Incan AST. The primary span points at the token or source region where parsing stopped.",
+    examples: &["def broken(:", "if value"],
+    common_causes: &[
+        "A missing expression, colon, delimiter, or indentation boundary.",
+        "Using vocabulary syntax without the required imported vocabulary surface.",
+    ],
+    fixes: &[
+        "Check the source around the highlighted span.",
+        "Run `incan fmt --check` after the file parses if the intended syntax is valid.",
+    ],
+    docs_url: Some("https://dannys-code-corner.github.io/incan/language/reference/syntax/"),
+};
+
+const TYPECHECK: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0001",
+    title: "Type checking error",
+    severity: "error",
+    phase: "typecheck",
+    summary: "A parsed program violates Incan's type, symbol, or semantic rules.",
+    explanation: "The type checker resolved declarations and expressions but found an invalid symbol, type mismatch, unsupported call shape, or related semantic issue.",
+    examples: &["value: int = \"text\"", "unknown_name()"],
+    common_causes: &[
+        "A missing import or definition.",
+        "A value passed to a function, assignment, or return position does not match the expected type.",
+    ],
+    fixes: &[
+        "Read the message, notes, and hints in the diagnostic payload.",
+        "Prefer fixing the source contract rather than adding casts or wrappers that hide the mismatch.",
+    ],
+    docs_url: Some("https://dannys-code-corner.github.io/incan/language/reference/types/"),
+};
+
+const IMPORT: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-I0001",
+    title: "Import or module resolution error",
+    severity: "error",
+    phase: "import",
+    summary: "The compiler could not resolve or load a source, stdlib, Rust, or public package import.",
+    explanation: "Import diagnostics cover missing source modules, private exports, unresolved `pub::` libraries, invalid dependency manifests, and Rust bridge resolution failures.",
+    examples: &["from missing import value", "from pub::unknown import helper"],
+    common_causes: &[
+        "The imported module does not exist relative to the source root.",
+        "A dependency library has not been built with `incan build --lib`.",
+        "The symbol exists but is not exported publicly.",
+    ],
+    fixes: &[
+        "Check the import path and public exports.",
+        "For `pub::` imports, build the dependency library and verify `incan.toml` dependencies.",
+    ],
+    docs_url: Some("https://dannys-code-corner.github.io/incan/language/reference/modules/"),
+};
+
+const TOOLING: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-C0001",
+    title: "CLI or tooling error",
+    severity: "error",
+    phase: "tooling",
+    summary: "The compiler command could not read inputs or complete a tooling operation.",
+    explanation: "Tooling diagnostics are produced before or around the compiler pipeline, such as missing files, unreadable inputs, invalid command targets, or toolchain setup failures.",
+    examples: &["incan check missing.incn"],
+    common_causes: &[
+        "The path does not exist.",
+        "The file is too large or cannot be read.",
+        "The local toolchain is missing a required target or dependency.",
+    ],
+    fixes: &[
+        "Verify the command path and filesystem permissions.",
+        "Run `incan tools doctor` for local toolchain problems.",
+    ],
+    docs_url: Some("https://dannys-code-corner.github.io/incan/tooling/reference/cli_reference/"),
+};
+
+const UNKNOWN: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-U0001",
+    title: "Unknown diagnostic code",
+    severity: "error",
+    phase: "unknown",
+    summary: "The requested diagnostic code is not in this compiler's catalog.",
+    explanation: "Diagnostic codes are versioned with the compiler. A code may be misspelled, from a newer compiler, or not yet assigned to a catalog entry.",
+    examples: &["incan explain INCAN-NOPE"],
+    common_causes: &[
+        "Typo in the diagnostic code.",
+        "Using docs from a different compiler version.",
+    ],
+    fixes: &[
+        "Check the code printed by `incan check --format json`.",
+        "Upgrade the compiler if the code comes from newer documentation.",
+    ],
+    docs_url: Some("https://dannys-code-corner.github.io/incan/tooling/reference/cli_reference/"),
+};
+
+const CATALOG: &[DiagnosticCatalogEntry] = &[PARSER_SYNTAX, TYPECHECK, IMPORT, TOOLING, UNKNOWN];
+
+/// Look up a public diagnostic explanation entry.
+pub fn explain(code: &str) -> Option<&'static DiagnosticCatalogEntry> {
+    CATALOG.iter().find(|entry| entry.code.eq_ignore_ascii_case(code))
+}
+
+/// Return every public catalog entry in deterministic order.
+pub fn catalog_entries() -> &'static [DiagnosticCatalogEntry] {
+    CATALOG
+}
+
+/// Select the stable public code for a compiler diagnostic.
+pub fn code_for_error(error: &CompileError, phase: DiagnosticPhase) -> &'static str {
+    match phase {
+        DiagnosticPhase::Lex | DiagnosticPhase::Parse => PARSER_SYNTAX.code,
+        DiagnosticPhase::Typecheck => TYPECHECK.code,
+        DiagnosticPhase::Import => IMPORT.code,
+        DiagnosticPhase::Tooling => TOOLING.code,
+        DiagnosticPhase::Unknown => match error.kind {
+            ErrorKind::Syntax => PARSER_SYNTAX.code,
+            ErrorKind::Type => TYPECHECK.code,
+            ErrorKind::Error | ErrorKind::Warning | ErrorKind::Lint => TOOLING.code,
+        },
+    }
+}
+
+/// Convert a compiler diagnostic into the stable JSON-ready representation.
+pub fn stable_diagnostic(
+    file_name: &str,
+    source: &str,
+    error: &CompileError,
+    phase: DiagnosticPhase,
+) -> StableDiagnostic {
+    let code = code_for_error(error, phase);
+    let severity = match error.kind {
+        ErrorKind::Error | ErrorKind::Syntax | ErrorKind::Type => "error",
+        ErrorKind::Warning => "warning",
+        ErrorKind::Lint => "hint",
+    };
+    StableDiagnostic {
+        code,
+        severity,
+        phase,
+        message: error.message.clone(),
+        primary_span: DiagnosticSpan {
+            file: file_name.to_string(),
+            start: position_for_offset(source, error.span.start),
+            end: position_for_offset(source, error.span.end.max(error.span.start + 1)),
+        },
+        notes: error.notes.clone(),
+        hints: error.hints.clone(),
+        related_spans: Vec::new(),
+        explain: format!("incan explain {code}"),
+    }
+}
+
+fn position_for_offset(source: &str, offset: usize) -> DiagnosticPosition {
+    let offset = offset.min(source.len());
+    let mut line = 1usize;
+    let mut column = 1usize;
+    for (idx, ch) in source.char_indices() {
+        if idx >= offset {
+            break;
+        }
+        if ch == '\n' {
+            line += 1;
+            column = 1;
+        } else {
+            column += 1;
+        }
+    }
+    DiagnosticPosition { line, column, offset }
+}
