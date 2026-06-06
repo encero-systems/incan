@@ -26,6 +26,7 @@ Reference document for AI agents. These are hard-won insights from past RFC impl
 - **Parser should own type-sugar desugaring**: If a surface spelling must never reach lowering/emission (e.g. function-type sugar vs. a dedicated AST node), desugar in the parser to the canonical `Type::*` shape instead of duplicating normalization in `resolve_type`/symbols—two sites drift, and the resolver-only path can lag so the sugar leaks into generated Rust.
 - **`Program` struct stability**: adding fields to `Program` breaks all literal construction sites. Use `#[derive(Default)]` + `..Default::default()` in tests — never explicit field lists in test helpers.
 - **Resolved semantics beat lowering guesses**: when typechecking resolves overloads, trait dispatch, callable kind, or type-directed behavior, carry that decision through `TypeCheckInfo`/IR instead of hardcoding method names or argument shapes in lowering/emission; feature-specific lowerings can pass one RFC while creating unmaintainable compiler policy. (RFC 056 / issue #291)
+- **Single-source plans prevent split brain**: callable identity, defaults, ownership/coercion, union wrapper identity, Rust metadata, and vocab helper-call behavior must flow through canonical planning data instead of local typechecker/lowering/emitter guesses; same-module success is not enough if imported, reexported, packaged, or test-batched code can observe different behavior. (v0.3 RC cycle, June 2026)
 - **Use `IrType::incan_name()` for user-facing type strings**, not `IrType::to_string()` (which returns Rust types like `String` instead of `str`).
 
 ## Rust: `unwrap` / `expect` ban vs. `unwrap_or`
@@ -35,11 +36,15 @@ Reference document for AI agents. These are hard-won insights from past RFC impl
 ## Testing strategy
 
 - **Always test both typechecker and codegen.** Typechecker unit tests validate semantics; codegen snapshot tests verify end-to-end output. Neither alone is sufficient.
+- **Boundary parity is coverage**: a language or stdlib feature is not release-ready just because it passes local/direct tests; add coverage for import, reexport/facade, package consumer, test-batch, and dependency/vocab-generated call paths when the feature can cross those boundaries. (v0.3 RC cycle, June 2026)
+- **Downstream acceptance should run early**: when InQL or another downstream project exercises the surface being changed, run its focused acceptance before RC hardening rather than after local compiler tests pass; downstream failures often expose package, metadata, and generated-Rust paths that synthetic fixtures miss. (v0.3 RC cycle, June 2026)
+- **Performance regressions need evidence gates**: long silent compiler phases, repeated metadata prewarm work, or unexpectedly slow pre-commit/CI steps should be measured and given progress output or budgets; "eventually completes" is not enough for release tooling. (Issues #707/#723/#736, v0.3)
 - **Review closeout requires repo gates**: do not declare a review or implementation loop complete on targeted parser/typechecker/codegen checks alone; run `make pre-commit` (or the repo’s full gate) before closeout, because formatter/clippy/all-targets failures can still surface missing imports, feature-gated compile errors, or drift outside the exercised feature slice. (RFC 049 / issue #333)
 - **Conformance fixtures belong in tests**: production conformance modules should define scenario contracts and validators only; synthetic fixture plans and hardcoded sample literals belong in test-local builders so contract APIs stay clean and reusable.
 - **Extern fixture coverage must stay real**: when removing or renaming a Rust host-boundary symbol, update generic extern-delegation fixtures/snapshots (for example `rust_extern_delegation`) alongside feature-specific snapshots; otherwise test coverage keeps validating dead runtime paths instead of the current boundary shape. (Issues #301/#302)
 - **Snapshot tests must exercise features in expressions**, not just declarations. A model that declares an alias but never uses it in an expression won't catch lowering bugs.
 - **Test both `From` and `RustFrom` import forms** when changing import handling — they share `parse_import_items(rust_item_names)`; only `RustFrom` passes `true` so Rust symbols may be Incan keywords (e.g. `import type as proto_type`). Incan `from m import ...` keeps `rust_item_names=false`.
+- **Vocab packages need full toolchain tests**: scoped vocab fixes must be verified through parse/check, `fmt`, `fmt --check`, `incan test`, package consumers, and nested consumers; formatter and test-runner activation can drift from ordinary `--check` even when the desugarer itself is correct. (Issues #724/#727/#729/#730/#735/#756, v0.3)
 
 ## Parser and lexer patterns
 

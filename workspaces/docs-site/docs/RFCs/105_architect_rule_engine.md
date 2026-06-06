@@ -1,4 +1,4 @@
-# RFC 105: `incan architect` rule engine for design, safety, idiom, and smell findings
+# RFC 105: `incan architect` rule engine for design, safety, idiom, maintainability, and risk findings
 
 - **Status:** Draft
 - **Created:** 2026-05-24
@@ -16,22 +16,22 @@
 
 ## Summary
 
-This RFC proposes `incan architect` as a deterministic code-advice command for Incan projects. The command reports evidence-backed findings across architecture, safety, idiom usage, and maintainability smells by running maintainable rules over compiler-backed codegraph facts. The central goal is not to create a broad subjective linter, but to create a durable rule authoring surface where new advice can be added cheaply, tested precisely, calibrated against real projects, and consumed by humans, agents, editors, and CI without relying on model inference for core detection.
+This RFC proposes `incan architect` as a deterministic code-advice command for Incan projects. The command reports evidence-backed findings across architecture, safety, idiom usage, maintainability, and deterministic risk signals by running maintainable rules over compiler-backed codegraph facts. The central goal is not to create a broad subjective linter, but to create a durable rule authoring surface where new advice can be added cheaply, tested precisely, calibrated against real projects, and consumed by humans, agents, editors, and CI without relying on model inference for core detection.
 
 ## Core model
 
 1. **Compiler-backed facts first:** `incan architect` consumes source facts produced by Incan's parser, module/import resolver, typechecker, metadata pipeline, and codegraph exporter rather than independently scraping text.
 2. **Rules interpret facts:** Each rule consumes typed fact views and emits findings with stable codes, priorities, categories, confidence, evidence, suggestions, and risks.
 3. **Findings are advisory:** Architect findings are not compiler errors. They describe design pressure or code-shape opportunities with enough evidence for a human or agent to decide whether to act.
-4. **Categories are explicit:** Architecture findings, safety findings, idiom findings, and code-smell findings remain separate in rule codes and profiles even when they share one command.
-5. **Conservative detection is preferred:** The command should under-report ambiguous style opportunities rather than produce noisy, low-trust advice.
+4. **Categories are explicit:** Architecture findings, safety findings, idiom findings, maintainability findings, and risk findings remain separate in rule codes and profiles even when they share one command.
+5. **Broad collection, precise classification:** The command should scan the requested scope broadly and emit evidence-backed findings across categories. Confidence, category, profile, baseline, and priority decide presentation and action pressure; they should not erase valid findings up front merely because the finding is local, optional, or not architectural.
 6. **Rule authoring is a product surface:** The feature is only maintainable if adding a rule means using stable typed facts and reusable queries, not hand-parsing raw graph nodes or reimplementing AST walks.
 
 ## Motivation
 
 Incan already has syntax checks, semantic checks, formatter behavior, tests, and generated-Rust validation. Those tools answer whether a program parses, typechecks, formats, and runs. They do not answer whether a project is accumulating design pressure: repeated dispatch over the same domain, public boundaries that can panic on recoverable input, old-shaped control flow that should now use language features, or small helper functions that add indirection without carrying domain meaning.
 
-The first experiments with an architecture-advice command showed that deterministic rules can surface useful pressure when they report concrete source evidence and stay cautious about severity. Repeated match dispatch can reveal a growing operation boundary. Fail-fast calls inside public APIs can reveal recoverability problems. Body-shape facts can also support smaller maintainability smells such as compound-assignment candidates, single-use trivial helpers, append-only list builders that could become comprehensions, or `Result` matches that could use RFC 070 combinators.
+The first experiments with an architecture-advice command showed that deterministic rules can surface useful pressure when they report concrete source evidence and classify action pressure separately from proof strength. Repeated match dispatch can reveal a growing operation boundary. Fail-fast calls inside public APIs can reveal recoverability problems. Body-shape facts can also support maintainability findings such as compound-assignment candidates, single-use trivial helpers, append-only list builders that could become comprehensions, or `Result` matches that could use RFC 070 combinators.
 
 Without a formal rule engine, each new check risks becoming a one-off command-private AST walk with custom parsing, inconsistent output, and ad hoc severity. That path does not scale. The value is in a shared substrate: one project-wide codegraph, one typed query layer, one finding model, one de-duplication path, and many small rules that are easy to review and calibrate.
 
@@ -39,13 +39,14 @@ This feature also matters for agent workflows. Agents can already make broad ref
 
 ## Goals
 
-- Define `incan architect` as the umbrella command for deterministic design, safety, idiom, and maintainability-smell advice.
+- Define `incan architect` as the umbrella command for deterministic design, safety, idiom, maintainability, and risk-signal advice.
 - Provide a stable finding model with rule code, category, priority, confidence, evidence, pressure, suggestions, risks, and machine-readable output.
-- Provide project-wide directory scanning over `.incn` source trees with deterministic module de-duplication and finding de-duplication.
-- Establish rule categories and profiles so users can run architecture-only, safety-only, idiom-only, smell-only, or all-rule scans.
+- Provide requested-scope scanning over `.incn` source trees with deterministic module de-duplication and finding de-duplication. The first version should support files and directories; the same finding model should later support package, workspace, PR-diff, and graph-snapshot scopes.
+- Establish rule categories and profiles so users can run architecture-only, safety-only, idiom-only, maintainability-only, risk-only, or all-rule scans.
 - Establish a maintainable rule authoring surface based on typed facts and reusable queries over codegraph data.
 - Extend codegraph body facts as needed for rule families such as match dispatch, call sites, references, assignment/update shapes, helper usage, loop-builder shapes, and result-match shapes.
-- Include code smells in scope when they can be detected conservatively with clear evidence and useful counterexamples.
+- Include maintainability findings in scope when they have clear evidence, useful counterexamples, and calibrated confidence.
+- Include deterministic risk findings when local inputs such as coverage, churn, ownership, co-change, or decision records are available, while keeping risk evidence separate from architecture recommendations.
 - Keep detection deterministic for the first version; no language model is required for core finding generation.
 - Support text output for humans and stable JSON output for tools, agents, editors, and CI.
 - Make suppression and baselining part of the product model so mature codebases can adopt the command incrementally.
@@ -56,8 +57,9 @@ This feature also matters for agent workflows. Agents can already make broad ref
 - This RFC does not replace formatter rules, typechecker diagnostics, Clippy-style generated-Rust checks, or project tests.
 - This RFC does not require a small language model or remote AI service for rule detection.
 - This RFC does not attempt to infer developer intent from names alone.
-- This RFC does not require every possible code smell to ship in the first version.
+- This RFC does not require every possible maintainability rule or risk signal to ship in the first version.
 - This RFC does not define automatic rewrites or apply fixes.
+- This RFC does not decide whether a reported finding should be fixed in the current change. That is a separate user, CI, or fix-loop policy decision.
 - This RFC does not define a public plugin ABI for third-party binary rule packages.
 - This RFC does not require every codegraph fact to be part of a permanently stable external schema in the first release; only the JSON findings format and documented command behavior need v0.5 stability.
 
@@ -69,7 +71,7 @@ Users run `incan architect` on a file or project directory.
 incan architect .
 incan architect src/lib.incn --format json
 incan architect . --profile architecture
-incan architect . --profile smells
+incan architect . --profile maintainability
 ```
 
 The command prints findings grouped by priority and grounded in source evidence.
@@ -113,16 +115,17 @@ Suggestion: Consider a format-handler registry if adding one format requires sho
 Risk: Keep exhaustive local matches if the format set is closed, the operations are genuinely local, and cross-format registration would obscure control flow.
 ```
 
-Architect findings use categories. Architecture findings describe design pressure. Safety findings describe failure or recoverability risk. Idiom findings describe opportunities to use Incan features more directly. Smell findings describe local maintainability pressure.
+Architect findings use categories. Architecture findings describe design pressure. Safety findings describe failure or recoverability risk. Idiom findings describe opportunities to use Incan features more directly. Maintainability findings describe local readability, cleanup, or code-shape pressure. Risk findings describe deterministic prioritization evidence such as churn, weak coverage, co-change, or ownership spread.
 
 ```text
 safety.fail_fast_boundary_call
 idiom.result_combinator_candidate
-smell.single_use_trivial_helper
+maintainability.single_use_trivial_helper
+risk.untested_hotspot
 arch.repeated_match_dispatch
 ```
 
-Small smells are allowed when they are precise and humble. A trivial helper rule can identify a private helper that is used once and only returns a pure expression.
+Maintainability findings are allowed when they are precise and humble. A trivial helper rule can identify a private helper that is used once and only returns a pure expression.
 
 ```incan
 def add(left: int, right: int) -> int:
@@ -178,9 +181,11 @@ When `PATH` is a file, the command must scan the file and the modules needed to 
 
 When `PATH` is a directory, the command must scan `.incn` files under that directory recursively. The scan must be deterministic. The scan must de-duplicate modules by source path so a file imported by multiple roots contributes facts once.
 
+The requested scope is the scan boundary. Maintainability findings are not limited to code that happens to be near another edit. Profiles, baselines, suppressions, and output filters decide which findings are shown or acted on.
+
 The command must provide `--format text` and `--format json`. Text output is for humans. JSON output is the integration surface for agents, editors, CI, dashboards, and future baselining tools.
 
-The command should provide `--profile` with at least `architecture`, `safety`, `idioms`, `smells`, and `all`. The default profile is unresolved by this draft.
+The command should provide `--profile` with at least `architecture`, `safety`, `idioms`, `maintainability`, `risk`, and `all`. The default profile is unresolved by this draft.
 
 ### Finding model
 
@@ -190,7 +195,8 @@ Every finding must have a stable rule code. Rule codes must be namespaced by cat
 arch.repeated_match_dispatch
 safety.fail_fast_boundary_call
 idiom.result_combinator_candidate
-smell.single_use_trivial_helper
+maintainability.single_use_trivial_helper
+risk.untested_hotspot
 ```
 
 Every finding must include a category, priority, confidence, title, pressure, evidence, suggestions, and risks.
@@ -200,7 +206,7 @@ Priority must describe expected action pressure, not proof certainty.
 ```text
 P1: likely correctness, reliability, or public-boundary risk that should be reviewed before release
 P2: meaningful design or maintainability pressure that should be tracked or scheduled
-P3: watchlist, idiom, or local smell that may be worth cleanup when nearby work touches the code
+P3: low-risk local maintainability, idiom, or watchlist finding that is valid within the requested scan scope but optional to act on
 Info: low-pressure educational or style-level advice
 ```
 
@@ -216,17 +222,21 @@ Evidence must identify source file, line, column, owner declaration when availab
 
 Suggestions must be phrased as advice, not certainty. Risks must name the common counterexamples that would make the suggestion wrong.
 
+Category, confidence, priority, profile, suppression, and baseline state shape presentation and policy. They must not be used as hidden reasons to drop evidence-backed findings before output unless the user selected a profile, suppression, or baseline that explicitly hides them.
+
 Findings must be de-duplicated before output. Identical findings produced through multiple import roots must appear once.
 
 ### Rule categories
 
-Architecture rules describe design pressure across declarations, modules, domains, or boundaries. Repeated match dispatch, growing literal domains, and operation-boundary pressure belong here.
+Architecture rules describe design pressure across declarations, modules, domains, or boundaries. Repeated match dispatch, growing literal domains, registry source-of-truth drift, wrong-layer behavior, and operation-boundary pressure belong here.
 
 Safety rules describe recoverability, fail-fast behavior, partial handling, unchecked assumptions, or public-boundary hazards. A public function that can panic on caller-provided data belongs here.
 
 Idiom rules describe opportunities to use Incan language or stdlib features more directly. Result combinator candidates, iterator adapter candidates, generator/comprehension candidates, and compound assignment candidates belong here.
 
-Smell rules describe local maintainability pressure. Single-use trivial helpers, repeated literals, unnecessary wrappers, long branch-heavy functions, and append-only builders belong here when detected conservatively.
+Maintainability rules describe local readability, cleanup, or code-shape pressure. Single-use trivial helpers, repeated literals, unnecessary wrappers, long branch-heavy functions, broad type plumbing, parallel fixture lists, and append-only builders belong here when detected with concrete evidence.
+
+Risk rules describe deterministic prioritization evidence rather than recommendations by themselves. Untested hotspots, churn, ownership spread, co-change without structural edges, decision staleness, and code-age volatility belong here when the required local inputs are available. Risk findings must expose raw contributing measures and caveats rather than only a composite score.
 
 Rules must not be categorized as architecture findings merely because they are emitted by `incan architect`.
 
@@ -260,6 +270,8 @@ Function body summary facts should identify simple shapes such as single-return 
 
 Result-match facts should identify branch-preserving transformations only when the matched expression is known to be a `Result[T, E]` or the syntactic shape is unambiguous enough for an idiom finding with appropriate confidence.
 
+Risk rules may consume optional process facts such as git churn, ownership, co-change, coverage reports, and decision records when available. Missing optional inputs must be represented as absent evidence, not as zero risk.
+
 ### Suppression and baselining
 
 The command should support local suppression of a specific rule at a specific source location. Suppression syntax is unresolved by this draft.
@@ -272,7 +284,7 @@ Suppressions and baselines must preserve rule code and evidence identity. A futu
 
 ### Profiles
 
-Profiles let users choose the kind of advice they want. `architecture` should include cross-cutting design pressure. `safety` should include fail-fast and recoverability risk. `idioms` should include feature-usage opportunities. `smells` should include local maintainability findings. `all` should include every non-experimental rule.
+Profiles let users choose the kind of advice they want. `architecture` should include cross-cutting design pressure. `safety` should include fail-fast and recoverability risk. `idioms` should include feature-usage opportunities. `maintainability` should include local readability, cleanup, and code-shape findings. `risk` should include deterministic prioritization evidence. `all` should include every non-experimental rule.
 
 Rules may belong to more than one profile only when that does not blur the category. For example, a public fail-fast boundary call is a safety finding even if it also has architecture implications.
 
@@ -280,9 +292,9 @@ Exploratory rules may exist behind an explicit experimental profile, but they mu
 
 ### Severity calibration
 
-Severity should be calibrated against evidence strength, public surface impact, and likely cost of ignoring the finding. Public API failures are generally higher priority than private helper smells. Repeated design pressure across files is generally higher priority than a local expression-level cleanup. Idiom suggestions are generally P3 or Info unless the shape creates repeated complexity or risk.
+Severity should be calibrated against evidence strength, public surface impact, and likely cost of ignoring the finding. Public API failures are generally higher priority than private helper maintainability findings. Repeated design pressure across files is generally higher priority than a local expression-level cleanup. Idiom suggestions are generally P3 or Info unless the shape creates repeated complexity or risk.
 
-Rules should downrank or suppress known low-action cases. For example, fail-fast calls around trusted constants may be lower priority than fail-fast calls around caller-provided input. Exhaustive matches over a closed domain may be preferable to abstraction when the matched operation is local and the domain changes rarely.
+Rules should downrank, lower confidence, or route known low-action cases to explicit profiles instead of mislabeling them as urgent. Rules should suppress a match only when counterexample evidence makes it invalid, or when user-selected profiles, suppressions, or baselines hide it. For example, fail-fast calls around trusted constants may be lower priority than fail-fast calls around caller-provided input. Exhaustive matches over a closed domain may be preferable to abstraction when the matched operation is local and the domain changes rarely.
 
 ### Examples of initial rules
 
@@ -296,19 +308,21 @@ Rules should downrank or suppress known low-action cases. For example, fail-fast
 
 `idiom.comprehension_candidate` reports append-only list builders that can be represented as eager list comprehensions.
 
-`smell.single_use_trivial_helper` reports private, undocumented, undecorated helpers that are used once and only return a simple pure expression. The rule must mention that domain vocabulary can justify keeping the helper.
+`maintainability.single_use_trivial_helper` reports private, undocumented, undecorated helpers that are used once and only return a simple pure expression. The rule must mention that domain vocabulary can justify keeping the helper.
 
-`smell.repeated_literal_domain` reports repeated raw string or scalar literal domains used as branch keys or dispatch keys across multiple sites.
+`maintainability.repeated_literal_domain` reports repeated raw string or scalar literal domains used as branch keys or dispatch keys across multiple sites.
+
+`risk.untested_hotspot` reports files, modules, declarations, or architecture findings with high change frequency and weak test or coverage evidence when those process facts are available. The rule must expose the contributing churn and coverage facts rather than only a score.
 
 ## Alternatives considered
 
 ### Keep architect as architecture-only
 
-This would preserve a narrow name, but it would force closely related idiom and smell findings into a separate command even though they need the same project-wide codegraph, evidence model, de-duplication, profiles, suppressions, and JSON output. The better boundary is category namespace, not separate infrastructure.
+This would preserve a narrow name, but it would force closely related idiom, maintainability, and risk findings into separate commands even though they need the same project-wide codegraph, evidence model, de-duplication, profiles, suppressions, and JSON output. The better boundary is category namespace, not separate infrastructure.
 
 ### Build a general linter instead
 
-A general linter would fit small syntax-level advice, but it would understate the project-wide design-pressure use case. The command should remain broader than a linter while still identifying local smells as one category.
+A general linter would fit small syntax-level advice, but it would understate the project-wide design-pressure use case. The command should remain broader than a linter while still identifying local maintainability findings as one category.
 
 ### Use a language model for rule detection
 
@@ -324,11 +338,11 @@ Some findings will eventually support safe rewrites, such as compound assignment
 
 ## Drawbacks
 
-This feature adds a new advisory surface that can become noisy if rule quality is poor. The command must earn trust by being conservative, showing evidence, and naming counterexamples.
+This feature adds a new advisory surface that can become noisy if rule quality is poor. The command must earn trust by showing evidence, classifying findings precisely, calibrating confidence and priority, and naming counterexamples.
 
 The codegraph fact model will grow. If facts are added without a typed query layer, rules will become stringly and brittle. If facts are over-designed too early, implementation will slow down before the rule set proves itself.
 
-Some code smells are subjective. A helper that looks unnecessary may carry important domain meaning. A loop that could be a comprehension may be clearer as a loop when side effects are about to be added. The finding model must make room for this uncertainty through confidence and risk text.
+Some maintainability findings are subjective. A helper that looks unnecessary may carry important domain meaning. A loop that could be a comprehension may be clearer as a loop when side effects are about to be added. The finding model must make room for this uncertainty through confidence and risk text.
 
 Project-wide scanning may be slower than entry-point scanning. The implementation should keep scans deterministic and should leave room for caching, but v0.5 should prioritize correctness and evidence over premature optimization.
 
@@ -355,7 +369,7 @@ The first version should ship with a small calibrated rule set rather than a lar
 - **Stdlib / Runtime (`incan_stdlib`)**: No required runtime impact, though stdlib feature surfaces such as Result combinators and iterator adapters inform idiom rules.
 - **Formatter**: No required impact unless future auto-fix support is added.
 - **LSP / Tooling**: The JSON findings format should be usable by editors, agents, CI, and future diagnostics-style surfaces.
-- **CLI / Project tooling**: `incan architect` needs project-wide scanning, profiles, stable text/JSON output, suppression support, and baseline support.
+- **CLI / Project tooling**: `incan architect` needs requested-scope scanning, profiles, stable text/JSON output, suppression support, and baseline support.
 - **Documentation**: The CLI reference must document command behavior, profiles, categories, priorities, confidence, suppressions, and examples.
 
 ## Unresolved questions
@@ -364,9 +378,10 @@ The first version should ship with a small calibrated rule set rather than a lar
 - What suppression syntax should Incan use for architect findings, and should it share vocabulary with compiler diagnostic suppressions?
 - Should baselines live in `incan.toml`, a separate lock-like file, or a generated artifact under project tooling state?
 - Which finding fields are stable enough to commit as v0.5 JSON output, and which should remain experimental?
-- Should code-smell findings use the namespace `smell.*` or `maintainability.*`?
+- Which maintainability rules belong in the first stable profile, and which should remain experimental until enough corpus evidence exists?
 - Should project-wide directory scanning include tests by default, and should findings from tests use a separate priority calibration?
 - How should architect distinguish trusted-constant fail-fast calls from caller-input fail-fast calls in a deterministic, maintainable way?
+- Which risk findings should ship first, and which local inputs are required before a risk profile can produce useful results?
 - Should third-party rule packages be considered after v0.5, or should v0.5 explicitly restrict rule authoring to the Incan repository?
 
 <!-- Rename this section to "Design Decisions" once all questions have been resolved.
