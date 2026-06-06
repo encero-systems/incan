@@ -279,6 +279,8 @@
       
         
       
+        
+      
     
     
       
@@ -376,6 +378,27 @@
   
   <span class="md-ellipsis">
     Pipelines & automation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../start_here/encero_stack/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Encero stack
   </span>
   
 
@@ -4344,6 +4367,8 @@
       
         
       
+        
+      
     
     
       
@@ -4386,6 +4411,27 @@
   
   <span class="md-ellipsis">
     CLI reference
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="reference/codegraph_inspection/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Codegraph inspection
   </span>
   
 
@@ -5689,18 +5735,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#canonical-commands-make-first" class="md-nav__link">
+  <a href="#canonical-first-contact-flow" class="md-nav__link">
     <span class="md-ellipsis">
-      Canonical commands (make-first)
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#notes" class="md-nav__link">
-    <span class="md-ellipsis">
-      Notes
+      Canonical first-contact flow
     </span>
   </a>
   
@@ -5727,7 +5764,8 @@
 <h1 id="tooling-start-here">Tooling: Start here<a class="headerlink" href="#tooling-start-here" title="Permanent link">&para;</a></h1>
 <p>This section covers the Incan tooling experience:</p>
 <ul>
-<li>CLI (check/build/run/fmt/test)</li>
+<li>SDK install and project creation</li>
+<li>CLI (<code>check</code>, <code>build</code>, <code>run</code>, <code>fmt</code>, <code>test</code>, <code>inspect</code>, and <code>tools</code>)</li>
 <li>editor setup and LSP</li>
 </ul>
 <p>If you’re not sure where you fit, start at <a href="../start_here/">Start here</a>.</p>
@@ -5745,33 +5783,17 @@
 <h2 id="reference-look-up">Reference (look up)<a class="headerlink" href="#reference-look-up" title="Permanent link">&para;</a></h2>
 <p>Single source of truth pages under Tooling:</p>
 <ul>
-<li><a href="how-to/install_and_run/">Install/build/run</a> (make-first)</li>
+<li><a href="how-to/install_and_run/">Install and run</a> (SDK-first)</li>
 <li><a href="reference/cli_reference/">CLI reference</a> (commands/flags/env vars)</li>
 </ul>
-<h2 id="canonical-commands-make-first">Canonical commands (make-first)<a class="headerlink" href="#canonical-commands-make-first" title="Permanent link">&para;</a></h2>
-<div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">Recommended: install to PATH</label><label for="__tabbed_1_2">Fallback: no install</label></div>
-<div class="tabbed-content">
-<div class="tabbed-block">
-<div class="language-bash highlight"><pre><span></span><code>make<span class="w"> </span>install
-incan<span class="w"> </span>--version
+<h2 id="canonical-first-contact-flow">Canonical first-contact flow<a class="headerlink" href="#canonical-first-contact-flow" title="Permanent link">&para;</a></h2>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>new<span class="w"> </span>hello<span class="w"> </span>--yes
+<span class="nb">cd</span><span class="w"> </span>hello
+incan<span class="w"> </span>run
+incan<span class="w"> </span><span class="nb">test</span>
+incan<span class="w"> </span>build<span class="w"> </span>--release
 </code></pre></div>
-<p>Notes:</p>
-<ul>
-<li><code>make install</code> installs <code>incan</code> to <code>~/.cargo/bin</code>.</li>
-<li>If <code>incan</code> is not found, make sure <code>~/.cargo/bin</code> is on your <code>PATH</code>.</li>
-</ul>
-</div>
-<div class="tabbed-block">
-<div class="language-bash highlight"><pre><span></span><code>make<span class="w"> </span>release
-./target/release/incan<span class="w"> </span>--version
-</code></pre></div>
-</div>
-</div>
-</div>
-<h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
-<ul>
-<li>We prefer repository <code>make</code> targets in docs wherever possible.</li>
-</ul>
+<p>Repository <code>make</code> targets remain the contributor path for working on Incan itself.</p>
 
 
 

@@ -279,6 +279,8 @@
       
         
       
+        
+      
     
     
       
@@ -376,6 +378,27 @@
   
   <span class="md-ellipsis">
     Pipelines & automation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../start_here/encero_stack/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Encero stack
   </span>
   
 
@@ -2334,6 +2357,24 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#sdk-installer-and-release-manifest" class="md-nav__link">
+    <span class="md-ellipsis">
+      SDK installer and release manifest
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#zero-clone-starter-project-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      Zero-clone starter project flow
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#stable-diagnostics-commands" class="md-nav__link">
     <span class="md-ellipsis">
       Stable diagnostics commands
@@ -2346,6 +2387,15 @@
   <a href="#build-reports-and-generated-rust-inspection" class="md-nav__link">
     <span class="md-ellipsis">
       Build reports and generated Rust inspection
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compiler-backed-codegraph-inspection" class="md-nav__link">
+    <span class="md-ellipsis">
+      Compiler-backed codegraph inspection
     </span>
   </a>
   
@@ -4851,6 +4901,8 @@
       
         
       
+        
+      
     
     
       
@@ -4893,6 +4945,27 @@
   
   <span class="md-ellipsis">
     CLI reference
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/reference/codegraph_inspection/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Codegraph inspection
   </span>
   
 
@@ -6593,6 +6666,24 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#sdk-installer-and-release-manifest" class="md-nav__link">
+    <span class="md-ellipsis">
+      SDK installer and release manifest
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#zero-clone-starter-project-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      Zero-clone starter project flow
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#stable-diagnostics-commands" class="md-nav__link">
     <span class="md-ellipsis">
       Stable diagnostics commands
@@ -6605,6 +6696,15 @@
   <a href="#build-reports-and-generated-rust-inspection" class="md-nav__link">
     <span class="md-ellipsis">
       Build reports and generated Rust inspection
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compiler-backed-codegraph-inspection" class="md-nav__link">
+    <span class="md-ellipsis">
+      Compiler-backed codegraph inspection
     </span>
   </a>
   
@@ -7120,6 +7220,26 @@
 <td><a href="../project_lifecycle/">Project lifecycle</a>, <a href="../../how-to/project_lifecycle/">Project lifecycle how-to</a>, <a href="../../../release_notes/0_3/">Release 0.3</a></td>
 </tr>
 <tr>
+<td>SDK installer and release manifest</td>
+<td>Tooling</td>
+<td style="text-align: right;">0.4</td>
+<td>Use the GitHub Release installer, Homebrew formula, npm package, pipx package, or versioned SDK manifest.</td>
+<td><code>curl -fsSL https://github.com/dannys-code-corner/incan/releases/latest/download/install.sh \| sh</code><br><code>brew install https://github.com/dannys-code-corner/incan/releases/latest/download/incan.rb</code><br><code>npm install -g incan-sdk</code><br><code>pipx install incan-sdk</code></td>
+<td>The SDK install path is manifest-driven, checksum-verified, and installs <code>incan</code> plus <code>incan-lsp</code> from the same release archives across direct and package-manager channels.</td>
+<td>Treating Cargo, repository checkouts, and package-manager adapters as separate sources of install truth.</td>
+<td><a href="../../../tooling/how-to/install_and_run/">Install and run</a>, <a href="../../../release_notes/0_4/">Release 0.4</a></td>
+</tr>
+<tr>
+<td>Zero-clone starter project flow</td>
+<td>Tooling</td>
+<td style="text-align: right;">0.4</td>
+<td>Use <code>incan new</code>, then run project commands from the generated directory.</td>
+<td><code>incan new hello --yes</code><br><code>cd hello</code><br><code>incan run</code><br><code>incan test</code><br><code>incan build --release</code></td>
+<td><code>incan new</code> creates a runnable, testable project with a manifest, entrypoint, starter test, README, <code>.gitignore</code>, and release-line toolchain constraint.</td>
+<td>Cloning the compiler repository or copying examples manually before a first run.</td>
+<td><a href="../../../tooling/tutorials/getting_started/">Getting started</a>, <a href="../project_lifecycle/">Project lifecycle</a>, <a href="../../../release_notes/0_4/">Release 0.4</a></td>
+</tr>
+<tr>
 <td>Stable diagnostics commands</td>
 <td>Tooling</td>
 <td style="text-align: right;">0.4</td>
@@ -7138,6 +7258,16 @@
 <td>Builds can emit versioned machine-readable reports, generated Rust can be inspected intentionally as current backend output, and generated public Rust items preserve checked source docstrings as Rust doc comments when available.</td>
 <td>Scraping terminal progress output or treating <code>--emit-rust</code> debug output as a stable artifact contract.</td>
 <td><a href="../../../tooling/reference/cli_reference/">CLI reference</a>, <a href="../../../release_notes/0_4/">Release 0.4</a></td>
+</tr>
+<tr>
+<td>Compiler-backed codegraph inspection</td>
+<td>Tooling</td>
+<td style="text-align: right;">0.4</td>
+<td>Use <code>incan inspect codegraph</code>.</td>
+<td><code>incan inspect codegraph src/main.incn --format jsonl</code><br><code>incan inspect codegraph src --format jsonl --allow-errors</code></td>
+<td>Incan-language source files, modules, declarations, imports, exports, body-level reference and call syntax, containment, spans, provenance, language tags, degraded state, and diagnostics can be exported as deterministic JSONL records.</td>
+<td>Repeated grep/read loops or tool-specific source scrapers when agents and tooling need basic Incan structure.</td>
+<td><a href="../../../tooling/reference/codegraph_inspection/">Codegraph inspection</a>, <a href="../../../tooling/reference/cli_reference/">CLI reference</a>, <a href="../../../release_notes/0_4/">Release 0.4</a></td>
 </tr>
 <tr>
 <td>Checked API metadata</td>
@@ -7940,6 +8070,46 @@
 <li><code>incan version patch</code></li>
 <li><code>incan env test</code></li>
 </ul>
+<h3 id="sdk-installer-and-release-manifest">SDK installer and release manifest<a class="headerlink" href="#sdk-installer-and-release-manifest" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Id:</strong> <code>SdkInstallerManifest</code></li>
+<li><strong>Category:</strong> <code>Tooling</code></li>
+<li><strong>Since:</strong> <code>0.4</code></li>
+<li><strong>RFC:</strong> <code>RFC 015</code></li>
+<li><strong>Stability:</strong> <code>Stable</code></li>
+<li><strong>Activation:</strong> Use the GitHub Release installer, Homebrew formula, npm package, pipx package, or versioned SDK manifest.</li>
+<li><strong>Use instead of:</strong> Treating Cargo, repository checkouts, and package-manager adapters as separate sources of install truth.</li>
+<li><strong>References:</strong> <a href="../../../tooling/how-to/install_and_run/">Install and run</a>, <a href="../../../release_notes/0_4/">Release 0.4</a></li>
+</ul>
+<p>The SDK install path is manifest-driven, checksum-verified, and installs <code>incan</code> plus <code>incan-lsp</code> from the same release archives across direct and package-manager channels.</p>
+<p>Canonical forms:</p>
+<ul>
+<li><code>curl -fsSL https://github.com/dannys-code-corner/incan/releases/latest/download/install.sh | sh</code></li>
+<li><code>brew install https://github.com/dannys-code-corner/incan/releases/latest/download/incan.rb</code></li>
+<li><code>npm install -g incan-sdk</code></li>
+<li><code>pipx install incan-sdk</code></li>
+<li><code>workspaces/release/install-incan-sdk.sh --dry-run</code></li>
+</ul>
+<h3 id="zero-clone-starter-project-flow">Zero-clone starter project flow<a class="headerlink" href="#zero-clone-starter-project-flow" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Id:</strong> <code>ZeroCloneStarterFlow</code></li>
+<li><strong>Category:</strong> <code>Tooling</code></li>
+<li><strong>Since:</strong> <code>0.4</code></li>
+<li><strong>RFC:</strong> <code>RFC 015</code></li>
+<li><strong>Stability:</strong> <code>Stable</code></li>
+<li><strong>Activation:</strong> Use <code>incan new</code>, then run project commands from the generated directory.</li>
+<li><strong>Use instead of:</strong> Cloning the compiler repository or copying examples manually before a first run.</li>
+<li><strong>References:</strong> <a href="../../../tooling/tutorials/getting_started/">Getting started</a>, <a href="../project_lifecycle/">Project lifecycle</a>, <a href="../../../release_notes/0_4/">Release 0.4</a></li>
+</ul>
+<p><code>incan new</code> creates a runnable, testable project with a manifest, entrypoint, starter test, README, <code>.gitignore</code>, and release-line toolchain constraint.</p>
+<p>Canonical forms:</p>
+<ul>
+<li><code>incan new hello --yes</code></li>
+<li><code>cd hello</code></li>
+<li><code>incan run</code></li>
+<li><code>incan test</code></li>
+<li><code>incan build --release</code></li>
+</ul>
 <h3 id="stable-diagnostics-commands">Stable diagnostics commands<a class="headerlink" href="#stable-diagnostics-commands" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Id:</strong> <code>StableDiagnostics</code></li>
@@ -7974,6 +8144,23 @@
 <li><code>incan build src/main.incn --report json</code></li>
 <li><code>incan build --lib --report json --report-output build.json</code></li>
 <li><code>incan inspect rust src/main.incn --format json</code></li>
+</ul>
+<h3 id="compiler-backed-codegraph-inspection">Compiler-backed codegraph inspection<a class="headerlink" href="#compiler-backed-codegraph-inspection" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Id:</strong> <code>CodegraphInspection</code></li>
+<li><strong>Category:</strong> <code>Tooling</code></li>
+<li><strong>Since:</strong> <code>0.4</code></li>
+<li><strong>RFC:</strong> <code>RFC 106</code></li>
+<li><strong>Stability:</strong> <code>Stable</code></li>
+<li><strong>Activation:</strong> Use <code>incan inspect codegraph</code>.</li>
+<li><strong>Use instead of:</strong> Repeated grep/read loops or tool-specific source scrapers when agents and tooling need basic Incan structure.</li>
+<li><strong>References:</strong> <a href="../../../tooling/reference/codegraph_inspection/">Codegraph inspection</a>, <a href="../../../tooling/reference/cli_reference/">CLI reference</a>, <a href="../../../release_notes/0_4/">Release 0.4</a></li>
+</ul>
+<p>Incan-language source files, modules, declarations, imports, exports, body-level reference and call syntax, containment, spans, provenance, language tags, degraded state, and diagnostics can be exported as deterministic JSONL records. First-class Rust graph records, MCP serving, task-context packing, process-risk signals, and Architect findings are later RFC 106 follow-up work.</p>
+<p>Canonical forms:</p>
+<ul>
+<li><code>incan inspect codegraph src/main.incn --format jsonl</code></li>
+<li><code>incan inspect codegraph src --format jsonl --allow-errors</code></li>
 </ul>
 <h3 id="checked-api-metadata">Checked API metadata<a class="headerlink" href="#checked-api-metadata" title="Permanent link">&para;</a></h3>
 <ul>

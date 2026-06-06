@@ -14,7 +14,7 @@
         <link rel="prev" href="../../explanation/lsp_architecture/">
       
       
-        <link rel="next" href="../contract_metadata/">
+        <link rel="next" href="../codegraph_inspection/">
       
       
       <link rel="icon" href="../../../assets/images/favicon.png">
@@ -279,6 +279,8 @@
       
         
       
+        
+      
     
     
       
@@ -376,6 +378,27 @@
   
   <span class="md-ellipsis">
     Pipelines & automation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../start_here/encero_stack/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Encero stack
   </span>
   
 
@@ -4346,6 +4369,8 @@
       
         
       
+        
+      
     
     
       
@@ -4502,6 +4527,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#incan-inspect-codegraph" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan inspect codegraph
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#incan-run" class="md-nav__link">
     <span class="md-ellipsis">
       incan run
@@ -4645,6 +4679,27 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../codegraph_inspection/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Codegraph inspection
+  </span>
+  
+
+      </a>
     </li>
   
 
@@ -5990,6 +6045,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#incan-inspect-codegraph" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan inspect codegraph
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#incan-run" class="md-nav__link">
     <span class="md-ellipsis">
       incan run
@@ -6150,8 +6214,8 @@
 <h1 id="cli-reference">CLI reference<a class="headerlink" href="#cli-reference" title="Permanent link">&para;</a></h1>
 <p>This is the authoritative CLI reference for <code>incan</code> (commands, flags, paths, and environment variables).</p>
 <div class="admonition note">
-<p class="admonition-title">No-install fallback</p>
-<p>If you did not run <code>make install</code>, you can still run the <code>incan</code> binary directly:</p>
+<p class="admonition-title">Contributor source-build fallback</p>
+<p>If you are working from a compiler checkout instead of an SDK install, you can run the repository-built binary directly:</p>
 <ul>
 <li>from the repository root:</li>
 </ul>
@@ -6267,6 +6331,7 @@ incan build --lib [OPTIONS] [OUTPUT_DIR]
 <li><code>--cargo-features &lt;FEATURES&gt;</code>: Enable specific Cargo features (comma-separated).</li>
 <li><code>--cargo-no-default-features</code>: Disable default Cargo features.</li>
 <li><code>--cargo-all-features</code>: Enable all Cargo features.</li>
+<li><code>--release</code>: Explicitly request the release Cargo profile. This is the default for <code>incan build</code>, and the flag exists so first-contact flows can spell out that they are producing an optimized build.</li>
 <li><code>--report json</code>: Emit a versioned machine-readable build report.</li>
 <li><code>--report-output &lt;PATH&gt;</code>: Write the build report to a file instead of stdout.</li>
 </ul>
@@ -6289,6 +6354,7 @@ incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span cla
 incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span class="w"> </span>--cargo-features<span class="w"> </span>fancy_logging
 incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span class="w"> </span>--<span class="w"> </span>--timings
 incan<span class="w"> </span>build<span class="w"> </span>--lib
+incan<span class="w"> </span>build<span class="w"> </span>--release
 incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span class="w"> </span>--report<span class="w"> </span>json
 incan<span class="w"> </span>build<span class="w"> </span>--lib<span class="w"> </span>--report<span class="w"> </span>json<span class="w"> </span>--report-output<span class="w"> </span>target/build-report.json
 </code></pre></div>
@@ -6307,6 +6373,21 @@ incan<span class="w"> </span>build<span class="w"> </span>--lib<span class="w"> 
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>inspect<span class="w"> </span>rust<span class="w"> </span>src/main.incn
 incan<span class="w"> </span>inspect<span class="w"> </span>rust<span class="w"> </span>src/main.incn<span class="w"> </span>--format<span class="w"> </span>json
 incan<span class="w"> </span>inspect<span class="w"> </span>rust<span class="w"> </span>.<span class="w"> </span>--lib<span class="w"> </span>--format<span class="w"> </span>json
+</code></pre></div>
+<h3 id="incan-inspect-codegraph"><code>incan inspect codegraph</code><a class="headerlink" href="#incan-inspect-codegraph" title="Permanent link">&para;</a></h3>
+<p>Usage:</p>
+<div class="language-text highlight"><pre><span></span><code>incan inspect codegraph [OPTIONS] &lt;PATH&gt;
+</code></pre></div>
+<p>Exports compiler-backed codegraph records for an Incan source file or directory. The 0.4 export is a deterministic JSONL stream of Incan-language files, modules, top-level declarations, imports, public exports, body-level reference and call syntax, containment relationships, source spans, provenance, degraded state, and diagnostics. It is intended for tools and agents that need Incan structure without scraping source text.</p>
+<p>Options:</p>
+<ul>
+<li><code>--format jsonl</code>: Emit newline-delimited JSON records. JSONL is the only supported 0.4 format.</li>
+<li><code>--allow-errors</code>: Emit a degraded partial graph and diagnostic records when the source is broken. Without this flag, diagnostics fail the command.</li>
+</ul>
+<p><code>incan inspect codegraph</code> is tooling output, not runtime <code>std.graph</code>, not a generated-Rust ABI, and not a full reference/call graph in 0.4. The header lists the represented languages, and every fact record carries <code>language</code>, <code>provenance</code>, and <code>degraded</code> fields. The 0.4 exporter emits <code>language: "incan"</code> only; first-class Rust graph records and MCP/task-context consumers are follow-up work.</p>
+<p>Examples:</p>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>inspect<span class="w"> </span>codegraph<span class="w"> </span>src/main.incn<span class="w"> </span>--format<span class="w"> </span>jsonl
+incan<span class="w"> </span>inspect<span class="w"> </span>codegraph<span class="w"> </span>src<span class="w"> </span>--format<span class="w"> </span>jsonl<span class="w"> </span>--allow-errors
 </code></pre></div>
 <h3 id="incan-run"><code>incan run</code><a class="headerlink" href="#incan-run" title="Permanent link">&para;</a></h3>
 <p>Usage:</p>
@@ -6485,7 +6566,7 @@ incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span
 <p>Usage:</p>
 <div class="language-text highlight"><pre><span></span><code>incan new [OPTIONS] [NAME]
 </code></pre></div>
-<p>Creates a new project directory with <code>incan.toml</code>, <code>src/main.incn</code>, <code>tests/test_main.incn</code>, <code>README.md</code>, and <code>.gitignore</code>. When run in an interactive terminal without <code>--yes</code>, it prompts for project metadata. In non-interactive contexts, pass <code>NAME</code> or <code>--dir</code>.</p>
+<p>Creates a new project directory with <code>incan.toml</code>, <code>src/main.incn</code>, <code>tests/test_main.incn</code>, <code>README.md</code>, and <code>.gitignore</code>. The starter source includes a small public <code>greeting()</code> function plus a test that imports and checks it, so <code>incan run</code>, <code>incan test</code>, and <code>incan build --release</code> work immediately after project creation. When run in an interactive terminal without <code>--yes</code>, it prompts for project metadata. In non-interactive contexts, pass <code>NAME</code> or <code>--dir</code>.</p>
 <p>Options:</p>
 <ul>
 <li><code>NAME</code>: Project name. If omitted in an interactive terminal, <code>incan new</code> prompts for it.</li>

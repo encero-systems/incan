@@ -270,6 +270,8 @@
       
         
       
+        
+      
     
     
       
@@ -367,6 +369,27 @@
   
   <span class="md-ellipsis">
     Pipelines & automation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../start_here/encero_stack/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Encero stack
   </span>
   
 
@@ -4333,6 +4356,8 @@
       
         
       
+        
+      
     
     
       
@@ -4375,6 +4400,27 @@
   
   <span class="md-ellipsis">
     CLI reference
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/reference/codegraph_inspection/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Codegraph inspection
   </span>
   
 
@@ -5660,16 +5706,18 @@
 
   <h1>Install build run</h1>
 
-<div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">Recommended: install to PATH</label><label for="__tabbed_1_2">Fallback: no install</label></div>
+<div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">Recommended: SDK install</label><label for="__tabbed_1_2">Contributor: source checkout</label></div>
 <div class="tabbed-content">
 <div class="tabbed-block">
-<div class="language-bash highlight"><pre><span></span><code>make<span class="w"> </span>install
+<div class="language-bash highlight"><pre><span></span><code>curl<span class="w"> </span>-fsSL<span class="w"> </span>https://github.com/dannys-code-corner/incan/releases/latest/download/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>sh
+<span class="nb">export</span><span class="w"> </span><span class="nv">PATH</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$HOME</span><span class="s2">/.local/bin:</span><span class="nv">$PATH</span><span class="s2">&quot;</span>
 incan<span class="w"> </span>--version
 </code></pre></div>
 <p>Notes:</p>
 <ul>
-<li><code>make install</code> installs <code>incan</code> to <code>~/.cargo/bin</code>.</li>
-<li>If <code>incan</code> is not found, make sure <code>~/.cargo/bin</code> is on your <code>PATH</code>.</li>
+<li>The SDK installer links <code>incan</code> and <code>incan-lsp</code> into <code>~/.local/bin</code> by default.</li>
+<li>Homebrew, npm, and pipx install the same SDK binaries through package-manager adapters.</li>
+<li>If <code>incan</code> is not found, make sure <code>~/.local/bin</code> is on your <code>PATH</code>.</li>
 </ul>
 </div>
 <div class="tabbed-block">

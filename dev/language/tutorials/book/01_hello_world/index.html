@@ -279,6 +279,8 @@
       
         
       
+        
+      
     
     
       
@@ -376,6 +378,27 @@
   
   <span class="md-ellipsis">
     Pipelines & automation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../start_here/encero_stack/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Encero stack
   </span>
   
 
@@ -4433,6 +4456,8 @@
       
         
       
+        
+      
     
     
       
@@ -4475,6 +4500,27 @@
   
   <span class="md-ellipsis">
     CLI reference
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/reference/codegraph_inspection/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Codegraph inspection
   </span>
   
 
@@ -5830,28 +5876,25 @@
 </div>
 <p>Tip: Incan uses indentation for blocks. The canonical style is <strong>4 spaces</strong> per indent level; see the <a href="../../../reference/code_style/">Incan Code Style Guide</a> and run <code>incan fmt</code> to normalize source.</p>
 <h2 id="run-it">Run it<a class="headerlink" href="#run-it" title="Permanent link">&para;</a></h2>
-<p>If you installed to PATH:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>run<span class="w"> </span>hello.incn
 </code></pre></div>
-<p>If you used the no-install fallback:</p>
-<div class="language-bash highlight"><pre><span></span><code>./target/release/incan<span class="w"> </span>run<span class="w"> </span>hello.incn
-</code></pre></div>
 <h2 id="when-to-make-it-a-project">When to make it a project<a class="headerlink" href="#when-to-make-it-a-project" title="Permanent link">&para;</a></h2>
-<p>A single <code>hello.incn</code> file is the fastest way to try the language. Once you want tests, dependencies, a stable source root, release metadata, or repeatable project commands, create an Incan project. This is easy to do using the incan cli:</p>
-<div class="language-bash highlight"><pre><span></span><code>mkdir<span class="w"> </span>hello_project
+<p>A single <code>hello.incn</code> file is the fastest way to try one language construct. Once you want tests, dependencies, a stable source root, release metadata, or repeatable project commands, create an Incan project:</p>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>new<span class="w"> </span>hello_project<span class="w"> </span>--yes
 <span class="nb">cd</span><span class="w"> </span>hello_project
-incan<span class="w"> </span>init<span class="w"> </span>--name<span class="w"> </span>hello_project<span class="w"> </span>--yes
 </code></pre></div>
-<p>This creates <code>incan.toml</code>, <code>src/main.incn</code>, <code>tests/test_main.incn</code>, <code>README.md</code>, and <code>.gitignore</code>. The manifest is the project metadata file; it names the project, records the project version, and declares the default entry point under <code>[project.scripts]</code>.</p>
+<p>This creates <code>incan.toml</code>, <code>src/main.incn</code>, <code>tests/test_main.incn</code>, <code>README.md</code>, and <code>.gitignore</code>. The manifest is the project metadata file; it names the project, records the project version and toolchain requirement, and declares the default entry point under <code>[project.scripts]</code>.</p>
 <div class="language-toml highlight"><span class="filename">incan.toml</span><pre><span></span><code><span class="k">[project]</span>
 <span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;hello_project&quot;</span>
 <span class="n">version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.1.0&quot;</span>
+<span class="n">requires-incan</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;&gt;=0.4.0-0,&lt;0.5.0&quot;</span>
 
 <span class="k">[project.scripts]</span>
 <span class="n">main</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;src/main.incn&quot;</span>
 </code></pre></div>
 <p>Run the project entry point:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>run
+incan<span class="w"> </span><span class="nb">test</span>
 </code></pre></div>
 <p>For the full lifecycle workflow, see <a href="../../../how-to/project_lifecycle/">Project lifecycle</a>.</p>
 <h2 id="try-it">Try it<a class="headerlink" href="#try-it" title="Permanent link">&para;</a></h2>

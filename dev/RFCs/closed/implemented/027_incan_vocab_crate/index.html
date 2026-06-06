@@ -275,6 +275,8 @@
       
         
       
+        
+      
     
     
       
@@ -372,6 +374,27 @@
   
   <span class="md-ellipsis">
     Pipelines & automation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../start_here/encero_stack/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Encero stack
   </span>
   
 
@@ -4338,6 +4361,8 @@
       
         
       
+        
+      
     
     
       
@@ -4380,6 +4405,27 @@
   
   <span class="md-ellipsis">
     CLI reference
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/reference/codegraph_inspection/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Codegraph inspection
   </span>
   
 
@@ -8127,7 +8173,7 @@ Phase 2 collapses lexer token types into <code>Token::Ident</code> once the regi
 <li><code>src/frontend/</code>: hosts the public-AST bridge and later end-to-end desugar runtime integration.</li>
 <li><code>src/backend/project/</code>: replaces <code>needs_*</code> booleans with collected dependency/feature sets where vocab metadata suffices.</li>
 <li><code>src/lsp/</code> and <code>src/format/</code>: remain registry-backed and later consume the richer declaration metadata where relevant.</li>
-<li><code>editors/vscode/</code>: continues build-time grammar generation for the static fallback story.</li>
+<li><code>workspaces/ide/vscode/</code>: continues build-time grammar generation for the static fallback story.</li>
 </ul>
 <h2 id="implementation-log">Implementation log<a class="headerlink" href="#implementation-log" title="Permanent link">&para;</a></h2>
 <p>The checklist below records the completed rollout of RFC 027. Earlier phases landed first to establish registry parity; later phases completed the public companion-crate surface, library build/consumer integration, desugaring runtime, and release polish.</p>

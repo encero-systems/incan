@@ -279,6 +279,8 @@
       
         
       
+        
+      
     
     
       
@@ -376,6 +378,27 @@
   
   <span class="md-ellipsis">
     Pipelines & automation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../start_here/encero_stack/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Encero stack
   </span>
   
 
@@ -4500,6 +4523,8 @@
       
         
       
+        
+      
     
     
       
@@ -4542,6 +4567,27 @@
   
   <span class="md-ellipsis">
     CLI reference
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/reference/codegraph_inspection/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Codegraph inspection
   </span>
   
 
@@ -6012,7 +6058,7 @@ incan<span class="w"> </span>run<span class="w"> </span>-c<span class="w"> </spa
 <div class="language-toml highlight"><span class="filename">incan.toml</span><pre><span></span><code><span class="k">[project]</span>
 <span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;greeter&quot;</span>
 <span class="n">version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.1.0&quot;</span>
-<span class="n">requires-incan</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;&gt;=0.2.0&quot;</span>
+<span class="n">requires-incan</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;&gt;=0.4.0-0,&lt;0.5.0&quot;</span>
 
 <span class="k">[project.scripts]</span>
 <span class="n">main</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;src/main.incn&quot;</span>
@@ -6061,6 +6107,7 @@ incan<span class="w"> </span>new<span class="w"> </span>--dir<span class="w"> </
 </tbody>
 </table>
 <p><code>incan new</code> derives the project name from <code>NAME</code>, then from <code>--dir</code>, then from an interactive prompt. In non-interactive mode it requires either <code>NAME</code> or <code>--dir</code>.</p>
+<p>The generated scaffold includes <code>src/main.incn</code>, <code>tests/test_main.incn</code>, <code>README.md</code>, <code>.gitignore</code>, a <code>main</code> script, and a release-line <code>requires-incan</code> constraint. The starter test imports the generated public <code>greeting()</code> function, so the project is immediately runnable and testable instead of containing only a placeholder assertion.</p>
 <h2 id="project"><code>[project]</code><a class="headerlink" href="#project" title="Permanent link">&para;</a></h2>
 <p><code>[project]</code> is the canonical metadata table.</p>
 <table>
@@ -6160,10 +6207,10 @@ incan<span class="w"> </span>new<span class="w"> </span>--dir<span class="w"> </
 <div class="language-toml highlight"><pre><span></span><code><span class="k">[project]</span>
 <span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;greeter&quot;</span>
 <span class="n">version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.1.0&quot;</span>
-<span class="n">requires-incan</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;&gt;=0.4,&lt;0.5&quot;</span>
+<span class="n">requires-incan</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;&gt;=0.4.0-0,&lt;0.5.0&quot;</span>
 </code></pre></div>
 <p>If the active compiler is outside the range, <code>incan run</code> in project mode, <code>incan build</code>, <code>incan test</code>, <code>incan lock</code>, and <code>incan env run</code> fail early with a diagnostic that names the active compiler version and the contributing constraint layers. Single-file and inline commands without a discovered <code>incan.toml</code> remain manifest-free and do not infer a requirement.</p>
-<p>Development compilers identify themselves with prerelease versions such as <code>0.4.0-dev.N</code>. For lifecycle compatibility, that development build is treated as part of the <code>0.4</code> line, so a requirement such as <code>&gt;=0.4,&lt;0.5</code> admits it.</p>
+<p>Development compilers identify themselves with prerelease versions such as <code>0.4.0-dev.N</code>. Generated 0.4 projects therefore use a prerelease-aware lower bound (<code>&gt;=0.4.0-0,&lt;0.5.0</code>) so local development builds and final 0.4 releases both satisfy the starter constraint.</p>
 <h2 id="projectscripts"><code>[project.scripts]</code><a class="headerlink" href="#projectscripts" title="Permanent link">&para;</a></h2>
 <p><code>[project.scripts]</code> maps script names to Incan source files:</p>
 <div class="language-toml highlight"><pre><span></span><code><span class="k">[project.scripts]</span>

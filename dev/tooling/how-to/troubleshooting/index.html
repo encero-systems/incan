@@ -279,6 +279,8 @@
       
         
       
+        
+      
     
     
       
@@ -376,6 +378,27 @@
   
   <span class="md-ellipsis">
     Pipelines & automation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../start_here/encero_stack/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Encero stack
   </span>
   
 
@@ -4174,9 +4197,9 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#incan-command-not-found-after-make-install" class="md-nav__link">
+  <a href="#incan-command-not-found-after-sdk-install" class="md-nav__link">
     <span class="md-ellipsis">
-      incan: command not found after make install
+      incan: command not found after SDK install
     </span>
   </a>
   
@@ -4192,9 +4215,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#i-didnt-run-make-install-no-install-fallback" class="md-nav__link">
+  <a href="#contributor-source-builds" class="md-nav__link">
     <span class="md-ellipsis">
-      I didn’t run make install (no-install fallback)
+      Contributor source builds
     </span>
   </a>
   
@@ -4449,6 +4472,8 @@
       
         
       
+        
+      
     
     
       
@@ -4491,6 +4516,27 @@
   
   <span class="md-ellipsis">
     CLI reference
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/codegraph_inspection/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Codegraph inspection
   </span>
   
 
@@ -5767,9 +5813,9 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#incan-command-not-found-after-make-install" class="md-nav__link">
+  <a href="#incan-command-not-found-after-sdk-install" class="md-nav__link">
     <span class="md-ellipsis">
-      incan: command not found after make install
+      incan: command not found after SDK install
     </span>
   </a>
   
@@ -5785,9 +5831,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#i-didnt-run-make-install-no-install-fallback" class="md-nav__link">
+  <a href="#contributor-source-builds" class="md-nav__link">
     <span class="md-ellipsis">
-      I didn’t run make install (no-install fallback)
+      Contributor source builds
     </span>
   </a>
   
@@ -5848,62 +5894,59 @@
 
 
 <h1 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h1>
-<p>This page collects common “it didn’t work” fixes when getting started with Incan from this repository.</p>
-<h2 id="incan-command-not-found-after-make-install"><code>incan: command not found</code> after <code>make install</code><a class="headerlink" href="#incan-command-not-found-after-make-install" title="Permanent link">&para;</a></h2>
-<ul>
-<li><code>make install</code> installs <code>incan</code> into <code>~/.cargo/bin</code>.</li>
-<li>Ensure <code>~/.cargo/bin</code> is on your <code>PATH</code>.</li>
-</ul>
-<p>Check:</p>
-<div class="language-bash highlight"><pre><span></span><code>ls<span class="w"> </span>-la<span class="w"> </span>~/.cargo/bin/incan
-<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PATH</span><span class="s2">&quot;</span>
-which<span class="w"> </span>incan<span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nb">true</span>
+<p>This page collects common setup and first-run fixes for the installed SDK path. Contributor-only source-build notes are called out separately.</p>
+<h2 id="incan-command-not-found-after-sdk-install"><code>incan: command not found</code> after SDK install<a class="headerlink" href="#incan-command-not-found-after-sdk-install" title="Permanent link">&para;</a></h2>
+<p>The SDK installer links <code>incan</code> and <code>incan-lsp</code> into <code>INCAN_BIN_DIR</code>, defaulting to <code>~/.local/bin</code>. Make sure that directory is on your <code>PATH</code>:</p>
+<div class="language-bash highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">PATH</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$HOME</span><span class="s2">/.local/bin:</span><span class="nv">$PATH</span><span class="s2">&quot;</span>
+<span class="nb">command</span><span class="w"> </span>-v<span class="w"> </span>incan
+incan<span class="w"> </span>--version
+</code></pre></div>
+<p>If you installed with a custom bin directory, use that path instead:</p>
+<div class="language-bash highlight"><pre><span></span><code>curl<span class="w"> </span>-fsSL<span class="w"> </span>https://github.com/dannys-code-corner/incan/releases/latest/download/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span><span class="nv">INCAN_BIN_DIR</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$HOME</span><span class="s2">/bin&quot;</span><span class="w"> </span>sh
+<span class="nb">export</span><span class="w"> </span><span class="nv">PATH</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$HOME</span><span class="s2">/bin:</span><span class="nv">$PATH</span><span class="s2">&quot;</span>
 </code></pre></div>
 <h2 id="shell-or-editor-is-using-an-old-incan-incan-lsp">Shell or editor is using an old <code>incan</code> / <code>incan-lsp</code><a class="headerlink" href="#shell-or-editor-is-using-an-old-incan-incan-lsp" title="Permanent link">&para;</a></h2>
-<p>This usually means your shell and editor are resolving different binaries. For local development from a clone, prefer:</p>
-<div class="language-bash highlight"><pre><span></span><code><span class="nb">cd</span><span class="w"> </span>/path/to/incan
-make<span class="w"> </span>build
-</code></pre></div>
-<p>On local machines, <code>make build</code> builds the compiler and LSP with <code>cargo build --features lsp</code>, then links <code>~/.cargo/bin/incan</code> to <code>target/debug/incan</code> and <code>~/.cargo/bin/incan-lsp</code> to <code>target/debug/incan-lsp</code>. Keep <code>~/.cargo/bin</code> early enough in your <code>PATH</code> that both tools resolve there:</p>
+<p>This usually means your shell and editor resolve different binaries. Check both commands:</p>
 <div class="language-bash highlight"><pre><span></span><code><span class="nb">command</span><span class="w"> </span>-v<span class="w"> </span>incan
 <span class="nb">command</span><span class="w"> </span>-v<span class="w"> </span>incan-lsp
-ls<span class="w"> </span>-l<span class="w"> </span>~/.cargo/bin/incan<span class="w"> </span>~/.cargo/bin/incan-lsp
 incan<span class="w"> </span>--version
 incan<span class="w"> </span>tools<span class="w"> </span>doctor
 </code></pre></div>
-<p>If <code>command -v incan</code> or <code>command -v incan-lsp</code> points somewhere unexpected, fix your <code>PATH</code> or remove the stale binary from the earlier location. If the <code>ls -l</code> target points at a different checkout, rerun <code>make build</code> from the checkout you want to use.</p>
 <p>For VS Code/Cursor, also check the Incan settings:</p>
 <div class="language-json highlight"><pre><span></span><code><span class="p">{</span>
 <span class="w">  </span><span class="nt">&quot;incan.lsp.path&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&quot;</span><span class="p">,</span>
 <span class="w">  </span><span class="nt">&quot;incan.compiler.path&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&quot;</span>
 <span class="p">}</span>
 </code></pre></div>
-<p>Leaving these empty makes the extension use workspace binary discovery or <code>PATH</code>. If you set <code>incan.lsp.path</code>, use a literal executable path such as <code>/path/to/incan/target/debug/incan-lsp</code>; the setting does not expand <code>$HOME</code>, <code>~</code>, or shell commands. The extension warns when either path setting contains shell syntax, points at a missing file, or points at a non-executable file.</p>
-<p>After changing paths or rebuilding, reload the editor window so it starts a new language-server process:</p>
+<p>Leaving these empty makes the extension use workspace binary discovery or <code>PATH</code>. If you set <code>incan.lsp.path</code>, use a literal executable path such as <code>/Users/me/.local/bin/incan-lsp</code>; the setting does not expand <code>$HOME</code>, <code>~</code>, or shell commands. The extension warns when either path setting contains shell syntax, points at a missing file, or points at a non-executable file.</p>
+<p>After changing paths or reinstalling, reload the editor window so it starts a new language-server process:</p>
 <ol>
 <li>Run <strong>Incan: Doctor</strong> from the command palette and check the <strong>Incan</strong> output channel.</li>
 <li>Run <strong>Developer: Reload Window</strong> from the command palette.</li>
 <li>Reopen a <code>.incn</code> file.</li>
 <li>Re-run <strong>Incan: Doctor</strong> if diagnostics still look stale.</li>
 </ol>
-<h2 id="i-didnt-run-make-install-no-install-fallback">I didn’t run <code>make install</code> (no-install fallback)<a class="headerlink" href="#i-didnt-run-make-install-no-install-fallback" title="Permanent link">&para;</a></h2>
-<p>If you’re using the no-install fallback, run commands from the repository root and invoke:</p>
-<div class="language-bash highlight"><pre><span></span><code>./target/release/incan<span class="w"> </span>...
+<h2 id="contributor-source-builds">Contributor source builds<a class="headerlink" href="#contributor-source-builds" title="Permanent link">&para;</a></h2>
+<p>If you are working from a compiler checkout, use repository <code>make</code> targets instead of the SDK installer:</p>
+<div class="language-bash highlight"><pre><span></span><code><span class="nb">cd</span><span class="w"> </span>/path/to/incan
+make<span class="w"> </span>build
 </code></pre></div>
-<p>If <code>./target/release/incan</code> does not exist yet, build it first:</p>
+<p>On local machines, <code>make build</code> builds the compiler and LSP with <code>cargo build --features lsp</code>, then links <code>~/.cargo/bin/incan</code> to <code>target/debug/incan</code> and <code>~/.cargo/bin/incan-lsp</code> to <code>target/debug/incan-lsp</code>. Keep <code>~/.cargo/bin</code> early enough in your <code>PATH</code> that both tools resolve there.</p>
+<p>If you intentionally want the release binary from a checkout:</p>
 <div class="language-bash highlight"><pre><span></span><code>make<span class="w"> </span>release
+./target/release/incan<span class="w"> </span>--version
 </code></pre></div>
 <h2 id="builds-are-slow-the-first-time">Builds are slow the first time<a class="headerlink" href="#builds-are-slow-the-first-time" title="Permanent link">&para;</a></h2>
-<p>The first <code>make release</code> (or first <code>incan build</code>) will compile Rust dependencies and can take a few minutes.</p>
+<p>The first <code>incan build</code>, <code>incan test</code>, or generated project run may compile Rust dependencies and can take a few minutes. Later runs should reuse Cargo artifacts unless dependency inputs, profile, target directory, or lock data changed.</p>
 <h2 id="cargo-needs-internet-access-for-dependencies">Cargo needs internet access for dependencies<a class="headerlink" href="#cargo-needs-internet-access-for-dependencies" title="Permanent link">&para;</a></h2>
-<p>Some builds may download Rust crates via Cargo on first run. Ensure your environment can reach crates.io (or your configured proxy/mirror).</p>
+<p>Some builds may download Rust crates via Cargo on first run. Ensure your environment can reach crates.io or your configured proxy/mirror.</p>
 <p>For restricted or offline environments, run the supported preflight before the build:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>tools<span class="w"> </span>doctor
 </code></pre></div>
 <p>The doctor report includes offline-readiness diagnostics for local dependency inputs. Treat it as advisory: it can flag likely problems before Cargo runs, but it cannot guarantee that a later <code>incan build --frozen</code> or <code>incan test --frozen</code> will succeed.</p>
 <p>Run once while online to populate Cargo's cache and generate <code>incan.lock</code>, then use:</p>
-<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span class="w"> </span>--frozen
-incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>tests/<span class="w"> </span>--frozen
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>build<span class="w"> </span>--frozen
+incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--frozen
 </code></pre></div>
 <p>Offline policy prevents fetching; it does not remove crate dependencies, so crates that are not already available to Cargo locally can still make an offline build fail. Use <code>--offline</code> when you want Cargo to fail instead of using the network without also requiring a lockfile. Use <code>--locked</code> when the lockfile must exist and match current dependency inputs.</p>
 <h2 id="macos-toolchainlinker-issues">macOS: toolchain/linker issues<a class="headerlink" href="#macos-toolchainlinker-issues" title="Permanent link">&para;</a></h2>
@@ -5911,15 +5954,7 @@ incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span
 <div class="language-bash highlight"><pre><span></span><code>xcode-select<span class="w"> </span>--install
 </code></pre></div>
 <h2 id="still-stuck">Still stuck?<a class="headerlink" href="#still-stuck" title="Permanent link">&para;</a></h2>
-<p>If you’re still stuck, please <a href="https://github.com/dannys-code-corner/incan/issues">open an issue</a> and include:</p>
-<ul>
-<li>your OS and architecture</li>
-<li>the exact commands you ran</li>
-<li>the full error output</li>
-<li><code>command -v incan</code>, <code>command -v incan-lsp</code>, and <code>ls -l ~/.cargo/bin/incan ~/.cargo/bin/incan-lsp</code></li>
-<li><code>incan tools doctor --format json</code></li>
-<li>whether <code>incan.lsp.path</code> or <code>incan.compiler.path</code> is set in VS Code/Cursor</li>
-</ul>
+<p>If you’re still stuck, please <a href="https://github.com/dannys-code-corner/incan/issues">open an issue</a> and include your OS, architecture, exact commands, and full error output.</p>
 
 
 

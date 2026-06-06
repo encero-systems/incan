@@ -279,6 +279,8 @@
       
         
       
+        
+      
     
     
       
@@ -376,6 +378,27 @@
   
   <span class="md-ellipsis">
     Pipelines & automation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../start_here/encero_stack/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Encero stack
   </span>
   
 
@@ -4464,6 +4487,8 @@
       
         
       
+        
+      
     
     
       
@@ -4506,6 +4531,27 @@
   
   <span class="md-ellipsis">
     CLI reference
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/codegraph_inspection/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Codegraph inspection
   </span>
   
 
@@ -5927,7 +5973,7 @@ Test it:  incan test
 ├── .gitignore             # Ignores target/
 └── incan.toml             # Manifest with project metadata and [project.scripts] main set
 </code></pre></div>
-<p>The generated <code>incan.toml</code> can also carry <code>requires-incan</code> to document the minimum supported Incan toolchain version. Commit <code>incan.lock</code> once the project generates it so builds stay reproducible.</p>
+<p>The generated <code>incan.toml</code> carries a <code>requires-incan</code> constraint for the current release line. Commit <code>incan.lock</code> once the project generates it so builds stay reproducible.</p>
 <p>Try it immediately:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>run
 </code></pre></div>
@@ -5940,6 +5986,7 @@ Test it:  incan test
 <span class="n">description</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;A small greeting command&quot;</span>
 <span class="n">license</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;MIT&quot;</span>
 <span class="n">readme</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;README.md&quot;</span>
+<span class="n">requires-incan</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;&gt;=0.4.0,&lt;0.5.0&quot;</span>
 
 <span class="k">[project.scripts]</span>
 <span class="n">main</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;src/main.incn&quot;</span>
@@ -5959,8 +6006,11 @@ Test it:  incan test
 <p>Now update <code>src/main.incn</code> to use the <code>greet</code> function from the <code>greet.incn</code> module:</p>
 <div class="language-incan highlight"><span class="filename">src/main.incn</span><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">greet</span><span class="w"> </span><span class="kn">import</span> <span class="n">greet</span>
 
+<span class="k">pub</span> <span class="k">def</span><span class="w"> </span><span class="nf">greeting</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">greet</span><span class="p">(</span><span class="s2">&quot;World&quot;</span><span class="p">)</span>
+
 <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="nb">println</span><span class="p">(</span><span class="n">greet</span><span class="p">(</span><span class="s2">&quot;World&quot;</span><span class="p">))</span>
+    <span class="nb">println</span><span class="p">(</span><span class="n">greeting</span><span class="p">())</span>
 </code></pre></div>
 <p>Run again:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>run
@@ -5981,8 +6031,11 @@ Test it:  incan test
 <p>And update <code>src/main.incn</code> to use both:</p>
 <div class="language-incan highlight"><span class="filename">src/main.incn</span><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">greet</span><span class="w"> </span><span class="kn">import</span> <span class="n">greet</span><span class="p">,</span> <span class="n">farewell</span>
 
+<span class="k">pub</span> <span class="k">def</span><span class="w"> </span><span class="nf">greeting</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">greet</span><span class="p">(</span><span class="s2">&quot;World&quot;</span><span class="p">)</span>
+
 <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="nb">println</span><span class="p">(</span><span class="n">greet</span><span class="p">(</span><span class="s2">&quot;World&quot;</span><span class="p">))</span>
+    <span class="nb">println</span><span class="p">(</span><span class="n">greeting</span><span class="p">())</span>
     <span class="nb">println</span><span class="p">(</span><span class="n">farewell</span><span class="p">(</span><span class="s2">&quot;World&quot;</span><span class="p">))</span>
 </code></pre></div>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>run

@@ -279,6 +279,8 @@
       
         
       
+        
+      
     
     
       
@@ -376,6 +378,27 @@
   
   <span class="md-ellipsis">
     Pipelines & automation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../start_here/encero_stack/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Encero stack
   </span>
   
 
@@ -4458,6 +4481,8 @@
       
         
       
+        
+      
     
     
       
@@ -4500,6 +4525,27 @@
   
   <span class="md-ellipsis">
     CLI reference
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/reference/codegraph_inspection/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Codegraph inspection
   </span>
   
 
@@ -5912,7 +5958,7 @@
 <p>Floats are excluded because NaN payloads, negative zero, infinities, and cross-language canonicalization need their own explicit design. If a domain behaves like money, use a decimal value or scaled integer. If it behaves like a finite measurement code, model that code directly.</p>
 <h2 id="performance-model">Performance model<a class="headerlink" href="#performance-model" title="Permanent link">&para;</a></h2>
 <p><code>OrdinalMap</code> is optimized for known key domains and repeated lookup, not for incremental mutation. Construction pays validation cost up front. Lookup then works against compact payload sections plus runtime caches.</p>
-<p>The repository benchmark in <code>benchmarks/collections/ordinal_map</code> compares:</p>
+<p>The repository benchmark in <code>workspaces/benchmarks/collections/ordinal_map</code> compares:</p>
 <ul>
 <li>Python <code>dict</code>;</li>
 <li>Python <code>fastconstmap.ConstMap</code>;</li>

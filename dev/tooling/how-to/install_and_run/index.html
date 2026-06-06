@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#install-build-and-run-make-first" class="md-skip">
+        <a href="#install-and-run-incan" class="md-skip">
           Skip to content
         </a>
       
@@ -279,6 +279,8 @@
       
         
       
+        
+      
     
     
       
@@ -376,6 +378,27 @@
   
   <span class="md-ellipsis">
     Pipelines & automation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../start_here/encero_stack/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Encero stack
   </span>
   
 
@@ -4111,36 +4134,36 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#prerequisites" class="md-nav__link">
+  <a href="#supported-hosts" class="md-nav__link">
     <span class="md-ellipsis">
-      Prerequisites
+      Supported hosts
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#get-the-repo-run-from-repo-root" class="md-nav__link">
+  <a href="#install-the-sdk" class="md-nav__link">
     <span class="md-ellipsis">
-      Get the repo (run from repo root)
+      Install the SDK
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#canonical-command-flow" class="md-nav__link">
+  <a href="#create-a-starter-project" class="md-nav__link">
     <span class="md-ellipsis">
-      Canonical command flow
+      Create a starter project
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#run-a-file" class="md-nav__link">
+  <a href="#source-build-fallback-for-contributors" class="md-nav__link">
     <span class="md-ellipsis">
-      Run a file
+      Source-build fallback for contributors
     </span>
   </a>
   
@@ -4422,6 +4445,8 @@
       
         
       
+        
+      
     
     
       
@@ -4464,6 +4489,27 @@
   
   <span class="md-ellipsis">
     CLI reference
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/codegraph_inspection/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Codegraph inspection
   </span>
   
 
@@ -5740,36 +5786,36 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#prerequisites" class="md-nav__link">
+  <a href="#supported-hosts" class="md-nav__link">
     <span class="md-ellipsis">
-      Prerequisites
+      Supported hosts
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#get-the-repo-run-from-repo-root" class="md-nav__link">
+  <a href="#install-the-sdk" class="md-nav__link">
     <span class="md-ellipsis">
-      Get the repo (run from repo root)
+      Install the SDK
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#canonical-command-flow" class="md-nav__link">
+  <a href="#create-a-starter-project" class="md-nav__link">
     <span class="md-ellipsis">
-      Canonical command flow
+      Create a starter project
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#run-a-file" class="md-nav__link">
+  <a href="#source-build-fallback-for-contributors" class="md-nav__link">
     <span class="md-ellipsis">
-      Run a file
+      Source-build fallback for contributors
     </span>
   </a>
   
@@ -5793,47 +5839,48 @@
   
 
 
-<h1 id="install-build-and-run-make-first">Install, build, and run (make-first)<a class="headerlink" href="#install-build-and-run-make-first" title="Permanent link">&para;</a></h1>
-<p>This page documents the canonical way to build/install/run Incan from this repository.</p>
-<h2 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Rust (1.92+): install via <a href="https://rustup.rs/">rustup</a></li>
-<li><code>git</code>: to clone the repository</li>
-<li><code>make</code>: for the canonical make-first workflow</li>
-</ul>
-<p>These instructions assume a Unix-like shell environment (macOS/Linux). If you’re on Windows, use WSL or adapt the commands.</p>
-<h2 id="get-the-repo-run-from-repo-root">Get the repo (run from repo root)<a class="headerlink" href="#get-the-repo-run-from-repo-root" title="Permanent link">&para;</a></h2>
-<p>Run the commands on this page from the repository root (the directory containing <code>Makefile</code>):</p>
+<h1 id="install-and-run-incan">Install and run Incan<a class="headerlink" href="#install-and-run-incan" title="Permanent link">&para;</a></h1>
+<p>This page documents the public 0.4 install path. Use the SDK installer when you want to try Incan as a user. Use the source-build path only when you are contributing to the compiler or testing an unreleased branch.</p>
+<h2 id="supported-hosts">Supported hosts<a class="headerlink" href="#supported-hosts" title="Permanent link">&para;</a></h2>
+<p>The 0.4 SDK installer ships archives for macOS arm64, macOS x86_64, and Linux x86_64. Native Windows and Linux arm64 are not part of the initial SDK installer; use WSL2 or a source build for those hosts for now. Generated Rust projects still use the local Rust toolchain, so install Rust with <code>rustup</code> before running projects that build binaries.</p>
+<p>The SDK manifest also records the Rust backend policy for the release, including the <code>wasm32-wasip1</code> target used by packages that ship vocabulary companions.</p>
+<h2 id="install-the-sdk">Install the SDK<a class="headerlink" href="#install-the-sdk" title="Permanent link">&para;</a></h2>
+<p>The canonical 0.4 artifact source is the GitHub Release. The release publishes <code>install.sh</code>, <code>manifest.json</code>, checksums, and platform SDK archives; Homebrew, npm, and pip are thin adapters over that same manifest rather than separate compiler builds.</p>
+<p>The direct installer path is:</p>
+<div class="language-bash highlight"><pre><span></span><code>curl<span class="w"> </span>-fsSL<span class="w"> </span>https://github.com/dannys-code-corner/incan/releases/latest/download/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>sh
+</code></pre></div>
+<p>For a dry run that resolves the manifest and target without writing files:</p>
+<div class="language-bash highlight"><pre><span></span><code>curl<span class="w"> </span>-fsSL<span class="w"> </span>https://github.com/dannys-code-corner/incan/releases/latest/download/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>sh<span class="w"> </span>-s<span class="w"> </span>--<span class="w"> </span>--dry-run
+</code></pre></div>
+<p>The installer reads the release manifest, selects the archive for your host target, verifies the archive checksum, installs into <code>INCAN_HOME</code> (default <code>~/.incan</code>), and links <code>incan</code> plus <code>incan-lsp</code> into <code>INCAN_BIN_DIR</code> (default <code>~/.local/bin</code>). Make sure the bin directory is on <code>PATH</code>.</p>
+<div class="language-bash highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">PATH</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$HOME</span><span class="s2">/.local/bin:</span><span class="nv">$PATH</span><span class="s2">&quot;</span>
+incan<span class="w"> </span>--version
+incan-lsp<span class="w"> </span>--version
+</code></pre></div>
+<p>Package-manager installs use the same SDK archive contract:</p>
+<div class="language-bash highlight"><pre><span></span><code>brew<span class="w"> </span>install<span class="w"> </span>https://github.com/dannys-code-corner/incan/releases/latest/download/incan.rb
+npm<span class="w"> </span>install<span class="w"> </span>-g<span class="w"> </span>incan-sdk
+pipx<span class="w"> </span>install<span class="w"> </span>incan-sdk
+</code></pre></div>
+<p>Use Homebrew when you want native macOS or Linux command management. Use npm when you want the SDK command shims available through Node-based tooling, editors, or CI images. Use <code>pipx</code> for Python-oriented environments; plain <code>pip install --user incan-sdk</code> also works, but <code>pipx</code> keeps the command package isolated from project environments.</p>
+<p>The npm and pip packages install the SDK into a package-local cache on first install or first command use, then delegate to the real <code>incan</code> and <code>incan-lsp</code> binaries from the verified SDK archive. Set <code>INCAN_SDK_MANIFEST</code> to pin a manifest, or use the direct <code>install.sh --manifest &lt;URL|PATH&gt;</code> path when you need fully explicit release control.</p>
+<h2 id="create-a-starter-project">Create a starter project<a class="headerlink" href="#create-a-starter-project" title="Permanent link">&para;</a></h2>
+<p>After installation, the shortest first run is:</p>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>new<span class="w"> </span>hello<span class="w"> </span>--yes
+<span class="nb">cd</span><span class="w"> </span>hello
+incan<span class="w"> </span>run
+incan<span class="w"> </span><span class="nb">test</span>
+incan<span class="w"> </span>build<span class="w"> </span>--release
+</code></pre></div>
+<p><code>incan new</code> creates an <code>incan.toml</code>, <code>src/main.incn</code>, <code>tests/test_main.incn</code>, <code>README.md</code>, and <code>.gitignore</code>. The generated project is intentionally small: one function, one entrypoint, and one test that checks the generated behavior.</p>
+<h2 id="source-build-fallback-for-contributors">Source-build fallback for contributors<a class="headerlink" href="#source-build-fallback-for-contributors" title="Permanent link">&para;</a></h2>
+<p>If you are working on Incan itself, build from the repository instead:</p>
 <div class="language-bash highlight"><pre><span></span><code>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/dannys-code-corner/incan.git
 <span class="nb">cd</span><span class="w"> </span>incan
+make<span class="w"> </span>install
+incan<span class="w"> </span>run<span class="w"> </span>examples/simple/hello.incn
 </code></pre></div>
-<h2 id="canonical-command-flow">Canonical command flow<a class="headerlink" href="#canonical-command-flow" title="Permanent link">&para;</a></h2>
-<div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">Recommended: install to PATH</label><label for="__tabbed_1_2">Fallback: no install</label></div>
-<div class="tabbed-content">
-<div class="tabbed-block">
-<div class="language-bash highlight"><pre><span></span><code>make<span class="w"> </span>install
-incan<span class="w"> </span>--version
-</code></pre></div>
-<p>Notes:</p>
-<ul>
-<li><code>make install</code> installs <code>incan</code> to <code>~/.cargo/bin</code>.</li>
-<li>If <code>incan</code> is not found, make sure <code>~/.cargo/bin</code> is on your <code>PATH</code>.</li>
-</ul>
-</div>
-<div class="tabbed-block">
-<div class="language-bash highlight"><pre><span></span><code>make<span class="w"> </span>release
-./target/release/incan<span class="w"> </span>--version
-</code></pre></div>
-</div>
-</div>
-</div>
-<h2 id="run-a-file">Run a file<a class="headerlink" href="#run-a-file" title="Permanent link">&para;</a></h2>
-<p>If you used <code>make install</code>:</p>
-<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>run<span class="w"> </span>hello.incn
-</code></pre></div>
-<p>If you used the no-install fallback:</p>
-<div class="language-bash highlight"><pre><span></span><code>./target/release/incan<span class="w"> </span>run<span class="w"> </span>hello.incn
-</code></pre></div>
+<p>The source-build path links the compiler from the checkout and is useful for development. It is not the public first-contact path for evaluating an SDK release.</p>
 
 
 
