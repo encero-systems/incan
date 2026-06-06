@@ -77,7 +77,7 @@ use crate::frontend::resolved_type_subst::{substitute_resolved_type, type_param_
 use crate::frontend::surface_semantics::SurfaceContext;
 use crate::frontend::symbols::*;
 #[cfg(feature = "rust_inspect")]
-use crate::rust_inspect::RustMetadataCache;
+use crate::rust_inspect::{Inspector, RustMetadataCache};
 use helpers::{collection_name, collection_type_id, render_resolved_type_as_rust_arg, stringlike_type_id};
 use incan_core::interop::{
     RustFunctionSig, RustItemKind, RustItemMetadata, RustParam, RustTypeShape, render_rust_type_shape_path,
@@ -555,19 +555,26 @@ impl TypeChecker {
     /// `foo::Bar<T>` or placeholder displays like `{unknown}`. This strips outer generic instantiation from a Rust
     /// path while rejecting obviously non-item spellings before hitting the metadata cache/extractor.
     fn rust_metadata_lookup_path(canonical_path: &str) -> Option<&str> {
-        let trimmed = canonical_path.trim();
-        if trimmed.is_empty() || trimmed == "{unknown}" {
-            return None;
+        #[cfg(feature = "rust_inspect")]
+        {
+            Inspector::normalize_lookup_path(canonical_path)
         }
-        let had_generics = trimmed.contains('<');
-        let base = trimmed.split_once('<').map_or(trimmed, |(base, _)| base);
-        if had_generics && !base.contains("::") {
-            return None;
+        #[cfg(not(feature = "rust_inspect"))]
+        {
+            let trimmed = canonical_path.trim();
+            if trimmed.is_empty() || trimmed == "{unknown}" {
+                return None;
+            }
+            let had_generics = trimmed.contains('<');
+            let base = trimmed.split_once('<').map_or(trimmed, |(base, _)| base);
+            if had_generics && !base.contains("::") {
+                return None;
+            }
+            if base.is_empty() || base.contains(['{', '}', '(', ')', '[', ']', ',', ' ']) {
+                return None;
+            }
+            Some(base)
         }
-        if base.is_empty() || base.contains(['{', '}', '(', ')', '[', ']', ',', ' ']) {
-            return None;
-        }
-        Some(base)
     }
 
     /// Strip the synthetic `rust::` namespace prefix used in Incan source paths.

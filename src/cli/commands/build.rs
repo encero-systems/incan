@@ -11,7 +11,7 @@ use std::time::Instant;
 
 use crate::backend::{IrCodegen, ProjectGenerator, RunProfile};
 use crate::cli::{CliError, CliResult, ExitCode};
-use crate::dependency_resolver::{resolve_dependencies, resolve_reachable_dependencies};
+use crate::dependency_resolver::{ResolvedDependencies, resolve_dependencies, resolve_reachable_dependencies};
 use crate::frontend::api_metadata::{
     CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, CheckedApiPackageIdentity,
     collect_checked_api_metadata, materialize_api_alias_projections, validate_checked_api_docstrings,
@@ -35,14 +35,17 @@ use super::build_report::{
     generated_project_report, incan_dependencies_report, interop_report, rust_inspection_report,
 };
 use super::common::{
-    CargoPolicy, build_source_map, cargo_command_flags, collect_modules, collect_project_requirements,
-    collect_rust_dependency_uses, enforce_project_toolchain_constraint, format_dependency_error,
-    imported_module_deps_for_with_index, merge_project_requirement_dependencies, module_key_index,
-    resolve_project_root, typecheck_modules_with_import_graph, validate_output_dir,
+    CargoPolicy, ProjectRequirements, build_source_map, cargo_command_flags, collect_modules,
+    collect_project_requirements, collect_rust_dependency_uses, enforce_project_toolchain_constraint,
+    format_dependency_error, imported_module_deps_for_with_index, merge_project_requirement_dependencies,
+    module_key_index, resolve_project_root, typecheck_modules_with_import_graph, validate_output_dir,
 };
 #[cfg(feature = "rust_inspect")]
 use super::common::{collect_rust_inspect_query_paths, ensure_rust_inspect_workspace, prewarm_rust_inspect_workspace};
-use super::lock::{LockResolutionRequest, resolve_lock_payload, run_generated_library_dependency_preheat};
+use super::lock::{
+    GeneratedLibraryDependencyPreheatRequest, LockResolutionRequest, resolve_lock_payload,
+    run_generated_library_dependency_preheat,
+};
 use super::vocab_extraction::{PendingDesugarerArtifact, collect_library_vocab_metadata};
 use crate::cli::prelude::ParsedModule;
 #[cfg(feature = "rust_inspect")]
@@ -75,9 +78,14 @@ struct PreparedProject {
 struct PreparedLibraryProject {
     generator: ProjectGenerator,
     project_root: PathBuf,
+    project_name: String,
+    rust_edition: Option<String>,
     out_dir: PathBuf,
     manifest_path: PathBuf,
     library_manifest: LibraryManifest,
+    resolved_dependencies: ResolvedDependencies,
+    project_requirements: ProjectRequirements,
+    lock_payload: Option<String>,
     cargo_policy: CargoPolicy,
     cargo_features: CargoFeatureSelection,
     rust_extern_contexts: Vec<RustExternDeclContext>,
@@ -1006,6 +1014,7 @@ fn prepare_library_project(
     })?;
     let should_preheat_library_dependencies = lock_payload_for_typecheck.is_some()
         && (!resolved.dependencies.is_empty() || !project_requirements.stdlib_features.is_empty());
+    let lock_payload_for_preheat = lock_payload_for_typecheck.clone();
     #[cfg(feature = "rust_inspect")]
     let rust_inspect_manifest_dir = {
         let rust_inspect_manifest_dir = ensure_rust_inspect_workspace(
@@ -1165,13 +1174,16 @@ fn prepare_library_project(
     let mut generator = ProjectGenerator::new(&out_dir, project_name.as_str(), false);
     generator.set_stdlib_features(project_requirements.stdlib_features.clone());
     generator.set_include_dev_dependencies(false);
-    generator.set_rust_edition(manifest.build.as_ref().and_then(|build| build.rust_edition.clone()));
+    let rust_edition = manifest.build.as_ref().and_then(|build| build.rust_edition.clone());
+    generator.set_rust_edition(rust_edition.clone());
     #[cfg(feature = "rust_inspect")]
     codegen.set_rust_inspect_manifest_dir(rust_inspect_manifest_dir.clone());
     generator.set_cargo_lock_payload(lock_payload_for_typecheck);
     generator.set_cargo_policy_flags(cargo_command_flags(&cargo_policy, &cargo_features));
     let rust_dependencies = resolved.dependencies.clone();
     let rust_dev_dependencies = resolved.dev_dependencies.clone();
+    let resolved_dependencies_for_preheat = resolved.clone();
+    let project_requirements_for_preheat = project_requirements.clone();
     let report_draft = BuildReportDraft {
         mode: BuildReportMode::Library,
         profile: "release".to_string(),
@@ -1229,9 +1241,14 @@ fn prepare_library_project(
     Ok(PreparedLibraryProject {
         generator,
         project_root,
+        project_name,
+        rust_edition,
         out_dir,
         manifest_path,
         library_manifest,
+        resolved_dependencies: resolved_dependencies_for_preheat,
+        project_requirements: project_requirements_for_preheat,
+        lock_payload: lock_payload_for_preheat,
         cargo_policy,
         cargo_features,
         rust_extern_contexts,
@@ -1259,14 +1276,21 @@ pub fn build_library(
         cargo_all_features,
     )?;
 
-    if prepared.should_preheat_library_dependencies {
-        run_generated_library_dependency_preheat(
-            &prepared.project_root,
-            &prepared.project_root.join("target").join("incan_lock"),
-            &prepared.cargo_features,
-            &prepared.cargo_policy,
-            &prepared.generator.cargo_target_dir(),
-        )?;
+    if prepared.should_preheat_library_dependencies
+        && let Some(lock_payload) = prepared.lock_payload.as_deref()
+    {
+        run_generated_library_dependency_preheat(GeneratedLibraryDependencyPreheatRequest {
+            project_root: &prepared.project_root,
+            lock_dir: &prepared.project_root.join("target").join("incan_lock"),
+            project_name: &prepared.project_name,
+            rust_edition: prepared.rust_edition.clone(),
+            resolved: &prepared.resolved_dependencies,
+            project_requirements: &prepared.project_requirements,
+            cargo_features: &prepared.cargo_features,
+            cargo_policy: &prepared.cargo_policy,
+            target_dir: &prepared.generator.cargo_target_dir(),
+            cargo_lock_payload: lock_payload,
+        })?;
     }
 
     let cargo_start = Instant::now();

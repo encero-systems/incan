@@ -63,8 +63,8 @@
     {
       "path": "src/backend/ir/conversions.rs",
       "category": "central argument conversion shape checks",
-      "expected_count": 2,
-      "expected_fingerprint": "0xc102811ab1ea1d38"
+      "expected_count": 3,
+      "expected_fingerprint": "0x4d96219944d67d53"
     },
     {
       "path": "src/backend/ir/emit/decls/functions.rs",

@@ -106,6 +106,7 @@ impl Inspector {
         let debug = Self::env_flag_enabled("INCAN_RUST_INSPECT_PREWARM_DEBUG");
         let started_all = Instant::now();
         let mut warmed = 0usize;
+        let mut reused = 0usize;
         let mut skipped = 0usize;
         let mut seen = BTreeSet::new();
         let mut paths = Vec::new();
@@ -138,11 +139,16 @@ impl Inspector {
                 canonical_path.as_str(),
                 progress,
             ) {
-                Ok(_) => {
-                    warmed += 1;
+                Ok(access) => {
+                    if access.outcome.reused() {
+                        reused += 1;
+                    } else {
+                        warmed += 1;
+                    }
                     if debug {
                         tracing::debug!(
                             query = %canonical_path,
+                            outcome = ?access.outcome,
                             ms = started_item.elapsed().as_secs_f64() * 1000.0,
                             "rust-inspect prewarm done"
                         );
@@ -167,12 +173,13 @@ impl Inspector {
         }
         self.cache.persist_manifest_dir(self.config.manifest_dir())?;
         progress(format!(
-            "rust-inspect prewarm complete: warmed={warmed} skipped={skipped} elapsed_ms={:.0}",
+            "rust-inspect prewarm complete: warmed={warmed} reused={reused} skipped={skipped} elapsed_ms={:.0}",
             started_all.elapsed().as_secs_f64() * 1000.0
         ));
         if debug {
             tracing::debug!(
                 warmed,
+                reused,
                 skipped,
                 total_ms = started_all.elapsed().as_secs_f64() * 1000.0,
                 "rust-inspect prewarm summary"
@@ -340,8 +347,79 @@ mod tests {
             "expected observable prewarm completion message, got {messages:?}"
         );
         assert!(
+            messages.iter().any(|message| {
+                message.starts_with("rust-inspect prewarm complete:")
+                    && message.contains("warmed=0")
+                    && message.contains("reused=1")
+                    && message.contains("skipped=0")
+            }),
+            "expected prewarm completion to distinguish cache reuse from extraction, got {messages:?}"
+        );
+        assert!(
             messages.iter().all(|message| !message.contains("item 2/")),
             "prewarm progress should report deduped work, got {messages:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn prewarm_reports_disk_reuse_for_synthetic_metadata_fixture() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        fs::create_dir_all(tmp.path().join("src"))?;
+        fs::write(
+            tmp.path().join("Cargo.toml"),
+            "[package]\nname = \"rust-inspect-heavy-synthetic\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        fs::write(
+            tmp.path().join("src/lib.rs"),
+            r#"pub mod bridge {
+    pub struct Model0;
+    pub struct Model1;
+    pub struct Model2;
+    pub struct Model3;
+}
+"#,
+        )?;
+        let queries = (0..4)
+            .map(|idx| format!("rust_inspect_heavy_synthetic::bridge::Model{idx}"))
+            .collect::<Vec<_>>();
+
+        let cold_messages = Mutex::new(Vec::new());
+        Inspector::new(InspectorConfig::new(tmp.path())).prewarm(queries.clone(), &|message| {
+            if let Ok(mut messages) = cold_messages.lock() {
+                messages.push(message);
+            }
+        })?;
+        let cold_messages = cold_messages
+            .into_inner()
+            .map_err(|_| std::io::Error::other("cold progress message lock poisoned"))?;
+        assert!(
+            cold_messages.iter().any(|message| {
+                message.starts_with("rust-inspect prewarm complete:")
+                    && message.contains("warmed=4")
+                    && message.contains("reused=0")
+                    && message.contains("skipped=0")
+            }),
+            "expected cold synthetic prewarm to extract all items, got {cold_messages:?}"
+        );
+
+        let warm_messages = Mutex::new(Vec::new());
+        Inspector::new(InspectorConfig::new(tmp.path())).prewarm(queries, &|message| {
+            if let Ok(mut messages) = warm_messages.lock() {
+                messages.push(message);
+            }
+        })?;
+        let warm_messages = warm_messages
+            .into_inner()
+            .map_err(|_| std::io::Error::other("warm progress message lock poisoned"))?;
+        assert!(
+            warm_messages.iter().any(|message| {
+                message.starts_with("rust-inspect prewarm complete:")
+                    && message.contains("warmed=0")
+                    && message.contains("reused=4")
+                    && message.contains("skipped=0")
+            }),
+            "expected warm synthetic prewarm to reuse persisted metadata, got {warm_messages:?}"
         );
         Ok(())
     }

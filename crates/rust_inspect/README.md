@@ -42,6 +42,7 @@ The intended contract is:
 
 - `prewarm(...)` may perform expensive extraction
 - `prewarm(...)` reports explicit start, per-item, and completion progress through its callback so CLI callers can keep long Rust metadata preparation observable without requiring users to run separate probes
+- `prewarm(...)` distinguishes newly warmed metadata from reused in-memory, disk-cache, and alias hits so callers can tell whether a slow run did real extraction or reused prepared state
 - `prewarm(...)` flushes disk-cache changes once per batch instead of rewriting the complete cache after every item
 - `get(...)` should be cache-only
 - workspace loading is owned by explicit preparation/cache code, not by semantic checks as a side effect
@@ -91,6 +92,8 @@ The stable architectural rule is the phase boundary: extraction happens before h
 - `cache_timing.rs`: optional timing instrumentation (still uses `eprintln!` when `INCAN_RUST_INSPECT_TIMING` is set)
 
 The in-memory cache stores a definition-path alias index alongside exact item keys. Re-export-heavy crates can then resolve `definition_path` hits directly instead of scanning every cached item and recomputing Rust spelling aliases for each lookup.
+
+When `INCAN_RUST_INSPECT_TIMING=1` is set, the cache layer reports whether a lookup reused process state, loaded persisted metadata from disk, missed because no cache file existed, missed because the cache format changed, or missed because the workspace fingerprint changed. Those messages are a debugging aid for compiler and CI performance work; they are not a stable downstream API.
 
 Structured logging for durable diagnostics uses `tracing` (for example disk-cache parse failures and failed persists).
 

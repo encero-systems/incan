@@ -59,6 +59,23 @@ struct DiskCacheState {
     workspace_fingerprint: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DiskCacheLoadReport {
+    reason: &'static str,
+    items: usize,
+    misses: usize,
+}
+
+impl DiskCacheLoadReport {
+    /// Return a compact timing-detail string for `INCAN_RUST_INSPECT_TIMING` output.
+    fn detail(self) -> String {
+        format!(
+            "reason={} cached_items={} cached_misses={}",
+            self.reason, self.items, self.misses
+        )
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum NegativeLookup {
     CrateNotFound(String),
@@ -208,17 +225,47 @@ fn write_disk_cache(root: &Path, envelope: &DiskCacheEnvelope) -> Result<(), Rus
     write_json_cache(&cache_path, envelope)
 }
 
-/// Load valid disk-cache items into memory for one workspace.
-fn load_disk_cache_into_memory(inner: &mut CacheInner, root: &Path) -> Result<Option<String>, RustMetadataError> {
+/// Load valid disk-cache items into memory for one workspace and explain whether the disk state was reusable.
+fn load_disk_cache_into_memory(
+    inner: &mut CacheInner,
+    root: &Path,
+) -> Result<(Option<String>, DiskCacheLoadReport), RustMetadataError> {
     let fingerprint = workspace_fingerprint(root)?;
     let Some(envelope) = read_disk_cache(root)? else {
-        return Ok(Some(fingerprint));
+        return Ok((
+            Some(fingerprint),
+            DiskCacheLoadReport {
+                reason: "miss.cache_file_absent",
+                items: 0,
+                misses: 0,
+            },
+        ));
     };
-    if envelope.cache_format != DISK_CACHE_FORMAT
-        || !disk_cache_fingerprint_matches(root, &envelope, fingerprint.as_str())?
-    {
-        return Ok(Some(fingerprint));
+    if envelope.cache_format != DISK_CACHE_FORMAT {
+        return Ok((
+            Some(fingerprint),
+            DiskCacheLoadReport {
+                reason: "miss.cache_format_changed",
+                items: envelope.items.len(),
+                misses: envelope.misses.len(),
+            },
+        ));
     }
+    if !disk_cache_fingerprint_matches(root, &envelope, fingerprint.as_str())? {
+        return Ok((
+            Some(fingerprint),
+            DiskCacheLoadReport {
+                reason: "miss.workspace_fingerprint_changed",
+                items: envelope.items.len(),
+                misses: envelope.misses.len(),
+            },
+        ));
+    }
+    let report = DiskCacheLoadReport {
+        reason: "hit.disk",
+        items: envelope.items.len(),
+        misses: envelope.misses.len(),
+    };
     for (canonical_path, metadata) in envelope.items {
         let mut metadata = metadata;
         metadata.canonical_path = canonical_path;
@@ -227,19 +274,33 @@ fn load_disk_cache_into_memory(inner: &mut CacheInner, root: &Path) -> Result<Op
     for (canonical_path, miss) in envelope.misses {
         inner.failed_items.insert((root.to_path_buf(), canonical_path), miss);
     }
-    Ok(Some(fingerprint))
+    Ok((Some(fingerprint), report))
 }
 
 /// Ensure the workspace-local disk cache has been loaded once for this process.
-fn ensure_disk_cache_loaded(inner: &mut CacheInner, root: &Path) -> Result<(), RustMetadataError> {
+fn ensure_disk_cache_loaded(inner: &mut CacheInner, root: &Path) -> Result<DiskCacheLoadReport, RustMetadataError> {
     if inner.disk_cache_state.get(root).is_some_and(|state| state.loaded) {
-        return Ok(());
+        let items = inner
+            .items
+            .keys()
+            .filter(|(workspace_root, _)| workspace_root == root)
+            .count();
+        let misses = inner
+            .failed_items
+            .keys()
+            .filter(|(workspace_root, _)| workspace_root == root)
+            .count();
+        return Ok(DiskCacheLoadReport {
+            reason: "hit.process_loaded",
+            items,
+            misses,
+        });
     }
-    let fingerprint = load_disk_cache_into_memory(inner, root)?;
+    let (fingerprint, report) = load_disk_cache_into_memory(inner, root)?;
     let state = inner.disk_cache_state.entry(root.to_path_buf()).or_default();
     state.workspace_fingerprint = fingerprint;
     state.loaded = true;
-    Ok(())
+    Ok(report)
 }
 
 /// Build the current workspace-local disk cache snapshot.
@@ -290,6 +351,37 @@ fn persist_negative_to_disk_cache(inner: &CacheInner, root: &Path) -> Result<(),
 pub struct CacheLookupHit {
     pub metadata: Arc<RustItemMetadata>,
     pub alias_used: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CacheAccessOutcome {
+    ExactHit,
+    DefinitionAliasHit,
+    AliasHit,
+    Extracted,
+}
+
+impl CacheAccessOutcome {
+    /// Return true when an access reused existing cache state rather than extracting metadata.
+    pub(crate) fn reused(self) -> bool {
+        matches!(self, Self::ExactHit | Self::DefinitionAliasHit | Self::AliasHit)
+    }
+
+    /// Return the stable timing-trace label for this cache access outcome.
+    fn trace_label(self) -> &'static str {
+        match self {
+            Self::ExactHit => "hit.memory.exact",
+            Self::DefinitionAliasHit => "hit.memory.definition_alias",
+            Self::AliasHit => "hit.memory.alias",
+            Self::Extracted => "hit.extracted",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct CacheAccess {
+    pub metadata: Arc<RustItemMetadata>,
+    pub outcome: CacheAccessOutcome,
 }
 
 /// Generate canonical-path aliases that account for Rust/Cargo naming and std/core/alloc spellings.
@@ -900,7 +992,7 @@ impl RustMetadataCache {
         registry_src_roots: Option<&[PathBuf]>,
         progress: &(dyn Fn(String) + Sync),
         persist_immediately: bool,
-    ) -> Result<Arc<RustItemMetadata>, RustMetadataError> {
+    ) -> Result<CacheAccess, RustMetadataError> {
         let root = manifest_dir.canonicalize()?;
         let timing_enabled = rust_inspect_timing_enabled();
         let mut trace = CallTrace::new(timing_enabled, &root, canonical_path);
@@ -912,19 +1004,23 @@ impl RustMetadataCache {
         })?;
 
         let disk_load_started = Instant::now();
-        ensure_disk_cache_loaded(&mut inner, &root)?;
+        let disk_report = ensure_disk_cache_loaded(&mut inner, &root)?;
         log_timing_stage(
             timing_enabled,
             &root,
             canonical_path,
             "disk_cache.ensure_loaded",
             disk_load_started.elapsed(),
-            "",
+            disk_report.detail().as_str(),
         );
 
         if let Some(hit) = inner.items.get(&key_item) {
-            trace.set_outcome("hit.memory.exact");
-            return Ok(Arc::clone(hit));
+            let outcome = CacheAccessOutcome::ExactHit;
+            trace.set_outcome(outcome.trace_label());
+            return Ok(CacheAccess {
+                metadata: Arc::clone(hit),
+                outcome,
+            });
         }
         if let Some(hit) = cached_definition_alias(&inner, &root, canonical_path) {
             let arc = insert_aliased_item(&mut inner, &root, canonical_path, &hit);
@@ -947,8 +1043,9 @@ impl RustMetadataCache {
                 persist_started.elapsed(),
                 if persist_immediately { "" } else { "deferred=true" },
             );
-            trace.set_outcome("hit.memory.definition_alias");
-            return Ok(arc);
+            let outcome = CacheAccessOutcome::DefinitionAliasHit;
+            trace.set_outcome(outcome.trace_label());
+            return Ok(CacheAccess { metadata: arc, outcome });
         }
         if let Some(miss) = inner.failed_items.get(&key_item) {
             trace.set_outcome("hit.memory.negative");
@@ -980,8 +1077,9 @@ impl RustMetadataCache {
                     persist_started.elapsed(),
                     if persist_immediately { "" } else { "deferred=true" },
                 );
-                trace.set_outcome("hit.memory.alias");
-                return Ok(arc);
+                let outcome = CacheAccessOutcome::AliasHit;
+                trace.set_outcome(outcome.trace_label());
+                return Ok(CacheAccess { metadata: arc, outcome });
             }
             if let Some(miss) = inner.failed_items.get(&candidate_key) {
                 last_err = Some(miss.to_error());
@@ -1055,8 +1153,9 @@ impl RustMetadataCache {
             persist_started.elapsed(),
             if persist_immediately { "" } else { "deferred=true" },
         );
-        trace.set_outcome("hit.extracted");
-        Ok(arc)
+        let outcome = CacheAccessOutcome::Extracted;
+        trace.set_outcome(outcome.trace_label());
+        Ok(CacheAccess { metadata: arc, outcome })
     }
 
     /// Return metadata for a canonical Rust path, extracting from the workspace and persisting cache misses.
@@ -1067,6 +1166,7 @@ impl RustMetadataCache {
         progress: &(dyn Fn(String) + Sync),
     ) -> Result<Arc<RustItemMetadata>, RustMetadataError> {
         self.get_or_extract_inner(manifest_dir, canonical_path, None, progress, true)
+            .map(|access| access.metadata)
     }
 
     /// Return metadata for a canonical Rust path while deferring disk-cache persistence to the caller.
@@ -1077,7 +1177,7 @@ impl RustMetadataCache {
         manifest_dir: &Path,
         canonical_path: &str,
         progress: &(dyn Fn(String) + Sync),
-    ) -> Result<Arc<RustItemMetadata>, RustMetadataError> {
+    ) -> Result<CacheAccess, RustMetadataError> {
         self.get_or_extract_inner(manifest_dir, canonical_path, None, progress, false)
     }
 
@@ -1212,6 +1312,7 @@ impl RustMetadataCache {
         progress: &(dyn Fn(String) + Sync),
     ) -> Result<Arc<RustItemMetadata>, RustMetadataError> {
         self.get_or_extract_inner(manifest_dir, canonical_path, Some(registry_src_roots), progress, true)
+            .map(|access| access.metadata)
     }
 
     /// Seed metadata directly for tests without invoking rust-analyzer extraction.

@@ -1318,6 +1318,65 @@ pub def exported_value() -> int:
     Ok(())
 }
 
+#[test]
+fn build_lib_recreates_dependency_preheat_workspace_from_existing_lock() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let helper_dir = tmp.path().join("library_preheat_existing_lock_helper");
+    fs::create_dir_all(helper_dir.join("src"))?;
+    fs::write(
+        helper_dir.join("Cargo.toml"),
+        "[package]\nname = \"library_preheat_existing_lock_helper\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    fs::write(helper_dir.join("src").join("lib.rs"), "pub fn value() -> i64 { 11 }\n")?;
+
+    let _main_path = write_minimal_project(
+        tmp.path(),
+        "cli_library_preheat_existing_lock_project",
+        r#"
+[rust-dependencies.library_preheat_existing_lock_helper]
+path = "library_preheat_existing_lock_helper"
+"#,
+    )?;
+    let lib_path = tmp.path().join("src").join("lib.incn");
+    fs::write(
+        &lib_path,
+        r#"from rust::library_preheat_existing_lock_helper import value
+
+pub def exported_value() -> int:
+  return value()
+"#,
+    )?;
+
+    let lock = run_incan(
+        tmp.path(),
+        &["lock", lib_path.to_str().ok_or("lib path was not valid UTF-8")?],
+    )?;
+    assert_success(&lock, "incan lock for library preheat existing-lock fixture");
+    fs::remove_dir_all(tmp.path().join("target").join("incan_lock"))?;
+
+    let build = run_incan(tmp.path(), &["build", "--lib"])?;
+    assert_success(
+        &build,
+        "incan build --lib should recreate dependency preheat workspace from committed incan.lock",
+    );
+    let stderr = String::from_utf8_lossy(&build.stderr);
+    assert!(
+        stderr.contains("preheating Cargo dependencies for generated library builds"),
+        "build --lib should preheat after recreating the missing dependency workspace, got:\n{stderr}"
+    );
+    assert!(
+        tmp.path().join("target/incan_lock/Cargo.toml").is_file(),
+        "generated-library dependency preheat should recreate the missing lock workspace"
+    );
+    assert!(
+        tmp.path()
+            .join("target/incan_lock/.incan_library_dependency_preheat_fingerprint")
+            .is_file(),
+        "generated-library dependency preheat should write a fingerprint stamp after workspace recreation"
+    );
+    Ok(())
+}
+
 fn stale_lockfile_without_changing_cargo_payload(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
     let lock_path = root.join("incan.lock");
     let original = fs::read_to_string(&lock_path)?;
@@ -4388,6 +4447,60 @@ def main() -> None:
     assert_success(
         &build_output,
         "incan build for inline f-string Rust String enum variant issue716",
+    );
+    Ok(())
+}
+
+#[test]
+fn build_static_str_const_rust_string_struct_field() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let helper_dir = tmp.path().join("rust").join("tiny_option");
+    fs::create_dir_all(helper_dir.join("src"))?;
+    fs::write(
+        helper_dir.join("Cargo.toml"),
+        "[package]\nname = \"tiny_option\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    fs::write(
+        helper_dir.join("src").join("lib.rs"),
+        r#"pub struct FunctionOption {
+    pub name: String,
+    pub enabled: bool,
+}
+
+pub fn option_name(option: FunctionOption) -> String {
+    option.name
+}
+"#,
+    )?;
+    let main_path = write_minimal_project(
+        tmp.path(),
+        "static_str_const_rust_string_struct_field",
+        r#"
+[rust-dependencies]
+tiny_option = { path = "rust/tiny_option" }
+"#,
+    )?;
+    fs::write(
+        &main_path,
+        r#"from rust::tiny_option import FunctionOption, option_name
+
+
+pub const OPTION_NAME: str = "sketch_family"
+
+
+def main() -> None:
+    option = FunctionOption(name=OPTION_NAME, enabled=True)
+    println(option_name(option))
+"#,
+    )?;
+
+    let build_output = run_incan(
+        tmp.path(),
+        &["build", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(
+        &build_output,
+        "incan build for static str const into Rust String struct field",
     );
     Ok(())
 }

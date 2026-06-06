@@ -37,6 +37,30 @@ const LOCK_DEPENDENCY_PREHEAT_STALE_LOCK_SECS: u64 = 30 * 60;
 const LIBRARY_DEPENDENCY_PREHEAT_FINGERPRINT_FILE: &str = ".incan_library_dependency_preheat_fingerprint";
 const LIBRARY_DEPENDENCY_PREHEAT_LOCK_FILE: &str = ".incan_library_dependency_preheat.lock";
 
+/// Inputs needed to preheat generated-library dependencies into the real generated-library Cargo target domain.
+pub(crate) struct GeneratedLibraryDependencyPreheatRequest<'a> {
+    /// Project root used as the Cargo command working directory.
+    pub project_root: &'a Path,
+    /// Dependency-only generated lock workspace directory.
+    pub lock_dir: &'a Path,
+    /// Cargo package name to use for the dependency-only generated lock workspace.
+    pub project_name: &'a str,
+    /// Rust edition to write into the dependency-only generated lock workspace.
+    pub rust_edition: Option<String>,
+    /// Resolved Rust dependencies that define the generated lock workspace.
+    pub resolved: &'a ResolvedDependencies,
+    /// Stdlib/provider requirements that define generated helper dependencies.
+    pub project_requirements: &'a ProjectRequirements,
+    /// Cargo feature selection used by the generated library build.
+    pub cargo_features: &'a CargoFeatureSelection,
+    /// Cargo policy flags used by the generated library build.
+    pub cargo_policy: &'a CargoPolicy,
+    /// Cargo target directory shared with the real generated library build.
+    pub target_dir: &'a Path,
+    /// Embedded Cargo.lock payload from `incan.lock`.
+    pub cargo_lock_payload: &'a str,
+}
+
 /// Generate or update incan.lock for a project.
 pub fn lock_project(
     entry_file: Option<&PathBuf>,
@@ -573,16 +597,33 @@ fn run_lock_dependency_preheat(
 
 /// Compile the lock workspace dependency graph into the generated-library target/profile domain when stale.
 pub(crate) fn run_generated_library_dependency_preheat(
-    project_root: &Path,
-    lock_dir: &Path,
-    cargo_features: &CargoFeatureSelection,
-    cargo_policy: &CargoPolicy,
-    target_dir: &Path,
+    request: GeneratedLibraryDependencyPreheatRequest<'_>,
 ) -> CliResult<()> {
+    let GeneratedLibraryDependencyPreheatRequest {
+        project_root,
+        lock_dir,
+        project_name,
+        rust_edition,
+        resolved,
+        project_requirements,
+        cargo_features,
+        cargo_policy,
+        target_dir,
+        cargo_lock_payload,
+    } = request;
     if !lock_dependency_preheat_enabled() {
         eprintln!("generated library dependency preheat: disabled by INCAN_LOCK_PREHEAT");
         return Ok(());
     }
+
+    materialize_dependency_preheat_workspace(
+        lock_dir,
+        project_name,
+        rust_edition,
+        resolved,
+        project_requirements,
+        cargo_lock_payload,
+    )?;
 
     let cargo_flags = cargo_command_flags(cargo_policy, cargo_features);
     let fingerprint =
@@ -675,6 +716,29 @@ pub(crate) fn run_generated_library_dependency_preheat(
         "generated library dependency preheat: ran in {:.2}s",
         start.elapsed().as_secs_f64()
     );
+    Ok(())
+}
+
+/// Materialize the dependency-only generated lock workspace from the current dependency graph and committed lock
+/// payload.
+fn materialize_dependency_preheat_workspace(
+    lock_dir: &Path,
+    project_name: &str,
+    rust_edition: Option<String>,
+    resolved: &ResolvedDependencies,
+    project_requirements: &ProjectRequirements,
+    cargo_lock_payload: &str,
+) -> CliResult<()> {
+    let mut generator = ProjectGenerator::new(lock_dir, project_name, true);
+    generator.set_dependencies(resolved.dependencies.clone());
+    generator.set_dev_dependencies(resolved.dev_dependencies.clone());
+    generator.set_include_dev_dependencies(true);
+    generator.set_rust_edition(rust_edition);
+    generator.set_stdlib_features(project_requirements.stdlib_features.clone());
+    generator.set_cargo_lock_payload(Some(cargo_lock_payload.to_string()));
+    generator
+        .generate("fn main() {}")
+        .map_err(|err| CliError::failure(format!("Failed to generate dependency preheat project: {err}")))?;
     Ok(())
 }
 
