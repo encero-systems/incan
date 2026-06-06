@@ -3,10 +3,11 @@
 //! This module handles the full compilation flow: module collection, type checking, codegen configuration, dependency
 //! resolution, project generation, and Cargo build/run.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use crate::backend::{IrCodegen, ProjectGenerator, RunProfile};
 use crate::cli::{CliError, CliResult, ExitCode};
@@ -28,6 +29,11 @@ use crate::library_manifest::LibraryRustAbi;
 use crate::lockfile::CargoFeatureSelection;
 use crate::manifest::ProjectManifest;
 
+use super::build_report::{
+    BuildReportDraft, BuildReportMode, BuildReportOptions, BuildReportProject, RustInspectionFormat, SourceFileReport,
+    artifact_report, cargo_report, dependencies_report, emit_build_report, emit_rust_inspection_report,
+    generated_project_report, incan_dependencies_report, interop_report, rust_inspection_report,
+};
 use super::common::{
     CargoPolicy, build_source_map, cargo_command_flags, collect_modules, collect_project_requirements,
     collect_rust_dependency_uses, enforce_project_toolchain_constraint, format_dependency_error,
@@ -61,6 +67,22 @@ struct PreparedProject {
     project_root: PathBuf,
     /// Source contexts for `@rust.extern` declarations, used to enrich downstream Rust/Cargo failures.
     rust_extern_contexts: Vec<RustExternDeclContext>,
+    /// Machine-readable build report data collected before Cargo is invoked.
+    report: BuildReportDraft,
+}
+
+/// A prepared library project after Incan validation and Rust source generation, before Cargo build.
+struct PreparedLibraryProject {
+    generator: ProjectGenerator,
+    project_root: PathBuf,
+    out_dir: PathBuf,
+    manifest_path: PathBuf,
+    library_manifest: LibraryManifest,
+    cargo_policy: CargoPolicy,
+    cargo_features: CargoFeatureSelection,
+    rust_extern_contexts: Vec<RustExternDeclContext>,
+    should_preheat_library_dependencies: bool,
+    report: BuildReportDraft,
 }
 
 #[derive(Debug, Clone)]
@@ -159,6 +181,55 @@ fn collect_rust_extern_contexts(modules: &[ParsedModule]) -> Vec<RustExternDeclC
         }
     }
     contexts
+}
+
+/// Return stable `rust.module::item` labels for Rust extern declarations that influenced this generated build.
+fn rust_extern_report_paths(contexts: &[RustExternDeclContext]) -> Vec<String> {
+    let mut paths = contexts
+        .iter()
+        .map(|context| format!("{}::{}", context.rust_module_path, context.item_name))
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+/// Build the project identity block used by build and generated Rust inspection reports.
+fn manifest_project_report(
+    manifest: Option<&ProjectManifest>,
+    project_name: &str,
+    project_root: &Path,
+) -> BuildReportProject {
+    BuildReportProject {
+        name: project_name.to_string(),
+        version: manifest.and_then(|manifest| manifest.project.as_ref().and_then(|project| project.version.clone())),
+        project_root: project_root.to_string_lossy().to_string(),
+    }
+}
+
+/// Convert collected Incan modules into source breadcrumbs for machine-readable reports.
+fn source_file_report(modules: &[ParsedModule]) -> Vec<SourceFileReport> {
+    modules
+        .iter()
+        .map(|module| SourceFileReport {
+            path: module.file_path.to_string_lossy().to_string(),
+            module_path: module.path_segments.clone(),
+        })
+        .collect()
+}
+
+/// Return elapsed milliseconds as a bounded `u64` for report payloads.
+fn elapsed_ms(start: Instant) -> u64 {
+    start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
+}
+
+/// Print human build progress to stderr when stdout is reserved for a machine-readable report.
+fn print_build_progress(report_options: &BuildReportOptions, message: impl AsRef<str>) {
+    if report_options.enabled() {
+        eprintln!("{}", message.as_ref());
+    } else {
+        println!("{}", message.as_ref());
+    }
 }
 
 #[cfg(feature = "rust_inspect")]
@@ -273,6 +344,7 @@ fn format_rust_extern_wrapped_diagnostics(stderr: &str, contexts: &[RustExternDe
     if rendered.is_empty() { None } else { Some(rendered) }
 }
 
+/// Resolve the project root for library commands from an optional source path or project directory.
 fn resolve_library_project_root(file_path: Option<&str>) -> CliResult<PathBuf> {
     if let Some(file_path) = file_path {
         let normalized = if Path::new(file_path).is_absolute() {
@@ -282,6 +354,9 @@ fn resolve_library_project_root(file_path: Option<&str>) -> CliResult<PathBuf> {
                 .map_err(|e| CliError::failure(format!("failed to determine current directory: {e}")))?
                 .join(file_path)
         };
+        if normalized.is_dir() {
+            return Ok(normalized);
+        }
         return Ok(resolve_project_root(&normalized));
     }
 
@@ -591,6 +666,8 @@ fn prepare_project(
     merge_project_requirement_dependencies(&mut resolved, &project_requirements)?;
     #[cfg(feature = "rust_inspect")]
     let metadata_query_paths = collect_library_rust_abi_query_paths(&modules, &rust_extern_contexts);
+    #[cfg(not(feature = "rust_inspect"))]
+    let metadata_query_paths: Vec<String> = Vec::new();
 
     // Resolve lock payload before moving deps into generator (borrows resolved)
     let lock_payload = resolve_lock_payload(LockResolutionRequest {
@@ -624,6 +701,47 @@ fn prepare_project(
     let cargo_flags = cargo_command_flags(cargo_policy, &cargo_features);
     generator.set_cargo_policy_flags(cargo_flags);
 
+    let rust_dependencies = resolved.dependencies.clone();
+    let rust_dev_dependencies = resolved.dev_dependencies.clone();
+    let incan_dependencies = manifest
+        .as_ref()
+        .map(|manifest| incan_dependencies_report(manifest.library_dependencies().iter().collect()))
+        .unwrap_or_default();
+    let report = BuildReportDraft {
+        mode: BuildReportMode::Executable,
+        profile: "release".to_string(),
+        project: manifest_project_report(manifest.as_ref(), project_name.as_str(), &project_root),
+        entrypoint: Some(normalized_file_path_str.clone()),
+        library_root: None,
+        source_files: source_file_report(&modules),
+        generated: generated_project_report(
+            generator.output_dir(),
+            &generator.crate_root_path(),
+            &generator.cargo_target_dir(),
+        ),
+        artifacts: Vec::new(),
+        dependencies: dependencies_report(
+            &rust_dependencies,
+            &rust_dev_dependencies,
+            incan_dependencies,
+            project_requirements.stdlib_features.clone(),
+        ),
+        cargo: cargo_report(
+            cargo_policy,
+            cargo_features.cargo_features.clone(),
+            cargo_features.cargo_no_default_features,
+            cargo_features.cargo_all_features,
+        ),
+        interop: interop_report(
+            &inline_imports,
+            rust_extern_report_paths(&rust_extern_contexts),
+            metadata_query_paths.clone(),
+        ),
+        notes: vec![
+            "Generated Rust is current backend output for inspection and debugging, not a stable Rust ABI.".to_string(),
+        ],
+    };
+
     generator.set_dependencies(resolved.dependencies);
     generator.set_dev_dependencies(resolved.dev_dependencies);
 
@@ -653,6 +771,7 @@ fn prepare_project(
         out_dir,
         project_root,
         rust_extern_contexts,
+        report,
     })
 }
 
@@ -664,7 +783,10 @@ pub fn build_file(
     cargo_features: Vec<String>,
     cargo_no_default_features: bool,
     cargo_all_features: bool,
+    report_options: BuildReportOptions,
 ) -> CliResult<ExitCode> {
+    let total_start = Instant::now();
+    let prepare_start = Instant::now();
     let prepared = prepare_project(
         file_path,
         output_dir.map(|s| s.as_str()),
@@ -673,15 +795,34 @@ pub fn build_file(
         cargo_no_default_features,
         cargo_all_features,
     )?;
+    let prepare_ms = elapsed_ms(prepare_start);
 
-    println!("Generated Rust project in: {}", prepared.out_dir);
-    println!("Building...");
+    print_build_progress(
+        &report_options,
+        format!("Generated Rust project in: {}", prepared.out_dir),
+    );
+    print_build_progress(&report_options, "Building...");
 
+    let cargo_start = Instant::now();
     match prepared.generator.build() {
         Ok(result) => {
+            let cargo_build_ms = elapsed_ms(cargo_start);
             if result.success {
-                println!("✓ Build successful!");
-                println!("Binary: {}", prepared.generator.binary_path().display());
+                print_build_progress(&report_options, "✓ Build successful!");
+                print_build_progress(
+                    &report_options,
+                    format!("Binary: {}", prepared.generator.binary_path().display()),
+                );
+                let mut report_draft = prepared.report.clone();
+                report_draft
+                    .artifacts
+                    .push(artifact_report("binary", &prepared.generator.binary_path()));
+                let report = report_draft.finish(BTreeMap::from([
+                    ("prepare".to_string(), prepare_ms),
+                    ("cargo_build".to_string(), cargo_build_ms),
+                    ("total".to_string(), elapsed_ms(total_start)),
+                ]));
+                emit_build_report(&report, &report_options)?;
                 Ok(ExitCode::SUCCESS)
             } else if let Some(wrapped) =
                 format_rust_extern_wrapped_diagnostics(&result.stderr, &prepared.rust_extern_contexts)
@@ -699,15 +840,14 @@ pub fn build_file(
     }
 }
 
-/// Validate RFC 031 library-mode preconditions.
-pub fn build_library(
+/// Validate a library project and generate its Rust project without running Cargo.
+fn prepare_library_project(
     file_path: Option<&str>,
-    _output_dir: Option<&String>,
     cargo_policy: CargoPolicy,
     cargo_features: Vec<String>,
     cargo_no_default_features: bool,
     cargo_all_features: bool,
-) -> CliResult<ExitCode> {
+) -> CliResult<PreparedLibraryProject> {
     let project_root = resolve_library_project_root(file_path)?;
     let Some(manifest) = ProjectManifest::discover(&project_root).map_err(|e| CliError::failure(e.to_string()))? else {
         return Err(CliError::failure(
@@ -777,6 +917,8 @@ pub fn build_library(
     merge_project_requirement_dependencies(&mut resolved, &project_requirements)?;
     #[cfg(feature = "rust_inspect")]
     let metadata_query_paths = collect_library_rust_abi_query_paths(&modules, &rust_extern_contexts);
+    #[cfg(not(feature = "rust_inspect"))]
+    let metadata_query_paths: Vec<String> = Vec::new();
 
     let lock_payload_for_typecheck = resolve_lock_payload(LockResolutionRequest {
         project_root: &project_root,
@@ -955,6 +1097,42 @@ pub fn build_library(
     codegen.set_rust_inspect_manifest_dir(rust_inspect_manifest_dir.clone());
     generator.set_cargo_lock_payload(lock_payload_for_typecheck);
     generator.set_cargo_policy_flags(cargo_command_flags(&cargo_policy, &cargo_features));
+    let rust_dependencies = resolved.dependencies.clone();
+    let rust_dev_dependencies = resolved.dev_dependencies.clone();
+    let report_draft = BuildReportDraft {
+        mode: BuildReportMode::Library,
+        profile: "release".to_string(),
+        project: manifest_project_report(Some(&manifest), project_name.as_str(), &project_root),
+        entrypoint: Some(lib_entry_str.clone()),
+        library_root: Some(project_root.to_string_lossy().to_string()),
+        source_files: source_file_report(&modules),
+        generated: generated_project_report(
+            generator.output_dir(),
+            &generator.crate_root_path(),
+            &generator.cargo_target_dir(),
+        ),
+        artifacts: Vec::new(),
+        dependencies: dependencies_report(
+            &rust_dependencies,
+            &rust_dev_dependencies,
+            incan_dependencies_report(manifest.library_dependencies().iter().collect()),
+            project_requirements.stdlib_features.clone(),
+        ),
+        cargo: cargo_report(
+            &cargo_policy,
+            cargo_features.cargo_features.clone(),
+            cargo_features.cargo_no_default_features,
+            cargo_features.cargo_all_features,
+        ),
+        interop: interop_report(
+            &inline_imports,
+            rust_extern_report_paths(&rust_extern_contexts),
+            metadata_query_paths.clone(),
+        ),
+        notes: vec![
+            "Generated Rust is current backend output for inspection and debugging, not a stable Rust ABI.".to_string(),
+        ],
+    };
     generator.set_dependencies(resolved.dependencies);
     generator.set_dev_dependencies(resolved.dev_dependencies);
 
@@ -975,20 +1153,57 @@ pub fn build_library(
             .map_err(|e| CliError::failure(format!("Error generating project: {e}")))?;
     }
 
-    if should_preheat_library_dependencies {
+    Ok(PreparedLibraryProject {
+        generator,
+        project_root,
+        out_dir,
+        manifest_path,
+        library_manifest,
+        cargo_policy,
+        cargo_features,
+        rust_extern_contexts,
+        should_preheat_library_dependencies,
+        report: report_draft,
+    })
+}
+
+/// Validate RFC 031 library-mode preconditions.
+pub fn build_library(
+    file_path: Option<&str>,
+    _output_dir: Option<&String>,
+    cargo_policy: CargoPolicy,
+    cargo_features: Vec<String>,
+    cargo_no_default_features: bool,
+    cargo_all_features: bool,
+    report_options: BuildReportOptions,
+) -> CliResult<ExitCode> {
+    let total_start = Instant::now();
+    let mut prepared = prepare_library_project(
+        file_path,
+        cargo_policy,
+        cargo_features,
+        cargo_no_default_features,
+        cargo_all_features,
+    )?;
+
+    if prepared.should_preheat_library_dependencies {
         run_generated_library_dependency_preheat(
-            &project_root,
-            &project_root.join("target").join("incan_lock"),
-            &cargo_features,
-            &cargo_policy,
-            &generator.cargo_target_dir(),
+            &prepared.project_root,
+            &prepared.project_root.join("target").join("incan_lock"),
+            &prepared.cargo_features,
+            &prepared.cargo_policy,
+            &prepared.generator.cargo_target_dir(),
         )?;
     }
 
-    match generator.build() {
+    let cargo_start = Instant::now();
+    let cargo_build_ms = match prepared.generator.build() {
         Ok(result) => {
+            let cargo_build_ms = elapsed_ms(cargo_start);
             if !result.success {
-                if let Some(wrapped) = format_rust_extern_wrapped_diagnostics(&result.stderr, &rust_extern_contexts) {
+                if let Some(wrapped) =
+                    format_rust_extern_wrapped_diagnostics(&result.stderr, &prepared.rust_extern_contexts)
+                {
                     return Err(CliError::failure(format!(
                         "Library build failed.\n\n{}\nRaw cargo/rustc output:\n{}",
                         wrapped.trim_end(),
@@ -997,20 +1212,79 @@ pub fn build_library(
                 }
                 return Err(CliError::failure(format!("Library build failed:\n{}", result.stderr)));
             }
+            cargo_build_ms
         }
         Err(err) => {
             return Err(CliError::failure(format!("Error running cargo: {err}")));
         }
-    }
+    };
 
-    library_manifest
-        .write_to_path(&manifest_path)
-        .map_err(|err| CliError::failure(format!("failed to write {}: {err}", manifest_path.display())))?;
+    prepared
+        .library_manifest
+        .write_to_path(&prepared.manifest_path)
+        .map_err(|err| CliError::failure(format!("failed to write {}: {err}", prepared.manifest_path.display())))?;
 
-    println!("✓ Library build successful!");
-    println!("Generated Rust crate in: {}", out_dir.display());
-    println!("Generated manifest: {}", manifest_path.display());
+    print_build_progress(&report_options, "✓ Library build successful!");
+    print_build_progress(
+        &report_options,
+        format!("Generated Rust crate in: {}", prepared.out_dir.display()),
+    );
+    print_build_progress(
+        &report_options,
+        format!("Generated manifest: {}", prepared.manifest_path.display()),
+    );
 
+    prepared
+        .report
+        .artifacts
+        .push(artifact_report("incan_library_manifest", &prepared.manifest_path));
+    prepared.report.artifacts.push(artifact_report(
+        "generated_cargo_manifest",
+        &prepared.generator.cargo_manifest_path(),
+    ));
+    let report = prepared.report.finish(BTreeMap::from([
+        ("cargo_build".to_string(), cargo_build_ms),
+        ("total".to_string(), elapsed_ms(total_start)),
+    ]));
+    emit_build_report(&report, &report_options)?;
+
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Generate and inspect the current Rust backend output without running Cargo.
+pub fn inspect_rust(path: &Path, lib_mode: bool, format: RustInspectionFormat) -> CliResult<ExitCode> {
+    let path_arg = path.to_string_lossy();
+    let report = if lib_mode {
+        let prepared = prepare_library_project(
+            Some(path_arg.as_ref()),
+            CargoPolicy::default(),
+            Vec::new(),
+            false,
+            false,
+        )?;
+        rust_inspection_report(
+            BuildReportMode::Library,
+            prepared.report.generated,
+            prepared.report.source_files,
+            prepared.report.notes,
+        )?
+    } else {
+        let prepared = prepare_project(
+            path_arg.as_ref(),
+            None,
+            &CargoPolicy::default(),
+            Vec::new(),
+            false,
+            false,
+        )?;
+        rust_inspection_report(
+            BuildReportMode::Executable,
+            prepared.report.generated,
+            prepared.report.source_files,
+            prepared.report.notes,
+        )?
+    };
+    emit_rust_inspection_report(&report, format)?;
     Ok(ExitCode::SUCCESS)
 }
 
@@ -1481,6 +1755,7 @@ mod tests {
             Vec::new(),
             false,
             false,
+            BuildReportOptions::default(),
         )?;
         assert_eq!(exit, ExitCode::SUCCESS);
 
@@ -1552,6 +1827,7 @@ mod tests {
             Vec::new(),
             false,
             false,
+            BuildReportOptions::default(),
         )?;
         assert_eq!(exit, ExitCode::SUCCESS);
 

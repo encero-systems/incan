@@ -8,6 +8,7 @@
 //! - `explain <code>` - Explain stable diagnostic codes
 //! - `build <file>` - Compile to Rust and build executable
 //! - `build --lib` - Validate library-mode preconditions
+//! - `inspect rust <file|project>` - Inspect current generated Rust backend output
 //! - `run [file]` - Compile and run the program, defaulting to `[project.scripts].main`
 //! - `init [path]` - Create a starter project scaffold in an existing directory
 //! - `new [name]` - Create a new Incan project directory, prompting when no name is provided
@@ -46,6 +47,7 @@ use std::process;
 
 use crate::manifest::ProjectManifest;
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
+use commands::build_report::{BuildReportFormat, BuildReportOptions, RustInspectionFormat};
 use commands::common::{CargoPolicy, CargoPolicyCliFlags};
 use commands::diagnostics::DiagnosticOutputFormat;
 use commands::lifecycle::{EnvOutputFormat, VersionBumpArg};
@@ -213,6 +215,12 @@ pub enum Command {
         /// Enable all Cargo features
         #[arg(long = "cargo-all-features")]
         cargo_all_features: bool,
+        /// Emit a machine-readable build report
+        #[arg(long = "report", value_enum)]
+        report: Option<BuildReportFormat>,
+        /// Write the build report to this path instead of stdout
+        #[arg(long = "report-output", value_name = "PATH", requires = "report")]
+        report_output: Option<PathBuf>,
         /// Extra arguments forwarded to Cargo after `--`
         #[arg(last = true)]
         cargo_passthrough: Vec<String>,
@@ -326,6 +334,12 @@ pub enum Command {
     Tools {
         #[command(subcommand)]
         command: ToolsCommand,
+    },
+
+    /// Inspect compiler artifacts and semantic projections
+    Inspect {
+        #[command(subcommand)]
+        command: InspectCommand,
     },
 
     /// Run tests (pytest-style)
@@ -496,6 +510,22 @@ pub enum Command {
 }
 
 #[derive(Subcommand, Debug)]
+pub enum InspectCommand {
+    /// Generate and inspect current Rust backend output
+    Rust {
+        /// Source file or project root to inspect
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
+        /// Inspect the library build surface rooted at `src/lib.incn`
+        #[arg(long = "lib")]
+        lib_mode: bool,
+        /// Output format
+        #[arg(long = "format", value_enum, default_value = "text")]
+        format: RustInspectionFormat,
+    },
+}
+
+#[derive(Subcommand, Debug)]
 pub enum EnvCommand {
     /// List configured environments
     List {
@@ -650,9 +680,15 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             cargo_features,
             cargo_no_default_features,
             cargo_all_features,
+            report,
+            report_output,
             cargo_passthrough,
         }) => {
             let out = output_dir.map(|p| p.to_string_lossy().to_string());
+            let report_options = BuildReportOptions {
+                format: report,
+                output_path: report_output,
+            };
             let cargo_policy = CargoPolicy::from_cli_and_env(
                 CargoPolicyCliFlags {
                     offline,
@@ -674,6 +710,7 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                     cargo_features,
                     cargo_no_default_features,
                     cargo_all_features,
+                    report_options,
                 )
             } else {
                 let file = file.ok_or_else(|| CliError::failure("Error: build requires FILE unless `--lib` is set"))?;
@@ -684,11 +721,15 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                     cargo_features,
                     cargo_no_default_features,
                     cargo_all_features,
+                    report_options,
                 )
             }
         }
         Some(Command::Check { path, format }) => commands::check_path(&path, format),
         Some(Command::Explain { code, format }) => commands::explain_diagnostic(&code, format),
+        Some(Command::Inspect { command }) => match command {
+            InspectCommand::Rust { path, lib_mode, format } => commands::inspect_rust(&path, lib_mode, format),
+        },
         Some(Command::Run {
             file,
             command,

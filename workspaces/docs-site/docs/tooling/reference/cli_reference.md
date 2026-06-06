@@ -19,6 +19,7 @@ Commands:
 - `check` - Type-check a file or project entrypoint, with optional stable JSON diagnostics
 - `explain` - Explain a stable diagnostic code
 - `build` - Compile to Rust and build an executable
+- `inspect` - Inspect compiler artifacts such as generated Rust output
 - `run` - Compile and run a program
 - `fmt` - Format Incan source files
 - `test` - Run tests (pytest-style)
@@ -140,10 +141,14 @@ Dependency flags:
 - `--cargo-features <FEATURES>`: Enable specific Cargo features (comma-separated).
 - `--cargo-no-default-features`: Disable default Cargo features.
 - `--cargo-all-features`: Enable all Cargo features.
+- `--report json`: Emit a versioned machine-readable build report.
+- `--report-output <PATH>`: Write the build report to a file instead of stdout.
 
 Without `--locked` or `--frozen`, `incan build` creates `incan.lock` when it is missing. If an existing lockfile is stale, the command warns and reuses the embedded `Cargo.lock` payload without rewriting `incan.lock`; run `incan lock` to refresh the committed lockfile intentionally.
 
 For `incan build --lib`, dependency preheat uses the generated lock workspace and the same release-profile Cargo target directory as the real generated library build. If the dependency graph is unchanged, the preheat stamp is reused; if it has to run, the command prints the target/profile domain before invoking Cargo and streams Cargo's progress while the preheat compiles.
+
+Build reports use `schema_version: 1` and describe the successful build rather than restating terminal prose. They include the compiler version, build mode, profile, project identity, entrypoint or library root, source-file breadcrumbs, generated Rust project paths, emitted artifacts, Rust and Incan dependency summaries, Cargo policy flags, interop summary, coarse timings, and notes. When `--report json` writes to stdout, human progress moves to stderr so tooling can parse stdout directly; when `--report-output <PATH>` is supplied, the report is written to that file and ordinary progress remains human-facing.
 
 Environment defaults:
 
@@ -163,6 +168,33 @@ incan build src/main.incn --frozen
 incan build src/main.incn --cargo-features fancy_logging
 incan build src/main.incn -- --timings
 incan build --lib
+incan build src/main.incn --report json
+incan build --lib --report json --report-output target/build-report.json
+```
+
+### `incan inspect rust`
+
+Usage:
+
+```text
+incan inspect rust [OPTIONS] <PATH>
+```
+
+Generates the same Rust project that the current backend would build, then reports the emitted Rust files without invoking Cargo. Use this when you need to inspect backend output, debug generated paths, or hand artifact locations to tooling without treating `--emit-rust` as a structured interface.
+
+Options:
+
+- `--lib`: Inspect the library build surface rooted at `src/lib.incn`; `PATH` may be the project root or a source path inside the project.
+- `--format text|json`: Output a human file list or a versioned JSON report (default: `text`).
+
+JSON output uses `schema_version: 1` and includes the compiler version, mode, source-file breadcrumbs, generated project paths, emitted Rust file paths, crate-root markers, file sizes, and notes. Generated Rust is inspectable current backend output, not a stable Rust ABI contract; tools may use it for debugging and reporting, but public compatibility should be based on Incan source, manifests, checked API metadata, and documented CLI report schemas.
+
+Examples:
+
+```bash
+incan inspect rust src/main.incn
+incan inspect rust src/main.incn --format json
+incan inspect rust . --lib --format json
 ```
 
 ### `incan run`

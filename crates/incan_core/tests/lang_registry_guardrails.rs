@@ -276,7 +276,7 @@ fn traits_spellings_unique_and_resolvable() {
 
 #[test]
 fn feature_inventory_has_required_metadata() {
-    assert_eq!(features::FEATURES.len(), 47, "feature inventory length changed");
+    assert_eq!(features::FEATURES.len(), 48, "feature inventory length changed");
 
     let mut seen = HashMap::new();
     for feature in features::FEATURES {
