@@ -15,7 +15,7 @@ use std::time::Instant;
 
 use incan_core::interop::{
     RustFieldInfo, RustItemKind, RustItemMetadata, RustTypeInfo, RustTypeMetadataCompleteness, RustTypeShape,
-    RustVariantInfo, RustVisibility, split_top_level_rust_args,
+    RustTypeShapePathFallback, RustVariantInfo, RustVisibility, parse_rust_type_shape_text, split_top_level_rust_args,
 };
 use incan_core::lang::types::collections::{self, CollectionTypeId};
 use ra_ap_syntax::{
@@ -960,67 +960,7 @@ fn generated_field_info(
 
 /// Convert a normalized generated Rust type display into the structural shape used by boundary coercion planning.
 fn generated_type_shape(text: &str) -> RustTypeShape {
-    let text = text.trim().replace(' ', "");
-    match text.as_str() {
-        "bool" => return RustTypeShape::Bool,
-        "f32" | "f64" => return RustTypeShape::Float,
-        "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64" | "u128" | "usize" => {
-            return RustTypeShape::Int;
-        }
-        "str" | "String" | "std::string::String" | "alloc::string::String" => return RustTypeShape::Str,
-        "()" => return RustTypeShape::Unit,
-        "[u8]" => return RustTypeShape::Bytes,
-        _ => {}
-    }
-
-    if let Some(inner) = text.strip_prefix('&') {
-        let inner = inner.strip_prefix("mut").unwrap_or(inner).trim();
-        return RustTypeShape::Ref(Box::new(generated_type_shape(inner)));
-    }
-    if text.starts_with('(') && text.ends_with(')') {
-        let inner = &text[1..text.len() - 1];
-        if inner.is_empty() {
-            return RustTypeShape::Unit;
-        }
-        return RustTypeShape::Tuple(
-            split_top_level_rust_args(inner)
-                .into_iter()
-                .map(generated_type_shape)
-                .collect(),
-        );
-    }
-    if let Some(start) = text.find('<')
-        && text.ends_with('>')
-    {
-        let base = text[..start].to_string();
-        let inner = &text[start + 1..text.len() - 1];
-        let args: Vec<RustTypeShape> = split_top_level_rust_args(inner)
-            .into_iter()
-            .map(generated_type_shape)
-            .collect();
-        match base.as_str() {
-            "Option" | "std::option::Option" | "core::option::Option" => {
-                return RustTypeShape::Option(Box::new(args.into_iter().next().unwrap_or(RustTypeShape::Unknown)));
-            }
-            "Result" | "std::result::Result" | "core::result::Result" => {
-                let mut it = args.into_iter();
-                return RustTypeShape::Result(
-                    Box::new(it.next().unwrap_or(RustTypeShape::Unknown)),
-                    Box::new(it.next().unwrap_or(RustTypeShape::Unknown)),
-                );
-            }
-            "Vec" | "std::vec::Vec" | "alloc::vec::Vec" if text.ends_with("<u8>") => return RustTypeShape::Bytes,
-            _ => {}
-        }
-        return RustTypeShape::RustPath { path: base, args };
-    }
-    if text.chars().next().is_some_and(|ch| ch.is_ascii_uppercase()) && !text.contains("::") {
-        return RustTypeShape::TypeParam(text);
-    }
-    RustTypeShape::RustPath {
-        path: text,
-        args: Vec::new(),
-    }
+    parse_rust_type_shape_text(text, |_| None, RustTypeShapePathFallback::RustPath)
 }
 
 /// Build metadata for a public generated Rust struct discovered in build-script output.

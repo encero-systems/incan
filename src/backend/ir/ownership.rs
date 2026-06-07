@@ -7,6 +7,7 @@
 //! Keep emitter modules calling this planner instead of open-coding ad hoc `.clone()`, `&`, `&mut`, `.to_string()`, or
 //! `.into()` decisions.
 
+use incan_core::interop::{RustTypeShape, RustTypeShapePathFallback, parse_rust_type_shape_text};
 use proc_macro2::TokenStream;
 use quote::quote;
 
@@ -380,9 +381,9 @@ fn external_buf_arg_needs_bytes_as_slice(expr: &IrExpr, target_ty: Option<&IrTyp
 fn is_rust_buf_like_target(ty: &IrType) -> bool {
     match ty {
         IrType::Generic(name) | IrType::Struct(name) | IrType::Trait(name) | IrType::RustDisplay(name) => {
-            rust_type_leaf(name) == "Buf" || name == "implBuf"
+            rust_type_shape_is_buf(&rust_display_type_shape(name))
         }
-        IrType::ImplTrait(bound) => rust_type_leaf(&bound.trait_path) == "Buf",
+        IrType::ImplTrait(bound) => rust_type_shape_is_buf(&rust_display_type_shape(&bound.trait_path)),
         _ => false,
     }
 }
@@ -391,7 +392,9 @@ fn is_rust_buf_like_target(ty: &IrType) -> bool {
 pub fn is_byte_buffer_type(ty: &IrType) -> bool {
     match ty {
         IrType::Bytes | IrType::FrozenBytes => true,
-        IrType::Struct(name) | IrType::RustDisplay(name) => rust_vec_u8_shape(name),
+        IrType::Struct(name) | IrType::RustDisplay(name) => {
+            rust_type_shape_is_byte_buffer(&rust_display_type_shape(name))
+        }
         IrType::NamedGeneric(name, args)
             if matches!(name.as_str(), "Vec" | "std::vec::Vec" | "alloc::vec::Vec")
                 && matches!(
@@ -405,18 +408,42 @@ pub fn is_byte_buffer_type(ty: &IrType) -> bool {
     }
 }
 
-/// Return the final path segment of a Rust type display or path.
-fn rust_type_leaf(name: &str) -> &str {
-    name.rsplit("::").next().unwrap_or(name)
+/// Return whether an IR type is represented as an owned mutable Rust string buffer at Rust boundaries.
+pub fn is_string_buffer_type(ty: &IrType) -> bool {
+    matches!(ty, IrType::String)
+        || matches!(
+            ty,
+            IrType::Struct(name) | IrType::RustDisplay(name)
+                if matches!(name.as_str(), "String" | "std::string::String" | "alloc::string::String")
+        )
 }
 
-/// Return whether a Rust type display denotes a `Vec<u8>` byte buffer.
-fn rust_vec_u8_shape(name: &str) -> bool {
-    let compact: String = name.chars().filter(|ch| !ch.is_whitespace()).collect();
-    matches!(
-        compact.as_str(),
-        "Vec<u8>" | "std::vec::Vec<u8>" | "alloc::vec::Vec<u8>"
-    )
+/// Parse a Rust display type through the same shared shape parser rust-inspect uses for textual fallbacks.
+fn rust_display_type_shape(name: &str) -> RustTypeShape {
+    parse_rust_type_shape_text(name, |_| None, RustTypeShapePathFallback::RustPath)
+}
+
+/// Return whether a parsed Rust display type is the `Buf` trait shape used by inspected decode APIs.
+fn rust_type_shape_is_buf(shape: &RustTypeShape) -> bool {
+    let Some(path) = rust_type_shape_path(shape) else {
+        return false;
+    };
+    let path = path.strip_prefix("impl ").unwrap_or(path);
+    let leaf = path.rsplit("::").next().unwrap_or(path);
+    leaf == "Buf" || leaf == "implBuf"
+}
+
+/// Return whether a parsed Rust display type denotes an owned byte-buffer value.
+fn rust_type_shape_is_byte_buffer(shape: &RustTypeShape) -> bool {
+    matches!(shape, RustTypeShape::Bytes)
+}
+
+/// Return the display path from a path-like Rust type shape.
+fn rust_type_shape_path(shape: &RustTypeShape) -> Option<&str> {
+    match shape {
+        RustTypeShape::RustPath { path, .. } | RustTypeShape::TypeParam(path) => Some(path.as_str()),
+        _ => None,
+    }
 }
 
 /// Return whether the source already called `.as_slice()` for this argument.
@@ -990,6 +1017,44 @@ mod tests {
             },
         );
         assert_eq!(render(plan.apply_full(quote! { encoded })), "(encoded).as_slice()");
+    }
+
+    #[test]
+    fn rust_display_byte_buffer_detection_uses_shared_type_shape_parser() {
+        assert!(is_byte_buffer_type(&IrType::RustDisplay("Vec < u8 >".to_string())));
+        assert!(is_byte_buffer_type(&IrType::RustDisplay(
+            "std::vec::Vec<u8>".to_string()
+        )));
+        assert!(is_byte_buffer_type(&IrType::RustDisplay(
+            "alloc::vec::Vec<u8>".to_string()
+        )));
+        assert!(!is_byte_buffer_type(&IrType::RustDisplay(
+            "std::io::Cursor<Vec<u8>>".to_string()
+        )));
+    }
+
+    #[test]
+    fn rust_display_buf_detection_uses_shared_type_shape_parser() {
+        assert!(is_rust_buf_like_target(&IrType::RustDisplay("prost::Buf".to_string())));
+        assert!(is_rust_buf_like_target(&IrType::RustDisplay(
+            "impl prost::Buf".to_string()
+        )));
+        assert!(!is_rust_buf_like_target(&IrType::RustDisplay(
+            "demo::Buffer".to_string()
+        )));
+    }
+
+    #[test]
+    fn rust_string_buffer_detection_is_owned_string_only() {
+        assert!(is_string_buffer_type(&IrType::String));
+        assert!(is_string_buffer_type(&IrType::RustDisplay(
+            "std::string::String".to_string()
+        )));
+        assert!(is_string_buffer_type(&IrType::Struct(
+            "alloc::string::String".to_string()
+        )));
+        assert!(!is_string_buffer_type(&IrType::StrRef));
+        assert!(!is_string_buffer_type(&IrType::FrozenStr));
     }
 
     #[test]

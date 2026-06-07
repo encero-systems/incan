@@ -2,6 +2,7 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
 use crate::backend::ir::expr::{IrExprKind, Literal as IrLiteral, TypedExpr};
+use crate::backend::ir::ownership::{is_byte_buffer_type, is_string_buffer_type};
 use crate::backend::ir::types::IrType;
 
 /// Emit a typechecker-selected Rust borrow coercion without re-planning ownership at the call site.
@@ -61,26 +62,12 @@ fn expr_already_materializes_owned_bytes(expr: &TypedExpr) -> bool {
 
 /// Return whether a Rust boundary target is an owned Rust string value.
 fn is_owned_rust_string_target(ty: &IrType) -> bool {
-    matches!(ty, IrType::String)
-        || matches!(
-            ty,
-            IrType::Struct(name) if matches!(
-                name.as_str(),
-                "String" | "std::string::String" | "alloc::string::String"
-            )
-        )
+    is_string_buffer_type(ty)
 }
 
 /// Return whether a Rust boundary target is an owned Rust byte vector.
 fn is_owned_rust_bytes_target(ty: &IrType) -> bool {
-    matches!(ty, IrType::Bytes)
-        || matches!(
-            ty,
-            IrType::Struct(name) if matches!(
-                name.as_str(),
-                "Vec<u8>" | "std::vec::Vec<u8>" | "alloc::vec::Vec<u8>"
-            )
-        )
+    is_byte_buffer_type(ty)
 }
 
 /// Emit a projection from a referenced source item into a Rust-boundary target item.

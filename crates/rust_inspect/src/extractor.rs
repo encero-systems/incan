@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 use incan_core::interop::{
     RustFieldInfo, RustFunctionSig, RustImplementedTrait, RustItemKind, RustItemMetadata, RustMethodSig,
     RustModuleChild, RustModuleChildKind, RustModuleInfo, RustParam, RustTraitAssoc, RustTraitInfo, RustTypeInfo,
-    RustTypeShape, RustVariantInfo, RustVisibility, render_rust_type_shape, split_top_level_rust_args,
-    strip_rust_borrow_lifetimes,
+    RustTypeShape, RustTypeShapePathFallback, RustVariantInfo, RustVisibility, parse_rust_type_shape_text,
+    render_rust_type_shape, strip_rust_borrow_lifetimes,
 };
 use ra_ap_hir::{
     Adt, AssocItem, Crate, DisplayTarget, Enum, FieldSource, Function, HasSource, HasVisibility, HirDisplay, Impl,
@@ -235,83 +235,11 @@ fn resolve_source_path(text: &str, crate_name: &str, module: Module, db: &RootDa
 
 /// Classify the source-level shape represented by a Rust display type.
 fn source_type_shape(text: &str, crate_name: &str, module: Module, db: &RootDatabase) -> RustTypeShape {
-    let text = normalize_source_type_text(text);
-    if text.is_empty() {
-        return RustTypeShape::Unknown;
-    }
-    match text.as_str() {
-        "bool" => return RustTypeShape::Bool,
-        "f32" | "f64" => return RustTypeShape::Float,
-        "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64" | "u128" | "usize" => {
-            return RustTypeShape::Int;
-        }
-        "str" | "String" | "std::string::String" | "alloc::string::String" => return RustTypeShape::Str,
-        "()" => return RustTypeShape::Unit,
-        _ => {}
-    }
-
-    if let Some(inner) = text.strip_prefix('&') {
-        let inner = inner.strip_prefix("mut").unwrap_or(inner).trim();
-        return RustTypeShape::Ref(Box::new(source_type_shape(inner, crate_name, module, db)));
-    }
-
-    if text == "[u8]" {
-        return RustTypeShape::Bytes;
-    }
-
-    if text.starts_with('(') && text.ends_with(')') {
-        let inner = &text[1..text.len() - 1];
-        if inner.is_empty() {
-            return RustTypeShape::Unit;
-        }
-        return RustTypeShape::Tuple(
-            split_top_level_rust_args(inner)
-                .into_iter()
-                .map(|arg| source_type_shape(arg, crate_name, module, db))
-                .collect(),
-        );
-    }
-
-    if let Some(start) = text.find('<')
-        && text.ends_with('>')
-    {
-        let base =
-            resolve_source_path(&text[..start], crate_name, module, db).unwrap_or_else(|| text[..start].to_string());
-        let inner = &text[start + 1..text.len() - 1];
-        let args: Vec<RustTypeShape> = split_top_level_rust_args(inner)
-            .into_iter()
-            .map(|arg| source_type_shape(arg, crate_name, module, db))
-            .collect();
-        match base.as_str() {
-            "Option" | "std::option::Option" | "core::option::Option" => {
-                return RustTypeShape::Option(Box::new(args.into_iter().next().unwrap_or(RustTypeShape::Unknown)));
-            }
-            "Result" | "std::result::Result" | "core::result::Result" => {
-                let mut it = args.into_iter();
-                return RustTypeShape::Result(
-                    Box::new(it.next().unwrap_or(RustTypeShape::Unknown)),
-                    Box::new(it.next().unwrap_or(RustTypeShape::Unknown)),
-                );
-            }
-            "Vec" | "std::vec::Vec" | "alloc::vec::Vec"
-                if matches!(args.first(), Some(RustTypeShape::Int)) && text.ends_with("<u8>") =>
-            {
-                return RustTypeShape::Bytes;
-            }
-            _ => {}
-        }
-        return RustTypeShape::RustPath { path: base, args };
-    }
-
-    if let Some(path) = resolve_source_path(text.as_str(), crate_name, module, db) {
-        return RustTypeShape::RustPath { path, args: Vec::new() };
-    }
-
-    if display_looks_like_type_param(text.as_str()) {
-        return RustTypeShape::TypeParam(text);
-    }
-
-    RustTypeShape::Unknown
+    parse_rust_type_shape_text(
+        text,
+        |path| resolve_source_path(path, crate_name, module, db),
+        RustTypeShapePathFallback::Unknown,
+    )
 }
 
 fn source_field_type_shape(field: &ra_ap_hir::Field, db: &RootDatabase, crate_name: &str) -> Option<RustTypeShape> {

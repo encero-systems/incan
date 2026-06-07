@@ -34,7 +34,7 @@ Examples:
 """
 
 import std.async
-from rust::incan_stdlib::async::task import JoinHandle, TaskJoinError, RuntimeFuture, RuntimeFnOnce
+from rust::incan_stdlib::async::task import JoinHandle, RuntimeFuture, RuntimeFnOnce
 from rust::incan_stdlib::async::task import spawn as rust_spawn
 from rust::incan_stdlib::async::task import spawn_blocking as rust_spawn_blocking
 from rust::incan_stdlib::async::task import yield_now as rust_yield_now

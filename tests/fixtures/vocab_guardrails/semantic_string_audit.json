@@ -14,15 +14,15 @@
     },
     {
       "path": "crates/incan_core/src/interop/metadata.rs",
-      "category": "registry-backed Rust collection metadata policy",
-      "expected_count": 14,
-      "expected_fingerprint": "0x5da489b106a16ae2"
+      "category": "registry-backed Rust collection metadata policy and shared Rust type-shape parsing",
+      "expected_count": 23,
+      "expected_fingerprint": "0xa552cf64d66c9211"
     },
     {
       "path": "crates/rust_inspect/src/cache.rs",
       "category": "rust-inspect cache migration and generated Rust syntax metadata compatibility",
-      "expected_count": 20,
-      "expected_fingerprint": "0xaee7fb876de04bcc"
+      "expected_count": 11,
+      "expected_fingerprint": "0x6b6a57b5d48d379f"
     },
     {
       "path": "crates/rust_inspect/src/cache_tests.rs",
@@ -39,8 +39,8 @@
     {
       "path": "crates/rust_inspect/src/extractor.rs",
       "category": "rust-inspect display-shape normalization",
-      "expected_count": 18,
-      "expected_fingerprint": "0xfdfffcbe8f5fc285"
+      "expected_count": 9,
+      "expected_fingerprint": "0xfe72d3181174ad90"
     },
     {
       "path": "crates/rust_inspect/src/lib.rs",
@@ -117,8 +117,8 @@
     {
       "path": "src/backend/ir/emit/expressions/methods.rs",
       "category": "quarantined metadata-free method compatibility",
-      "expected_count": 7,
-      "expected_fingerprint": "0xd980f50534954c82"
+      "expected_count": 6,
+      "expected_fingerprint": "0x8e7a10a90b5bbd3f"
     },
     {
       "path": "src/backend/ir/emit/expressions/methods/fast_paths.rs",
@@ -218,9 +218,9 @@
     },
     {
       "path": "src/backend/ir/ownership.rs",
-      "category": "central external Rust duckborrower byte-buffer planning",
+      "category": "central external Rust duckborrower buffer planning",
       "expected_count": 4,
-      "expected_fingerprint": "0xa001bd9bca8bb353"
+      "expected_fingerprint": "0xe78ae9c1c06afb76"
     },
     {
       "path": "src/backend/ir/reference_shape.rs",

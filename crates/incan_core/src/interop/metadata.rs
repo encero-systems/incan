@@ -303,6 +303,136 @@ pub enum RustTypeShape {
     Unknown,
 }
 
+/// Fallback for a parsed Rust type name after structured primitives, wrappers, and path resolution have failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RustTypeShapePathFallback {
+    /// Leave unresolved names as unknown. Use this when an extractor has an authoritative name resolver.
+    Unknown,
+    /// Preserve unresolved names as Rust paths. Use this for generated Rust surfaces that already canonicalized text.
+    RustPath,
+}
+
+/// Parse a Rust type display into the shared structural shape used by Rust interop consumers.
+///
+/// Callers own path resolution because HIR extraction can resolve source-relative names, while generated Rust fallback
+/// surfaces have already normalized module paths textually. Keeping the parser here prevents those two routes from
+/// reimplementing primitive, wrapper, tuple, reference, and byte-buffer classification independently.
+#[must_use]
+pub fn parse_rust_type_shape_text<F>(
+    text: &str,
+    mut resolve_path: F,
+    fallback: RustTypeShapePathFallback,
+) -> RustTypeShape
+where
+    F: FnMut(&str) -> Option<String>,
+{
+    parse_rust_type_shape_text_inner(text, &mut resolve_path, fallback)
+}
+
+/// Parse normalized Rust type-display text recursively while preserving the caller's path-resolution policy.
+fn parse_rust_type_shape_text_inner<F>(
+    text: &str,
+    resolve_path: &mut F,
+    fallback: RustTypeShapePathFallback,
+) -> RustTypeShape
+where
+    F: FnMut(&str) -> Option<String>,
+{
+    let text = strip_rust_borrow_lifetimes(text).trim().replace(' ', "");
+    if text.is_empty() {
+        return RustTypeShape::Unknown;
+    }
+    match text.as_str() {
+        "bool" => return RustTypeShape::Bool,
+        "f32" | "f64" => return RustTypeShape::Float,
+        "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64" | "u128" | "usize" => {
+            return RustTypeShape::Int;
+        }
+        "str" | "String" | "std::string::String" | "alloc::string::String" => return RustTypeShape::Str,
+        "()" => return RustTypeShape::Unit,
+        "[u8]" => return RustTypeShape::Bytes,
+        _ => {}
+    }
+
+    if let Some(inner) = text.strip_prefix('&') {
+        let inner = inner.strip_prefix("mut").unwrap_or(inner).trim();
+        return RustTypeShape::Ref(Box::new(parse_rust_type_shape_text_inner(
+            inner,
+            resolve_path,
+            fallback,
+        )));
+    }
+
+    if text.starts_with('(') && text.ends_with(')') {
+        let inner = &text[1..text.len() - 1];
+        if inner.is_empty() {
+            return RustTypeShape::Unit;
+        }
+        return RustTypeShape::Tuple(
+            split_top_level_rust_args(inner)
+                .into_iter()
+                .map(|arg| parse_rust_type_shape_text_inner(arg, resolve_path, fallback))
+                .collect(),
+        );
+    }
+
+    if let Some(start) = text.find('<')
+        && text.ends_with('>')
+    {
+        let raw_base = &text[..start];
+        let base = resolve_path(raw_base).unwrap_or_else(|| raw_base.to_string());
+        let inner = &text[start + 1..text.len() - 1];
+        let args: Vec<RustTypeShape> = split_top_level_rust_args(inner)
+            .into_iter()
+            .map(|arg| parse_rust_type_shape_text_inner(arg, resolve_path, fallback))
+            .collect();
+        match base.as_str() {
+            "Option" | "std::option::Option" | "core::option::Option" => {
+                return RustTypeShape::Option(Box::new(args.into_iter().next().unwrap_or(RustTypeShape::Unknown)));
+            }
+            "Result" | "std::result::Result" | "core::result::Result" => {
+                let mut it = args.into_iter();
+                return RustTypeShape::Result(
+                    Box::new(it.next().unwrap_or(RustTypeShape::Unknown)),
+                    Box::new(it.next().unwrap_or(RustTypeShape::Unknown)),
+                );
+            }
+            "Vec" | "std::vec::Vec" | "alloc::vec::Vec"
+                if matches!(args.first(), Some(RustTypeShape::Int)) && text.ends_with("<u8>") =>
+            {
+                return RustTypeShape::Bytes;
+            }
+            _ => {}
+        }
+        return RustTypeShape::RustPath { path: base, args };
+    }
+
+    if let Some(path) = resolve_path(text.as_str()) {
+        return RustTypeShape::RustPath { path, args: Vec::new() };
+    }
+
+    if rust_type_shape_text_looks_like_type_param(text.as_str()) {
+        return RustTypeShape::TypeParam(text);
+    }
+
+    match fallback {
+        RustTypeShapePathFallback::Unknown => RustTypeShape::Unknown,
+        RustTypeShapePathFallback::RustPath => RustTypeShape::RustPath {
+            path: text,
+            args: Vec::new(),
+        },
+    }
+}
+
+/// Return whether unresolved type text has the shape of a Rust generic type parameter.
+fn rust_type_shape_text_looks_like_type_param(text: &str) -> bool {
+    !text.is_empty()
+        && !text.contains("::")
+        && !text.contains(['<', '>', '(', ')', '[', ']', '&', ' '])
+        && text.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && text.chars().next().is_some_and(|ch| ch.is_ascii_uppercase())
+}
+
 /// Render `path` with generic arguments as `path<A, B, ...>` for stable Rust-like display.
 #[must_use]
 pub fn render_rust_type_shape_path(path: &str, args: &[RustTypeShape]) -> String {
@@ -577,5 +707,44 @@ mod tests {
         assert!(!RustCollectionFamily::HashMap.preserves_lookup_arg_shape("insert"));
         assert!(RustCollectionFamily::HashSet.preserves_lookup_arg_shape("contains"));
         assert!(!RustCollectionFamily::HashSet.preserves_lookup_arg_shape("insert"));
+    }
+
+    #[test]
+    fn parse_rust_type_shape_text_classifies_shared_structural_shapes() {
+        let shape = parse_rust_type_shape_text(
+            "&'static Result<Vec<u8>, demo::Error>",
+            |path| (path == "demo::Error").then(|| "demo::Error".to_string()),
+            RustTypeShapePathFallback::Unknown,
+        );
+
+        assert_eq!(
+            shape,
+            RustTypeShape::Ref(Box::new(RustTypeShape::Result(
+                Box::new(RustTypeShape::Bytes),
+                Box::new(RustTypeShape::RustPath {
+                    path: "demo::Error".to_string(),
+                    args: Vec::new(),
+                }),
+            )))
+        );
+    }
+
+    #[test]
+    fn parse_rust_type_shape_text_keeps_source_and_generated_fallbacks_distinct() {
+        assert_eq!(
+            parse_rust_type_shape_text("missing_type", |_| None, RustTypeShapePathFallback::Unknown),
+            RustTypeShape::Unknown,
+        );
+        assert_eq!(
+            parse_rust_type_shape_text("missing_type", |_| None, RustTypeShapePathFallback::RustPath),
+            RustTypeShape::RustPath {
+                path: "missing_type".to_string(),
+                args: Vec::new(),
+            },
+        );
+        assert_eq!(
+            parse_rust_type_shape_text("T", |_| None, RustTypeShapePathFallback::RustPath),
+            RustTypeShape::TypeParam("T".to_string()),
+        );
     }
 }

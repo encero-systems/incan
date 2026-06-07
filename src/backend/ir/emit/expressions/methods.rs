@@ -14,7 +14,8 @@ use super::super::super::expr::{
 };
 use super::super::super::ownership::{
     ArgumentPassingPlan, AssociatedFunctionArgumentContext, RegularMethodArgumentContext, ValueUseSite,
-    associated_function_argument_use_site, is_byte_buffer_type, regular_method_argument_use_site,
+    associated_function_argument_use_site, is_byte_buffer_type, is_string_buffer_type,
+    regular_method_argument_use_site,
 };
 use super::super::super::reference_shape::{expr_has_rust_reference_shape, type_has_rust_reference_shape};
 use super::super::super::types::IrType;
@@ -499,7 +500,7 @@ impl<'a> IrEmitter<'a> {
     /// Return whether an argument type matches without relying on metadata.
     fn metadata_free_arg_matches(arg_ty: &IrType, class: MetadataFreeArgClass) -> bool {
         match class {
-            MetadataFreeArgClass::StringBuffer => Self::is_string_buffer_type(arg_ty),
+            MetadataFreeArgClass::StringBuffer => is_string_buffer_type(arg_ty),
             MetadataFreeArgClass::ByteBuffer => is_byte_buffer_type(arg_ty),
             MetadataFreeArgClass::Any => true,
         }
@@ -546,16 +547,6 @@ impl<'a> IrEmitter<'a> {
                     name == *expected_name || short_name == expected_name.rsplit("::").next().unwrap_or(expected_name)
                 })
             })
-    }
-
-    /// Return whether an IR type can stand in for a mutable Rust string buffer.
-    fn is_string_buffer_type(ty: &IrType) -> bool {
-        matches!(ty, IrType::String)
-            || matches!(
-                ty,
-                IrType::Struct(name)
-                    if matches!(name.as_str(), "String" | "std::string::String" | "alloc::string::String")
-            )
     }
 
     /// Return whether a std.fs method takes `Path | str` as its first user argument.
