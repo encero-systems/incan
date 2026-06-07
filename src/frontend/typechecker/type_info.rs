@@ -121,6 +121,11 @@ pub struct ExpressionArtifacts {
     /// Lowering consumes these decisions when an expression is used at an approved implicit-coercion site, such as a
     /// function argument, typed initializer, or model/class field initializer.
     pub validated_newtype_coercions: HashMap<(usize, usize), ValidatedNewtypeCoercionInfo>,
+    /// Source-level codegraph targets proven during expression checking, keyed by call or reference expression span.
+    ///
+    /// The codegraph exporter consumes this instead of re-resolving names from syntax. Absence means the target is
+    /// unsupported, ambiguous, degraded, or outside the current conservative source target set.
+    pub source_targets: HashMap<(usize, usize), SourceTargetInfo>,
 }
 
 /// Const evaluation facts needed by runtime and emission boundaries.
@@ -441,6 +446,17 @@ pub enum IdentKind {
     Trait,
 }
 
+/// Compiler-proven source declaration target for codegraph call/reference records.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceTargetInfo {
+    /// Canonical source module path segments that own the target declaration.
+    pub module_path: Vec<String>,
+    /// Source declaration name in the owning module.
+    pub name: String,
+    /// Source declaration kind, matching the codegraph declaration `kind` spelling.
+    pub kind: String,
+}
+
 /// Coercion category selected by the typechecker for a Rust-boundary call argument.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RustArgCoercionKind {
@@ -592,6 +608,11 @@ impl TypeCheckInfo {
     /// Return how the identifier expression at `span` resolved in the symbol table.
     pub fn ident_kind(&self, span: Span) -> Option<IdentKind> {
         self.expressions.ident_kinds.get(&(span.start, span.end)).copied()
+    }
+
+    /// Return a compiler-proven source target for the expression at `span`, if one was recorded.
+    pub fn source_target(&self, span: Span) -> Option<&SourceTargetInfo> {
+        self.expressions.source_targets.get(&(span.start, span.end))
     }
 
     /// Return whether the identifier at `span` resolved to the ambient `std.logging` logger binding.

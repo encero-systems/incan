@@ -48,6 +48,8 @@ pub enum CodegraphProvenance {
     Source,
     /// Fact came from parsed syntax.
     Syntax,
+    /// Fact came from checked compiler artifacts.
+    Checked,
     /// Fact came from checked compiler diagnostics.
     Diagnostic,
     /// Fact came from manifest/tooling context.

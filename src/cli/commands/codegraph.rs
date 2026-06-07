@@ -27,12 +27,14 @@ use crate::frontend::ast::{
 };
 use crate::frontend::diagnostics::{self, StableDiagnostic};
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
+use crate::frontend::module::canonicalize_source_module_segments;
+use crate::frontend::typechecker::{SourceTargetInfo, TypeCheckInfo};
 use crate::manifest::ProjectManifest;
 use crate::version::INCAN_VERSION;
 
 use super::common::{
     CliDiagnosticFailure, CompilationSession, collect_modules_detailed, read_source, resolve_project_root,
-    typecheck_modules_with_import_graph_detailed,
+    typecheck_modules_with_import_graph_info,
 };
 
 /// Output format for `incan inspect codegraph`.
@@ -62,32 +64,46 @@ fn collect_codegraph_records(path: &Path, allow_errors: bool) -> CliResult<Vec<C
     let mut builder = CodegraphBuilder::new(path, package, allow_errors);
 
     if path.is_dir() {
-        let mut sessions = BTreeMap::new();
         let files = discover_incan_files(path)?;
-        for file in &files {
-            let project_root = resolve_project_root(file);
-            if !sessions.contains_key(&project_root) {
-                sessions.insert(project_root.clone(), CompilationSession::discover(file)?);
-            }
-            let Some(session) = sessions.get(&project_root) else {
-                return Err(CliError::failure(format!(
-                    "failed to prepare codegraph compilation session for {}",
-                    project_root.display()
-                )));
-            };
-            builder.collect_tolerant_file_with_session(file, session)?;
+        let (modules, diagnostics, type_info_by_path) = directory_modules_diagnostics_and_info(&files)?;
+        if !diagnostics.is_empty() && !allow_errors {
+            return Err(CliError::failure(render_diagnostics(&diagnostics)));
         }
-        builder.collect_diagnostics(directory_typecheck_diagnostics(&files)?);
+        if diagnostics.is_empty() {
+            builder.set_type_info(type_info_by_path);
+            builder.seed_source_target_ids(&modules);
+            for module in &modules {
+                builder.collect_parsed_module(module, Vec::new());
+            }
+        } else {
+            let mut sessions = BTreeMap::new();
+            for file in &files {
+                let project_root = resolve_project_root(file);
+                if !sessions.contains_key(&project_root) {
+                    sessions.insert(project_root.clone(), CompilationSession::discover(file)?);
+                }
+                let Some(session) = sessions.get(&project_root) else {
+                    return Err(CliError::failure(format!(
+                        "failed to prepare codegraph compilation session for {}",
+                        project_root.display()
+                    )));
+                };
+                builder.collect_tolerant_file_with_session(file, session)?;
+            }
+        }
+        builder.collect_diagnostics(diagnostics);
         if !allow_errors && builder.has_diagnostics() {
             return Err(CliError::failure(render_diagnostics(builder.diagnostics())));
         }
     } else {
         match collect_modules_detailed(&path.to_string_lossy()) {
             Ok(modules) => {
-                let diagnostics = typecheck_diagnostics(path, &modules)?;
+                let (diagnostics, type_info_by_path) = typecheck_diagnostics_and_info(path, &modules)?;
                 if !diagnostics.is_empty() && !allow_errors {
                     return Err(CliError::failure(render_diagnostics(&diagnostics)));
                 }
+                builder.set_type_info(type_info_by_path);
+                builder.seed_source_target_ids(&modules);
                 for module in &modules {
                     builder.collect_parsed_module(module, diagnostics_for_file(&diagnostics, &module.file_path));
                 }
@@ -103,14 +119,31 @@ fn collect_codegraph_records(path: &Path, allow_errors: bool) -> CliResult<Vec<C
     Ok(builder.finish())
 }
 
-/// Run normal collection and typechecking for every discovered directory source root.
-fn directory_typecheck_diagnostics(files: &[PathBuf]) -> CliResult<Vec<StableDiagnostic>> {
+type DirectoryTypecheckArtifacts = (
+    Vec<ParsedModule>,
+    Vec<StableDiagnostic>,
+    BTreeMap<PathBuf, TypeCheckInfo>,
+);
+
+/// Collect and typecheck every discovered directory source root, keeping semantic artifacts only when the whole
+/// directory graph is clean.
+fn directory_modules_diagnostics_and_info(files: &[PathBuf]) -> CliResult<DirectoryTypecheckArtifacts> {
+    let file_set = files.iter().cloned().collect::<BTreeSet<_>>();
+    let mut modules_by_path = BTreeMap::new();
     let mut diagnostics = Vec::new();
     let mut contexts = BTreeMap::new();
+    let mut type_info_by_path = BTreeMap::new();
 
     for file in files {
         match collect_modules_detailed(&file.to_string_lossy()) {
             Ok(modules) => {
+                for module in &modules {
+                    if file_set.contains(&module.file_path) {
+                        modules_by_path
+                            .entry(module.file_path.clone())
+                            .or_insert_with(|| module.clone());
+                    }
+                }
                 let project_root = resolve_project_root(file);
                 if !contexts.contains_key(&project_root) {
                     contexts.insert(project_root.clone(), TypecheckContext::discover(file)?);
@@ -121,7 +154,22 @@ fn directory_typecheck_diagnostics(files: &[PathBuf]) -> CliResult<Vec<StableDia
                         project_root.display()
                     )));
                 };
-                dedup_diagnostics(&mut diagnostics, typecheck_diagnostics_with_context(&modules, context)?);
+                match typecheck_modules_with_import_graph_info(
+                    &modules,
+                    context.manifest.as_ref(),
+                    &context.library_manifest_index,
+                    #[cfg(feature = "rust_inspect")]
+                    None,
+                ) {
+                    Ok(module_type_info) => {
+                        for (path, type_info) in module_type_info {
+                            type_info_by_path.entry(path).or_insert(type_info);
+                        }
+                    }
+                    Err(failure) => {
+                        dedup_diagnostics(&mut diagnostics, stable_diagnostics(failure));
+                    }
+                }
             }
             Err(failure) => {
                 dedup_diagnostics(&mut diagnostics, stable_diagnostics(failure));
@@ -129,7 +177,11 @@ fn directory_typecheck_diagnostics(files: &[PathBuf]) -> CliResult<Vec<StableDia
         }
     }
 
-    Ok(diagnostics)
+    if diagnostics.is_empty() {
+        Ok((modules_by_path.into_values().collect(), diagnostics, type_info_by_path))
+    } else {
+        Ok((Vec::new(), diagnostics, BTreeMap::new()))
+    }
 }
 
 struct TypecheckContext {
@@ -154,27 +206,21 @@ impl TypecheckContext {
     }
 }
 
-/// Run the normal entrypoint typecheck and convert failures into stable diagnostics that the graph layer can either
-/// reject or emit in tolerant mode.
-fn typecheck_diagnostics(path: &Path, modules: &[ParsedModule]) -> CliResult<Vec<StableDiagnostic>> {
-    let context = TypecheckContext::discover(path)?;
-    typecheck_diagnostics_with_context(modules, &context)
-}
-
-/// Typecheck collected modules with a caller-provided project context.
-fn typecheck_diagnostics_with_context(
+/// Run typechecking and keep reusable semantic artifacts when the checked graph succeeds.
+fn typecheck_diagnostics_and_info(
+    path: &Path,
     modules: &[ParsedModule],
-    context: &TypecheckContext,
-) -> CliResult<Vec<StableDiagnostic>> {
-    match typecheck_modules_with_import_graph_detailed(
+) -> CliResult<(Vec<StableDiagnostic>, BTreeMap<PathBuf, TypeCheckInfo>)> {
+    let context = TypecheckContext::discover(path)?;
+    match typecheck_modules_with_import_graph_info(
         modules,
         context.manifest.as_ref(),
         &context.library_manifest_index,
         #[cfg(feature = "rust_inspect")]
         None,
     ) {
-        Ok(()) => Ok(Vec::new()),
-        Err(failure) => Ok(stable_diagnostics(failure)),
+        Ok(type_info_by_path) => Ok((Vec::new(), type_info_by_path)),
+        Err(failure) => Ok((stable_diagnostics(failure), BTreeMap::new())),
     }
 }
 
@@ -296,6 +342,8 @@ struct CodegraphBuilder {
     root_path_buf: PathBuf,
     package: Option<CodegraphPackage>,
     next_body_fact_index: usize,
+    type_info_by_path: BTreeMap<PathBuf, TypeCheckInfo>,
+    source_target_ids: BTreeMap<(Vec<String>, String, String), String>,
 }
 
 /// Compact source declaration facts used before serializing a public declaration record.
@@ -324,7 +372,90 @@ impl CodegraphBuilder {
             root_path_buf: root_path.to_path_buf(),
             package,
             next_body_fact_index: 0,
+            type_info_by_path: BTreeMap::new(),
+            source_target_ids: BTreeMap::new(),
         }
+    }
+
+    /// Attach successful typechecker artifacts for later body fact target population.
+    fn set_type_info(&mut self, type_info_by_path: BTreeMap<PathBuf, TypeCheckInfo>) {
+        self.type_info_by_path = type_info_by_path;
+    }
+
+    /// Precompute declaration ids for source targets before body facts are emitted.
+    ///
+    /// Body facts consume typechecker-proven target artifacts. This map only connects those artifacts to declaration
+    /// records that this export will emit, including public source reexports whose declaration identity lives in
+    /// another module.
+    fn seed_source_target_ids(&mut self, modules: &[ParsedModule]) {
+        for module in modules {
+            for (index, declaration) in module.ast.declarations.iter().enumerate() {
+                let Some(summary) = declaration_summary(&declaration.node) else {
+                    continue;
+                };
+                let declaration_id = declaration_id(module, declaration, index);
+                for module_path in source_module_target_paths(module) {
+                    self.source_target_ids.insert(
+                        (module_path, summary.name.clone(), summary.kind.clone()),
+                        declaration_id.clone(),
+                    );
+                }
+            }
+        }
+
+        for _ in 0..modules.len() {
+            let before = self.source_target_ids.len();
+            for module in modules {
+                self.seed_import_source_target_ids(module);
+            }
+            if self.source_target_ids.len() == before {
+                break;
+            }
+        }
+    }
+
+    /// Connect one module's source imports/reexports to already-known source declaration ids.
+    fn seed_import_source_target_ids(&mut self, module: &ParsedModule) {
+        for declaration in &module.ast.declarations {
+            let Declaration::Import(import) = &declaration.node else {
+                continue;
+            };
+            let ImportKind::From {
+                module: imported,
+                items,
+            } = &import.kind
+            else {
+                continue;
+            };
+            if imported.parent_levels != 0 {
+                continue;
+            }
+            let target_module_path = canonicalize_source_module_segments(&imported.segments);
+            for item in items {
+                let local_name = item.alias.as_ref().unwrap_or(&item.name);
+                let Some((target_kind, target_id)) =
+                    self.source_target_id_for_module_name(&target_module_path, &item.name)
+                else {
+                    continue;
+                };
+                for module_path in source_module_target_paths(module) {
+                    self.source_target_ids.insert(
+                        (module_path, local_name.clone(), target_kind.clone()),
+                        target_id.clone(),
+                    );
+                }
+            }
+        }
+    }
+
+    /// Return the first known source target id for one module/name pair.
+    fn source_target_id_for_module_name(&self, module_path: &[String], name: &str) -> Option<(String, String)> {
+        self.source_target_ids
+            .iter()
+            .find(|((candidate_module_path, candidate_name, _), _)| {
+                candidate_module_path == module_path && candidate_name == name
+            })
+            .map(|((_, _, kind), id)| (kind.clone(), id.clone()))
     }
 
     /// Recover as much source structure as possible after the ordinary entrypoint collection path failed.
@@ -419,6 +550,7 @@ impl CodegraphBuilder {
 
     /// Add declaration, import, export, and containment records for a parsed module body.
     fn collect_program_records(&mut self, module: &ParsedModule, module_id: &str, degraded: bool) {
+        self.index_module_declaration_targets(module);
         for (index, declaration) in module.ast.declarations.iter().enumerate() {
             match &declaration.node {
                 Declaration::Import(import) => {
@@ -465,7 +597,7 @@ impl CodegraphBuilder {
                             id: declaration_id.clone(),
                             language: CodegraphLanguage::Incan,
                             module_id: module_id.to_string(),
-                            kind: summary.kind,
+                            kind: summary.kind.clone(),
                             name: summary.name.clone(),
                             visibility: visibility_spelling(summary.visibility).to_string(),
                             type_params: summary.type_params,
@@ -496,6 +628,22 @@ impl CodegraphBuilder {
                     }
                     self.collect_declaration_body_records(module, module_id, &declaration_id, declaration, degraded);
                 }
+            }
+        }
+    }
+
+    /// Index declaration ids before walking bodies so forward calls can resolve to later declarations in the module.
+    fn index_module_declaration_targets(&mut self, module: &ParsedModule) {
+        for (index, declaration) in module.ast.declarations.iter().enumerate() {
+            let Some(summary) = declaration_summary(&declaration.node) else {
+                continue;
+            };
+            let declaration_id = declaration_id(module, declaration, index);
+            for module_path in source_module_target_paths(module) {
+                self.source_target_ids.insert(
+                    (module_path, summary.name.clone(), summary.kind.clone()),
+                    declaration_id.clone(),
+                );
             }
         }
     }
@@ -1041,6 +1189,8 @@ impl CodegraphBuilder {
         degraded: bool,
     ) {
         let id = self.next_body_fact_id("reference", module, span, name);
+        let target_id = self.source_target_id(module, span);
+        let provenance = provenance_for_target(target_id.as_ref());
         self.records.push(CodegraphRecord::Reference(CodegraphReferenceRecord {
             id: id.clone(),
             language: CodegraphLanguage::Incan,
@@ -1048,9 +1198,9 @@ impl CodegraphBuilder {
             owner_id: owner_id.map(str::to_string),
             name: name.to_string(),
             kind: kind.to_string(),
-            target_id: None,
+            target_id,
             span: Some(source_span(&module.file_path, &module.source, span)),
-            provenance: CodegraphProvenance::Syntax,
+            provenance,
             degraded,
         }));
         if let Some(owner_id) = owner_id {
@@ -1081,6 +1231,8 @@ impl CodegraphBuilder {
         degraded: bool,
     ) {
         let id = self.next_body_fact_id("call", module, span, callee);
+        let target_id = self.source_target_id(module, span);
+        let provenance = provenance_for_target(target_id.as_ref());
         self.records.push(CodegraphRecord::Call(CodegraphCallRecord {
             id: id.clone(),
             language: CodegraphLanguage::Incan,
@@ -1090,9 +1242,9 @@ impl CodegraphBuilder {
             kind: kind.to_string(),
             argument_count,
             type_argument_count,
-            target_id: None,
+            target_id,
             span: Some(source_span(&module.file_path, &module.source, span)),
-            provenance: CodegraphProvenance::Syntax,
+            provenance,
             degraded,
         }));
         if let Some(owner_id) = owner_id {
@@ -1182,6 +1334,19 @@ impl CodegraphBuilder {
         }
         records
     }
+
+    /// Return a declaration record id for a compiler-proven source target at `span`.
+    fn source_target_id(&self, module: &ParsedModule, span: Span) -> Option<String> {
+        let target = self.type_info_by_path.get(&module.file_path)?.source_target(span)?;
+        self.declaration_id_for_source_target(target)
+    }
+
+    /// Resolve one source target artifact to an emitted declaration id.
+    fn declaration_id_for_source_target(&self, target: &SourceTargetInfo) -> Option<String> {
+        self.source_target_ids
+            .get(&(target.module_path.clone(), target.name.clone(), target.kind.clone()))
+            .cloned()
+    }
 }
 
 /// Read the degraded flag from any codegraph record variant.
@@ -1197,6 +1362,25 @@ fn record_degraded(record: &CodegraphRecord) -> bool {
         CodegraphRecord::Call(record) => record.degraded,
         CodegraphRecord::Containment(record) => record.degraded,
         CodegraphRecord::Diagnostic(record) => record.degraded,
+    }
+}
+
+/// Return module path spellings that can refer to one parsed source module in checked target artifacts.
+fn source_module_target_paths(module: &ParsedModule) -> Vec<Vec<String>> {
+    let mut paths = BTreeSet::new();
+    paths.insert(module.path_segments.clone());
+    if let Some(stem) = module.file_path.file_stem().and_then(|stem| stem.to_str()) {
+        paths.insert(vec![stem.to_string()]);
+    }
+    paths.into_iter().collect()
+}
+
+/// Return provenance for body facts that may carry compiler-checked source targets.
+fn provenance_for_target(target_id: Option<&String>) -> CodegraphProvenance {
+    if target_id.is_some() {
+        CodegraphProvenance::Checked
+    } else {
+        CodegraphProvenance::Syntax
     }
 }
 

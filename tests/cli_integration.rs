@@ -248,7 +248,7 @@ def main() -> None:
     assert!(records.iter().any(|record| {
         record["record"] == serde_json::json!("call")
             && record["callee"] == serde_json::json!("make_widget")
-            && record["provenance"] == serde_json::json!("syntax")
+            && record["provenance"] == serde_json::json!("checked")
     }));
 
     Ok(())
@@ -697,8 +697,11 @@ pub def make_widget(value: int) -> Widget:
         &main_path,
         r#"from helpers import make_widget
 
+def local_value() -> int:
+    return 3
+
 pub def entrypoint() -> int:
-    return make_widget(7).value
+    return make_widget(local_value()).value
 "#,
     )?;
 
@@ -759,8 +762,54 @@ pub def entrypoint() -> int:
             && record["kind"] == serde_json::json!("function")
             && record["callee"] == serde_json::json!("make_widget")
             && record["argument_count"] == serde_json::json!(1)
-            && record["target_id"] == serde_json::Value::Null
-            && record["provenance"] == serde_json::json!("syntax")
+            && record["target_id"].as_str().is_some_and(|target_id| {
+                records.iter().any(|candidate| {
+                    candidate["record"] == serde_json::json!("declaration")
+                        && candidate["id"] == serde_json::json!(target_id)
+                        && candidate["name"] == serde_json::json!("make_widget")
+                })
+            })
+            && record["provenance"] == serde_json::json!("checked")
+    }));
+    assert!(records.iter().any(|record| {
+        record["record"] == serde_json::json!("call")
+            && record["kind"] == serde_json::json!("function")
+            && record["callee"] == serde_json::json!("local_value")
+            && record["argument_count"] == serde_json::json!(0)
+            && record["target_id"].as_str().is_some_and(|target_id| {
+                records.iter().any(|candidate| {
+                    candidate["record"] == serde_json::json!("declaration")
+                        && candidate["id"] == serde_json::json!(target_id)
+                        && candidate["name"] == serde_json::json!("local_value")
+                })
+            })
+            && record["provenance"] == serde_json::json!("checked")
+    }));
+    assert!(records.iter().any(|record| {
+        record["record"] == serde_json::json!("reference")
+            && record["kind"] == serde_json::json!("identifier")
+            && record["name"] == serde_json::json!("make_widget")
+            && record["target_id"].as_str().is_some_and(|target_id| {
+                records.iter().any(|candidate| {
+                    candidate["record"] == serde_json::json!("declaration")
+                        && candidate["id"] == serde_json::json!(target_id)
+                        && candidate["name"] == serde_json::json!("make_widget")
+                })
+            })
+            && record["provenance"] == serde_json::json!("checked")
+    }));
+    assert!(records.iter().any(|record| {
+        record["record"] == serde_json::json!("reference")
+            && record["kind"] == serde_json::json!("identifier")
+            && record["name"] == serde_json::json!("local_value")
+            && record["target_id"].as_str().is_some_and(|target_id| {
+                records.iter().any(|candidate| {
+                    candidate["record"] == serde_json::json!("declaration")
+                        && candidate["id"] == serde_json::json!(target_id)
+                        && candidate["name"] == serde_json::json!("local_value")
+                })
+            })
+            && record["provenance"] == serde_json::json!("checked")
     }));
     assert!(records.iter().any(|record| {
         record["record"] == serde_json::json!("reference")
@@ -772,6 +821,31 @@ pub def entrypoint() -> int:
     assert!(records.iter().any(|record| {
         record["record"] == serde_json::json!("containment")
             && record["kind"] == serde_json::json!("declaration_contains_call")
+    }));
+
+    let directory = run_incan(
+        tmp.path(),
+        &[
+            "inspect",
+            "codegraph",
+            src_dir.to_str().ok_or("src directory path was not valid UTF-8")?,
+            "--format",
+            "jsonl",
+        ],
+    )?;
+    assert_success(&directory, "directory incan inspect codegraph");
+    let directory_records = parse_jsonl_stdout(&directory)?;
+    assert!(directory_records.iter().any(|record| {
+        record["record"] == serde_json::json!("call")
+            && record["callee"] == serde_json::json!("local_value")
+            && record["target_id"].as_str().is_some_and(|target_id| {
+                directory_records.iter().any(|candidate| {
+                    candidate["record"] == serde_json::json!("declaration")
+                        && candidate["id"] == serde_json::json!(target_id)
+                        && candidate["name"] == serde_json::json!("local_value")
+                })
+            })
+            && record["provenance"] == serde_json::json!("checked")
     }));
 
     Ok(())

@@ -1041,7 +1041,7 @@ pub const FEATURES: &[FeatureDescriptor] = &[
         introduced_in_rfc: RFC::_106,
         stability: Stability::Stable,
         activation: "Use `incan inspect codegraph`.",
-        summary: "Source files, modules, declarations, imports, exports, containment, spans, provenance, and diagnostics can be exported as deterministic JSONL records.",
+        summary: "Incan-language source files, modules, declarations, imports, exports, body-level reference and call syntax, conservative resolved reference and call targets, containment, spans, provenance, language tags, degraded state, and diagnostics can be exported as deterministic JSONL records.",
         canonical_forms: &[
             "incan inspect codegraph src/main.incn --format jsonl",
             "incan inspect codegraph src --format jsonl --allow-errors",

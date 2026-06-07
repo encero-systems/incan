@@ -58,7 +58,7 @@ pub use type_info::{
     ComputedPropertyAccessInfo, DecoratedFunctionBindingInfo, DecoratedMethodBindingInfo, FixedUnpackPlan,
     FunctionBindingInfo, IdentKind, PartialProjectionInfo, PartialProjectionPreset, PartialProjectionTargetKind,
     ProtocolIterationInfo, ResolvedMethodCall, ResolvedMethodDispatch, ResolvedOperatorCall, ResolvedOperatorKind,
-    RustArgCoercionInfo, RustArgCoercionKind, StaticBindingInfo, TestingFixtureInfo, TypeCheckInfo,
+    RustArgCoercionInfo, RustArgCoercionKind, SourceTargetInfo, StaticBindingInfo, TestingFixtureInfo, TypeCheckInfo,
     ValidatedNewtypeCoercionInfo, ValidatedNewtypeCoercionMode, ValidatedNewtypeCoercionStep,
 };
 #[cfg(test)]
@@ -257,6 +257,8 @@ pub struct TypeChecker {
     pub(crate) cached_pub_libraries: HashSet<String>,
     /// Module path for the program being checked (if known).
     pub(crate) current_module_path: Option<Vec<String>>,
+    /// Source import aliases with declaration origins known from the dependency import graph.
+    pub(crate) source_import_targets: HashMap<String, SourceTargetInfo>,
     /// Declared Rust crate names from `incan.toml [rust-dependencies]` (RFC 023 / RFC 013).
     ///
     /// Used to validate that `rust.module()` paths reference known crates. When `None`, crate validation is skipped
@@ -359,6 +361,7 @@ impl TypeChecker {
             transitive_stdlib_stub_traits: HashMap::new(),
             cached_pub_libraries: HashSet::new(),
             current_module_path: None,
+            source_import_targets: HashMap::new(),
             declared_crate_names: None,
             stdlib_cache: stdlib_loader::StdlibAstCache::new(),
             testing_marker_import_bindings: HashSet::new(),
@@ -1290,6 +1293,64 @@ impl TypeChecker {
     /// Record the resolved type for one expression span in the lowering-facing expression artifact map.
     pub(crate) fn record_expr_type(&mut self, span: Span, ty: ResolvedType) {
         self.type_info.expressions.expr_types.insert((span.start, span.end), ty);
+    }
+
+    /// Record a source declaration target proven by normal typechecking.
+    pub(crate) fn record_source_target(
+        &mut self,
+        span: Span,
+        module_path: Vec<String>,
+        name: impl Into<String>,
+        kind: impl Into<String>,
+    ) {
+        self.type_info.expressions.source_targets.insert(
+            (span.start, span.end),
+            SourceTargetInfo {
+                module_path,
+                name: name.into(),
+                kind: kind.into(),
+            },
+        );
+    }
+
+    /// Return the canonical declaration origin for a source binding, if it is part of the supported codegraph target
+    /// set.
+    pub(crate) fn source_target_for_symbol(&self, name: &str, kind: &SymbolKind) -> Option<SourceTargetInfo> {
+        if let Some(target) = self.source_import_targets.get(name) {
+            return Some(target.clone());
+        }
+        if matches!(kind, SymbolKind::Function(_) | SymbolKind::FunctionOverloads(_))
+            && !self.current_module_function_symbols.contains_key(name)
+        {
+            return None;
+        }
+        let current_module_path = self.current_module_path.clone()?;
+        let target_kind = Self::source_target_kind_for_symbol(kind)?;
+        Some(SourceTargetInfo {
+            module_path: current_module_path,
+            name: name.to_string(),
+            kind: target_kind.to_string(),
+        })
+    }
+
+    /// Return the codegraph declaration kind for source symbol targets supported by the current semantic artifacts.
+    pub(crate) fn source_target_kind_for_symbol(kind: &SymbolKind) -> Option<&'static str> {
+        match kind {
+            SymbolKind::Function(_) | SymbolKind::FunctionOverloads(_) => Some("function"),
+            SymbolKind::Type(info) => Self::source_target_kind_for_type_info(info),
+            _ => None,
+        }
+    }
+
+    /// Return the codegraph declaration kind for type symbols supported by the current semantic artifacts.
+    pub(crate) fn source_target_kind_for_type_info(info: &TypeInfo) -> Option<&'static str> {
+        match info {
+            TypeInfo::Model(_) => Some("model"),
+            TypeInfo::Class(_) => Some("class"),
+            TypeInfo::Newtype(info) => Some(if info.is_rusttype { "rusttype" } else { "newtype" }),
+            TypeInfo::Enum(_) => Some("enum"),
+            TypeInfo::Builtin | TypeInfo::TypeAlias => None,
+        }
     }
 
     /// Record a typechecker-proven unpack binding plan for backend lowering.
@@ -3517,6 +3578,7 @@ impl TypeChecker {
         self.surface_function_import_bindings.clear();
         self.surface_type_import_bindings.clear();
         self.testing_fixture_names.clear();
+        self.source_import_targets.clear();
         self.surface_context = SurfaceContext::from_program(program);
         self.import_aliases = self.surface_context.import_aliases().clone();
         self.supertrait_closure.clear();

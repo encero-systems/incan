@@ -48,6 +48,7 @@ impl TypeChecker {
             self.errors.push(errors::unknown_symbol(name, span));
             return ResolvedType::Unknown;
         };
+        let source_target = self.source_target_for_symbol(name, &sym.kind);
 
         let (kind, ty) = match &sym.kind {
             SymbolKind::Variable(info) => (IdentKind::Value, info.ty.clone()),
@@ -90,6 +91,9 @@ impl TypeChecker {
                         .expressions
                         .ident_kinds
                         .insert((span.start, span.end), IdentKind::Value);
+                    if let Some(target) = source_target {
+                        self.record_source_target(span, target.module_path, target.name, target.kind);
+                    }
                     return ResolvedType::TypeToken(Box::new(ty));
                 }
                 let ty = if matches!(info, TypeInfo::Builtin) && sym.scope > 0 {
@@ -171,6 +175,9 @@ impl TypeChecker {
             .expressions
             .ident_kinds
             .insert((span.start, span.end), kind);
+        if let Some(target) = source_target {
+            self.record_source_target(span, target.module_path, target.name, target.kind);
+        }
         ty
     }
 

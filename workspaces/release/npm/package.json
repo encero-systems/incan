@@ -1,6 +1,6 @@
 {
   "name": "incan-sdk",
-  "version": "0.4.0-dev.7",
+  "version": "0.4.0-dev.8",
   "description": "Thin installer package for the Incan SDK",
   "license": "Apache-2.0",
   "homepage": "https://github.com/dannys-code-corner/incan",
