@@ -1115,6 +1115,193 @@ fn root_workspace_declares_crate(inner: &mut CacheInner, root: &Path, crate_name
         .any(|name| name == normalized_crate_cache_key(crate_name).as_str())
 }
 
+/// Typed rust-inspect workspace route used for one extraction attempt.
+#[derive(Debug)]
+enum WorkspaceExtractionRoute {
+    Primary,
+    DependencyOutDirs { manifest_dir: PathBuf },
+    RootOutDirs,
+}
+
+impl WorkspaceExtractionRoute {
+    /// Return the in-memory workspace-cache key for this route.
+    fn key(&self, root: &Path) -> (PathBuf, bool) {
+        match self {
+            Self::Primary => (root.to_path_buf(), false),
+            Self::DependencyOutDirs { manifest_dir } => (manifest_dir.clone(), true),
+            Self::RootOutDirs => (root.to_path_buf(), true),
+        }
+    }
+
+    /// Return the Cargo manifest directory that should be loaded for this route.
+    fn manifest_dir<'a>(&'a self, root: &'a Path) -> &'a Path {
+        match self {
+            Self::Primary | Self::RootOutDirs => root,
+            Self::DependencyOutDirs { manifest_dir } => manifest_dir.as_path(),
+        }
+    }
+
+    /// Return whether build-script `OUT_DIR` output should be included while loading the route workspace.
+    fn include_out_dirs(&self) -> bool {
+        matches!(self, Self::DependencyOutDirs { .. } | Self::RootOutDirs)
+    }
+
+    /// Return the timing stage label for loading this route's workspace.
+    fn load_stage(&self) -> &'static str {
+        match self {
+            Self::Primary => "workspace.load.primary",
+            Self::DependencyOutDirs { .. } => "workspace.load.dependency.out_dirs",
+            Self::RootOutDirs => "workspace.load.out_dirs",
+        }
+    }
+
+    /// Return the timing stage label for extracting metadata through this route.
+    fn extract_stage(&self) -> &'static str {
+        match self {
+            Self::Primary => "extract.workspace.primary",
+            Self::DependencyOutDirs { .. } => "extract.workspace.dependency",
+            Self::RootOutDirs => "extract.workspace.out_dirs",
+        }
+    }
+
+    /// Return timing detail for a workspace load outcome.
+    fn load_detail(&self, status: &str) -> String {
+        match self {
+            Self::DependencyOutDirs { manifest_dir } => manifest_dir.display().to_string(),
+            Self::Primary | Self::RootOutDirs => {
+                format!("out_dirs={} status={status}", self.include_out_dirs())
+            }
+        }
+    }
+
+    /// Return timing detail for a successful extraction outcome.
+    fn extract_detail(&self, workspace_hit: bool) -> String {
+        match self {
+            Self::DependencyOutDirs { manifest_dir } => manifest_dir.display().to_string(),
+            Self::Primary | Self::RootOutDirs => {
+                format!("workspace_hit={workspace_hit} out_dirs={}", self.include_out_dirs())
+            }
+        }
+    }
+
+    /// Return timing detail for an extraction miss.
+    fn extract_miss_detail(&self, workspace_hit: bool) -> String {
+        match self {
+            Self::DependencyOutDirs { manifest_dir } => manifest_dir.display().to_string(),
+            Self::Primary | Self::RootOutDirs => {
+                format!(
+                    "workspace_hit={workspace_hit} out_dirs={} status=miss",
+                    self.include_out_dirs()
+                )
+            }
+        }
+    }
+}
+
+/// Return whether an extraction error is a route miss that can fall through to the next route.
+fn metadata_extraction_missed(err: &RustMetadataError) -> bool {
+    matches!(
+        err,
+        RustMetadataError::CrateNotFound(_) | RustMetadataError::PathNotResolved(_)
+    )
+}
+
+/// Return whether the primary route failed to load and can be deferred until fallback routes are exhausted.
+fn workspace_load_failed(err: &RustMetadataError) -> bool {
+    matches!(err, RustMetadataError::Io(_) | RustMetadataError::LoadWorkspace { .. })
+}
+
+/// Extract metadata through one typed workspace route.
+fn extract_from_workspace_route(
+    inner: &mut CacheInner,
+    root: &Path,
+    canonical_path: &str,
+    route: WorkspaceExtractionRoute,
+    progress: &(dyn Fn(String) + Sync),
+    timing_enabled: bool,
+) -> Result<RustItemMetadata, RustMetadataError> {
+    match inner.workspaces.entry(route.key(root)) {
+        Entry::Occupied(o) => {
+            let started = Instant::now();
+            match extract_rust_item(o.into_mut(), canonical_path) {
+                Ok(meta) => {
+                    log_timing_stage(
+                        timing_enabled,
+                        root,
+                        canonical_path,
+                        route.extract_stage(),
+                        started.elapsed(),
+                        route.extract_detail(true).as_str(),
+                    );
+                    return Ok(meta);
+                }
+                Err(err) if metadata_extraction_missed(&err) => {}
+                Err(err) => return Err(err),
+            }
+            log_timing_stage(
+                timing_enabled,
+                root,
+                canonical_path,
+                route.extract_stage(),
+                started.elapsed(),
+                route.extract_miss_detail(true).as_str(),
+            );
+        }
+        Entry::Vacant(v) => {
+            let load_started = Instant::now();
+            match RustWorkspace::load_with_options(route.manifest_dir(root), progress, route.include_out_dirs()) {
+                Ok(workspace) => {
+                    log_timing_stage(
+                        timing_enabled,
+                        root,
+                        canonical_path,
+                        route.load_stage(),
+                        load_started.elapsed(),
+                        route.load_detail("ok").as_str(),
+                    );
+                    let extract_started = Instant::now();
+                    match extract_rust_item(v.insert(workspace), canonical_path) {
+                        Ok(meta) => {
+                            log_timing_stage(
+                                timing_enabled,
+                                root,
+                                canonical_path,
+                                route.extract_stage(),
+                                extract_started.elapsed(),
+                                route.extract_detail(false).as_str(),
+                            );
+                            return Ok(meta);
+                        }
+                        Err(err) if metadata_extraction_missed(&err) => {}
+                        Err(err) => return Err(err),
+                    }
+                    log_timing_stage(
+                        timing_enabled,
+                        root,
+                        canonical_path,
+                        route.extract_stage(),
+                        extract_started.elapsed(),
+                        route.extract_miss_detail(false).as_str(),
+                    );
+                }
+                Err(err) => {
+                    log_timing_stage(
+                        timing_enabled,
+                        root,
+                        canonical_path,
+                        route.load_stage(),
+                        load_started.elapsed(),
+                        route.load_detail("error").as_str(),
+                    );
+                    return Err(err);
+                }
+            }
+        }
+    }
+
+    Err(RustMetadataError::PathNotResolved(canonical_path.to_string()))
+}
+
 /// Attempt extraction through one planned route: primary workspace, dependency workspace, then root out-dir workspace
 /// only for root-package items.
 fn extract_in_workspace_set(
@@ -1127,83 +1314,18 @@ fn extract_in_workspace_set(
 ) -> Result<RustItemMetadata, RustMetadataError> {
     let mut deferred_load_error = None;
 
-    match inner.workspaces.entry((root.to_path_buf(), false)) {
-        Entry::Occupied(o) => {
-            let started = Instant::now();
-            match extract_rust_item(o.into_mut(), canonical_path) {
-                Ok(meta) => {
-                    log_timing_stage(
-                        timing_enabled,
-                        root,
-                        canonical_path,
-                        "extract.workspace.primary",
-                        started.elapsed(),
-                        "workspace_hit=true out_dirs=false",
-                    );
-                    return Ok(meta);
-                }
-                Err(RustMetadataError::CrateNotFound(_)) | Err(RustMetadataError::PathNotResolved(_)) => {}
-                Err(err) => return Err(err),
-            }
-            log_timing_stage(
-                timing_enabled,
-                root,
-                canonical_path,
-                "extract.workspace.primary",
-                started.elapsed(),
-                "workspace_hit=true out_dirs=false status=miss",
-            );
-        }
-        Entry::Vacant(v) => {
-            let load_started = Instant::now();
-            match RustWorkspace::load(root, progress) {
-                Ok(workspace) => {
-                    log_timing_stage(
-                        timing_enabled,
-                        root,
-                        canonical_path,
-                        "workspace.load.primary",
-                        load_started.elapsed(),
-                        "out_dirs=false status=ok",
-                    );
-                    let extract_started = Instant::now();
-                    match extract_rust_item(v.insert(workspace), canonical_path) {
-                        Ok(meta) => {
-                            log_timing_stage(
-                                timing_enabled,
-                                root,
-                                canonical_path,
-                                "extract.workspace.primary",
-                                extract_started.elapsed(),
-                                "workspace_hit=false out_dirs=false",
-                            );
-                            return Ok(meta);
-                        }
-                        Err(RustMetadataError::CrateNotFound(_)) | Err(RustMetadataError::PathNotResolved(_)) => {}
-                        Err(err) => return Err(err),
-                    }
-                    log_timing_stage(
-                        timing_enabled,
-                        root,
-                        canonical_path,
-                        "extract.workspace.primary",
-                        extract_started.elapsed(),
-                        "workspace_hit=false out_dirs=false status=miss",
-                    );
-                }
-                Err(err) => {
-                    log_timing_stage(
-                        timing_enabled,
-                        root,
-                        canonical_path,
-                        "workspace.load.primary",
-                        load_started.elapsed(),
-                        "out_dirs=false status=error",
-                    );
-                    deferred_load_error = Some(err);
-                }
-            }
-        }
+    match extract_from_workspace_route(
+        inner,
+        root,
+        canonical_path,
+        WorkspaceExtractionRoute::Primary,
+        progress,
+        timing_enabled,
+    ) {
+        Ok(meta) => return Ok(meta),
+        Err(err) if metadata_extraction_missed(&err) => {}
+        Err(err) if workspace_load_failed(&err) => deferred_load_error = Some(err),
+        Err(err) => return Err(err),
     }
 
     let crate_name = crate_name_for_path(canonical_path);
@@ -1260,42 +1382,24 @@ fn extract_in_workspace_set(
                 Err(err) => return Err(err),
             }
         }
-        let dep_root_display = dep_root.display().to_string();
-        let dep_workspace = match inner.workspaces.entry((dep_root.clone(), true)) {
-            Entry::Occupied(o) => o.into_mut(),
-            Entry::Vacant(v) => {
-                let load_started = Instant::now();
-                let workspace = RustWorkspace::load_with_options(&dep_root, progress, true)?;
-                log_timing_stage(
-                    timing_enabled,
-                    root,
-                    canonical_path,
-                    "workspace.load.dependency.out_dirs",
-                    load_started.elapsed(),
-                    dep_root_display.as_str(),
-                );
-                v.insert(workspace)
-            }
-        };
-        let extract_started = Instant::now();
-        let meta = extract_rust_item(dep_workspace, canonical_path);
-        log_timing_stage(
-            timing_enabled,
+        match extract_from_workspace_route(
+            inner,
             root,
             canonical_path,
-            "extract.workspace.dependency",
-            extract_started.elapsed(),
-            dep_root_display.as_str(),
-        );
-        match meta {
+            WorkspaceExtractionRoute::DependencyOutDirs {
+                manifest_dir: dep_root.clone(),
+            },
+            progress,
+            timing_enabled,
+        ) {
             Ok(meta) => return Ok(meta),
-            Err(err @ (RustMetadataError::CrateNotFound(_) | RustMetadataError::PathNotResolved(_))) => {
+            Err(err) if metadata_extraction_missed(&err) => {
                 log_timing_stage(
                     timing_enabled,
                     root,
                     canonical_path,
                     "extract.workspace.dependency",
-                    extract_started.elapsed(),
+                    std::time::Duration::ZERO,
                     "status=miss root_out_dirs_fallback=true",
                 );
                 if let Ok(meta) =
@@ -1331,86 +1435,14 @@ fn extract_from_root_out_dir_workspace(
     progress: &(dyn Fn(String) + Sync),
     timing_enabled: bool,
 ) -> Result<RustItemMetadata, RustMetadataError> {
-    match inner.workspaces.entry((root.to_path_buf(), true)) {
-        Entry::Occupied(o) => {
-            let started = Instant::now();
-            match extract_rust_item(o.into_mut(), canonical_path) {
-                Ok(meta) => {
-                    log_timing_stage(
-                        timing_enabled,
-                        root,
-                        canonical_path,
-                        "extract.workspace.out_dirs",
-                        started.elapsed(),
-                        "workspace_hit=true out_dirs=true",
-                    );
-                    return Ok(meta);
-                }
-                Err(RustMetadataError::CrateNotFound(_)) | Err(RustMetadataError::PathNotResolved(_)) => {}
-                Err(err) => return Err(err),
-            }
-            log_timing_stage(
-                timing_enabled,
-                root,
-                canonical_path,
-                "extract.workspace.out_dirs",
-                started.elapsed(),
-                "workspace_hit=true out_dirs=true status=miss",
-            );
-        }
-        Entry::Vacant(v) => {
-            let load_started = Instant::now();
-            match RustWorkspace::load_with_options(root, progress, true) {
-                Ok(workspace) => {
-                    log_timing_stage(
-                        timing_enabled,
-                        root,
-                        canonical_path,
-                        "workspace.load.out_dirs",
-                        load_started.elapsed(),
-                        "out_dirs=true status=ok",
-                    );
-                    let extract_started = Instant::now();
-                    match extract_rust_item(v.insert(workspace), canonical_path) {
-                        Ok(meta) => {
-                            log_timing_stage(
-                                timing_enabled,
-                                root,
-                                canonical_path,
-                                "extract.workspace.out_dirs",
-                                extract_started.elapsed(),
-                                "workspace_hit=false out_dirs=true",
-                            );
-                            return Ok(meta);
-                        }
-                        Err(RustMetadataError::CrateNotFound(_)) | Err(RustMetadataError::PathNotResolved(_)) => {}
-                        Err(err) => return Err(err),
-                    }
-                    log_timing_stage(
-                        timing_enabled,
-                        root,
-                        canonical_path,
-                        "extract.workspace.out_dirs",
-                        extract_started.elapsed(),
-                        "workspace_hit=false out_dirs=true status=miss",
-                    );
-                }
-                Err(err) => {
-                    log_timing_stage(
-                        timing_enabled,
-                        root,
-                        canonical_path,
-                        "workspace.load.out_dirs",
-                        load_started.elapsed(),
-                        "out_dirs=true status=error",
-                    );
-                    return Err(err);
-                }
-            }
-        }
-    }
-
-    Err(RustMetadataError::PathNotResolved(canonical_path.to_string()))
+    extract_from_workspace_route(
+        inner,
+        root,
+        canonical_path,
+        WorkspaceExtractionRoute::RootOutDirs,
+        progress,
+        timing_enabled,
+    )
 }
 
 impl RustMetadataCache {
