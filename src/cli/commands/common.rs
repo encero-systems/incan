@@ -3,7 +3,7 @@
 //! This module contains functions for source file reading, module collection, project root resolution,
 //! dependency helpers, and Cargo flag construction.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -27,6 +27,7 @@ use crate::frontend::library_manifest_index::{
 use crate::frontend::module::{
     SourceModuleImportResolution, canonicalize_source_module_segments, resolve_program_source_imports,
 };
+use crate::frontend::typechecker::TypeCheckInfo;
 use crate::frontend::{ast_walk, diagnostics, lexer, parser, typechecker, vocab_desugar_pass};
 use crate::lockfile::CargoFeatureSelection;
 use crate::manifest::{DependencySource, DependencySpec};
@@ -2094,9 +2095,27 @@ pub(crate) fn typecheck_modules_with_import_graph_detailed(
     library_manifest_index: &LibraryManifestIndex,
     #[cfg(feature = "rust_inspect")] rust_inspect_manifest_dir: Option<&Path>,
 ) -> Result<(), CliDiagnosticFailure> {
+    typecheck_modules_with_import_graph_info(
+        modules,
+        manifest,
+        library_manifest_index,
+        #[cfg(feature = "rust_inspect")]
+        rust_inspect_manifest_dir,
+    )
+    .map(|_| ())
+}
+
+/// Typecheck all collected modules and return reusable typechecker artifacts for successfully checked modules.
+pub(crate) fn typecheck_modules_with_import_graph_info(
+    modules: &[ParsedModule],
+    manifest: Option<&ProjectManifest>,
+    library_manifest_index: &LibraryManifestIndex,
+    #[cfg(feature = "rust_inspect")] rust_inspect_manifest_dir: Option<&Path>,
+) -> Result<BTreeMap<PathBuf, TypeCheckInfo>, CliDiagnosticFailure> {
     let declared = manifest.map(|m| m.declared_rust_crate_names());
     let module_idx_by_key = module_key_index(modules);
     let mut diagnostics_out = Vec::new();
+    let mut type_info_by_path = BTreeMap::new();
 
     for (idx, module) in modules.iter().enumerate() {
         let deps_for_module = imported_module_deps_for_with_index(modules, idx, &module_idx_by_key);
@@ -2105,6 +2124,7 @@ pub(crate) fn typecheck_modules_with_import_graph_detailed(
         if let Some(names) = declared.clone() {
             checker.set_declared_crate_names(names);
         }
+        checker.set_current_module_path(Some(module.path_segments.clone()));
         checker.set_library_manifest_index(library_manifest_index.clone());
         #[cfg(feature = "rust_inspect")]
         if let Some(rust_inspect_manifest_dir) = rust_inspect_manifest_dir {
@@ -2119,6 +2139,7 @@ pub(crate) fn typecheck_modules_with_import_graph_detailed(
                         diagnostics::format_error(module.file_path.to_string_lossy().as_ref(), &module.source, warn)
                     );
                 }
+                type_info_by_path.insert(module.file_path.clone(), checker.type_info().clone());
             }
             Err(errs) => {
                 diagnostics_out.extend(errs.into_iter().map(|error| CliDiagnostic {
@@ -2132,7 +2153,7 @@ pub(crate) fn typecheck_modules_with_import_graph_detailed(
     }
 
     if diagnostics_out.is_empty() {
-        Ok(())
+        Ok(type_info_by_path)
     } else {
         Err(CliDiagnosticFailure {
             diagnostics: diagnostics_out,

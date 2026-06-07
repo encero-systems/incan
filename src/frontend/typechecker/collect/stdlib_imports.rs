@@ -239,10 +239,10 @@ impl TypeChecker {
             }
             if let Some(kind) = self.imported_source_dependency_symbol_kind(module, item) {
                 let projection = self.imported_source_dependency_partial_projection(module, item);
-                self.define_resolved_source_import_symbol(item, kind, projection, span);
+                self.define_resolved_source_import_symbol(module, item, kind, projection, span);
                 continue;
             }
-            if self.preserve_existing_from_import_symbol(item, span) {
+            if self.preserve_existing_from_import_symbol(module, item, span) {
                 continue;
             }
             self.define_from_import_placeholder(module, item, span);
@@ -533,7 +533,7 @@ impl TypeChecker {
     ///
     /// This keeps dependency metadata imports, especially statics, from being rewritten as module path proxies.
     /// Returns `true` when the caller should skip fallback placeholder materialization.
-    fn preserve_existing_from_import_symbol(&mut self, item: &ImportItem, span: Span) -> bool {
+    fn preserve_existing_from_import_symbol(&mut self, module: &ImportPath, item: &ImportItem, span: Span) -> bool {
         let Some(mut imported_kind) = self.existing_from_import_symbol_kind(&item.name) else {
             return false;
         };
@@ -544,6 +544,7 @@ impl TypeChecker {
         if let Some(alias) = &item.alias {
             if self.symbols.lookup(alias).is_none() {
                 self.validate_root_namespace(alias, span);
+                self.record_source_import_target(module, item, alias, &imported_kind);
                 if matches!(imported_kind, SymbolKind::Static(_)) {
                     self.type_info.declarations.static_bindings.insert(
                         alias.clone(),
@@ -560,10 +561,31 @@ impl TypeChecker {
                 return true;
             }
         } else {
+            self.record_source_import_target(module, item, &item.name, &imported_kind);
             self.mark_static_binding_imported(&item.name);
             return true;
         }
         false
+    }
+
+    /// Record source origin metadata for an imported binding whose symbol was already materialized earlier.
+    fn record_source_import_target(
+        &mut self,
+        module: &ImportPath,
+        item: &ImportItem,
+        local_name: &str,
+        kind: &SymbolKind,
+    ) {
+        if let Some(target_kind) = Self::source_target_kind(kind) {
+            self.source_import_targets.insert(
+                local_name.to_string(),
+                crate::frontend::typechecker::SourceTargetInfo {
+                    module_path: canonicalize_source_module_segments(&module.segments),
+                    name: item.name.clone(),
+                    kind: target_kind.to_string(),
+                },
+            );
+        }
     }
 
     /// Define a fallback module placeholder for one `from module import item` binding.
@@ -595,15 +617,31 @@ impl TypeChecker {
         self.dependency_member_partial_projection_for_path(module, &item.name)
     }
 
+    /// Return the codegraph declaration kind for source targets this importer can preserve.
+    fn source_target_kind(kind: &SymbolKind) -> Option<&'static str> {
+        Self::source_target_kind_for_symbol(kind)
+    }
+
     /// Define a source-imported dependency symbol under its local import name.
     fn define_resolved_source_import_symbol(
         &mut self,
+        module: &ImportPath,
         item: &ImportItem,
         mut kind: SymbolKind,
         projection: Option<PartialProjectionInfo>,
         span: Span,
     ) {
         let local_name = Self::import_item_local_name(item);
+        if let Some(target_kind) = Self::source_target_kind(&kind) {
+            self.source_import_targets.insert(
+                local_name.clone(),
+                crate::frontend::typechecker::SourceTargetInfo {
+                    module_path: canonicalize_source_module_segments(&module.segments),
+                    name: item.name.clone(),
+                    kind: target_kind.to_string(),
+                },
+            );
+        }
         if let SymbolKind::FunctionOverloads(overloads) = &kind {
             self.record_function_overload_binding(&local_name, overloads, true);
         }

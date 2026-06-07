@@ -12,7 +12,7 @@ The 0.4 schema is the first RFC 106 codegraph slice. It covers:
 - source files and modules
 - top-level declarations
 - imports and public exports
-- body-level reference and call syntax
+- body-level reference and call syntax, with conservative checked `target_id` values when the compiler has a source declaration identity
 - containment relationships
 - stable diagnostic records in tolerant exports
 - source spans, explicit language tags, provenance, and degraded-state flags

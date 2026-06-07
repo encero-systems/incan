@@ -121,6 +121,8 @@ impl TypeChecker {
             let _ = self.check_ident(module_name.as_str(), base.span);
             if let Some(func_info) = self.resolve_imported_module_function_member(&module_path, method.as_str()) {
                 let callable = format!("{module_name}.{method}");
+                self.record_source_target(span, module_path.clone(), method.clone(), "function");
+                self.record_source_target(callee.span, module_path, method.clone(), "function");
                 return self.validate_stdlib_module_function_call(
                     callable.as_str(),
                     &func_info,
@@ -181,6 +183,16 @@ impl TypeChecker {
             if let Some(sym) = self.lookup_symbol(name).cloned() {
                 match sym.kind {
                     SymbolKind::Type(type_info) => {
+                        if let Some(target) = self.source_target_for_symbol(name, &SymbolKind::Type(type_info.clone()))
+                        {
+                            self.record_source_target(
+                                callee.span,
+                                target.module_path.clone(),
+                                target.name.clone(),
+                                target.kind.clone(),
+                            );
+                            self.record_source_target(span, target.module_path, target.name, target.kind);
+                        }
                         if let Some(ret) =
                             self.check_type_constructor_hook_call(name, &type_info, type_args, args, span)
                         {
@@ -261,6 +273,17 @@ impl TypeChecker {
                         return explicit_constructor_ty.unwrap_or(constructor_ty);
                     }
                     SymbolKind::Function(func_info) => {
+                        if let Some(target) =
+                            self.source_target_for_symbol(name, &SymbolKind::Function(func_info.clone()))
+                        {
+                            self.record_source_target(
+                                callee.span,
+                                target.module_path.clone(),
+                                target.name.clone(),
+                                target.kind.clone(),
+                            );
+                            self.record_source_target(span, target.module_path, target.name, target.kind);
+                        }
                         return self.validate_function_call(
                             name,
                             &func_info,
@@ -271,6 +294,17 @@ impl TypeChecker {
                         );
                     }
                     SymbolKind::FunctionOverloads(overloads) => {
+                        if let Some(target) =
+                            self.source_target_for_symbol(name, &SymbolKind::FunctionOverloads(overloads.clone()))
+                        {
+                            self.record_source_target(
+                                callee.span,
+                                target.module_path.clone(),
+                                target.name.clone(),
+                                target.kind.clone(),
+                            );
+                            self.record_source_target(span, target.module_path, target.name, target.kind);
+                        }
                         return self.validate_function_overload_call(
                             name,
                             &overloads,
