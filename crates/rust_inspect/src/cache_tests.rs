@@ -10,6 +10,7 @@ fn dummy_type_metadata(path: &str) -> RustItemMetadata {
         visibility: RustVisibility::Public,
         kind: RustItemKind::Type(RustTypeInfo {
             alias_target: None,
+            metadata_completeness: Default::default(),
             methods: Vec::new(),
             implemented_traits: Vec::new(),
             fields: Vec::new(),
@@ -26,6 +27,7 @@ fn dummy_reexported_type_metadata(path: &str, definition_path: &str) -> RustItem
         visibility: RustVisibility::Public,
         kind: RustItemKind::Type(RustTypeInfo {
             alias_target: None,
+            metadata_completeness: Default::default(),
             methods: Vec::new(),
             implemented_traits: Vec::new(),
             fields: Vec::new(),
@@ -235,6 +237,7 @@ fn raw_identifier_alias_hits_existing_cached_item() -> Result<(), Box<dyn std::e
             visibility: RustVisibility::Public,
             kind: RustItemKind::Type(RustTypeInfo {
                 alias_target: None,
+                metadata_completeness: Default::default(),
                 methods: Vec::new(),
                 implemented_traits: Vec::new(),
                 fields: Vec::new(),
@@ -472,43 +475,31 @@ fn dependency_generated_out_dir_items_resolve_through_root_workspace() -> Result
         "pub struct Thing { pub value: String }\n",
     )?;
     fs::write(
-        dep.join("build.rs"),
-        r#"fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let out_dir = std::path::PathBuf::from(std::env::var("OUT_DIR")?);
-    std::fs::write(
-        out_dir.join("generated.rs"),
-        "pub struct Nested { pub count: u32 }\n\
-         pub struct GeneratedThing {\n\
-             pub r#type: ::core::option::Option<Nested>,\n\
-             pub names: ::std::vec::Vec<::std::string::String>,\n\
-             pub helper: helper_crate::Thing,\n\
-         }\n\
-         pub enum GeneratedChoice {\n\
-             Unit,\n\
-             Child(nested::Child),\n\
-             Count(i32),\n\
-             Boxed(::std::boxed::Box<Nested>),\n\
-         }\n\
-         pub struct EmptyRecord {}\n\
-         pub mod nested {\n\
-             pub struct Child { pub parent: super::Nested }\n\
-         }\n",
-    )?;
-    println!("cargo:rerun-if-changed=build.rs");
-    Ok(())
-}
-"#,
-    )?;
-    fs::write(
         dep.join("src").join("lib.rs"),
         "pub mod generated { include!(concat!(env!(\"OUT_DIR\"), \"/generated.rs\")); }\n",
     )?;
-    let status = std::process::Command::new("cargo")
-        .arg("check")
-        .arg("--manifest-path")
-        .arg(root.join("Cargo.toml"))
-        .status()?;
-    assert!(status.success(), "fixture cargo check should produce build-script out dirs");
+    let out_dir = root.join("target").join("debug").join("build").join("generated_dep-fixture").join("out");
+    fs::create_dir_all(&out_dir)?;
+    fs::write(
+        out_dir.join("generated.rs"),
+        r#"pub struct Nested { pub count: u32 }
+pub struct GeneratedThing {
+    pub r#type: ::core::option::Option<Nested>,
+    pub names: ::std::vec::Vec<::std::string::String>,
+    pub helper: helper_crate::Thing,
+}
+pub enum GeneratedChoice {
+    Unit,
+    Child(nested::Child),
+    Count(i32),
+    Boxed(::std::boxed::Box<Nested>),
+}
+pub struct EmptyRecord {}
+pub mod nested {
+    pub struct Child { pub parent: super::Nested }
+}
+"#,
+    )?;
 
     let cache = RustMetadataCache::new();
     let metadata = cache.get_or_extract(&root, "generated_dep::generated::GeneratedThing", &|_| ())?;
@@ -570,6 +561,11 @@ fn dependency_generated_out_dir_items_resolve_through_root_workspace() -> Result
     assert!(
         empty_info.fields.is_empty() && empty_info.variants.is_empty(),
         "zero-field generated structs should keep constructible type metadata"
+    );
+    let wrong_owner = cache.get_or_extract(&root, "generated_dep::wrong::GeneratedThing", &|_| ());
+    assert!(
+        matches!(wrong_owner, Err(RustMetadataError::PathNotResolved(_))),
+        "generated OUT_DIR fallback must not invent module ownership from a suffix match"
     );
     Ok(())
 }

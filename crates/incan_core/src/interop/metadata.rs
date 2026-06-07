@@ -438,6 +438,9 @@ pub struct RustTypeInfo {
     /// is needed for contextual typing or boundary planning.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alias_target: Option<String>,
+    /// Completeness of the recorded type surface.
+    #[serde(default, skip_serializing_if = "RustTypeMetadataCompleteness::is_complete")]
+    pub metadata_completeness: RustTypeMetadataCompleteness,
     /// Public inherent methods and associated functions.
     pub methods: Vec<RustMethodSig>,
     /// Trait implementations rust-inspect can prove for this Rust type.
@@ -447,6 +450,34 @@ pub struct RustTypeInfo {
     pub fields: Vec<RustFieldInfo>,
     /// Enum variants when the type is an enum; empty for non-enums.
     pub variants: Vec<RustVariantInfo>,
+}
+
+/// Whether Rust type metadata came from a full HIR extraction or from a partial syntax fallback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RustTypeMetadataCompleteness {
+    /// Full rust-inspect HIR metadata, including methods and proven trait impls when available.
+    #[default]
+    Complete,
+    /// Syntax-only metadata from generated source, limited to public fields and enum variants.
+    FieldsAndVariantsOnly,
+}
+
+impl RustTypeMetadataCompleteness {
+    /// Return whether this metadata can be treated as a full rust-inspect type surface.
+    pub const fn is_complete(&self) -> bool {
+        matches!(self, Self::Complete)
+    }
+
+    /// Return whether this metadata can prove inherent methods.
+    pub const fn has_methods(self) -> bool {
+        matches!(self, Self::Complete)
+    }
+
+    /// Return whether this metadata can prove trait implementations.
+    pub const fn has_trait_impls(self) -> bool {
+        matches!(self, Self::Complete)
+    }
 }
 
 /// One exported name inside a module (lightweight summary for namespace resolution).
@@ -496,6 +527,7 @@ mod tests {
             visibility: RustVisibility::Public,
             kind: RustItemKind::Type(RustTypeInfo {
                 alias_target: None,
+                metadata_completeness: Default::default(),
                 methods: Vec::new(),
                 implemented_traits: Vec::new(),
                 fields: Vec::new(),

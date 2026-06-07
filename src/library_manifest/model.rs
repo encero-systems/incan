@@ -174,6 +174,7 @@ pub struct LibraryContractMetadata {
     pub identity_graph: LibraryIdentityGraph,
 }
 
+/// Serialized schema version for the public export identity graph.
 pub const LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION: u32 = 1;
 
 /// Serializable semantic identity graph for exported library declarations.
@@ -183,8 +184,10 @@ pub const LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION: u32 = 1;
 /// presets, decorators, generated helpers, or public package boundaries can observe the symbol.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LibraryIdentityGraph {
+    /// Version of the serialized identity graph payload.
     #[serde(default = "default_identity_graph_schema_version")]
     pub schema_version: u32,
+    /// Public export entries keyed by public spelling, semantic source path, and projection metadata.
     #[serde(default)]
     pub exports: Vec<ExportIdentity>,
 }
@@ -240,10 +243,15 @@ fn default_identity_graph_schema_version() -> u32 {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExportIdentity {
+    /// Name that consumers import from the public package surface.
     pub public_name: String,
+    /// Package-qualified public path exposed by the `.incnlib` manifest.
     pub public_path: Vec<String>,
+    /// Provider-local declaration path that owns the semantic identity.
     pub source_path: Vec<String>,
+    /// Coarse export category used by consumers before reconstructing a full checked export surface.
     pub kind: ExportIdentityKind,
+    /// Projection layered on top of `source_path`, such as a direct export, alias, reexport, or partial preset.
     pub projection: ExportIdentityProjection,
 }
 
@@ -262,31 +270,50 @@ impl ExportIdentity {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExportIdentityKind {
+    /// Public function or overload set.
     Function,
+    /// Public partial preset.
     Partial,
+    /// Public alias declaration.
     Alias,
+    /// Public type alias declaration.
     TypeAlias,
+    /// Public model declaration.
     Model,
+    /// Public class declaration.
     Class,
+    /// Public trait declaration.
     Trait,
+    /// Public enum declaration.
     Enum,
+    /// Public newtype declaration.
     Newtype,
+    /// Public const declaration.
     Const,
+    /// Public static declaration.
     Static,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ExportIdentityProjection {
+    /// The public export exposes its own declaration directly.
     Direct,
+    /// The public export is a source-level alias over another declaration or overload set.
     Alias {
+        /// Provider-local declaration path that the alias projects.
         target_path: Vec<String>,
     },
+    /// The public export forwards another declaration through a facade.
     Reexport {
+        /// Provider-local declaration path that the reexport projects.
         target_path: Vec<String>,
     },
+    /// The public export is a partial preset over a callable or constructor target.
     Partial {
+        /// Provider-local declaration path that the partial preset projects.
         target_path: Vec<String>,
+        /// Kind of target being projected, used to rebuild the consumer callable surface.
         target_kind: PartialTargetKindExport,
     },
 }

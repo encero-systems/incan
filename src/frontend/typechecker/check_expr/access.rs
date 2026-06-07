@@ -725,10 +725,7 @@ impl TypeChecker {
 
     /// Return whether `method` consumes the receiver under RFC 088 terminal semantics.
     fn is_iterator_terminal_method(method: &str) -> bool {
-        matches!(
-            method,
-            "collect" | "count" | "reduce" | "fold" | "any" | "all" | "find" | "for_each" | "sum"
-        )
+        iterator_methods::from_str(method).is_some_and(iterator_methods::is_terminal)
     }
 
     /// Validate `.sum()` item types against the backend-supported summable item surface.
@@ -1905,6 +1902,9 @@ impl TypeChecker {
         method: &str,
     ) -> Option<Option<incan_core::interop::RustFunctionSig>> {
         if !import.methods.contains(method) {
+            return None;
+        }
+        if !type_info.metadata_completeness.has_trait_impls() {
             return None;
         }
         let trait_suffix = Self::rust_trait_path_suffix(&import.trait_path);

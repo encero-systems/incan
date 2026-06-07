@@ -10541,6 +10541,13 @@ mod rfc031_pub_import_integration_tests {
             .output()?)
     }
 
+    fn run_run(main_path: &Path) -> Result<std::process::Output, Box<dyn std::error::Error>> {
+        Ok(super::incan_command()
+            .args(["run", main_path.to_string_lossy().as_ref()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?)
+    }
+
     fn run_lock(entry_path: &Path) -> Result<std::process::Output, Box<dyn std::error::Error>> {
         Ok(super::incan_command()
             .args(["lock", entry_path.to_string_lossy().as_ref()])
@@ -10705,6 +10712,7 @@ def main() -> None:
 
 pub static registered_names: list[str] = []
 pub static registered_specs: list[FunctionSpec] = []
+pub static package_markers: list[str] = []
 
 pub deterministic_spec = partial FunctionSpec(namespace="core", deterministic=true)
 
@@ -10734,12 +10742,12 @@ pub def registered_spec_name(index: int) -> str:
         )?;
         std::fs::write(
             producer_root.join("src/facade.incn"),
-            r#"pub from registry import FunctionSpec, deterministic_spec, registered_count, registered_name, registered_spec_name, scale, scale_alias
+            r#"pub from registry import FunctionSpec, deterministic_spec, package_markers, registered_count, registered_name, registered_spec_name, scale, scale_alias
 "#,
         )?;
         std::fs::write(
             producer_root.join("src/lib.incn"),
-            "pub from facade import FunctionSpec, deterministic_spec, registered_count, registered_name, registered_spec_name, scale, scale_alias\n",
+            "pub from facade import FunctionSpec, deterministic_spec, package_markers, registered_count, registered_name, registered_spec_name, scale, scale_alias\n",
         )?;
         std::fs::create_dir_all(producer_root.join("tests"))?;
         std::fs::write(
@@ -10768,6 +10776,22 @@ def test_facade_source_import_identity() -> None:
   assert registered_spec_name(0) == "scale"
 "#,
         )?;
+        std::fs::write(
+            producer_root.join("tests/test_mixed_identity.incn"),
+            r#"from registry import registered_count, registered_name, registered_spec_name, scale as direct_scale, scale_alias as direct_scale_alias
+from facade import scale as facade_scale, scale_alias as facade_scale_alias
+
+
+def test_direct_and_facade_identity_share_one_static() -> None:
+  assert direct_scale(3) == 6
+  assert direct_scale_alias(4) == 8
+  assert facade_scale(5) == 10
+  assert facade_scale_alias(6) == 12
+  assert registered_count() == 1
+  assert registered_name(0) == "scale"
+  assert registered_spec_name(0) == "scale"
+"#,
+        )?;
 
         let producer_tests = run_test(&producer_root.join("tests"))?;
         assert!(
@@ -10775,6 +10799,13 @@ def test_facade_source_import_identity() -> None:
             "expected decorated alias partial identity source and facade test batch to succeed.\nstdout:\n{}\nstderr:\n{}",
             String::from_utf8_lossy(&producer_tests.stdout),
             String::from_utf8_lossy(&producer_tests.stderr)
+        );
+        let mixed_identity_test = run_test(&producer_root.join("tests/test_mixed_identity.incn"))?;
+        assert!(
+            mixed_identity_test.status.success(),
+            "expected combined direct/facade identity fixture to succeed by itself.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&mixed_identity_test.stdout),
+            String::from_utf8_lossy(&mixed_identity_test.stderr)
         );
 
         let producer_build = run_build_lib(&producer_root)?;
@@ -10789,7 +10820,7 @@ def test_facade_source_import_identity() -> None:
         let main_path = write_project_files(
             &consumer_root,
             "[project]\nname = \"consumer\"\n\n[dependencies]\ncallkit = { path = \"../callkit_provider\" }\n",
-            r#"from pub::callkit import registered_count, registered_name, registered_spec_name, scale, scale_alias
+            r#"from pub::callkit import package_markers, registered_count, registered_name, registered_spec_name, scale, scale_alias
 
 def main() -> None:
   assert scale(3) == 6
@@ -10797,6 +10828,8 @@ def main() -> None:
   assert registered_count() == 1
   assert registered_name(0) == "scale"
   assert registered_spec_name(0) == "scale"
+  package_markers.append(f"consumer")
+  assert len(package_markers) == 1
 "#,
         )?;
 
@@ -10814,6 +10847,13 @@ def main() -> None:
             "expected decorated alias partial identity consumer build to succeed.\nstdout:\n{}\nstderr:\n{}",
             String::from_utf8_lossy(&consumer_build.stdout),
             String::from_utf8_lossy(&consumer_build.stderr)
+        );
+        let consumer_run = run_run(&main_path)?;
+        assert!(
+            consumer_run.status.success(),
+            "expected decorated alias partial identity consumer run to execute shared package statics.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&consumer_run.stdout),
+            String::from_utf8_lossy(&consumer_run.stderr)
         );
         Ok(())
     }

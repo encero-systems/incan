@@ -745,6 +745,7 @@ mod validate_rust_function_call_tests {
             visibility: RustVisibility::Public,
             kind: RustItemKind::Type(RustTypeInfo {
                 alias_target: None,
+                metadata_completeness: Default::default(),
                 methods: Vec::new(),
                 implemented_traits: Vec::new(),
                 fields: Vec::new(),
@@ -1336,6 +1337,7 @@ mod validate_rust_function_call_tests {
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     alias_target: None,
+                    metadata_completeness: Default::default(),
                     methods: vec![],
                     implemented_traits: Vec::new(),
                     fields: vec![],

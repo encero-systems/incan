@@ -212,8 +212,40 @@ fn checked_exports_publish_semantic_identity_graph() -> Result<(), Box<dyn std::
                     target_path: vec!["helpers".to_string(), "cast".to_string()],
                     projected_function: Some(crate::frontend::library_exports::CheckedFunctionExport {
                         name: "safe_cast".to_string(),
-                        ..callable
+                        ..callable.clone()
                     }),
+                },
+            ),
+        },
+        crate::frontend::library_exports::CheckedNamedExport {
+            name: "public_cast".to_string(),
+            identity: crate::frontend::library_exports::CheckedExportIdentity::reexport(
+                vec!["helpers".to_string(), "cast".to_string()],
+                vec!["helpers".to_string(), "cast".to_string()],
+            ),
+            kind: crate::frontend::library_exports::CheckedExportKind::Function(callable.clone()),
+        },
+        crate::frontend::library_exports::CheckedNamedExport {
+            name: "core_cast".to_string(),
+            identity: crate::frontend::library_exports::CheckedExportIdentity::partial(
+                vec!["helpers".to_string(), "core_cast".to_string()],
+                vec!["helpers".to_string(), "cast".to_string()],
+                crate::frontend::library_exports::CheckedPartialTargetKind::Function,
+            ),
+            kind: crate::frontend::library_exports::CheckedExportKind::Partial(
+                crate::frontend::library_exports::CheckedPartialExport {
+                    name: "core_cast".to_string(),
+                    target_path: vec!["helpers".to_string(), "cast".to_string()],
+                    target_kind: crate::frontend::library_exports::CheckedPartialTargetKind::Function,
+                    presets: vec![crate::frontend::library_exports::CheckedPartialPreset {
+                        name: "target".to_string(),
+                        ty: crate::frontend::symbols::ResolvedType::Str,
+                        value: crate::frontend::library_exports::CheckedPresetValue::String("core".to_string()),
+                    }],
+                    type_params: Vec::new(),
+                    params: Vec::new(),
+                    return_type: crate::frontend::symbols::ResolvedType::Int,
+                    is_async: false,
                 },
             ),
         },
@@ -239,6 +271,27 @@ fn checked_exports_publish_semantic_identity_graph() -> Result<(), Box<dyn std::
         safe_cast.projection,
         ExportIdentityProjection::Alias {
             target_path: vec!["helpers".to_string(), "cast".to_string()]
+        }
+    );
+
+    let public_cast = graph
+        .entry_for_public_name("public_cast")
+        .ok_or("missing public_cast identity")?;
+    assert_eq!(
+        public_cast.projection,
+        ExportIdentityProjection::Reexport {
+            target_path: vec!["helpers".to_string(), "cast".to_string()]
+        }
+    );
+
+    let core_cast = graph
+        .entry_for_public_name("core_cast")
+        .ok_or("missing core_cast identity")?;
+    assert_eq!(
+        core_cast.projection,
+        ExportIdentityProjection::Partial {
+            target_path: vec!["helpers".to_string(), "cast".to_string()],
+            target_kind: PartialTargetKindExport::Function,
         }
     );
 

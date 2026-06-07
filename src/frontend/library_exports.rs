@@ -123,7 +123,9 @@ pub struct CheckedFunctionExport {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckedExportIdentity {
+    /// Provider-local declaration path that owns the semantic identity being exported.
     pub source_path: Vec<String>,
+    /// Public projection layered on top of `source_path`, such as an alias, reexport, or partial preset.
     pub projection: CheckedExportProjection,
 }
 
@@ -166,15 +168,23 @@ impl CheckedExportIdentity {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CheckedExportProjection {
+    /// The public export exposes its own declaration directly.
     Direct,
+    /// The public export is a source-level alias that preserves the target declaration identity.
     Alias {
+        /// Provider-local declaration or overload-set path that the alias projects.
         target_path: Vec<String>,
     },
+    /// The public export forwards another declaration through a facade without changing its identity.
     Reexport {
+        /// Provider-local declaration path that the reexport projects.
         target_path: Vec<String>,
     },
+    /// The public export is a partial preset over a callable or constructor target.
     Partial {
+        /// Provider-local declaration or overload-set path that the partial preset projects.
         target_path: Vec<String>,
+        /// Kind of target being projected, which lets consumers reconstruct the callable surface.
         target_kind: CheckedPartialTargetKind,
     },
 }

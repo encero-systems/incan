@@ -14,8 +14,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use incan_core::interop::{
-    RustFieldInfo, RustItemKind, RustItemMetadata, RustTypeInfo, RustTypeShape, RustVariantInfo, RustVisibility,
-    split_top_level_rust_args,
+    RustFieldInfo, RustItemKind, RustItemMetadata, RustTypeInfo, RustTypeMetadataCompleteness, RustTypeShape,
+    RustVariantInfo, RustVisibility, split_top_level_rust_args,
 };
 use incan_core::lang::types::collections::{self, CollectionTypeId};
 use ra_ap_syntax::{
@@ -468,8 +468,10 @@ fn manifest_dependency_crate_names(manifest: &toml::Value, table: &str, names: &
     }
 }
 
-/// Load the normalized dependency crate names declared by a generated crate so rust-inspect can distinguish local paths
-/// from external dependency paths while parsing generated `OUT_DIR` Rust.
+/// Load normalized dependency crate names from the crate whose generated `OUT_DIR` Rust is being parsed.
+///
+/// The generated-source fallback uses this to distinguish local relative paths from external dependency paths while it
+/// normalizes syntax-only field and variant metadata.
 fn load_dependency_crate_names(root: &Path) -> HashSet<String> {
     let Ok(payload) = fs::read_to_string(root.join("Cargo.toml")) else {
         return HashSet::new();
@@ -678,6 +680,112 @@ fn generated_out_dir_candidates(root: &Path, dep_root: &Path, crate_name: &str) 
     files.sort();
     files.dedup();
     files
+}
+
+/// Collect file names from `include!(concat!(env!("OUT_DIR"), "..."))` macro text.
+fn generated_include_file_names(text: &str) -> Vec<String> {
+    if !text.contains("include!") || !text.contains("OUT_DIR") {
+        return Vec::new();
+    }
+    let mut names = Vec::new();
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut current = String::new();
+    for ch in text.chars() {
+        if in_string {
+            if escaped {
+                current.push(ch);
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                if current.ends_with(".rs")
+                    && let Some(file_name) = Path::new(current.as_str()).file_name().and_then(|name| name.to_str())
+                {
+                    names.push(file_name.to_string());
+                }
+                current.clear();
+                in_string = false;
+            } else {
+                current.push(ch);
+            }
+            continue;
+        }
+        if ch == '"' {
+            in_string = true;
+        }
+    }
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// Record generated `OUT_DIR` file owners from one module-item list.
+fn collect_generated_include_owners<'a>(
+    mut items: impl Iterator<Item = ast::Item> + 'a,
+    module_path: &[String],
+    owners: &mut HashMap<String, Vec<Vec<String>>>,
+) {
+    for item in items.by_ref() {
+        match item {
+            ast::Item::MacroCall(macro_call) => {
+                for file_name in generated_include_file_names(macro_call.syntax().text().to_string().as_str()) {
+                    owners.entry(file_name).or_default().push(module_path.to_vec());
+                }
+            }
+            ast::Item::Module(module) => {
+                let Some(name) = module.name() else {
+                    continue;
+                };
+                let mut nested_path = module_path.to_vec();
+                nested_path.push(generated_source_name(name.to_string().as_str()));
+                let Some(item_list) = module.item_list() else {
+                    continue;
+                };
+                for file_name in generated_include_file_names(item_list.syntax().text().to_string().as_str()) {
+                    owners.entry(file_name).or_default().push(nested_path.clone());
+                }
+                collect_generated_include_owners(item_list.items(), &nested_path, owners);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Load generated-file owner modules from the dependency crate source that includes build-script output.
+fn load_generated_include_owners(dep_root: &Path) -> HashMap<String, Vec<Vec<String>>> {
+    let Ok(payload) = fs::read_to_string(dep_root.join("Cargo.toml")) else {
+        return HashMap::new();
+    };
+    let Ok(manifest) = toml::from_str::<toml::Value>(payload.as_str()) else {
+        return HashMap::new();
+    };
+    let Ok(source) = fs::read_to_string(manifest_lib_source_path(dep_root, &manifest)) else {
+        return HashMap::new();
+    };
+    let parsed = SourceFile::parse(source.as_str(), Edition::CURRENT).tree();
+    let mut owners = HashMap::new();
+    collect_generated_include_owners(parsed.items(), &[], &mut owners);
+    for paths in owners.values_mut() {
+        paths.sort();
+        paths.dedup();
+    }
+    owners
+}
+
+/// Return the path suffix inside a generated Rust file only when the requested item is owned by that include module.
+fn generated_item_suffix_for_owner<'a>(item_segments: &'a [&'a str], owner_path: &[String]) -> Option<&'a [&'a str]> {
+    if owner_path.is_empty() {
+        return Some(item_segments);
+    }
+    if item_segments.len() <= owner_path.len() {
+        return None;
+    }
+    let matches_owner = owner_path
+        .iter()
+        .zip(item_segments)
+        .all(|(owner, segment)| owner.trim_start_matches("r#") == segment.trim_start_matches("r#"));
+    matches_owner.then_some(&item_segments[owner_path.len()..])
 }
 
 /// Return whether rust-analyzer parsed a plain public visibility marker, excluding private and restricted public forms.
@@ -934,6 +1042,7 @@ fn generated_struct_metadata(
     };
     Some(RustTypeInfo {
         alias_target: None,
+        metadata_completeness: RustTypeMetadataCompleteness::FieldsAndVariantsOnly,
         methods: Vec::new(),
         implemented_traits: Vec::new(),
         fields,
@@ -1003,6 +1112,7 @@ fn generated_enum_metadata(
     variants.sort_by(|a, b| a.name.cmp(&b.name));
     Some(RustTypeInfo {
         alias_target: None,
+        metadata_completeness: RustTypeMetadataCompleteness::FieldsAndVariantsOnly,
         methods: Vec::new(),
         implemented_traits: Vec::new(),
         fields: Vec::new(),
@@ -1079,18 +1189,29 @@ fn generated_out_dir_metadata(root: &Path, dep_root: &Path, canonical_path: &str
         return None;
     }
     let external_crates = load_dependency_crate_names(dep_root);
+    let include_owners = load_generated_include_owners(dep_root);
     for generated_file in generated_out_dir_candidates(root, dep_root, crate_name) {
-        let Ok(source) = fs::read_to_string(generated_file) else {
+        let Ok(source) = fs::read_to_string(&generated_file) else {
             continue;
         };
-        for start in 0..item_segments.len() {
-            let suffix = &item_segments[start..];
-            let module_path = item_segments[..start]
-                .iter()
-                .map(|segment| generated_source_name(segment))
-                .collect::<Vec<_>>();
+        let file_name = generated_file
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        let empty_owner_paths;
+        let owner_paths = include_owners.get(file_name).map_or([].as_slice(), Vec::as_slice);
+        let owner_paths: &[Vec<String>] = if owner_paths.is_empty() {
+            empty_owner_paths = vec![Vec::new()];
+            empty_owner_paths.as_slice()
+        } else {
+            owner_paths
+        };
+        for module_path in owner_paths {
+            let Some(suffix) = generated_item_suffix_for_owner(&item_segments, module_path) else {
+                continue;
+            };
             if let Some(type_info) =
-                generated_type_info_from_source(source.as_str(), suffix, crate_name, &module_path, &external_crates)
+                generated_type_info_from_source(source.as_str(), suffix, crate_name, module_path, &external_crates)
             {
                 return Some(RustItemMetadata {
                     canonical_path: canonical_path.to_string(),
@@ -1302,8 +1423,11 @@ fn extract_from_workspace_route(
     Err(RustMetadataError::PathNotResolved(canonical_path.to_string()))
 }
 
-/// Attempt extraction through one planned route: primary workspace, dependency workspace, then root out-dir workspace
-/// only for root-package items.
+/// Attempt extraction through one planned route: primary workspace, dependency workspace, then root `OUT_DIR`
+/// workspace.
+///
+/// The root `OUT_DIR` route is reached only after the primary route misses and dependency resolution either misses or
+/// determines that the queried crate belongs to the generated root workspace.
 fn extract_in_workspace_set(
     inner: &mut CacheInner,
     root: &Path,

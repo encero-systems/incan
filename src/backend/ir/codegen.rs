@@ -3361,6 +3361,7 @@ pub def make_pair() -> Pair:
                     visibility: RustVisibility::Public,
                     kind: RustItemKind::Type(RustTypeInfo {
                         alias_target: None,
+                        metadata_completeness: Default::default(),
                         methods: Vec::new(),
                         implemented_traits: Vec::new(),
                         fields: vec![
@@ -3436,6 +3437,7 @@ pub def rebuild(join: JoinRel) -> JoinRel:
                     visibility: RustVisibility::Public,
                     kind: RustItemKind::Type(RustTypeInfo {
                         alias_target: None,
+                        metadata_completeness: Default::default(),
                         methods: Vec::new(),
                         implemented_traits: Vec::new(),
                         fields: vec![
@@ -3561,6 +3563,7 @@ pub def forward(payload: Payload) -> int:
                     visibility: RustVisibility::Public,
                     kind: RustItemKind::Type(RustTypeInfo {
                         alias_target: None,
+                        metadata_completeness: Default::default(),
                         methods: vec![
                             RustMethodSig {
                                 name: "new".to_string(),
@@ -3824,6 +3827,7 @@ pub async def register_csv() -> None:
                     visibility: RustVisibility::Public,
                     kind: RustItemKind::Type(RustTypeInfo {
                         alias_target: None,
+                        metadata_completeness: Default::default(),
                         methods: vec![
                             RustMethodSig {
                                 name: "new".to_string(),
@@ -3877,6 +3881,7 @@ pub async def register_csv() -> None:
                     visibility: RustVisibility::Public,
                     kind: RustItemKind::Type(RustTypeInfo {
                         alias_target: None,
+                        metadata_completeness: Default::default(),
                         methods: vec![RustMethodSig {
                             name: "new".to_string(),
                             signature: RustFunctionSig {

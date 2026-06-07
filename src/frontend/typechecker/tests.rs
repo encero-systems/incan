@@ -3796,6 +3796,7 @@ fn test_rust_item_metadata_lookup_reuses_cached_nominal_item_for_instantiated_ru
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     alias_target: None,
+                    metadata_completeness: Default::default(),
                     fields: Vec::new(),
                     methods: Vec::new(),
                     implemented_traits: Vec::new(),
@@ -3889,6 +3890,7 @@ fn test_types_compatible_accepts_rust_alias_definition_without_metadata_lookup()
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     alias_target: None,
+                    metadata_completeness: Default::default(),
                     fields: Vec::new(),
                     methods: Vec::new(),
                     implemented_traits: Vec::new(),
@@ -3927,6 +3929,7 @@ fn test_types_compatible_accepts_rust_path_alias_with_attached_definition_metada
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     alias_target: None,
+                    metadata_completeness: Default::default(),
                     fields: Vec::new(),
                     methods: Vec::new(),
                     implemented_traits: Vec::new(),
@@ -4120,6 +4123,7 @@ def f() -> None:
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     alias_target: None,
+                    metadata_completeness: Default::default(),
                     methods: vec![],
                     implemented_traits: Vec::new(),
                     fields: vec![],
@@ -4147,6 +4151,7 @@ def f() -> None:
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     alias_target: None,
+                    metadata_completeness: Default::default(),
                     methods: vec![],
                     implemented_traits: Vec::new(),
                     fields: vec![],
@@ -4228,6 +4233,7 @@ def f(holder: Holder) -> None:
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     alias_target: None,
+                    metadata_completeness: Default::default(),
                     methods: vec![],
                     implemented_traits: Vec::new(),
                     fields: vec![RustFieldInfo {
@@ -4256,6 +4262,7 @@ def f(holder: Holder) -> None:
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     alias_target: None,
+                    metadata_completeness: Default::default(),
                     methods: vec![],
                     implemented_traits: Vec::new(),
                     fields: vec![],
@@ -4340,6 +4347,7 @@ def f() -> FunctionOption:
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     alias_target: None,
+                    metadata_completeness: Default::default(),
                     methods: vec![],
                     implemented_traits: Vec::new(),
                     fields: vec![RustFieldInfo {
@@ -4396,6 +4404,7 @@ def f(payload: DemoPayload) -> Container:
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     alias_target: None,
+                    metadata_completeness: Default::default(),
                     methods: vec![],
                     implemented_traits: Vec::new(),
                     fields: vec![RustFieldInfo {
@@ -4421,6 +4430,7 @@ def f(payload: DemoPayload) -> Container:
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     alias_target: None,
+                    metadata_completeness: Default::default(),
                     methods: vec![],
                     implemented_traits: Vec::new(),
                     fields: vec![],
@@ -4600,6 +4610,7 @@ def render[T](value: Label[T]) -> str:
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     alias_target: None,
+                    metadata_completeness: Default::default(),
                     methods: vec![RustMethodSig {
                         name: "as_str".to_string(),
                         signature: RustFunctionSig {
@@ -4656,6 +4667,7 @@ fn seed_async_rust_method_probe_with_options_param(
             visibility: RustVisibility::Public,
             kind: RustItemKind::Type(RustTypeInfo {
                 alias_target: None,
+                metadata_completeness: Default::default(),
                 methods: vec![
                     RustMethodSig {
                         name: "new".to_string(),
@@ -4707,6 +4719,7 @@ fn seed_async_rust_method_probe_with_options_param(
             visibility: RustVisibility::Public,
             kind: RustItemKind::Type(RustTypeInfo {
                 alias_target: None,
+                metadata_completeness: Default::default(),
                 methods: vec![RustMethodSig {
                     name: "new".to_string(),
                     signature: RustFunctionSig {
@@ -4877,6 +4890,7 @@ def render(value: Label) -> str:
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     alias_target: None,
+                    metadata_completeness: Default::default(),
                     methods: vec![RustMethodSig {
                         name: "as_str".to_string(),
                         signature: RustFunctionSig {
@@ -4962,6 +4976,7 @@ def f(x: Envelope) -> None:
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     alias_target: None,
+                    metadata_completeness: Default::default(),
                     methods: vec![],
                     implemented_traits: Vec::new(),
                     fields: vec![RustFieldInfo {
@@ -4987,6 +5002,7 @@ def f(x: Envelope) -> None:
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     alias_target: None,
+                    metadata_completeness: Default::default(),
                     methods: vec![],
                     implemented_traits: Vec::new(),
                     fields: vec![],
@@ -5036,6 +5052,7 @@ def f(x: Envelope) -> None:
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     alias_target: None,
+                    metadata_completeness: Default::default(),
                     methods: vec![],
                     implemented_traits: Vec::new(),
                     fields: vec![RustFieldInfo {
@@ -5061,6 +5078,7 @@ def f(x: Envelope) -> None:
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     alias_target: None,
+                    metadata_completeness: Default::default(),
                     methods: vec![],
                     implemented_traits: Vec::new(),
                     fields: vec![],
@@ -5113,6 +5131,7 @@ def inspect(rel: Rel) -> None:
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     alias_target: None,
+                    metadata_completeness: Default::default(),
                     methods: vec![],
                     implemented_traits: Vec::new(),
                     fields: vec![RustFieldInfo {
@@ -5138,6 +5157,7 @@ def inspect(rel: Rel) -> None:
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     alias_target: None,
+                    metadata_completeness: Default::default(),
                     methods: vec![],
                     implemented_traits: Vec::new(),
                     fields: vec![],
@@ -5162,6 +5182,7 @@ def inspect(rel: Rel) -> None:
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     alias_target: None,
+                    metadata_completeness: Default::default(),
                     methods: vec![],
                     implemented_traits: Vec::new(),
                     fields: vec![RustFieldInfo {
@@ -5187,6 +5208,7 @@ def inspect(rel: Rel) -> None:
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     alias_target: None,
+                    metadata_completeness: Default::default(),
                     methods: vec![],
                     implemented_traits: Vec::new(),
                     fields: vec![],
@@ -9445,6 +9467,7 @@ def f(w: Widget) -> None:
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     alias_target: None,
+                    metadata_completeness: Default::default(),
                     methods: Vec::new(),
                     implemented_traits: vec![RustImplementedTrait {
                         path: "demo::AlphaRender".to_string(),
@@ -9523,6 +9546,7 @@ def f(encoded: bytes) -> None:
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     alias_target: None,
+                    metadata_completeness: Default::default(),
                     methods: Vec::new(),
                     implemented_traits: vec![RustImplementedTrait {
                         path: "demo::Message".to_string(),
@@ -9631,6 +9655,7 @@ def f(encoded: bytes) -> None:
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     alias_target: None,
+                    metadata_completeness: Default::default(),
                     methods: Vec::new(),
                     implemented_traits: Vec::new(),
                     fields: Vec::new(),
@@ -9698,6 +9723,11 @@ def choose(rng: ThreadRng, items: List[str]) -> str:
 "#;
     let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
     let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let gen_range_expr = "rng.gen_range(0..len(items))";
+    let gen_range_start = source
+        .find(gen_range_expr)
+        .ok_or_else(|| std::io::Error::other("missing gen_range expression in fixture"))?;
+    let gen_range_span = Span::new(gen_range_start, gen_range_start + gen_range_expr.len());
     let mut checker = TypeChecker::new();
     let tmp = seeded_rust_inspect_workspace()?;
     let manifest_dir = tmp.path().to_path_buf();
@@ -9743,6 +9773,7 @@ def choose(rng: ThreadRng, items: List[str]) -> str:
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     alias_target: None,
+                    metadata_completeness: Default::default(),
                     methods: Vec::new(),
                     implemented_traits: vec![RustImplementedTrait {
                         path: "demo::Rng".to_string(),
@@ -9762,6 +9793,11 @@ def choose(rng: ThreadRng, items: List[str]) -> str:
         uses.values()
             .any(|import_use| import_use.binding == "Rng" && import_use.method == "gen_range"),
         "expected Rng import use to be retained for gen_range, got {uses:?}"
+    );
+    assert_eq!(
+        checker.type_info().expr_type(gen_range_span),
+        Some(&ResolvedType::Unknown),
+        "expected unbound generic Rust method return to stay unknown for source typing"
     );
     Ok(())
 }
@@ -9803,6 +9839,7 @@ type Thing = rusttype RustThing with Labelled
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
                     alias_target: None,
+                    metadata_completeness: Default::default(),
                     methods: vec![],
                     implemented_traits: vec![RustImplementedTrait {
                         path: "demo::Labelled".to_string(),
