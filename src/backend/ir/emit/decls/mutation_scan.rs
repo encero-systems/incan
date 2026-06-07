@@ -5,36 +5,12 @@
 
 use std::collections::HashSet;
 
-use std::sync::LazyLock;
-
-use incan_core::lang::surface::methods::{dict_methods, list_methods};
-
 use super::super::super::expr::{
     IrDictEntry, IrExpr, IrExprKind, IrGeneratorClause, IrListEntry, MethodKind, VarAccess,
 };
 use super::super::super::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use super::super::IrEmitter;
-use crate::backend::ir::emit::expressions::method_kind_uses_mutable_receiver;
-
-/// Method names that mutate their receiver, built from `incan_core` registries.
-///
-/// `push` and `clear` are Rust-internal method names emitted by lowering that don't have surface-level registry entries
-/// — they're included explicitly.
-static MUTATING_METHOD_NAMES: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
-    vec![
-        list_methods::as_str(list_methods::ListMethodId::Append),
-        list_methods::as_str(list_methods::ListMethodId::Extend),
-        list_methods::as_str(list_methods::ListMethodId::Pop),
-        list_methods::as_str(list_methods::ListMethodId::Swap),
-        list_methods::as_str(list_methods::ListMethodId::Reserve),
-        list_methods::as_str(list_methods::ListMethodId::ReserveExact),
-        list_methods::as_str(list_methods::ListMethodId::Remove),
-        dict_methods::as_str(dict_methods::DictMethodId::Insert),
-        // TODO: Rust-internal method names with no surface registry entry
-        "push",
-        "clear",
-    ]
-});
+use crate::backend::ir::emit::expressions::{method_kind_uses_mutable_receiver, method_name_uses_mutable_receiver};
 
 impl<'a> IrEmitter<'a> {
     /// Collect the set of parameter names that are actually mutated in a function body.
@@ -361,7 +337,7 @@ impl<'a> IrEmitter<'a> {
 
     /// Check if a method name is mutating.
     fn is_mutating_method_name(name: &str) -> bool {
-        MUTATING_METHOD_NAMES.contains(&name)
+        method_name_uses_mutable_receiver(name)
     }
 
     /// Check if a method kind is mutating.

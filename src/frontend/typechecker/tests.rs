@@ -27,8 +27,9 @@ use crate::library_manifest::{
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect::{Inspector, InspectorConfig, write_borrowed_param_probe_crate, write_substrait_probe_crate};
 use incan_core::interop::{
-    RustFieldInfo, RustFunctionSig, RustImplementedTrait, RustItemKind, RustItemMetadata, RustMethodSig, RustParam,
-    RustTraitAssoc, RustTraitInfo, RustTypeInfo, RustTypeShape, RustVariantInfo, RustVisibility,
+    CoercionPolicy, RustFieldInfo, RustFunctionSig, RustImplementedTrait, RustItemKind, RustItemMetadata,
+    RustMethodSig, RustParam, RustTraitAssoc, RustTraitInfo, RustTypeInfo, RustTypeShape, RustVariantInfo,
+    RustVisibility,
 };
 use incan_core::lang::surface::constructors::{self as surface_constructors, ConstructorId};
 use incan_core::lang::traits::{self as builtin_traits, TraitId};
@@ -888,13 +889,13 @@ def use() -> None:
     assert!(
         left_emitted_names
             .iter()
-            .all(|name| name.starts_with("choose__overload_")),
+            .all(|name| name.starts_with("choose_overload_")),
         "left overloads should keep deterministic emitted names, got {left_emitted_names:?}"
     );
     assert!(
         right_emitted_names
             .iter()
-            .all(|name| name.starts_with("choose__overload_")),
+            .all(|name| name.starts_with("choose_overload_")),
         "right overloads should keep deterministic emitted names, got {right_emitted_names:?}"
     );
     assert_ne!(
@@ -3156,7 +3157,13 @@ fn test_resolved_result_display_splits_only_top_level_generic_commas() {
         checker.resolved_type_from_rust_display("Result<Vec<(i32, i32)>, String>"),
         ResolvedType::Generic(
             "Result".to_string(),
-            vec![ResolvedType::RustPath("Vec<(i32,i32)>".to_string()), ResolvedType::Str,],
+            vec![
+                ResolvedType::Generic(
+                    "List".to_string(),
+                    vec![ResolvedType::RustPath("(i32,i32)".to_string())]
+                ),
+                ResolvedType::Str,
+            ],
         ),
     );
 }
@@ -4087,6 +4094,204 @@ def f() -> None:
     );
 }
 
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn test_imported_rust_unit_variant_and_zero_field_constructor_typecheck() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+from rust::demo import Empty, Kind, accept_empty, accept_kind
+
+def f() -> None:
+  accept_kind(Kind.Unit)
+  accept_empty(Empty())
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    let tmp = seeded_rust_inspect_workspace()?;
+    let manifest_dir = tmp.path().to_path_buf();
+    checker.set_rust_inspect_manifest_dir(manifest_dir.clone());
+    checker
+        .rust_inspect_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::Kind".to_string(),
+                definition_path: Some("demo::Kind".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
+                    methods: vec![],
+                    implemented_traits: Vec::new(),
+                    fields: vec![],
+                    variants: vec![
+                        RustVariantInfo {
+                            name: "Unit".to_string(),
+                            fields: vec![],
+                        },
+                        RustVariantInfo {
+                            name: "Tuple".to_string(),
+                            fields: vec![RustTypeShape::Int],
+                        },
+                    ],
+                }),
+            },
+        )
+        .map_err(|e| std::io::Error::other(format!("seed rust-inspect kind: {e}")))?;
+    checker
+        .rust_inspect_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::Empty".to_string(),
+                definition_path: Some("demo::Empty".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
+                    methods: vec![],
+                    implemented_traits: Vec::new(),
+                    fields: vec![],
+                    variants: vec![],
+                }),
+            },
+        )
+        .map_err(|e| std::io::Error::other(format!("seed rust-inspect empty: {e}")))?;
+    checker
+        .rust_inspect_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::accept_kind".to_string(),
+                definition_path: Some("demo::accept_kind".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Function(RustFunctionSig {
+                    params: vec![RustParam {
+                        name: Some("value".to_string()),
+                        type_display: "demo::Kind".to_string(),
+                    }],
+                    return_type: "()".to_string(),
+                    is_async: false,
+                    is_unsafe: false,
+                }),
+            },
+        )
+        .map_err(|e| std::io::Error::other(format!("seed rust-inspect accept_kind: {e}")))?;
+    checker
+        .rust_inspect_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::accept_empty".to_string(),
+                definition_path: Some("demo::accept_empty".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Function(RustFunctionSig {
+                    params: vec![RustParam {
+                        name: Some("value".to_string()),
+                        type_display: "demo::Empty".to_string(),
+                    }],
+                    return_type: "()".to_string(),
+                    is_async: false,
+                    is_unsafe: false,
+                }),
+            },
+        )
+        .map_err(|e| std::io::Error::other(format!("seed rust-inspect accept_empty: {e}")))?;
+    checker.check_program(&ast).map_err(|errs| {
+        std::io::Error::other(format!(
+            "expected imported Rust unit variants and zero-field constructors to typecheck: {errs:?}"
+        ))
+    })?;
+    Ok(())
+}
+
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn test_imported_rust_vec_field_indexes_with_element_type() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+from rust::demo import Holder, accept_item
+
+def f(holder: Holder) -> None:
+  accept_item(holder.items[0])
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    let tmp = seeded_rust_inspect_workspace()?;
+    let manifest_dir = tmp.path().to_path_buf();
+    checker.set_rust_inspect_manifest_dir(manifest_dir.clone());
+    checker
+        .rust_inspect_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::Holder".to_string(),
+                definition_path: Some("demo::Holder".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
+                    methods: vec![],
+                    implemented_traits: Vec::new(),
+                    fields: vec![RustFieldInfo {
+                        name: "items".to_string(),
+                        type_display: "Vec<demo::Item>".to_string(),
+                        type_shape: RustTypeShape::RustPath {
+                            path: "Vec".to_string(),
+                            args: vec![RustTypeShape::RustPath {
+                                path: "demo::Item".to_string(),
+                                args: vec![],
+                            }],
+                        },
+                    }],
+                    variants: vec![],
+                }),
+            },
+        )
+        .map_err(|e| std::io::Error::other(format!("seed rust-inspect holder: {e}")))?;
+    checker
+        .rust_inspect_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::Item".to_string(),
+                definition_path: Some("demo::Item".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
+                    methods: vec![],
+                    implemented_traits: Vec::new(),
+                    fields: vec![],
+                    variants: vec![],
+                }),
+            },
+        )
+        .map_err(|e| std::io::Error::other(format!("seed rust-inspect item: {e}")))?;
+    checker
+        .rust_inspect_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::accept_item".to_string(),
+                definition_path: Some("demo::accept_item".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Function(RustFunctionSig {
+                    params: vec![RustParam {
+                        name: Some("value".to_string()),
+                        type_display: "demo::Item".to_string(),
+                    }],
+                    return_type: "()".to_string(),
+                    is_async: false,
+                    is_unsafe: false,
+                }),
+            },
+        )
+        .map_err(|e| std::io::Error::other(format!("seed rust-inspect accept_item: {e}")))?;
+    checker.check_program(&ast).map_err(|errs| {
+        std::io::Error::other(format!(
+            "expected imported Rust Vec field indexing to preserve element type: {errs:?}"
+        ))
+    })?;
+    Ok(())
+}
+
 #[test]
 fn test_imported_rust_function_without_metadata_stays_permissive() {
     let source = r#"
@@ -4107,6 +4312,128 @@ def f() -> None:
   _ = Range(start=1, end=3)
 "#;
     assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_imported_rust_named_constructor_records_field_boundary_coercion() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+from rust::demo import FunctionOption
+
+const OPTION_NAME: str = "name"
+
+def f() -> FunctionOption:
+  return FunctionOption(name=OPTION_NAME)
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    let tmp = seeded_rust_inspect_workspace()?;
+    let manifest_dir = tmp.path().to_path_buf();
+    checker.set_rust_inspect_manifest_dir(manifest_dir.clone());
+    checker
+        .rust_inspect_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::FunctionOption".to_string(),
+                definition_path: Some("demo::FunctionOption".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
+                    methods: vec![],
+                    implemented_traits: Vec::new(),
+                    fields: vec![RustFieldInfo {
+                        name: "name".to_string(),
+                        type_display: "String".to_string(),
+                        type_shape: RustTypeShape::Str,
+                    }],
+                    variants: vec![],
+                }),
+            },
+        )
+        .map_err(|err| std::io::Error::other(format!("seed rust-inspect FunctionOption: {err}")))?;
+
+    checker
+        .check_program(&ast)
+        .map_err(|errs| std::io::Error::other(format!("check failed: {errs:?}")))?;
+    let coercions: Vec<_> = checker.type_info().rust.arg_coercions.values().collect();
+    assert_eq!(
+        coercions.len(),
+        1,
+        "expected one field boundary coercion, got {coercions:?}"
+    );
+    assert_eq!(coercions[0].rust_target_type, "String");
+    assert!(matches!(
+        coercions[0].kind,
+        RustArgCoercionKind::Builtin(CoercionPolicy::Exact)
+    ));
+    Ok(())
+}
+
+#[test]
+fn test_imported_rust_named_constructor_resolves_bare_field_display_through_alias()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+from rust::demo::outer import Container
+from rust::demo::defs import Payload as DemoPayload
+
+def f(payload: DemoPayload) -> Container:
+  return Container(item=payload)
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    let tmp = seeded_rust_inspect_workspace()?;
+    let manifest_dir = tmp.path().to_path_buf();
+    checker.set_rust_inspect_manifest_dir(manifest_dir.clone());
+    checker
+        .rust_inspect_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::outer::Container".to_string(),
+                definition_path: Some("demo::outer::Container".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
+                    methods: vec![],
+                    implemented_traits: Vec::new(),
+                    fields: vec![RustFieldInfo {
+                        name: "item".to_string(),
+                        type_display: "Payload".to_string(),
+                        type_shape: RustTypeShape::RustPath {
+                            path: "Payload".to_string(),
+                            args: vec![],
+                        },
+                    }],
+                    variants: vec![],
+                }),
+            },
+        )
+        .map_err(|err| std::io::Error::other(format!("seed rust-inspect Container: {err}")))?;
+    checker
+        .rust_inspect_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::defs::Payload".to_string(),
+                definition_path: Some("demo::defs::Payload".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
+                    methods: vec![],
+                    implemented_traits: Vec::new(),
+                    fields: vec![],
+                    variants: vec![],
+                }),
+            },
+        )
+        .map_err(|err| std::io::Error::other(format!("seed rust-inspect Payload: {err}")))?;
+
+    checker
+        .check_program(&ast)
+        .map_err(|errs| std::io::Error::other(format!("check failed: {errs:?}")))?;
+    Ok(())
 }
 
 /// Field access on a Rust type that isn't a known inherent associated function should be permissive

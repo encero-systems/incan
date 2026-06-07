@@ -7,7 +7,6 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-use query::filter as __incan_vocab_helper_query_filter;
 fn main() {
     std::panic::set_hook(
         std::boxed::Box::new(|panic_info| {
@@ -20,5 +19,5 @@ fn main() {
             }
         }),
     );
-    query::filter(1);
+    let _ = query::filter(1);
 }

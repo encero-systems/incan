@@ -66,7 +66,7 @@ impl AstLowering {
             docstring: c.docstring.clone(),
             fields,
             derives,
-            visibility: Self::map_visibility(c.visibility),
+            visibility: self.map_type_visibility(c.visibility),
             type_params: Self::lower_type_params(&c.type_params),
             derive_rust_modules,
             lint_allows: self.extract_rust_lint_allows(&c.decorators),

@@ -31,5 +31,5 @@ fn main() {
             }
         })
         .collect::<std::collections::HashMap<_, _>>();
-    println!("{}", * incan_stdlib::collections::dict_get(& evens, & 2));
+    let _ = println!("{}", * incan_stdlib::collections::dict_get(& evens, & 2));
 }

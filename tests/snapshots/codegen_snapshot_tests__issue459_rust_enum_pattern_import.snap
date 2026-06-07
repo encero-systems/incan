@@ -10,12 +10,12 @@ incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 use ::substrait::proto::Rel;
 use ::substrait::proto::rel::RelType;
 pub fn inspect(rel: Rel) {
-    match rel.rel_type.clone() {
+    let _ = match rel.rel_type.clone() {
         Some(RelType::Read(_)) => {
-            ();
+            let _ = ();
         }
         _ => {
-            ();
+            let _ = ();
         }
     };
 }
@@ -31,5 +31,5 @@ fn main() {
             }
         }),
     );
-    ();
+    let _ = ();
 }

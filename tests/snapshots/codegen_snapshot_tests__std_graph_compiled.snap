@@ -14,7 +14,7 @@ pub struct NodeId(pub i64);
 impl NodeId {
     /// Return the runtime numeric representation for diagnostics, storage, or display.
     pub fn to_int(&self) -> i64 {
-        "Return the runtime numeric representation for diagnostics, storage, or display.";
+        let _ = "Return the runtime numeric representation for diagnostics, storage, or display.";
         return self.0;
     }
     /// Returns field metadata for this type.
@@ -41,7 +41,7 @@ pub struct EdgeId(pub i64);
 impl EdgeId {
     /// Return the runtime numeric representation for diagnostics, storage, or display.
     pub fn to_int(&self) -> i64 {
-        "Return the runtime numeric representation for diagnostics, storage, or display.";
+        let _ = "Return the runtime numeric representation for diagnostics, storage, or display.";
         return self.0;
     }
     /// Returns field metadata for this type.
@@ -419,7 +419,7 @@ impl<T> incan_stdlib::reflection::HasTypeFieldMetadata for DiGraph<T> {
 impl<T: Clone> DiGraph<T> {
     /// Compiler hook for `DiGraph[T]()` constructor syntax.
     pub fn __incan_new() -> Self {
-        "Compiler hook for `DiGraph[T]()` constructor syntax.";
+        let _ = "Compiler hook for `DiGraph[T]()` constructor syntax.";
         return DiGraph {
             next_node_id: 0,
             next_edge_id: 0,
@@ -429,10 +429,11 @@ impl<T: Clone> DiGraph<T> {
     }
     /// Add a node with `payload` and return its node id.
     pub fn add_node(&mut self, payload: T) -> NodeId {
-        "Add a node with `payload` and return its node id.";
+        let _ = "Add a node with `payload` and return its node id.";
         let id = NodeId(self.next_node_id);
         self.next_node_id = self.next_node_id + 1;
-        self.nodes
+        let _ = self
+            .nodes
             .push(GraphNode {
                 id: id.clone(),
                 payload: payload,
@@ -442,7 +443,7 @@ impl<T: Clone> DiGraph<T> {
     }
     /// Remove `node` and any incident edges.
     pub fn remove_node(&mut self, node: NodeId) -> Result<(), GraphError> {
-        "Remove `node` and any incident edges.";
+        let _ = "Remove `node` and any incident edges.";
         let index = self.node_index(node.clone());
         if index < 0 {
             return Err::<(), GraphError>(unknown_node(node.clone()));
@@ -473,12 +474,12 @@ impl<T: Clone> DiGraph<T> {
     }
     /// Return whether `node` belongs to this graph.
     pub fn contains_node(&self, node: NodeId) -> bool {
-        "Return whether `node` belongs to this graph.";
+        let _ = "Return whether `node` belongs to this graph.";
         return self.node_index(node) >= 0;
     }
     /// Return the payload for `node`.
     pub fn node_payload(&self, node: NodeId) -> Result<T, GraphError> {
-        "Return the payload for `node`.";
+        let _ = "Return the payload for `node`.";
         let index = self.node_index(node.clone());
         if index < 0 {
             return Err::<T, GraphError>(unknown_node(node));
@@ -494,8 +495,8 @@ impl<T: Clone> DiGraph<T> {
     }
     /// Add the directed edge `from_ -> to`.
     pub fn add_edge(&mut self, from_: NodeId, to: NodeId) -> Result<(), GraphError> {
-        "Add the directed edge `from_ -> to`.";
-        match self.insert_edge(from_, to, false) {
+        let _ = "Add the directed edge `from_ -> to`.";
+        let _ = match self.insert_edge(from_, to, false) {
             Ok(_) => {
                 return Ok::<(), GraphError>(());
             }
@@ -506,7 +507,7 @@ impl<T: Clone> DiGraph<T> {
     }
     /// Remove the directed edge `from_ -> to`.
     pub fn remove_edge(&mut self, from_: NodeId, to: NodeId) -> Result<(), GraphError> {
-        "Remove the directed edge `from_ -> to`.";
+        let _ = "Remove the directed edge `from_ -> to`.";
         if !self.contains_node(from_.clone()) {
             return Err::<(), GraphError>(unknown_node(from_.clone()));
         }
@@ -532,7 +533,7 @@ impl<T: Clone> DiGraph<T> {
     }
     /// Return whether the directed edge `from_ -> to` exists.
     pub fn contains_edge(&self, from_: NodeId, to: NodeId) -> bool {
-        "Return whether the directed edge `from_ -> to` exists.";
+        let _ = "Return whether the directed edge `from_ -> to` exists.";
         for edge in self.edges.iter() {
             if edge.active && edge.from_ == from_ && edge.to == to {
                 return true;
@@ -542,45 +543,45 @@ impl<T: Clone> DiGraph<T> {
     }
     /// Return outgoing neighbors for `node`.
     pub fn successors(&self, node: NodeId) -> Result<Vec<NodeId>, GraphError> {
-        "Return outgoing neighbors for `node`.";
+        let _ = "Return outgoing neighbors for `node`.";
         if !self.contains_node(node.clone()) {
             return Err::<Vec<NodeId>, GraphError>(unknown_node(node.clone()));
         }
         let mut nodes: Vec<NodeId> = vec![];
         for stored in self.nodes.iter() {
             if stored.active && self.contains_edge(node.clone(), stored.id.clone()) {
-                nodes.push(stored.id.clone());
+                let _ = nodes.push(stored.id.clone());
             }
         }
         return Ok::<Vec<NodeId>, GraphError>(nodes);
     }
     /// Return incoming neighbors for `node`.
     pub fn predecessors(&self, node: NodeId) -> Result<Vec<NodeId>, GraphError> {
-        "Return incoming neighbors for `node`.";
+        let _ = "Return incoming neighbors for `node`.";
         if !self.contains_node(node.clone()) {
             return Err::<Vec<NodeId>, GraphError>(unknown_node(node.clone()));
         }
         let mut nodes: Vec<NodeId> = vec![];
         for stored in self.nodes.iter() {
             if stored.active && self.contains_edge(stored.id.clone(), node.clone()) {
-                nodes.push(stored.id.clone());
+                let _ = nodes.push(stored.id.clone());
             }
         }
         return Ok::<Vec<NodeId>, GraphError>(nodes);
     }
     /// Return all nodes with no incoming edges.
     pub fn roots(&self) -> Vec<NodeId> {
-        "Return all nodes with no incoming edges.";
+        let _ = "Return all nodes with no incoming edges.";
         let mut roots: Vec<NodeId> = vec![];
         for node in self.active_node_ids() {
-            match self.predecessors(node.clone()) {
+            let _ = match self.predecessors(node.clone()) {
                 Ok(nodes) => {
                     if ::std::convert::identity(nodes.len() as i64) == 0 {
-                        roots.push(node.clone());
+                        let _ = roots.push(node.clone());
                     }
                 }
                 Err(_) => {
-                    ();
+                    let _ = ();
                 }
             };
         }
@@ -588,17 +589,17 @@ impl<T: Clone> DiGraph<T> {
     }
     /// Return all nodes with no outgoing edges.
     pub fn sinks(&self) -> Vec<NodeId> {
-        "Return all nodes with no outgoing edges.";
+        let _ = "Return all nodes with no outgoing edges.";
         let mut sinks: Vec<NodeId> = vec![];
         for node in self.active_node_ids() {
-            match self.successors(node.clone()) {
+            let _ = match self.successors(node.clone()) {
                 Ok(nodes) => {
                     if ::std::convert::identity(nodes.len() as i64) == 0 {
-                        sinks.push(node.clone());
+                        let _ = sinks.push(node.clone());
                     }
                 }
                 Err(_) => {
-                    ();
+                    let _ = ();
                 }
             };
         }
@@ -606,7 +607,7 @@ impl<T: Clone> DiGraph<T> {
     }
     /// Return nodes reachable from `start` in breadth-first order.
     pub fn bfs_nodes(&self, start: NodeId) -> Result<Vec<NodeId>, GraphError> {
-        "Return nodes reachable from `start` in breadth-first order.";
+        let _ = "Return nodes reachable from `start` in breadth-first order.";
         if !self.contains_node(start.clone()) {
             return Err::<Vec<NodeId>, GraphError>(unknown_node(start.clone()));
         }
@@ -620,14 +621,14 @@ impl<T: Clone> DiGraph<T> {
             if contains_node_id(order.clone(), node.clone()) {
                 continue;
             }
-            order.push(node.clone());
-            match self.successors(node.clone()) {
+            let _ = order.push(node.clone());
+            let _ = match self.successors(node.clone()) {
                 Ok(nodes) => {
                     for successor in nodes.iter() {
                         if !contains_node_id(order.clone(), successor.clone())
                             && !contains_node_id(queue.clone(), successor.clone())
                         {
-                            queue.push(successor.clone());
+                            let _ = queue.push(successor.clone());
                         }
                     }
                 }
@@ -640,7 +641,7 @@ impl<T: Clone> DiGraph<T> {
     }
     /// Return nodes reachable from `start` in depth-first preorder.
     pub fn dfs_preorder_nodes(&self, start: NodeId) -> Result<Vec<NodeId>, GraphError> {
-        "Return nodes reachable from `start` in depth-first preorder.";
+        let _ = "Return nodes reachable from `start` in depth-first preorder.";
         if !self.contains_node(start.clone()) {
             return Err::<Vec<NodeId>, GraphError>(unknown_node(start.clone()));
         }
@@ -651,8 +652,8 @@ impl<T: Clone> DiGraph<T> {
             if contains_node_id(order.clone(), node.clone()) {
                 continue;
             }
-            order.push(node.clone());
-            match self.successors(node.clone()) {
+            let _ = order.push(node.clone());
+            let _ = match self.successors(node.clone()) {
                 Ok(nodes) => {
                     let mut index = ::std::convert::identity(nodes.len() as i64) - 1;
                     while index >= 0 {
@@ -662,7 +663,7 @@ impl<T: Clone> DiGraph<T> {
                             )
                             .clone();
                         if !contains_node_id(order.clone(), successor.clone()) {
-                            stack.push(successor.clone());
+                            let _ = stack.push(successor.clone());
                         }
                         index = index - 1;
                     }
@@ -676,11 +677,11 @@ impl<T: Clone> DiGraph<T> {
     }
     /// Return a topological order or `Err(GraphError)` when the graph contains a cycle.
     pub fn topological_order(&self) -> Result<Vec<NodeId>, GraphError> {
-        "Return a topological order or `Err(GraphError)` when the graph contains a cycle.";
+        let _ = "Return a topological order or `Err(GraphError)` when the graph contains a cycle.";
         let active = self.active_node_ids();
         let mut indegrees: Vec<i64> = vec![];
         for node in active.iter() {
-            match self.predecessors(node.clone()) {
+            let _ = match self.predecessors(node.clone()) {
                 Ok(nodes) => indegrees.push(::std::convert::identity(nodes.len() as i64)),
                 Err(err) => {
                     return Err::<Vec<NodeId>, GraphError>(err);
@@ -698,10 +699,10 @@ impl<T: Clone> DiGraph<T> {
                 if *incan_stdlib::collections::list_get(&indegrees, (index) as i64) == 0
                     && !contains_node_id(consumed.clone(), node.clone())
                 {
-                    consumed.push(node.clone());
-                    order.push(node.clone());
+                    let _ = consumed.push(node.clone());
+                    let _ = order.push(node.clone());
                     made_progress = true;
-                    match self.successors(node.clone()) {
+                    let _ = match self.successors(node.clone()) {
                         Ok(nodes) => {
                             for successor in nodes.iter() {
                                 let successor_index = node_index_in(
@@ -755,7 +756,8 @@ impl<T: Clone> DiGraph<T> {
         }
         let id = EdgeId(self.next_edge_id);
         self.next_edge_id = self.next_edge_id + 1;
-        self.edges
+        let _ = self
+            .edges
             .push(GraphEdge {
                 id: id.clone(),
                 from_: from_,
@@ -768,7 +770,7 @@ impl<T: Clone> DiGraph<T> {
         let mut ids: Vec<NodeId> = vec![];
         for node in self.nodes.iter() {
             if node.active {
-                ids.push(node.id.clone());
+                let _ = ids.push(node.id.clone());
             }
         }
         return ids.clone();
@@ -777,7 +779,7 @@ impl<T: Clone> DiGraph<T> {
         let mut ids: Vec<EdgeId> = vec![];
         for edge in self.edges.iter() {
             if edge.active {
-                ids.push(edge.id.clone());
+                let _ = ids.push(edge.id.clone());
             }
         }
         return ids.clone();
@@ -890,34 +892,34 @@ impl<T> incan_stdlib::reflection::HasTypeFieldMetadata for Dag<T> {
 impl<T: Clone> Dag<T> {
     /// Compiler hook for `Dag[T]()` constructor syntax.
     pub fn __incan_new() -> Self {
-        "Compiler hook for `Dag[T]()` constructor syntax.";
+        let _ = "Compiler hook for `Dag[T]()` constructor syntax.";
         return Dag {
             graph: DiGraph::<T>::__incan_new(),
         };
     }
     /// Add a node with `payload` and return its node id.
     pub fn add_node(&mut self, payload: T) -> NodeId {
-        "Add a node with `payload` and return its node id.";
+        let _ = "Add a node with `payload` and return its node id.";
         return self.graph.add_node(payload);
     }
     /// Remove `node` and any incident edges.
     pub fn remove_node(&mut self, node: NodeId) -> Result<(), GraphError> {
-        "Remove `node` and any incident edges.";
+        let _ = "Remove `node` and any incident edges.";
         return self.graph.remove_node(node);
     }
     /// Return whether `node` belongs to this DAG.
     pub fn contains_node(&self, node: NodeId) -> bool {
-        "Return whether `node` belongs to this DAG.";
+        let _ = "Return whether `node` belongs to this DAG.";
         return self.graph.contains_node(node);
     }
     /// Return the payload for `node`.
     pub fn node_payload(&self, node: NodeId) -> Result<T, GraphError> {
-        "Return the payload for `node`.";
+        let _ = "Return the payload for `node`.";
         return self.graph.node_payload(node);
     }
     /// Add `from_ -> to`, rejecting the edge if it would create a cycle.
     pub fn add_edge(&mut self, from_: NodeId, to: NodeId) -> Result<(), GraphError> {
-        "Add `from_ -> to`, rejecting the edge if it would create a cycle.";
+        let _ = "Add `from_ -> to`, rejecting the edge if it would create a cycle.";
         if !self.graph.contains_node(from_.clone()) {
             return Err::<(), GraphError>(unknown_node(from_.clone()));
         }
@@ -949,43 +951,43 @@ impl<T: Clone> Dag<T> {
     }
     /// Remove the directed edge `from_ -> to`.
     pub fn remove_edge(&mut self, from_: NodeId, to: NodeId) -> Result<(), GraphError> {
-        "Remove the directed edge `from_ -> to`.";
+        let _ = "Remove the directed edge `from_ -> to`.";
         return self.graph.remove_edge(from_, to);
     }
     /// Return outgoing neighbors for `node`.
     pub fn successors(&self, node: NodeId) -> Result<Vec<NodeId>, GraphError> {
-        "Return outgoing neighbors for `node`.";
+        let _ = "Return outgoing neighbors for `node`.";
         return self.graph.successors(node);
     }
     /// Return incoming neighbors for `node`.
     pub fn predecessors(&self, node: NodeId) -> Result<Vec<NodeId>, GraphError> {
-        "Return incoming neighbors for `node`.";
+        let _ = "Return incoming neighbors for `node`.";
         return self.graph.predecessors(node);
     }
     /// Return all nodes with no incoming edges.
     pub fn roots(&self) -> Vec<NodeId> {
-        "Return all nodes with no incoming edges.";
+        let _ = "Return all nodes with no incoming edges.";
         return self.graph.roots();
     }
     /// Return all nodes with no outgoing edges.
     pub fn sinks(&self) -> Vec<NodeId> {
-        "Return all nodes with no outgoing edges.";
+        let _ = "Return all nodes with no outgoing edges.";
         return self.graph.sinks();
     }
     /// Return nodes reachable from `start` in breadth-first order.
     pub fn bfs_nodes(&self, start: NodeId) -> Result<Vec<NodeId>, GraphError> {
-        "Return nodes reachable from `start` in breadth-first order.";
+        let _ = "Return nodes reachable from `start` in breadth-first order.";
         return self.graph.bfs_nodes(start);
     }
     /// Return nodes reachable from `start` in depth-first preorder.
     pub fn dfs_preorder_nodes(&self, start: NodeId) -> Result<Vec<NodeId>, GraphError> {
-        "Return nodes reachable from `start` in depth-first preorder.";
+        let _ = "Return nodes reachable from `start` in depth-first preorder.";
         return self.graph.dfs_preorder_nodes(start);
     }
     /// Return the DAG's topological node order.
     pub fn topological_order(&self) -> Vec<NodeId> {
-        "Return the DAG's topological node order.";
-        match self.graph.topological_order() {
+        let _ = "Return the DAG's topological node order.";
+        let _ = match self.graph.topological_order() {
             Ok(nodes) => {
                 return nodes.clone();
             }
@@ -995,7 +997,7 @@ impl<T: Clone> Dag<T> {
         };
     }
     pub fn can_reach(&self, start: NodeId, target: NodeId) -> bool {
-        match self.graph.bfs_nodes(start) {
+        let _ = match self.graph.bfs_nodes(start) {
             Ok(nodes) => {
                 return contains_node_id(nodes.clone(), target);
             }
@@ -1065,39 +1067,39 @@ impl<T> incan_stdlib::reflection::HasTypeFieldMetadata for MultiDiGraph<T> {
 impl<T: Clone> MultiDiGraph<T> {
     /// Compiler hook for `MultiDiGraph[T]()` constructor syntax.
     pub fn __incan_new() -> Self {
-        "Compiler hook for `MultiDiGraph[T]()` constructor syntax.";
+        let _ = "Compiler hook for `MultiDiGraph[T]()` constructor syntax.";
         return MultiDiGraph {
             graph: DiGraph::<T>::__incan_new(),
         };
     }
     /// Add a node with `payload` and return its node id.
     pub fn add_node(&mut self, payload: T) -> NodeId {
-        "Add a node with `payload` and return its node id.";
+        let _ = "Add a node with `payload` and return its node id.";
         return self.graph.add_node(payload);
     }
     /// Remove `node` and any incident edges.
     pub fn remove_node(&mut self, node: NodeId) -> Result<(), GraphError> {
-        "Remove `node` and any incident edges.";
+        let _ = "Remove `node` and any incident edges.";
         return self.graph.remove_node(node);
     }
     /// Return whether `node` belongs to this multigraph.
     pub fn contains_node(&self, node: NodeId) -> bool {
-        "Return whether `node` belongs to this multigraph.";
+        let _ = "Return whether `node` belongs to this multigraph.";
         return self.graph.contains_node(node);
     }
     /// Return the payload for `node`.
     pub fn node_payload(&self, node: NodeId) -> Result<T, GraphError> {
-        "Return the payload for `node`.";
+        let _ = "Return the payload for `node`.";
         return self.graph.node_payload(node);
     }
     /// Add a directed edge and return its edge id.
     pub fn add_edge(&mut self, from_: NodeId, to: NodeId) -> Result<EdgeId, GraphError> {
-        "Add a directed edge and return its edge id.";
+        let _ = "Add a directed edge and return its edge id.";
         return self.graph.insert_edge(from_, to, true);
     }
     /// Remove the edge identified by `edge`.
     pub fn remove_edge(&mut self, edge: EdgeId) -> Result<(), GraphError> {
-        "Remove the edge identified by `edge`.";
+        let _ = "Remove the edge identified by `edge`.";
         let index = self.graph.edge_index(edge.clone());
         if index < 0 {
             return Err::<
@@ -1125,7 +1127,7 @@ impl<T: Clone> MultiDiGraph<T> {
     }
     /// Return whether `edge` belongs to this multigraph.
     pub fn contains_edge(&self, edge: EdgeId) -> bool {
-        "Return whether `edge` belongs to this multigraph.";
+        let _ = "Return whether `edge` belongs to this multigraph.";
         return self.graph.edge_index(edge.clone()) >= 0;
     }
     /// Return all edge ids connecting `from_ -> to`.
@@ -1134,7 +1136,7 @@ impl<T: Clone> MultiDiGraph<T> {
         from_: NodeId,
         to: NodeId,
     ) -> Result<Vec<EdgeId>, GraphError> {
-        "Return all edge ids connecting `from_ -> to`.";
+        let _ = "Return all edge ids connecting `from_ -> to`.";
         if !self.graph.contains_node(from_.clone()) {
             return Err::<Vec<EdgeId>, GraphError>(unknown_node(from_.clone()));
         }
@@ -1144,14 +1146,14 @@ impl<T: Clone> MultiDiGraph<T> {
         let mut edges: Vec<EdgeId> = vec![];
         for edge in self.graph.edges.iter() {
             if edge.active && edge.from_ == from_ && edge.to == to {
-                edges.push(edge.id.clone());
+                let _ = edges.push(edge.id.clone());
             }
         }
         return Ok::<Vec<EdgeId>, GraphError>(edges);
     }
     /// Return the source and target node ids for `edge`.
     pub fn edge_endpoints(&self, edge: EdgeId) -> Result<(NodeId, NodeId), GraphError> {
-        "Return the source and target node ids for `edge`.";
+        let _ = "Return the source and target node ids for `edge`.";
         let index = self.graph.edge_index(edge.clone());
         if index < 0 {
             return Err::<
@@ -1177,37 +1179,37 @@ impl<T: Clone> MultiDiGraph<T> {
     }
     /// Return outgoing neighbors for `node`.
     pub fn successors(&self, node: NodeId) -> Result<Vec<NodeId>, GraphError> {
-        "Return outgoing neighbors for `node`.";
+        let _ = "Return outgoing neighbors for `node`.";
         return self.graph.successors(node);
     }
     /// Return incoming neighbors for `node`.
     pub fn predecessors(&self, node: NodeId) -> Result<Vec<NodeId>, GraphError> {
-        "Return incoming neighbors for `node`.";
+        let _ = "Return incoming neighbors for `node`.";
         return self.graph.predecessors(node);
     }
     /// Return all nodes with no incoming edges.
     pub fn roots(&self) -> Vec<NodeId> {
-        "Return all nodes with no incoming edges.";
+        let _ = "Return all nodes with no incoming edges.";
         return self.graph.roots();
     }
     /// Return all nodes with no outgoing edges.
     pub fn sinks(&self) -> Vec<NodeId> {
-        "Return all nodes with no outgoing edges.";
+        let _ = "Return all nodes with no outgoing edges.";
         return self.graph.sinks();
     }
     /// Return nodes reachable from `start` in breadth-first order.
     pub fn bfs_nodes(&self, start: NodeId) -> Result<Vec<NodeId>, GraphError> {
-        "Return nodes reachable from `start` in breadth-first order.";
+        let _ = "Return nodes reachable from `start` in breadth-first order.";
         return self.graph.bfs_nodes(start);
     }
     /// Return nodes reachable from `start` in depth-first preorder.
     pub fn dfs_preorder_nodes(&self, start: NodeId) -> Result<Vec<NodeId>, GraphError> {
-        "Return nodes reachable from `start` in depth-first preorder.";
+        let _ = "Return nodes reachable from `start` in depth-first preorder.";
         return self.graph.dfs_preorder_nodes(start);
     }
     /// Return a topological node order or `Err(GraphError)` when the multigraph contains a cycle.
     pub fn topological_order(&self) -> Result<Vec<NodeId>, GraphError> {
-        "Return a topological node order or `Err(GraphError)` when the multigraph contains a cycle.";
+        let _ = "Return a topological node order or `Err(GraphError)` when the multigraph contains a cycle.";
         return self.graph.topological_order();
     }
     /// Returns field metadata for this type.

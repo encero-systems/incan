@@ -185,7 +185,7 @@ pub class File with BinaryReader:
         Returns:
             `Ok(None)` after the host completes the sync request, or `Err(IoError)`.
         """
-        mut file = self.handle.borrow_mut()
+        file = self.handle.borrow_mut()
         match file.sync_all():
             Ok(_) => return Ok(None)
             Err(err) => return Err(_io_error(self.path, err))
@@ -206,7 +206,7 @@ pub class File with BinaryReader:
         Returns:
             `Ok(None)` after the host completes the data sync request, or `Err(IoError)`.
         """
-        mut file = self.handle.borrow_mut()
+        file = self.handle.borrow_mut()
         match file.sync_data():
             Ok(_) => return Ok(None)
             Err(err) => return Err(_io_error(self.path, err))

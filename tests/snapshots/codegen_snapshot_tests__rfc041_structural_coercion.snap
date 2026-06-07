@@ -37,7 +37,7 @@ fn main() {
     ]
         .into_iter()
         .collect::<std::collections::HashMap<_, _>>();
-    accept_option(maybe_count);
-    accept_names(names);
-    accept_scores(scores);
+    let _ = accept_option(maybe_count);
+    let _ = accept_names(names);
+    let _ = accept_scores(scores);
 }

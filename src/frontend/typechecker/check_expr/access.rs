@@ -90,6 +90,22 @@ impl TypeChecker {
         fields.iter().find(|field| field.name == source_name)
     }
 
+    /// Resolve a Rust field type from its display string against the owning Rust type.
+    ///
+    /// Rust field metadata carries both a structural shape and the source display. Field access should use the display
+    /// because it preserves exact numeric widths and owner-relative paths that matter when a Rust field is copied back
+    /// into another Rust boundary. The structural shape remains useful for broad semantic classification and older
+    /// metadata entries whose display cannot be resolved.
+    fn resolved_rust_field_type(&self, owner_path: &str, field: &RustFieldInfo) -> ResolvedType {
+        let display = self.rust_display_for_owner_path(field.type_display.as_str(), owner_path);
+        let resolved = self.resolved_type_from_rust_display(display.as_str());
+        if matches!(resolved, ResolvedType::Unknown) {
+            self.resolved_type_from_rust_shape(&field.type_shape)
+        } else {
+            resolved
+        }
+    }
+
     /// Return the target display for a Rust type alias when the expected destination type names one.
     fn rust_callable_alias_target_display(&self, expected_ty: &ResolvedType) -> Option<String> {
         let ResolvedType::RustPath(path) = expected_ty else {
@@ -1509,7 +1525,7 @@ impl TypeChecker {
                         && let RustItemKind::Type(info) = &meta.kind
                         && let Some(rust_field) = Self::rust_field_for_source_name(&info.fields, field)
                     {
-                        return Some(self.resolved_type_from_rust_shape(&rust_field.type_shape));
+                        return Some(self.resolved_rust_field_type(path, rust_field));
                     }
                 }
                 return None;
@@ -2801,6 +2817,9 @@ impl TypeChecker {
                         return self.resolved_function_type_from_rust_sig_for_path(&sig, false, path);
                     }
                     if let Some(params) = self.rust_variant_callable_params(path, field) {
+                        if params.is_empty() {
+                            return ResolvedType::RustPath(path.to_string());
+                        }
                         return ResolvedType::Function(params, Box::new(ResolvedType::RustPath(path.to_string())));
                     }
                     if let RustItemKind::Type(info) = &meta.kind
@@ -2808,7 +2827,7 @@ impl TypeChecker {
                     {
                         self.type_info
                             .record_rust_field_access_name(span, rust_field.name.clone());
-                        return self.resolved_type_from_rust_shape(&rust_field.type_shape);
+                        return self.resolved_rust_field_type(path, rust_field);
                     }
                     // Metadata may still be missing constants, type aliases, trait-provided items, or private fields.
                     // Stay permissive when no exact field surface is available.
@@ -3552,6 +3571,24 @@ impl TypeChecker {
                 && set_methods::from_str(method).is_some()
             {
                 return ResolvedType::Bool;
+            }
+            if collection_type_id(name.as_str()) == Some(CollectionTypeId::Option) && method == "clone" {
+                if !args.is_empty() {
+                    self.errors.push(errors::type_mismatch(
+                        "no arguments",
+                        &format!("{} argument(s)", args.len()),
+                        span,
+                    ));
+                }
+                let inner = type_args.first().cloned().unwrap_or(ResolvedType::Unknown);
+                if !self.is_copy_type(&inner)
+                    && !self.is_clone_type(&inner)
+                    && !matches!(inner, ResolvedType::RustPath(_))
+                {
+                    self.errors
+                        .push(errors::list_clone_requires_clone(&inner.to_string(), span));
+                }
+                return option_ty(inner);
             }
         }
 

@@ -65,5 +65,5 @@ fn main() {
     );
     let nodes = vec![Node { id : 1 }, Node { id : 2 }];
     let copy = clone_nodes(nodes);
-    println!("{}", ::std::convert::identity(copy.len() as i64));
+    let _ = println!("{}", ::std::convert::identity(copy.len() as i64));
 }

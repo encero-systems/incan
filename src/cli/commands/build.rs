@@ -1262,7 +1262,7 @@ pub fn build_library(
     if prepared.should_preheat_library_dependencies {
         run_generated_library_dependency_preheat(
             &prepared.project_root,
-            &prepared.project_root.join("target").join("incan_lock"),
+            &prepared.out_dir,
             &prepared.cargo_features,
             &prepared.cargo_policy,
             &prepared.generator.cargo_target_dir(),

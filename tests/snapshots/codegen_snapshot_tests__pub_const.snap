@@ -21,6 +21,6 @@ fn main() {
             }
         }),
     );
-    println!("{}", PI);
-    println!("{}", E);
+    let _ = println!("{}", PI);
+    let _ = println!("{}", E);
 }

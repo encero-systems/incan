@@ -144,7 +144,7 @@ impl Row {
         return self.value + index;
     }
     pub fn __setitem__(&self, _: i64, _: i64) {
-        ();
+        let _ = ();
     }
 }
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
@@ -222,7 +222,7 @@ fn main() {
     let _same = first == second;
     let row = Row { value: 4 };
     let _item = row.__getitem__(3);
-    row.__setitem__(3, 9);
+    let _ = row.__setitem__(3, 9);
     let left = OpBox { value: 2 };
     let right = OpBox { value: 3 };
     let _mat = left.__matmul__(right.clone());

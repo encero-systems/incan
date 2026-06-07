@@ -44,7 +44,9 @@ fn main() {
     let copied = squares(values.clone());
     let filtered = positive_squares(values.clone());
     let indexed = index_by_value(values);
-    println!("{}", * incan_stdlib::collections::list_get(& copied, (0) as i64));
-    println!("{}", * incan_stdlib::collections::list_get(& filtered, (0) as i64));
-    println!("{}", * incan_stdlib::collections::dict_get(& indexed, & 1));
+    let _ = println!("{}", * incan_stdlib::collections::list_get(& copied, (0) as i64));
+    let _ = println!(
+        "{}", * incan_stdlib::collections::list_get(& filtered, (0) as i64)
+    );
+    let _ = println!("{}", * incan_stdlib::collections::dict_get(& indexed, & 1));
 }

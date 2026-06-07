@@ -29,10 +29,14 @@ pub const STDLIB_ASYNC: &str = "async";
 pub const STDLIB_GRAPH: &str = "graph";
 /// `std.rust` module name for capability bounds (RFC 041).
 pub const STDLIB_RUST: &str = "rust";
+/// Runtime error helper module under the compiled stdlib Rust namespace.
+pub const INCAN_STD_ERRORS_MODULE: &str = "errors";
 /// `std.builtins` module name for explicit builtin-function escape calls (RFC 045).
 pub const STDLIB_BUILTINS: &str = "builtins";
 /// `std.json` module name.
 pub const STDLIB_JSON: &str = "json";
+/// `std.result` module name.
+pub const STDLIB_RESULT: &str = "result";
 /// `std.serde` module name.
 pub const STDLIB_SERDE: &str = "serde";
 /// Dynamic JSON value type exported by `std.json`.

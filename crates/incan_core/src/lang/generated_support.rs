@@ -12,6 +12,19 @@ pub struct GeneratedModuleSupport {
     pub generated_module: &'static str,
     /// Fully qualified macro path without the trailing `!`.
     pub macro_path: &'static str,
+    /// Local generated items that must stay reachable because the macro expands against them.
+    pub required_items: &'static [&'static str],
+}
+
+/// Source items directly referenced by compiler-generated Rust paths.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GeneratedPathSupport {
+    /// Source module name such as `std.derives.collection`.
+    pub source_module: &'static str,
+    /// Generated Rust module name such as `__incan_std.derives.collection`.
+    pub generated_module: &'static str,
+    /// Local generated items directly named by backend emission.
+    pub required_items: &'static [&'static str],
 }
 
 /// Borrowed argument shape expected by a generated-method fast path.
@@ -46,6 +59,34 @@ const ORDINAL_MAP_MODULE_SUPPORTS: &[GeneratedModuleSupport] = &[GeneratedModule
     source_module: "std.collections",
     generated_module: "__incan_std.collections",
     macro_path: "incan_stdlib::__incan_ordinal_map_string_fast_impls",
+    required_items: &[
+        "OrdinalMap",
+        "OrdinalMapError",
+        "OrdinalMapErrorKind",
+        "_missing_ordinal",
+        "_ordinal_map_error",
+        "_ordinal_hash",
+    ],
+}];
+
+const DIRECT_GENERATED_PATH_SUPPORTS: &[GeneratedPathSupport] = &[GeneratedPathSupport {
+    source_module: "std.derives.collection",
+    generated_module: "__incan_std.derives.collection",
+    required_items: &[
+        "Iterator",
+        "ListIterator",
+        "MapIterator",
+        "FilterIterator",
+        "EnumerateIterator",
+        "ZipIterator",
+        "TakeIterator",
+        "SkipIterator",
+        "TakeWhileIterator",
+        "SkipWhileIterator",
+        "ChainIterator",
+        "FlatMapIterator",
+        "BatchIterator",
+    ],
 }];
 
 const ORDINAL_MAP_METHOD_FAST_PATHS: &[MethodFastPath] = &[
@@ -127,6 +168,12 @@ const ORDINAL_MAP_METHOD_FAST_PATHS: &[MethodFastPath] = &[
 #[must_use]
 pub fn generated_module_supports() -> &'static [GeneratedModuleSupport] {
     ORDINAL_MAP_MODULE_SUPPORTS
+}
+
+/// Return compiler-generated path support items that pruning must keep reachable.
+#[must_use]
+pub fn generated_path_supports() -> &'static [GeneratedPathSupport] {
+    DIRECT_GENERATED_PATH_SUPPORTS
 }
 
 /// Return method fast paths published for generated stdlib modules.

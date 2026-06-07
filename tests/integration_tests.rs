@@ -13269,7 +13269,7 @@ def main() -> Result[None, SessionError]:
     }
 
     #[test]
-    fn consumer_build_injects_helper_import_for_vocab_desugarer_calls() -> Result<(), Box<dyn std::error::Error>> {
+    fn consumer_build_uses_provider_paths_for_vocab_desugarer_calls() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let response = incan_vocab::DesugarResponse::expression(incan_vocab::IncanExpr::Call {
             callee: Box::new(incan_vocab::IncanExpr::Helper("filter".to_string())),
@@ -13310,12 +13310,12 @@ def main() -> Result[None, SessionError]:
 
         let generated_main_rs = std::fs::read_to_string(out_dir.join("src/main.rs"))?;
         assert!(
-            generated_main_rs.contains("__incan_vocab_helper_filterkit_filter"),
-            "expected hidden helper alias in generated Rust, got:\n{generated_main_rs}"
+            !generated_main_rs.contains("__incan_vocab_helper_filterkit_filter"),
+            "expected generated Rust to avoid hidden helper aliases, got:\n{generated_main_rs}"
         );
         assert!(
             generated_main_rs.contains("filterkit::filter"),
-            "expected generated Rust to import the provider helper from the dependency crate, got:\n{generated_main_rs}"
+            "expected generated Rust to call the provider helper through its dependency crate path, got:\n{generated_main_rs}"
         );
         Ok(())
     }

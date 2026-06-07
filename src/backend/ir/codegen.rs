@@ -52,7 +52,8 @@ mod serde_activation;
 
 use dependency_metadata::{
     DependencySymbolMetadata, collect_dependency_symbol_metadata, collect_externally_reachable_items_by_module,
-    collect_model_field_aliases, should_preserve_dependency_public_items,
+    collect_model_field_aliases, record_direct_generated_path_support_items_from_ir,
+    should_preserve_dependency_public_items,
 };
 use ordinal_bridge::{OrdinalBridgeConfig, compilation_imports_std_ordinal_contract, imports_std_ordinal_contract};
 use serde_activation::{add_serde_to_newtypes, collect_serde_derives};
@@ -134,6 +135,33 @@ impl From<EmitError> for GenerationError {
     }
 }
 
+/// Options for one IR-to-Rust generation pass that needs cross-module identity side channels.
+struct IrGenerationOptions<'a> {
+    /// Shared anonymous union definitions keyed by stable union shape.
+    generated_union_types: HashMap<String, super::types::IrType>,
+    /// Whether anonymous union references should be emitted from the crate root.
+    qualify_union_types_from_crate: bool,
+    /// Shared callable-name resolutions collected while emitting multi-module generated code.
+    callable_name_resolutions: Option<&'a mut HashMap<String, CallableNameResolution>>,
+    /// Callable signature keys that require `__IncanCallableName` support.
+    callable_name_used_signature_keys: Option<&'a mut HashSet<String>>,
+    /// Dependency support items required by generated paths observed in lowered IR.
+    direct_generated_path_support_items: Option<&'a mut HashMap<Vec<String>, HashSet<String>>>,
+}
+
+impl IrGenerationOptions<'_> {
+    /// Build options for an ordinary single-program generation pass.
+    fn ordinary() -> Self {
+        Self {
+            generated_union_types: HashMap::new(),
+            qualify_union_types_from_crate: false,
+            callable_name_resolutions: None,
+            callable_name_used_signature_keys: None,
+            direct_generated_path_support_items: None,
+        }
+    }
+}
+
 /// IR-based Rust code generator
 ///
 /// This is the unified entrypoint for code generation. It uses the typed IR and syn/quote for code emission.
@@ -164,7 +192,7 @@ pub struct IrCodegen<'a> {
     declared_crate_names: Option<HashSet<String>>,
     /// Consumer-side `pub::` dependency metadata used by internal typechecking.
     library_manifest_index: Option<Arc<LibraryManifestIndex>>,
-    /// Whether generated Rust should deny warning classes that normal emission suppresses at narrow scopes.
+    /// Whether generated Rust should deny warnings so tests can prove normal emission stays warning-clean.
     strict_generated_lints: bool,
     /// Private IR items called by generated code that is appended outside normal IR emission.
     externally_reachable_items: HashSet<String>,
@@ -372,7 +400,6 @@ impl<'a> IrCodegen<'a> {
             metadata.ambiguous_value_names.clone(),
         );
         emitter.set_dependency_enum_types(metadata.enum_type_names.clone());
-        emitter.set_external_error_trait_types(metadata.error_trait_type_names.clone());
         if let Some(index) = library_manifest_index {
             emitter.seed_public_dependency_nominal_metadata(index);
         }
@@ -673,7 +700,7 @@ impl<'a> IrCodegen<'a> {
         program: &Program,
         internal_module_roots: &HashSet<String>,
     ) -> Result<String, GenerationError> {
-        self.try_generate_via_ir_with_union_config(program, internal_module_roots, HashMap::new(), false, None, None)
+        self.try_generate_via_ir_with_union_config(program, internal_module_roots, IrGenerationOptions::ordinary())
     }
 
     /// Generate code via the IR pipeline with optional crate-root union sharing for multi-file source modules.
@@ -681,10 +708,7 @@ impl<'a> IrCodegen<'a> {
         &mut self,
         program: &Program,
         internal_module_roots: &HashSet<String>,
-        generated_union_types: HashMap<String, super::types::IrType>,
-        qualify_union_types_from_crate: bool,
-        mut callable_name_resolutions: Option<&mut HashMap<String, CallableNameResolution>>,
-        mut callable_name_used_signature_keys: Option<&mut HashSet<String>>,
+        mut options: IrGenerationOptions<'_>,
     ) -> Result<String, GenerationError> {
         let dependency_modules = self.dependency_modules.clone();
         let deps: Vec<(&str, &Program)> = dependency_modules.iter().map(|(name, ast, _)| (*name, *ast)).collect();
@@ -731,26 +755,27 @@ impl<'a> IrCodegen<'a> {
 
         // RFC 023: Infer trait bounds for generic functions.
         super::trait_bound_inference::infer_trait_bounds(&mut ir_program);
-        let callable_name_use_facts = IrEmitter::callable_name_use_facts_for_program(
-            &ir_program,
-            &self.externally_reachable_items,
-            true,
-            &dependency_symbol_metadata.error_trait_type_names,
-        );
-        if let Some(used_keys) = callable_name_used_signature_keys.as_deref_mut() {
+        if let Some(reachable_items) = options.direct_generated_path_support_items {
+            record_direct_generated_path_support_items_from_ir(reachable_items, &ir_program);
+        }
+        let callable_name_use_facts =
+            IrEmitter::callable_name_use_facts_for_program(&ir_program, &self.externally_reachable_items, true);
+        if let Some(used_keys) = options.callable_name_used_signature_keys.as_deref_mut() {
             used_keys.extend(callable_name_use_facts.signature_keys.iter().cloned());
             if callable_name_use_facts.generic_trait_used {
                 used_keys.extend(callable_name_use_facts.function_arg_signature_keys.iter().cloned());
             }
         }
-        if let Some(resolutions) = callable_name_resolutions.as_deref_mut() {
+        if let Some(resolutions) = options.callable_name_resolutions.as_deref_mut() {
             IrEmitter::add_callable_name_resolutions_for_program(resolutions, Vec::new(), &ir_program);
         }
-        let callable_name_resolutions_for_emit = callable_name_resolutions
+        let callable_name_resolutions_for_emit = options
+            .callable_name_resolutions
             .as_ref()
             .map(|resolutions| (**resolutions).clone())
             .unwrap_or_default();
-        let mut callable_name_used_signature_keys_for_emit = callable_name_used_signature_keys
+        let mut callable_name_used_signature_keys_for_emit = options
+            .callable_name_used_signature_keys
             .as_ref()
             .map(|used_keys| (**used_keys).clone())
             .unwrap_or_default();
@@ -825,8 +850,8 @@ impl<'a> IrCodegen<'a> {
             inner.set_strict_generated_lints(self.strict_generated_lints);
             inner.set_externally_reachable_items(self.externally_reachable_items.clone());
             self.apply_ordinal_bridge_config(inner, &ordinal_bridge);
-            inner.set_qualify_union_types_from_crate(qualify_union_types_from_crate);
-            inner.set_generated_union_types(generated_union_types);
+            inner.set_qualify_union_types_from_crate(options.qualify_union_types_from_crate);
+            inner.set_generated_union_types(options.generated_union_types);
             inner.set_canonical_function_registry(canonical_registry.clone());
             inner.set_callable_name_current_module_path(Vec::new());
             inner.set_callable_name_resolutions(callable_name_resolutions_for_emit);
@@ -852,8 +877,8 @@ impl<'a> IrCodegen<'a> {
             emitter.set_strict_generated_lints(self.strict_generated_lints);
             emitter.set_externally_reachable_items(self.externally_reachable_items.clone());
             self.apply_ordinal_bridge_config(&mut emitter, &ordinal_bridge);
-            emitter.set_qualify_union_types_from_crate(qualify_union_types_from_crate);
-            emitter.set_generated_union_types(generated_union_types);
+            emitter.set_qualify_union_types_from_crate(options.qualify_union_types_from_crate);
+            emitter.set_generated_union_types(options.generated_union_types);
             emitter.set_canonical_function_registry(canonical_registry.clone());
             emitter.set_callable_name_current_module_path(Vec::new());
             emitter.set_callable_name_resolutions(callable_name_resolutions_for_emit);
@@ -1012,7 +1037,7 @@ impl<'a> IrCodegen<'a> {
         let dependency_symbol_metadata = collect_dependency_symbol_metadata(&dependency_modules);
         let uses_std_ordinal_contract = compilation_imports_std_ordinal_contract(program, &dependency_modules);
         let ordinal_bridge = OrdinalBridgeConfig::for_internal_module(uses_std_ordinal_contract);
-        let dependency_reachable_items = collect_externally_reachable_items_by_module(program, &dependency_modules);
+        let mut dependency_reachable_items = collect_externally_reachable_items_by_module(program, &dependency_modules);
 
         // Generate module files
         let mut lowered_modules = Vec::new();
@@ -1049,6 +1074,7 @@ impl<'a> IrCodegen<'a> {
             // Global serde usage in the main module must not mutate unrelated dependency
             // newtypes (e.g., stdlib wrapper types like std.web.request.Query/Path).
             super::trait_bound_inference::infer_trait_bounds(&mut ir);
+            record_direct_generated_path_support_items_from_ir(&mut dependency_reachable_items, &ir);
             let module_path = path_segments.clone().unwrap_or_else(|| vec![name.to_string()]);
             lowered_modules.push((name.to_string(), module_path, ir));
         }
@@ -1094,12 +1120,8 @@ impl<'a> IrCodegen<'a> {
             }
             let preserve_public_items =
                 should_preserve_dependency_public_items(module_path, self.preserve_dependency_public_items);
-            let callable_name_use_facts = IrEmitter::callable_name_use_facts_for_program(
-                ir,
-                &reachable_items,
-                preserve_public_items,
-                &dependency_symbol_metadata.error_trait_type_names,
-            );
+            let callable_name_use_facts =
+                IrEmitter::callable_name_use_facts_for_program(ir, &reachable_items, preserve_public_items);
             callable_name_used_signature_keys.extend(callable_name_use_facts.signature_keys);
             callable_name_function_arg_signature_keys.extend(callable_name_use_facts.function_arg_signature_keys);
             generic_callable_name_trait_used |= callable_name_use_facts.generic_trait_used;
@@ -1111,10 +1133,13 @@ impl<'a> IrCodegen<'a> {
         let main_code = self.try_generate_via_ir_with_union_config(
             program,
             &internal_roots,
-            shared_union_types,
-            true,
-            Some(&mut callable_name_resolutions),
-            Some(&mut callable_name_used_signature_keys),
+            IrGenerationOptions {
+                generated_union_types: shared_union_types,
+                qualify_union_types_from_crate: true,
+                callable_name_resolutions: Some(&mut callable_name_resolutions),
+                callable_name_used_signature_keys: Some(&mut callable_name_used_signature_keys),
+                direct_generated_path_support_items: Some(&mut dependency_reachable_items),
+            },
         )?;
 
         let mut modules = HashMap::new();
@@ -1252,7 +1277,7 @@ impl<'a> IrCodegen<'a> {
         let dependency_symbol_metadata = collect_dependency_symbol_metadata(&dependency_modules);
         let uses_std_ordinal_contract = compilation_imports_std_ordinal_contract(program, &dependency_modules);
         let ordinal_bridge = OrdinalBridgeConfig::for_internal_module(uses_std_ordinal_contract);
-        let dependency_reachable_items = collect_externally_reachable_items_by_module(program, &dependency_modules);
+        let mut dependency_reachable_items = collect_externally_reachable_items_by_module(program, &dependency_modules);
 
         // Generate module files by path
         let mut lowered_modules = Vec::new();
@@ -1296,6 +1321,7 @@ impl<'a> IrCodegen<'a> {
                 // Global serde usage in the main module must not mutate unrelated dependency
                 // newtypes (e.g., stdlib wrapper types like std.web.request.Query/Path).
                 super::trait_bound_inference::infer_trait_bounds(&mut ir);
+                record_direct_generated_path_support_items_from_ir(&mut dependency_reachable_items, &ir);
                 lowered_modules.push((path.clone(), ir));
             }
         }
@@ -1334,12 +1360,8 @@ impl<'a> IrCodegen<'a> {
             }
             let preserve_public_items =
                 should_preserve_dependency_public_items(path, self.preserve_dependency_public_items);
-            let callable_name_use_facts = IrEmitter::callable_name_use_facts_for_program(
-                ir,
-                &reachable_items,
-                preserve_public_items,
-                &dependency_symbol_metadata.error_trait_type_names,
-            );
+            let callable_name_use_facts =
+                IrEmitter::callable_name_use_facts_for_program(ir, &reachable_items, preserve_public_items);
             callable_name_used_signature_keys.extend(callable_name_use_facts.signature_keys);
             callable_name_function_arg_signature_keys.extend(callable_name_use_facts.function_arg_signature_keys);
             generic_callable_name_trait_used |= callable_name_use_facts.generic_trait_used;
@@ -1351,10 +1373,13 @@ impl<'a> IrCodegen<'a> {
         let main_code = self.try_generate_via_ir_with_union_config(
             program,
             &internal_roots,
-            shared_union_types,
-            true,
-            Some(&mut callable_name_resolutions),
-            Some(&mut callable_name_used_signature_keys),
+            IrGenerationOptions {
+                generated_union_types: shared_union_types,
+                qualify_union_types_from_crate: true,
+                callable_name_resolutions: Some(&mut callable_name_resolutions),
+                callable_name_used_signature_keys: Some(&mut callable_name_used_signature_keys),
+                direct_generated_path_support_items: Some(&mut dependency_reachable_items),
+            },
         )?;
 
         let mut modules = HashMap::new();
@@ -1730,7 +1755,7 @@ def main() -> None:
     }
 
     #[test]
-    fn normal_codegen_preserves_stdlib_dependency_public_items_for_generated_projects() {
+    fn normal_codegen_prunes_unreachable_stdlib_dependency_public_items_for_generated_projects() {
         let gzip_module = parse_program(
             r#"
 pub def compress(data: bytes) -> bytes:
@@ -1760,7 +1785,7 @@ def main() -> None:
             "missing generated std.compression.gzip module",
         );
 
-        assert!(gzip_code.contains("pub fn compress"), "{gzip_code}");
+        assert!(!gzip_code.contains("pub fn compress"), "{gzip_code}");
         assert!(gzip_code.contains("pub fn decompress"), "{gzip_code}");
         assert_no_generated_unused_lint_allows(gzip_code);
     }
@@ -3199,7 +3224,8 @@ def main() -> None:
         codegen.set_library_manifest_index(library_index_with_widgets_exports());
         let code = must_ok(codegen.try_generate(&ast));
         assert!(code.contains("use widgets::Widget as PublicWidget;"));
-        assert!(code.contains("use widgets::make_widget;"));
+        assert!(code.contains("widgets::make_widget(\"ok\".to_string())"));
+        assert!(!code.contains("use widgets::make_widget;"));
         assert!(!code.contains("pub use widgets::Widget as PublicWidget;"));
         assert!(!code.contains("pub use widgets::make_widget;"));
         assert!(!code.contains("pub::widgets"));

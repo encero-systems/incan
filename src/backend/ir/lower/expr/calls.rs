@@ -2082,19 +2082,6 @@ impl AstLowering {
                 return self.lower_constructor_call(&owner_name, type_args, args, call_span);
             }
 
-            // Constructor lowering must follow typechecker resolution, not identifier casing. Local declarations are
-            // still available through `struct_names`; imported constructors are marked as `TypeName` on the callee
-            // span by the typechecker.
-            let is_known_struct = self.struct_names.contains_key(&constructor_name);
-            let is_resolved_type_name = self
-                .type_info
-                .as_ref()
-                .is_some_and(|info| matches!(info.ident_kind(f.span), Some(IdentKind::TypeName)));
-
-            if is_known_struct || is_resolved_type_name {
-                return self.lower_constructor_call(&constructor_name, type_args, args, call_span);
-            }
-
             if let Some(field_names) = self
                 .type_info
                 .as_ref()
@@ -2104,9 +2091,13 @@ impl AstLowering {
                 let lowered_args = self.lower_call_args(args)?;
                 let fields = field_names
                     .into_iter()
-                    .zip(lowered_args)
-                    .map(|(field_name, arg)| (field_name, arg.expr))
-                    .collect();
+                    .zip(lowered_args.into_iter().zip(args.iter()))
+                    .map(|(field_name, (arg, ast_arg))| {
+                        let span = Self::call_arg_expr(ast_arg).span;
+                        let expr = self.wrap_with_rust_arg_coercion(arg.expr, span)?;
+                        Ok((field_name, expr))
+                    })
+                    .collect::<Result<Vec<_>, LoweringError>>()?;
                 let expr_ty = self
                     .type_info
                     .as_ref()
@@ -2120,6 +2111,19 @@ impl AstLowering {
                     },
                     expr_ty,
                 ));
+            }
+
+            // Constructor lowering must follow typechecker resolution, not identifier casing. Local declarations are
+            // still available through `struct_names`; imported constructors are marked as `TypeName` on the callee
+            // span by the typechecker.
+            let is_known_struct = self.struct_names.contains_key(&constructor_name);
+            let is_resolved_type_name = self
+                .type_info
+                .as_ref()
+                .is_some_and(|info| matches!(info.ident_kind(f.span), Some(IdentKind::TypeName)));
+
+            if is_known_struct || is_resolved_type_name {
+                return self.lower_constructor_call(&constructor_name, type_args, args, call_span);
             }
         }
 
@@ -2958,6 +2962,62 @@ mod tests {
                 }
             }
             other => return Err(format!("expected MethodCall lowering, got {other:?}")),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn lower_rust_named_field_constructor_wraps_fields_with_rust_arg_coercion() -> Result<(), String> {
+        let call_span = Span::new(0, 40);
+        let callee_span = Span::new(0, 14);
+        let arg_span = Span::new(20, 31);
+        let mut type_info = TypeCheckInfo::default();
+        type_info.expressions.ident_kinds.insert(
+            (callee_span.start, callee_span.end),
+            crate::frontend::typechecker::IdentKind::TypeName,
+        );
+        type_info.expressions.expr_types.insert(
+            (call_span.start, call_span.end),
+            ResolvedType::RustPath("demo::FunctionOption".to_string()),
+        );
+        type_info.record_rust_named_field_constructor_fields(call_span, vec!["name".to_string()]);
+        type_info.rust.arg_coercions.insert(
+            (arg_span.start, arg_span.end),
+            RustArgCoercionInfo {
+                rust_target_type: "String".to_string(),
+                target_type: ResolvedType::Str,
+                kind: RustArgCoercionKind::Builtin(CoercionPolicy::Exact),
+            },
+        );
+
+        let mut lowering = AstLowering::new_with_type_info(type_info);
+        let expr = Expr::Call(
+            Box::new(Spanned::new(Expr::Ident("FunctionOption".to_string()), callee_span)),
+            Vec::new(),
+            vec![CallArg::Named(
+                "name".to_string(),
+                Spanned::new(Expr::Ident("OPTION_NAME".to_string()), arg_span),
+            )],
+        );
+
+        let lowered = lowering
+            .lower_expr(&expr, call_span)
+            .map_err(|err| format!("expected successful lowering, got {err:?}"))?;
+
+        match lowered.kind {
+            IrExprKind::Struct { fields, .. } => {
+                let Some((field_name, field_expr)) = fields.first() else {
+                    return Err("expected one lowered Rust constructor field".to_string());
+                };
+                assert_eq!(field_name, "name");
+                if !matches!(field_expr.kind, IrExprKind::InteropCoerce { .. }) {
+                    return Err(format!(
+                        "expected Rust constructor field to be wrapped in InteropCoerce, got {:?}",
+                        field_expr.kind
+                    ));
+                }
+            }
+            other => return Err(format!("expected Rust Struct lowering, got {other:?}")),
         }
         Ok(())
     }

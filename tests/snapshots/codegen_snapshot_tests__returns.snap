@@ -41,16 +41,16 @@ fn return_from_loop(numbers: Vec<i64>) -> i64 {
     return -1;
 }
 fn void_return() {
-    println!("{}", "Hello");
+    let _ = println!("{}", "Hello");
     return;
 }
 fn implicit_void_return() {
     let x: i64 = 5;
     if x > 0 {
-        println!("{}", "positive");
+        let _ = println!("{}", "positive");
         return;
     }
-    println!("{}", "not positive");
+    let _ = println!("{}", "not positive");
 }
 fn main() {
     std::panic::set_hook(
@@ -69,6 +69,6 @@ fn main() {
     let _result3: String = early_return(5);
     let _result4: i64 = multiple_returns(15);
     let _result5: i64 = return_from_loop(vec![1, 5, 15, 20]);
-    void_return();
-    implicit_void_return();
+    let _ = void_return();
+    let _ = implicit_void_return();
 }

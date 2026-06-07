@@ -23,6 +23,6 @@ fn main() {
             }
         }),
     );
-    println!("{}", RAW.len());
-    println!("{}", FROZEN.len());
+    let _ = println!("{}", RAW.len());
+    let _ = println!("{}", FROZEN.len());
 }

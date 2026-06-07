@@ -12,7 +12,7 @@ fn fail_t(msg: String) {
 }
 fn assert_true(value: bool) {
     if !value {
-        fail_t("assertion failed: expected true".to_string());
+        let _ = fail_t("assertion failed: expected true".to_string());
     }
 }
 fn main() {
@@ -27,5 +27,5 @@ fn main() {
             }
         }),
     );
-    assert_true(true);
+    let _ = assert_true(true);
 }

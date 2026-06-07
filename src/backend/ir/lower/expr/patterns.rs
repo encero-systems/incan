@@ -320,11 +320,7 @@ impl AstLowering {
 
         let mut lowered = Vec::new();
         for variant in target.variants {
-            let temp_name = format!(
-                "__incan_union_{}_{}",
-                primary_binding.name,
-                IrType::union_variant_name(variant.source_index)
-            );
+            let temp_name = format!("__incan_union_{}_v{}", primary_binding.name, variant.source_index);
             let union_pattern = Pattern::Enum {
                 name: source_union_name.clone(),
                 variant: format!(

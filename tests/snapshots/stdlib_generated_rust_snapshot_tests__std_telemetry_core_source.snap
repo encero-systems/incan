@@ -281,7 +281,7 @@ impl incan_stdlib::reflection::HasTypeFieldMetadata for TelemetryValue {
 impl TelemetryValue {
     /// Return a telemetry null value.
     pub fn none() -> Self {
-        "Return a telemetry null value.";
+        let _ = "Return a telemetry null value.";
         return TelemetryValue {
             kind: TelemetryValueKind::NONE.clone(),
             string_value: None::<_>,
@@ -295,7 +295,7 @@ impl TelemetryValue {
     }
     /// Return a telemetry string value.
     pub fn string(value: String) -> Self {
-        "Return a telemetry string value.";
+        let _ = "Return a telemetry string value.";
         return TelemetryValue {
             kind: TelemetryValueKind::STRING.clone(),
             string_value: Some(value),
@@ -309,7 +309,7 @@ impl TelemetryValue {
     }
     /// Return a telemetry boolean value.
     pub fn bool(value: bool) -> Self {
-        "Return a telemetry boolean value.";
+        let _ = "Return a telemetry boolean value.";
         return TelemetryValue {
             kind: TelemetryValueKind::BOOL.clone(),
             string_value: None::<_>,
@@ -323,7 +323,7 @@ impl TelemetryValue {
     }
     /// Return a telemetry integer value.
     pub fn int(value: i64) -> Self {
-        "Return a telemetry integer value.";
+        let _ = "Return a telemetry integer value.";
         return TelemetryValue {
             kind: TelemetryValueKind::INT.clone(),
             string_value: None::<_>,
@@ -337,7 +337,7 @@ impl TelemetryValue {
     }
     /// Return a telemetry floating-point value.
     pub fn float(value: f64) -> Self {
-        "Return a telemetry floating-point value.";
+        let _ = "Return a telemetry floating-point value.";
         return TelemetryValue {
             kind: TelemetryValueKind::FLOAT.clone(),
             string_value: None::<_>,
@@ -353,7 +353,7 @@ impl TelemetryValue {
     ///
     /// The caller owns the encoding convention.
     pub fn bytes(value: String) -> Self {
-        "\n        Return a telemetry bytes value from an encoded string.\n\n        The caller owns the encoding convention.\n        ";
+        let _ = "\n        Return a telemetry bytes value from an encoded string.\n\n        The caller owns the encoding convention.\n        ";
         return TelemetryValue {
             kind: TelemetryValueKind::BYTES.clone(),
             string_value: None::<_>,
@@ -367,7 +367,7 @@ impl TelemetryValue {
     }
     /// Return a telemetry array value.
     pub fn array(values: Vec<TelemetryValue>) -> Self {
-        "Return a telemetry array value.";
+        let _ = "Return a telemetry array value.";
         return TelemetryValue {
             kind: TelemetryValueKind::ARRAY.clone(),
             string_value: None::<_>,
@@ -381,7 +381,7 @@ impl TelemetryValue {
     }
     /// Return a telemetry map value.
     pub fn map(values: std::collections::HashMap<String, TelemetryValue>) -> Self {
-        "Return a telemetry map value.";
+        let _ = "Return a telemetry map value.";
         return TelemetryValue {
             kind: TelemetryValueKind::MAP.clone(),
             string_value: None::<_>,
@@ -398,8 +398,8 @@ impl TelemetryValue {
     /// String values render as their underlying text. Structured values render through their JSON representation so
     /// callers do not lose shape when displaying nested telemetry data.
     pub fn display_text(&self) -> String {
-        "\n        Return a concise text representation for human-oriented output.\n\n        String values render as their underlying text. Structured values render through their JSON representation so\n        callers do not lose shape when displaying nested telemetry data.\n        ";
-        match self.string_value.clone() {
+        let _ = "\n        Return a concise text representation for human-oriented output.\n\n        String values render as their underlying text. Structured values render through their JSON representation so\n        callers do not lose shape when displaying nested telemetry data.\n        ";
+        let _ = match self.string_value.clone() {
             Some(text) => {
                 return text;
             }
@@ -545,7 +545,7 @@ impl Attributes {
     pub fn from_string_fields(
         fields: std::collections::HashMap<String, String>,
     ) -> Attributes {
-        "\n        Convert string fields into structured telemetry attributes.\n\n        Args:\n            fields: String-valued field map from ordinary logging call sites.\n        ";
+        let _ = "\n        Convert string fields into structured telemetry attributes.\n\n        Args:\n            fields: String-valued field map from ordinary logging call sites.\n        ";
         return Attributes(
             ((fields).keys().cloned())
                 .map(|key| (

@@ -25,7 +25,7 @@ impl Signal {
 }
 impl Signal {
     pub fn label(&self) -> String {
-        match self.clone() {
+        let _ = match self.clone() {
             Signal::Start => {
                 return "start".to_string();
             }
@@ -40,7 +40,7 @@ impl Signal {
 }
 impl Labelled for Signal {
     fn label(&self) -> String {
-        match self.clone() {
+        let _ = match self.clone() {
             Signal::Start => {
                 return "start".to_string();
             }

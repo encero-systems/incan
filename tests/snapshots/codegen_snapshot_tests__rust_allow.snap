@@ -105,14 +105,6 @@ enum AllowEnum {
     Small,
     Large(String),
 }
-impl AllowEnum {
-    pub fn message(&self) -> String {
-        match self {
-            Self::Small => "Small".to_string(),
-            Self::Large(_) => "Large".to_string(),
-        }
-    }
-}
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone, Copy)]
 struct allow_newtype(pub i64);

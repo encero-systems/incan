@@ -23,5 +23,5 @@ fn main() {
         }),
     );
     let name = Name::parse("alice@example.com".to_string());
-    var(name);
+    let _ = var(name);
 }

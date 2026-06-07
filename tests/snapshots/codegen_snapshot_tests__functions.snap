@@ -65,7 +65,7 @@ fn classify_number(x: i64) -> String {
     return "large positive".to_string();
 }
 fn print_greeting(name: String) {
-    println!(
+    let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["Hello, ", "!"]; let __args : Vec <
         String > = vec![format!("{}", name)]; incan_stdlib::strings::fstring(& __parts, &
         __args) }
@@ -87,45 +87,45 @@ fn main() {
         }),
     );
     let greeting: String = greet();
-    println!("{}", greeting);
+    let _ = println!("{}", greeting);
     let sum: i64 = add(5, 3);
-    println!(
+    let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["5 + 3 = ", ""]; let __args : Vec <
         String > = vec![format!("{}", sum)]; incan_stdlib::strings::fstring(& __parts, &
         __args) }
     );
     let result: i64 = quadruple(5);
-    println!(
+    let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["quadruple(5) = ", ""]; let __args : Vec
         < String > = vec![format!("{}", result)]; incan_stdlib::strings::fstring(&
         __parts, & __args) }
     );
     let fact: i64 = factorial(5);
-    println!(
+    let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["factorial(5) = ", ""]; let __args : Vec
         < String > = vec![format!("{}", fact)]; incan_stdlib::strings::fstring(& __parts,
         & __args) }
     );
     let fib: i64 = fibonacci(7);
-    println!(
+    let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["fibonacci(7) = ", ""]; let __args : Vec
         < String > = vec![format!("{}", fib)]; incan_stdlib::strings::fstring(& __parts,
         & __args) }
     );
     let test_nums: Vec<i64> = vec![1, 5, 3, 9, 2];
     let max_num: i64 = find_max(test_nums);
-    println!(
+    let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["max = ", ""]; let __args : Vec < String
         > = vec![format!("{}", max_num)]; incan_stdlib::strings::fstring(& __parts, &
         __args) }
     );
     let mut nums: Vec<i64> = vec![5, 10, 15];
-    double_values(&mut nums);
-    println!("{}", "List incremented");
+    let _ = double_values(&mut nums);
+    let _ = println!("{}", "List incremented");
     let category: String = classify_number(-5);
-    println!("{}", category);
+    let _ = println!("{}", category);
     let mut alice_name: String = "Alice".to_string();
-    print_greeting(alice_name.to_string());
+    let _ = print_greeting(alice_name.to_string());
     let _coords: (i64, i64) = get_coordinates();
-    println!("{}", "Coordinates retrieved");
+    let _ = println!("{}", "Coordinates retrieved");
 }

@@ -333,12 +333,6 @@ impl<'a> IrEmitter<'a> {
         helper.name = helper_name;
         helper.visibility = super::super::super::decl::Visibility::Private;
         helper.rust_attributes.clear();
-        let dead_code_allow = IrRustLintAllow {
-            lint: "dead_code".to_string(),
-        };
-        if !helper.lint_allows.contains(&dead_code_allow) {
-            helper.lint_allows.push(dead_code_allow);
-        }
 
         let mut borrowed = HashMap::new();
         for &index in indices {
@@ -395,12 +389,6 @@ impl<'a> IrEmitter<'a> {
         helper.name = helper_name;
         helper.visibility = super::super::super::decl::Visibility::Private;
         helper.rust_attributes.clear();
-        let dead_code_allow = IrRustLintAllow {
-            lint: "dead_code".to_string(),
-        };
-        if !helper.lint_allows.contains(&dead_code_allow) {
-            helper.lint_allows.push(dead_code_allow);
-        }
         let original_ty = helper.params[param_index].ty.clone();
         helper.params[param_index].ty = IrType::Ref(Box::new(original_ty));
         Some(helper)

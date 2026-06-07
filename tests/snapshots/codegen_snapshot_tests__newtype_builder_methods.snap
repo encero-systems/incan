@@ -40,7 +40,7 @@ fn main() {
     let r1 = Response::ok();
     let r2 = Response::created();
     let r3 = Response::status(404, "Not Found".to_string());
-    println!("{}", r1.0);
-    println!("{}", r2.0);
-    println!("{}", r3.0);
+    let _ = println!("{}", r1.0);
+    let _ = println!("{}", r2.0);
+    let _ = println!("{}", r3.0);
 }

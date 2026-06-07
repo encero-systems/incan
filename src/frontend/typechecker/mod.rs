@@ -677,6 +677,41 @@ impl TypeChecker {
         }
     }
 
+    /// Resolve a bare Rust display name through imported Rust items when the local scope makes that identity unique.
+    ///
+    /// rust-inspect can report field and payload displays relative to the Rust module that owns the item, for example a
+    /// field displayed as `Payload` while Incan imported the same Rust type as `DemoPayload`. Source aliases are
+    /// display projections; the Rust boundary still needs the canonical Rust identity so local/import/reexport
+    /// paths do not diverge.
+    fn unique_imported_rust_item_path_for_display_tail(&self, display_tail: &str) -> Option<String> {
+        if display_tail.is_empty() || display_tail.contains("::") {
+            return None;
+        }
+        let mut matches = HashSet::new();
+        for symbol in self.symbols.all_symbols() {
+            let SymbolKind::RustItem(info) = &symbol.kind else {
+                continue;
+            };
+            if matches!(info.binding, RustImportBindingKind::CrateRoot) {
+                continue;
+            }
+            let path = Self::normalize_rust_namespace_path(info.path.as_str()).to_string();
+            if path.rsplit("::").next() == Some(display_tail) {
+                matches.insert(path);
+                continue;
+            }
+            if let Some(metadata) = info.metadata.as_ref() {
+                let canonical_path = Self::normalize_rust_namespace_path(metadata.canonical_path.as_str()).to_string();
+                if canonical_path.rsplit("::").next() == Some(display_tail) {
+                    matches.insert(canonical_path);
+                }
+            }
+        }
+        let mut iter = matches.into_iter();
+        let first = iter.next()?;
+        if iter.next().is_none() { Some(first) } else { None }
+    }
+
     /// Resolve a source-level rusttype backing type to its canonical Rust path spelling.
     pub(crate) fn rust_path_for_rusttype_underlying(&self, ty: &ResolvedType) -> Option<String> {
         if let ResolvedType::RustPath(path) = ty {
@@ -1120,6 +1155,13 @@ impl TypeChecker {
                         }
                         _ => {}
                     }
+                    if let Some(structural) = self
+                        .resolved_structural_rust_param_display(normalized.as_str(), |checker, arg| {
+                            checker.resolved_type_from_rust_display(arg)
+                        })
+                    {
+                        return structural;
+                    }
                 }
                 if self.lookup_type_info(normalized.as_str()).is_some() {
                     ResolvedType::Named(normalized)
@@ -1130,6 +1172,8 @@ impl TypeChecker {
             _ if !normalized.is_empty() => {
                 if self.lookup_type_info(normalized.as_str()).is_some() {
                     ResolvedType::Named(normalized)
+                } else if let Some(path) = self.unique_imported_rust_item_path_for_display_tail(normalized.as_str()) {
+                    ResolvedType::RustPath(path)
                 } else {
                     ResolvedType::RustPath(normalized)
                 }

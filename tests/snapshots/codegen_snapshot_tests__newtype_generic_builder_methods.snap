@@ -30,5 +30,5 @@ fn main() {
         }),
     );
     let boxed = Box::wrap(42);
-    println!("{}", boxed.duplicate());
+    let _ = println!("{}", boxed.duplicate());
 }

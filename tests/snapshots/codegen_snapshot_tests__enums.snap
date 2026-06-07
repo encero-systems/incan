@@ -13,40 +13,15 @@ enum Color {
     Green,
     Blue,
 }
-impl Color {
-    pub fn message(&self) -> String {
-        match self {
-            Self::Red => "Red".to_string(),
-            Self::Green => "Green".to_string(),
-            Self::Blue => "Blue".to_string(),
-        }
-    }
-}
 #[derive(Debug, Clone, PartialEq)]
 enum Maybe {
     Some(i64),
     None,
 }
-impl Maybe {
-    pub fn message(&self) -> String {
-        match self {
-            Self::Some(_) => "Some".to_string(),
-            Self::None => "None".to_string(),
-        }
-    }
-}
 #[derive(Debug, Clone, PartialEq)]
 enum Result {
     Ok(i64),
     Err(String),
-}
-impl Result {
-    pub fn message(&self) -> String {
-        match self {
-            Self::Ok(_) => "Ok".to_string(),
-            Self::Err(_) => "Err".to_string(),
-        }
-    }
 }
 #[derive(Debug, Clone, PartialEq)]
 enum Message {
@@ -55,30 +30,11 @@ enum Message {
     Write(String),
     ChangeColor(i64, i64, i64),
 }
-impl Message {
-    pub fn message(&self) -> String {
-        match self {
-            Self::Quit => "Quit".to_string(),
-            Self::Move(_, _) => "Move".to_string(),
-            Self::Write(_) => "Write".to_string(),
-            Self::ChangeColor(_, _, _) => "ChangeColor".to_string(),
-        }
-    }
-}
 #[derive(Debug, Clone, PartialEq)]
 enum Shape {
     Circle(f64),
     Rectangle(f64, f64),
     Triangle(f64, f64),
-}
-impl Shape {
-    pub fn message(&self) -> String {
-        match self {
-            Self::Circle(_) => "Circle".to_string(),
-            Self::Rectangle(_, _) => "Rectangle".to_string(),
-            Self::Triangle(_, _) => "Triangle".to_string(),
-        }
-    }
 }
 #[derive(Debug, Clone, PartialEq)]
 enum Status {
@@ -87,32 +43,12 @@ enum Status {
     Complete,
     Failed,
 }
-impl Status {
-    pub fn message(&self) -> String {
-        match self {
-            Self::Pending => "Pending".to_string(),
-            Self::InProgress => "InProgress".to_string(),
-            Self::Complete => "Complete".to_string(),
-            Self::Failed => "Failed".to_string(),
-        }
-    }
-}
 #[derive(Debug, Clone, PartialEq)]
 enum Priority {
     Low,
     Medium,
     High,
     Critical,
-}
-impl Priority {
-    pub fn message(&self) -> String {
-        match self {
-            Self::Low => "Low".to_string(),
-            Self::Medium => "Medium".to_string(),
-            Self::High => "High".to_string(),
-            Self::Critical => "Critical".to_string(),
-        }
-    }
 }
 #[derive(Debug, Clone, PartialEq)]
 enum DataContainer {
@@ -121,18 +57,8 @@ enum DataContainer {
     Multiple(Vec<i64>),
     Mapped(std::collections::HashMap<String, i64>),
 }
-impl DataContainer {
-    pub fn message(&self) -> String {
-        match self {
-            Self::Empty => "Empty".to_string(),
-            Self::Single(_) => "Single".to_string(),
-            Self::Multiple(_) => "Multiple".to_string(),
-            Self::Mapped(_) => "Mapped".to_string(),
-        }
-    }
-}
 fn get_color_name(color: Color) -> String {
-    match color {
+    let _ = match color {
         Color::Red => {
             return "red".to_string();
         }
@@ -145,7 +71,7 @@ fn get_color_name(color: Color) -> String {
     };
 }
 fn process_maybe(value: Maybe) -> i64 {
-    match value {
+    let _ = match value {
         Maybe::Some(x) => {
             return x * 2;
         }
@@ -155,7 +81,7 @@ fn process_maybe(value: Maybe) -> i64 {
     };
 }
 fn handle_result(result: Result) -> String {
-    match result {
+    let _ = match result {
         Result::Ok(value) => {
             return {
                 let __parts: [&str; 2usize] = ["Success: ", ""];
@@ -173,7 +99,7 @@ fn handle_result(result: Result) -> String {
     };
 }
 fn handle_message(msg: Message) -> String {
-    match msg {
+    let _ = match msg {
         Message::Quit => {
             return "Quitting".to_string();
         }
@@ -203,7 +129,7 @@ fn handle_message(msg: Message) -> String {
     };
 }
 fn calculate_area(shape: Shape) -> f64 {
-    match shape {
+    let _ = match shape {
         Shape::Circle(r) => {
             return 3.14159f64 * r * r;
         }
@@ -216,7 +142,7 @@ fn calculate_area(shape: Shape) -> f64 {
     };
 }
 fn get_priority_level(priority: Priority) -> i64 {
-    match priority {
+    let _ = match priority {
         Priority::Low => {
             return 1;
         }
@@ -232,7 +158,7 @@ fn get_priority_level(priority: Priority) -> i64 {
     };
 }
 fn count_items(container: DataContainer) -> i64 {
-    match container {
+    let _ = match container {
         DataContainer::Empty => {
             return 0;
         }
@@ -261,7 +187,7 @@ fn main() {
     );
     let color: Color = Color::Red;
     let color_name: String = get_color_name(color);
-    println!(
+    let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["Color: ", ""]; let __args : Vec <
         String > = vec![format!("{}", color_name)]; incan_stdlib::strings::fstring(&
         __parts, & __args) }
@@ -270,7 +196,7 @@ fn main() {
     let none_value: Maybe = Maybe::None;
     let result1: i64 = process_maybe(some_value);
     let result2: i64 = process_maybe(none_value);
-    println!(
+    let _ = println!(
         "{}", { let __parts : [& str; 3usize] = ["Some: ", ", None: ", ""]; let __args :
         Vec < String > = vec![format!("{}", result1), format!("{}", result2)];
         incan_stdlib::strings::fstring(& __parts, & __args) }
@@ -279,33 +205,33 @@ fn main() {
     let err_result: Result = Result::Err("Something went wrong".to_string());
     let ok_msg: String = handle_result(ok_result);
     let err_msg: String = handle_result(err_result);
-    println!("{}", ok_msg);
-    println!("{}", err_msg);
+    let _ = println!("{}", ok_msg);
+    let _ = println!("{}", err_msg);
     let quit_msg: Message = Message::Quit.clone();
     let move_msg: Message = Message::Move(10, 20);
     let write_msg: Message = Message::Write("Hello".to_string());
     let color_msg: Message = Message::ChangeColor(255, 0, 0);
-    println!("{}", handle_message(quit_msg));
-    println!("{}", handle_message(move_msg));
-    println!("{}", handle_message(write_msg));
-    println!("{}", handle_message(color_msg));
+    let _ = println!("{}", handle_message(quit_msg));
+    let _ = println!("{}", handle_message(move_msg));
+    let _ = println!("{}", handle_message(write_msg));
+    let _ = println!("{}", handle_message(color_msg));
     let circle: Shape = Shape::Circle(5f64);
     let rectangle: Shape = Shape::Rectangle(4f64, 6f64);
     let triangle: Shape = Shape::Triangle(3f64, 8f64);
     let circle_area: f64 = calculate_area(circle);
     let rect_area: f64 = calculate_area(rectangle);
     let tri_area: f64 = calculate_area(triangle);
-    println!(
+    let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["Circle area: ", ""]; let __args : Vec <
         String > = vec![format!("{}", circle_area)]; incan_stdlib::strings::fstring(&
         __parts, & __args) }
     );
-    println!(
+    let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["Rectangle area: ", ""]; let __args :
         Vec < String > = vec![format!("{}", rect_area)]; incan_stdlib::strings::fstring(&
         __parts, & __args) }
     );
-    println!(
+    let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["Triangle area: ", ""]; let __args : Vec
         < String > = vec![format!("{}", tri_area)]; incan_stdlib::strings::fstring(&
         __parts, & __args) }
@@ -313,7 +239,7 @@ fn main() {
     let _status: Status = Status::InProgress;
     let priority: Priority = Priority::High;
     let priority_level: i64 = get_priority_level(priority);
-    println!(
+    let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["Priority level: ", ""]; let __args :
         Vec < String > = vec![format!("{}", priority_level)];
         incan_stdlib::strings::fstring(& __parts, & __args) }
@@ -326,22 +252,22 @@ fn main() {
             .into_iter()
             .collect::<std::collections::HashMap<_, _>>(),
     );
-    println!(
+    let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["Empty count: ", ""]; let __args : Vec <
         String > = vec![format!("{}", count_items(empty))];
         incan_stdlib::strings::fstring(& __parts, & __args) }
     );
-    println!(
+    let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["Single count: ", ""]; let __args : Vec
         < String > = vec![format!("{}", count_items(single))];
         incan_stdlib::strings::fstring(& __parts, & __args) }
     );
-    println!(
+    let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["Multiple count: ", ""]; let __args :
         Vec < String > = vec![format!("{}", count_items(multiple))];
         incan_stdlib::strings::fstring(& __parts, & __args) }
     );
-    println!(
+    let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["Mapped count: ", ""]; let __args : Vec
         < String > = vec![format!("{}", count_items(mapped))];
         incan_stdlib::strings::fstring(& __parts, & __args) }

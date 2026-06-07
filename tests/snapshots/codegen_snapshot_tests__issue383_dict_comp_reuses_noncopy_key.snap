@@ -27,7 +27,7 @@ fn main() {
         }),
     );
     let values = lengths(vec!["alice".to_string(), "bob".to_string()]);
-    println!(
+    let _ = println!(
         "{}", * incan_stdlib::collections::dict_get(& values, < _ as AsRef < str >>
         ::as_ref(& "alice"))
     );

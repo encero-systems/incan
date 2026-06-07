@@ -1105,7 +1105,7 @@ pub def exported_value() -> int:
     );
     assert!(
         tmp.path()
-            .join("target/incan_lock/.incan_library_dependency_preheat_fingerprint")
+            .join("target/lib/.incan_library_dependency_preheat_fingerprint")
             .is_file(),
         "generated-library dependency preheat should write a fingerprint stamp"
     );

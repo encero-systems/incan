@@ -1,6 +1,6 @@
 use crate::cache_resolve::dependency_manifest_dir_from_lock_with_search_roots;
 use super::*;
-use incan_core::interop::{RustItemKind, RustTypeInfo, RustVisibility};
+use incan_core::interop::{RustItemKind, RustTypeInfo, RustTypeShape, RustVisibility};
 
 /// Build minimal public Rust type metadata for cache round-trip tests.
 fn dummy_type_metadata(path: &str) -> RustItemMetadata {
@@ -432,6 +432,144 @@ fn root_out_dir_workspace_is_skipped_for_non_root_crate_misses() -> Result<(), B
     assert!(
         !inner.workspaces.contains_key(&(root, true)),
         "a dependency or stdlib miss should not force the expensive root out-dir workspace route"
+    );
+    Ok(())
+}
+
+/// Dependency items generated into `OUT_DIR` should resolve through the root workspace that checked those build scripts.
+#[test]
+fn dependency_generated_out_dir_items_resolve_through_root_workspace() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let root = tmp.path().join("root");
+    let dep = tmp.path().join("generated-dep");
+    let helper = tmp.path().join("helper-crate");
+    fs::create_dir_all(root.join("src"))?;
+    fs::create_dir_all(dep.join("src"))?;
+    fs::create_dir_all(helper.join("src"))?;
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"root\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\ngenerated-dep = { path = \"../generated-dep\" }\n",
+    )?;
+    fs::write(root.join("src").join("lib.rs"), "pub fn keep() {}\n")?;
+    fs::create_dir_all(root.join(".cargo"))?;
+    fs::write(
+        root.join(".cargo").join("config.toml"),
+        format!(
+            "[build]\ntarget-dir = \"{}\"\n",
+            root.join("target").to_string_lossy().replace('\\', "\\\\")
+        ),
+    )?;
+    fs::write(
+        dep.join("Cargo.toml"),
+        "[package]\nname = \"generated-dep\"\nversion = \"0.1.0\"\nedition = \"2021\"\nbuild = \"build.rs\"\n\n[lib]\nname = \"generated_dep\"\n\n[dependencies]\nhelper-crate = { path = \"../helper-crate\" }\n",
+    )?;
+    fs::write(
+        helper.join("Cargo.toml"),
+        "[package]\nname = \"helper-crate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\nname = \"helper_crate\"\n",
+    )?;
+    fs::write(
+        helper.join("src").join("lib.rs"),
+        "pub struct Thing { pub value: String }\n",
+    )?;
+    fs::write(
+        dep.join("build.rs"),
+        r#"fn main() {
+    let out_dir = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
+    std::fs::write(
+        out_dir.join("generated.rs"),
+        "pub struct Nested { pub count: u32 }\n\
+         pub struct GeneratedThing {\n\
+             pub r#type: ::core::option::Option<Nested>,\n\
+             pub names: ::std::vec::Vec<::std::string::String>,\n\
+             pub helper: helper_crate::Thing,\n\
+         }\n\
+         pub enum GeneratedChoice {\n\
+             Unit,\n\
+             Child(nested::Child),\n\
+             Count(i32),\n\
+             Boxed(::std::boxed::Box<Nested>),\n\
+         }\n\
+         pub struct EmptyRecord {}\n\
+         pub mod nested {\n\
+             pub struct Child { pub parent: super::Nested }\n\
+         }\n",
+    )
+    .unwrap();
+    println!("cargo:rerun-if-changed=build.rs");
+}
+"#,
+    )?;
+    fs::write(
+        dep.join("src").join("lib.rs"),
+        "pub mod generated { include!(concat!(env!(\"OUT_DIR\"), \"/generated.rs\")); }\n",
+    )?;
+    let status = std::process::Command::new("cargo")
+        .arg("check")
+        .arg("--manifest-path")
+        .arg(root.join("Cargo.toml"))
+        .status()?;
+    assert!(status.success(), "fixture cargo check should produce build-script out dirs");
+
+    let cache = RustMetadataCache::new();
+    let metadata = cache.get_or_extract(&root, "generated_dep::generated::GeneratedThing", &|_| ())?;
+    let RustItemKind::Type(type_info) = &metadata.kind else {
+        return Err("expected generated dependency type metadata".into());
+    };
+    assert_eq!(type_info.fields.len(), 3);
+    assert_eq!(type_info.fields[0].name, "type");
+    assert_eq!(
+        type_info.fields[0].type_display,
+        "Option<generated_dep::generated::Nested>"
+    );
+    assert_eq!(type_info.fields[1].name, "names");
+    assert_eq!(type_info.fields[1].type_display, "Vec<String>");
+    assert_eq!(type_info.fields[2].name, "helper");
+    assert_eq!(type_info.fields[2].type_display, "helper_crate::Thing");
+
+    let nested = cache.get_or_extract(&root, "generated_dep::generated::nested::Child", &|_| ())?;
+    let RustItemKind::Type(nested_info) = &nested.kind else {
+        return Err("expected generated dependency nested type metadata".into());
+    };
+    assert_eq!(nested_info.fields.len(), 1);
+    assert_eq!(nested_info.fields[0].name, "parent");
+    assert_eq!(
+        nested_info.fields[0].type_display,
+        "generated_dep::generated::Nested"
+    );
+
+    let choice = cache.get_or_extract(&root, "generated_dep::generated::GeneratedChoice", &|_| ())?;
+    let RustItemKind::Type(choice_info) = &choice.kind else {
+        return Err("expected generated dependency enum metadata".into());
+    };
+    assert_eq!(choice_info.variants.len(), 4);
+    let unit = choice_info
+        .variants
+        .iter()
+        .find(|variant| variant.name == "Unit")
+        .ok_or("missing Unit variant")?;
+    assert!(
+        unit.fields.is_empty(),
+        "unit generated variants should not be modeled as zero-argument payload constructors"
+    );
+    let boxed = choice_info
+        .variants
+        .iter()
+        .find(|variant| variant.name == "Boxed")
+        .ok_or("missing Boxed variant")?;
+    assert_eq!(
+        boxed.fields,
+        vec![RustTypeShape::RustPath {
+            path: "generated_dep::generated::Nested".to_string(),
+            args: Vec::new()
+        }]
+    );
+    let empty = cache.get_or_extract(&root, "generated_dep::generated::EmptyRecord", &|_| ())?;
+    let RustItemKind::Type(empty_info) = &empty.kind else {
+        return Err("expected generated dependency empty struct metadata".into());
+    };
+    assert!(
+        empty_info.fields.is_empty() && empty_info.variants.is_empty(),
+        "zero-field generated structs should keep constructible type metadata"
     );
     Ok(())
 }

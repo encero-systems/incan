@@ -140,18 +140,23 @@ pub def decode(text: str) -> Result[Decoded, EncodingError]:
 
     # Polymod over HRP expansion plus payload+checksum tells us which checksum constant was used.
     check = _polymod(_hrp_expand(hrp) + values)
-    mut variant = Bech32Variant.Bech32
-    if check == _BECH32_CONST:
-        variant = Bech32Variant.Bech32
-    elif check == _BECH32M_CONST:
-        variant = Bech32Variant.Bech32m
-    else:
-        return Err(_error("invalid_checksum", "bech32 checksum does not match Bech32 or Bech32m", len(normalized) - 6))
+    variant = _checksum_variant(check, len(normalized) - 6)?
 
     mut data: list[int] = []
     for data_index in range(len(values) - 6):
         data.append(values[data_index])
     return Ok(Decoded(hrp=hrp, data=data, variant=variant))
+
+
+def _checksum_variant(check: int, position: int) -> Result[Bech32Variant, EncodingError]:
+    """
+    Return the Bech32 checksum family indicated by one polymod result.
+    """
+    if check == _BECH32_CONST:
+        return Ok(Bech32Variant.Bech32)
+    if check == _BECH32M_CONST:
+        return Ok(Bech32Variant.Bech32m)
+    return Err(_error("invalid_checksum", "bech32 checksum does not match Bech32 or Bech32m", position))
 
 
 pub def convertbits(data: list[int], from_bits: int, to_bits: int, pad: bool = true) -> Result[list[int], EncodingError]:
@@ -232,7 +237,7 @@ def _create_checksum(hrp: str, data: list[int], variant: Bech32Variant) -> list[
     Six zero values reserve the checksum space. XORing with the selected family constant turns the polymod remainder
     into the concrete checksum digits appended to the output.
     """
-    mut values = _hrp_expand(hrp) + data + list.repeat(0, 6)
+    values = _hrp_expand(hrp) + data + list.repeat(0, 6)
     mut constant = _BECH32_CONST
     if variant == Bech32Variant.Bech32m:
         constant = _BECH32M_CONST

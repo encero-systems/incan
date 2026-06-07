@@ -184,7 +184,7 @@ fn function_export_from_checked_marks_only_materializable_defaults_as_omittable(
 fn checked_exports_publish_semantic_identity_graph() -> Result<(), Box<dyn std::error::Error>> {
     let callable = crate::frontend::library_exports::CheckedFunctionExport {
         name: "cast".to_string(),
-        emitted_name: Some("cast__overload_abcd".to_string()),
+        emitted_name: Some("cast_overload_abcd".to_string()),
         type_params: Vec::new(),
         params: Vec::new(),
         param_defaults: Vec::new(),

@@ -130,8 +130,6 @@ pub(super) struct GeneratedUseAnalysis {
     pub(super) used_constructors: HashSet<String>,
     /// Type names whose Rust visibility prevents private helper methods from warning when retained.
     pub(super) public_types: HashSet<String>,
-    /// Whether emitted method calls require the stdlib `Error` trait in Rust scope.
-    pub(super) uses_stdlib_error_trait: bool,
     /// Source-owned callable object types used as non-Copy `Result.inspect` / `inspect_err` observers.
     pub(super) result_observer_callable_types: HashSet<String>,
     /// Top-level function values adapted to a borrowed function-pointer parameter.
@@ -320,8 +318,6 @@ pub struct IrEmitter<'a> {
     /// Imported enums usually lower to `IrType::Struct(name)` in consumer modules, so for-loop emission needs this
     /// side-channel to recognize that `list[name]` elements should be iterated as owned enum values.
     dependency_enum_types: HashSet<String>,
-    /// Imported stdlib error type names whose trait methods need Rust trait imports at call sites.
-    external_error_trait_types: HashSet<String>,
     /// Known internal module roots for this compilation unit (e.g. {"db", "store"}).
     ///
     /// Used to disambiguate crate-internal module imports vs external crate imports when emitting `use` paths.
@@ -434,7 +430,6 @@ impl<'a> IrEmitter<'a> {
             value_module_paths: HashMap::new(),
             ambiguous_value_names: HashSet::new(),
             dependency_enum_types: HashSet::new(),
-            external_error_trait_types: HashSet::new(),
             internal_module_roots: HashSet::new(),
             rust_module_path: None,
             rust_import_paths: RefCell::new(std::collections::HashMap::new()),
@@ -1025,6 +1020,20 @@ impl<'a> IrEmitter<'a> {
         )
     }
 
+    /// True when the compiler-provided enum `message()` helper should be emitted.
+    ///
+    /// Public enums keep the helper as part of their exported Rust-facing surface. Private and crate-visible helper
+    /// enums emit it only when reachable generated code actually calls `.message()`, which avoids dead-code warnings
+    /// without hiding them behind crate-level lint suppressions.
+    pub(super) fn should_emit_enum_message_method(&self, enum_name: &str, visibility: &Visibility) -> bool {
+        (self.preserve_public_items && matches!(visibility, Visibility::Public))
+            || self
+                .generated_use_analysis
+                .borrow()
+                .used_methods
+                .contains(&(enum_name.to_string(), "message".to_string()))
+    }
+
     /// True when the generated free constructor function for a struct should be retained.
     pub(super) fn should_emit_struct_constructor(&self, struct_name: &str) -> bool {
         let analysis = self.generated_use_analysis.borrow();
@@ -1105,11 +1114,6 @@ impl<'a> IrEmitter<'a> {
     /// Set imported enum type names discovered during codegen setup.
     pub fn set_dependency_enum_types(&mut self, enum_type_names: HashSet<String>) {
         self.dependency_enum_types = enum_type_names;
-    }
-
-    /// Set imported stdlib error types whose trait methods may be called from this module.
-    pub fn set_external_error_trait_types(&mut self, type_names: HashSet<String>) {
-        self.external_error_trait_types = type_names;
     }
 
     /// Seed nominal declaration metadata from another lowered module.

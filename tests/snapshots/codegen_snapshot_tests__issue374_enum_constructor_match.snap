@@ -23,7 +23,7 @@ impl ConformanceRel {
     }
 }
 pub fn relation_kind_name_from_conformance(rel: ConformanceRel) -> String {
-    match rel {
+    let _ = match rel {
         ConformanceRel::Read => {
             return "ReadRel".to_string();
         }
@@ -50,5 +50,7 @@ fn main() {
             }
         }),
     );
-    println!("{}", relation_kind_name_from_conformance(ConformanceRel::Filter.clone()));
+    let _ = println!(
+        "{}", relation_kind_name_from_conformance(ConformanceRel::Filter.clone())
+    );
 }

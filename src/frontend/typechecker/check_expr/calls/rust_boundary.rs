@@ -1,7 +1,7 @@
 //! Rust boundary matching, Rust call validation, and coercion metadata recording.
 
 use super::TypeChecker;
-use crate::frontend::ast::{CallArg, ParamKind, Span};
+use crate::frontend::ast::{CallArg, Expr, ParamKind, Span, Spanned};
 use crate::frontend::diagnostics::errors;
 use crate::frontend::symbols::{CallableParam, ResolvedType, TypeInfo};
 use crate::frontend::typechecker::helpers::collection_type_id;
@@ -358,6 +358,62 @@ impl TypeChecker {
         RustArgBoundaryMatch::NoMatch
     }
 
+    /// Validate one expression used at a Rust value boundary and record the exact coercion lowering must preserve.
+    ///
+    /// This is the shared Rust-boundary argument plan for free functions, methods, and named-field Rust constructors.
+    /// Callers provide the Rust display from metadata; this method resolves owner-relative displays, prewarms identity
+    /// metadata, and records the chosen coercion in the same artifact map lowering already consumes.
+    pub(in crate::frontend::typechecker) fn validate_rust_boundary_value(
+        &mut self,
+        owner_path: &str,
+        rust_type_display: &str,
+        arg_expr: &Spanned<Expr>,
+        arg_ty: &ResolvedType,
+        record_exact_builtin_coercion: bool,
+    ) {
+        let param_display = self.rust_display_for_owner_path(rust_type_display, owner_path);
+        let normalized = param_display.replace(' ', "");
+        let target_ty =
+            self.resolved_rust_boundary_target_from_param_display_for_owner_path(rust_type_display, owner_path);
+        self.prewarm_rust_type_identity_metadata(arg_ty);
+        self.prewarm_rust_type_identity_metadata(&target_ty);
+        match self.rust_arg_boundary_match(arg_ty, param_display.as_str()) {
+            RustArgBoundaryMatch::Exact => {
+                if record_exact_builtin_coercion
+                    && let Some(incan_display) = Self::incan_boundary_type_display(arg_ty)
+                    && admitted_builtin_coercion(incan_display.as_str(), normalized.as_str())
+                        == Some(CoercionPolicy::Exact)
+                {
+                    self.type_info.rust.arg_coercions.insert(
+                        (arg_expr.span.start, arg_expr.span.end),
+                        RustArgCoercionInfo {
+                            rust_target_type: normalized,
+                            target_type: target_ty,
+                            kind: RustArgCoercionKind::Builtin(CoercionPolicy::Exact),
+                        },
+                    );
+                }
+            }
+            RustArgBoundaryMatch::Coercion(kind) => {
+                self.type_info.rust.arg_coercions.insert(
+                    (arg_expr.span.start, arg_expr.span.end),
+                    RustArgCoercionInfo {
+                        rust_target_type: normalized,
+                        target_type: target_ty,
+                        kind,
+                    },
+                );
+            }
+            RustArgBoundaryMatch::NoMatch => {
+                self.errors.push(errors::type_mismatch(
+                    rust_type_display,
+                    &arg_ty.to_string(),
+                    arg_expr.span,
+                ));
+            }
+        }
+    }
+
     /// Record inspected Rust parameter types so codegen can emit the same borrow shape the typechecker accepted.
     fn rust_params_as_callable_params(
         &self,
@@ -661,32 +717,7 @@ impl TypeChecker {
             let arg_expr = Self::call_arg_expr(binding.arg);
             let arg_ty = binding.arg_ty;
             let param = binding.param;
-            let param_display = self.rust_display_for_owner_path(param.type_display.as_str(), path);
-            let normalized = param_display.replace(' ', "");
-            let target_ty =
-                self.resolved_rust_boundary_target_from_param_display_for_owner_path(param.type_display.as_str(), path);
-            self.prewarm_rust_type_identity_metadata(arg_ty);
-            self.prewarm_rust_type_identity_metadata(&target_ty);
-            match self.rust_arg_boundary_match(arg_ty, param_display.as_str()) {
-                RustArgBoundaryMatch::Exact => {}
-                RustArgBoundaryMatch::Coercion(kind) => {
-                    self.type_info.rust.arg_coercions.insert(
-                        (arg_expr.span.start, arg_expr.span.end),
-                        RustArgCoercionInfo {
-                            rust_target_type: normalized,
-                            target_type: target_ty,
-                            kind,
-                        },
-                    );
-                }
-                RustArgBoundaryMatch::NoMatch => {
-                    self.errors.push(errors::type_mismatch(
-                        param.type_display.as_str(),
-                        &arg_ty.to_string(),
-                        arg_expr.span,
-                    ));
-                }
-            }
+            self.validate_rust_boundary_value(path, param.type_display.as_str(), arg_expr, arg_ty, false);
         }
 
         let ret = self.resolved_rust_call_type_from_sig(sig, path, span);

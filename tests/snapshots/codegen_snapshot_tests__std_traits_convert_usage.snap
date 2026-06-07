@@ -133,13 +133,13 @@ fn main() {
     );
     let user = UserId::from(42);
     let result = PositiveInt::try_from(3);
-    println!("{}", user.value.to_string());
-    match result {
+    let _ = println!("{}", user.value.to_string());
+    let _ = match result {
         Ok(value) => {
-            println!("{}", value.value.to_string());
+            let _ = println!("{}", value.value.to_string());
         }
         Err(error) => {
-            println!("{}", error);
+            let _ = println!("{}", error);
         }
     };
 }

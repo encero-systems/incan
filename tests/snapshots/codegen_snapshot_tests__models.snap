@@ -511,7 +511,7 @@ fn main() {
         age: 30,
         email: "alice@example.com".to_string(),
     };
-    println!(
+    let _ = println!(
         "{}", { let __parts : [& str; 3usize] = ["User: ", ", Age: ", ""]; let __args :
         Vec < String > = vec![format!("{}", user.name), format!("{}", user.age)];
         incan_stdlib::strings::fstring(& __parts, & __args) }
@@ -521,7 +521,7 @@ fn main() {
         name: "Laptop".to_string(),
         price: 999.99f64,
     };
-    println!(
+    let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["Product ID: ", ""]; let __args : Vec <
         String > = vec![format!("{}", product.id)]; incan_stdlib::strings::fstring(&
         __parts, & __args) }
@@ -531,7 +531,7 @@ fn main() {
         port: 8080,
         timeout: 30,
     };
-    println!(
+    let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["Config port: ", ""]; let __args : Vec <
         String > = vec![format!("{}", config.port)]; incan_stdlib::strings::fstring(&
         __parts, & __args) }
@@ -556,14 +556,14 @@ fn main() {
             .into_iter()
             .collect::<std::collections::HashMap<_, _>>(),
     };
-    println!(
+    let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["Student: ", ""]; let __args : Vec <
         String > = vec![format!("{}", student.name)]; incan_stdlib::strings::fstring(&
         __parts, & __args) }
     );
     let coord: Coordinate = create_coordinate(3f64, 4f64);
     let dist: f64 = distance_from_origin(coord);
-    println!(
+    let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["Distance: ", ""]; let __args : Vec <
         String > = vec![format!("{}", dist)]; incan_stdlib::strings::fstring(& __parts, &
         __args) }
@@ -578,7 +578,7 @@ fn main() {
         address: address,
         phone: "555-1234".to_string(),
     };
-    println!(
+    let _ = println!(
         "{}", { let __parts : [& str; 3usize] = ["Contact: ", " in ", ""]; let __args :
         Vec < String > = vec![format!("{}", contact.name), format!("{}", contact.address
         .city)]; incan_stdlib::strings::fstring(& __parts, & __args) }

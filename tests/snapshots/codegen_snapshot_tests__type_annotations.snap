@@ -39,9 +39,9 @@ fn test_function_with_return_type() -> i64 {
     return 42;
 }
 fn test_function_parameters(x: i64, y: String, z: bool) {
-    println!("{}", x);
-    println!("{}", y);
-    println!("{}", z);
+    let _ = println!("{}", x);
+    let _ = println!("{}", y);
+    let _ = println!("{}", z);
 }
 fn main() {
     std::panic::set_hook(
@@ -55,10 +55,10 @@ fn main() {
             }
         }),
     );
-    test_explicit_types();
-    test_collection_types();
-    test_option_types();
-    test_nested_collections();
+    let _ = test_explicit_types();
+    let _ = test_collection_types();
+    let _ = test_option_types();
+    let _ = test_nested_collections();
     let _result: i64 = test_function_with_return_type();
-    test_function_parameters(10, "test".to_string(), true);
+    let _ = test_function_parameters(10, "test".to_string(), true);
 }

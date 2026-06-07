@@ -81,7 +81,7 @@ fn main() {
         StoredNode { store_id_raw : 1, node : "a".to_string() }, StoredNode {
         store_id_raw : 2, node : "b".to_string() }
     ];
-    println!(
+    let _ = println!(
         "{}", incan_stdlib::collections::list_get(& store_nodes(1, nodes), (0) as i64)
         .clone()
     );

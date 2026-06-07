@@ -8,13 +8,13 @@ expression: rust_code
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 pub use crate::__incan_std::r#async;
-pub use ::incan_stdlib::r#async::time::clamp_seconds;
-pub use ::incan_stdlib::r#async::task::RuntimeFuture;
-pub use ::incan_stdlib::r#async::race::RaceArm as RawRaceArm;
-pub use ::incan_stdlib::r#async::race::RuntimeRaceCallback;
-pub use ::incan_stdlib::r#async::race::arm as rust_arm;
-pub use ::incan_stdlib::r#async::race::race as rust_race;
-pub use ::incan_stdlib::__private::tokio::time::timeout as tokio_timeout;
+use ::incan_stdlib::r#async::time::clamp_seconds;
+use ::incan_stdlib::r#async::task::RuntimeFuture;
+use ::incan_stdlib::r#async::race::RaceArm as RawRaceArm;
+use ::incan_stdlib::r#async::race::RuntimeRaceCallback;
+use ::incan_stdlib::r#async::race::arm as rust_arm;
+use ::incan_stdlib::r#async::race::race as rust_race;
+use ::incan_stdlib::__private::tokio::time::timeout as tokio_timeout;
 pub type RaceArm<R> = RawRaceArm<R>;
 /// Package one awaitable branch for `race()`.
 ///
@@ -26,14 +26,14 @@ pub fn arm<
     TaskFuture: RuntimeFuture<T>,
     OnWin: RuntimeRaceCallback<T, R>,
 >(awaitable: TaskFuture, on_win: OnWin) -> RaceArm<R> {
-    "\n    Package one awaitable branch for `race()`.\n\n    `on_win` receives the awaited value only when this branch wins. Losing branches are dropped without running their\n    callbacks.\n    ";
+    let _ = "\n    Package one awaitable branch for `race()`.\n\n    `on_win` receives the awaited value only when this branch wins. Losing branches are dropped without running their\n    callbacks.\n    ";
     return rust_arm(awaitable, on_win);
 }
 /// Return the first completed race arm result.
 ///
 /// Arms are polled concurrently. If multiple arms are ready in the same poll, the earlier source arm wins.
 pub async fn race<R: Send + 'static>(arms: Vec<RaceArm<R>>) -> R {
-    "\n    Return the first completed race arm result.\n\n    Arms are polled concurrently. If multiple arms are ready in the same poll, the earlier source arm wins.\n    ";
+    let _ = "\n    Return the first completed race arm result.\n\n    Arms are polled concurrently. If multiple arms are ready in the same poll, the earlier source arm wins.\n    ";
     return rust_race(arms).await;
 }
 /// Returns `Some(value)` when `task` completes before the timeout.
@@ -45,8 +45,8 @@ pub async fn race_timeout<T: Send + 'static, TaskFuture: RuntimeFuture<T>>(
     seconds: f64,
     task: TaskFuture,
 ) -> Option<T> {
-    "\n    Returns `Some(value)` when `task` completes before the timeout.\n    Returns `None` when the timeout expires first.\n\n    If the timeout wins, the supplied future is cancelled by being dropped. Spawn the work first when the operation must\n    continue after the timeout path returns.\n    ";
-    match tokio_timeout(clamp_seconds(seconds), task).await {
+    let _ = "\n    Returns `Some(value)` when `task` completes before the timeout.\n    Returns `None` when the timeout expires first.\n\n    If the timeout wins, the supplied future is cancelled by being dropped. Spawn the work first when the operation must\n    continue after the timeout path returns.\n    ";
+    let _ = match tokio_timeout(clamp_seconds(seconds), task).await {
         Ok(value) => {
             return Some(value);
         }

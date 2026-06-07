@@ -89,7 +89,7 @@ fn main() {
         font_size: 16,
         auto_save: true,
     };
-    println!(
+    let _ = println!(
         "{}", { let __parts : [& str; 3usize] = ["", " ", ""]; let __args : Vec < String
         > = vec![format!("{}", a.theme), format!("{}", b.font_size)];
         incan_stdlib::strings::fstring(& __parts, & __args) }

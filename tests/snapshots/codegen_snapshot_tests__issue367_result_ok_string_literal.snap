@@ -8,12 +8,12 @@ expression: rust_code
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 fn takes_result(value: Result<String, String>) {
-    match value {
+    let _ = match value {
         Ok(msg) => {
-            println!("{}", msg);
+            let _ = println!("{}", msg);
         }
         Err(err) => {
-            println!("{}", err);
+            let _ = println!("{}", err);
         }
     };
 }
@@ -36,22 +36,22 @@ fn main() {
         String,
         String,
     >(("from_local").to_string());
-    match direct {
+    let _ = match direct {
         Ok(msg) => {
-            println!("{}", msg);
+            let _ = println!("{}", msg);
         }
         Err(err) => {
-            println!("{}", err);
+            let _ = println!("{}", err);
         }
     };
-    takes_result(Ok::<String, String>(("from_call").to_string()));
+    let _ = takes_result(Ok::<String, String>(("from_call").to_string()));
     let result: Result<String, String> = returns_result();
-    match result {
+    let _ = match result {
         Ok(msg) => {
-            println!("{}", msg);
+            let _ = println!("{}", msg);
         }
         Err(err) => {
-            println!("{}", err);
+            let _ = println!("{}", err);
         }
     };
 }

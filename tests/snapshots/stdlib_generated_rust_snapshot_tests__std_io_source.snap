@@ -117,7 +117,7 @@ impl IoError {
     /// Returns:
     ///     The detail text attached to the failed operation.
     pub fn message(&self) -> String {
-        "\n        Return the human-readable error detail.\n\n        Returns:\n            The detail text attached to the failed operation.\n        ";
+        let _ = "\n        Return the human-readable error detail.\n\n        Returns:\n            The detail text attached to the failed operation.\n        ";
         return self.detail.clone();
     }
     /// Returns field metadata for this type.
@@ -176,11 +176,11 @@ impl IoError {
 }
 impl Error for IoError {
     fn message(&self) -> String {
-        "\n        Return the human-readable error detail.\n\n        Returns:\n            The detail text attached to the failed operation.\n        ";
+        let _ = "\n        Return the human-readable error detail.\n\n        Returns:\n            The detail text attached to the failed operation.\n        ";
         return self.detail.clone();
     }
     fn source(&self) -> Option<String> {
-        "Optional: Return the underlying cause of this error";
+        let _ = "Optional: Return the underlying cause of this error";
         return None::<_>;
     }
 }
@@ -304,11 +304,11 @@ impl _BytesIO {
     /// Example:
     ///     `BytesIO(b"abc").read(2)?` returns `b"ab"`.
     pub fn read(&self, size: i64) -> Result<Vec<u8>, IoError> {
-        "\n        Read up to `size` bytes from the current cursor.\n\n        Args:\n            size: Maximum bytes to read. Use a negative value to read through EOF.\n\n        Returns:\n            The bytes read, or `Err(IoError)`.\n\n        Example:\n            `BytesIO(b\"abc\").read(2)?` returns `b\"ab\"`.\n        ";
+        let _ = "\n        Read up to `size` bytes from the current cursor.\n\n        Args:\n            size: Maximum bytes to read. Use a negative value to read through EOF.\n\n        Returns:\n            The bytes read, or `Err(IoError)`.\n\n        Example:\n            `BytesIO(b\"abc\").read(2)?` returns `b\"ab\"`.\n        ";
         let mut out: Vec<u8> = b"".to_vec();
         let mut cursor = self.handle.borrow_mut();
         if size < 0 {
-            match cursor.read_to_end(&mut out) {
+            let _ = match cursor.read_to_end(&mut out) {
                 Ok(_) => {
                     return Ok::<Vec<u8>, IoError>(out);
                 }
@@ -326,7 +326,7 @@ impl _BytesIO {
                 }
             };
         }
-        match Read::by_ref(&mut *cursor)
+        let _ = match Read::by_ref(&mut *cursor)
             .take(
                 match u64::try_from(size) {
                     Ok(__incan_take_count) => __incan_take_count,
@@ -358,7 +358,7 @@ impl _BytesIO {
     }
     /// Read up to `size` bytes through the `BinaryReader` trait surface.
     pub fn read_bytes(&self, size: i64) -> Result<Vec<u8>, IoError> {
-        "\n        Read up to `size` bytes through the `BinaryReader` trait surface.\n        ";
+        let _ = "\n        Read up to `size` bytes through the `BinaryReader` trait surface.\n        ";
         return self.read(size);
     }
     /// Read exactly `size` bytes.
@@ -372,7 +372,7 @@ impl _BytesIO {
     /// Example:
     ///     `BytesIO(b"ABCD").read_exact(4)?` returns `b"ABCD"`.
     pub fn read_exact(&self, size: i64) -> Result<Vec<u8>, IoError> {
-        "\n        Read exactly `size` bytes.\n\n        Args:\n            size: Number of bytes required.\n\n        Returns:\n            Exactly `size` bytes, or `Err(IoError)` with kind `unexpected_eof` if the buffer ends early.\n\n        Example:\n            `BytesIO(b\"ABCD\").read_exact(4)?` returns `b\"ABCD\"`.\n        ";
+        let _ = "\n        Read exactly `size` bytes.\n\n        Args:\n            size: Number of bytes required.\n\n        Returns:\n            Exactly `size` bytes, or `Err(IoError)` with kind `unexpected_eof` if the buffer ends early.\n\n        Example:\n            `BytesIO(b\"ABCD\").read_exact(4)?` returns `b\"ABCD\"`.\n        ";
         if size < 0 {
             return Err::<
                 Vec<u8>,
@@ -411,11 +411,11 @@ impl _BytesIO {
     /// Example:
     ///     `BytesIO(b"name\0rest").read_until(0)?` returns `b"name\0"`.
     pub fn read_until(&self, byte: u8) -> Result<Vec<u8>, IoError> {
-        "\n        Read through `byte` or EOF.\n\n        Args:\n            byte: Delimiter byte to include when found.\n\n        Returns:\n            Bytes up to and including the delimiter, or the remaining bytes at EOF.\n\n        Example:\n            `BytesIO(b\"name\\0rest\").read_until(0)?` returns `b\"name\\0\"`.\n        ";
+        let _ = "\n        Read through `byte` or EOF.\n\n        Args:\n            byte: Delimiter byte to include when found.\n\n        Returns:\n            Bytes up to and including the delimiter, or the remaining bytes at EOF.\n\n        Example:\n            `BytesIO(b\"name\\0rest\").read_until(0)?` returns `b\"name\\0\"`.\n        ";
         let out = _empty_stream();
         while self.remaining() > 0 {
             let value = self._read_u8()?;
-            out._write_u8(value)?;
+            let _ = out._write_u8(value)?;
             if value == byte {
                 return Ok::<Vec<u8>, IoError>(out.getvalue());
             }
@@ -434,7 +434,7 @@ impl _BytesIO {
     ///             `BytesIO(b"header
     /// body").skip_until(10)?` returns `7`.
     pub fn skip_until(&self, byte: u8) -> Result<i64, IoError> {
-        "\n        Discard bytes through `byte` or EOF.\n\n        Args:\n            byte: Delimiter byte to include in the skipped count when found.\n\n        Returns:\n            Number of discarded bytes, including the delimiter when present.\n\n        Example:\n            `BytesIO(b\"header\nbody\").skip_until(10)?` returns `7`.\n        ";
+        let _ = "\n        Discard bytes through `byte` or EOF.\n\n        Args:\n            byte: Delimiter byte to include in the skipped count when found.\n\n        Returns:\n            Number of discarded bytes, including the delimiter when present.\n\n        Example:\n            `BytesIO(b\"header\nbody\").skip_until(10)?` returns `7`.\n        ";
         let mut count = 0;
         while self.remaining() > 0 {
             let value = self._read_u8()?;
@@ -450,7 +450,7 @@ impl _BytesIO {
     /// Returns:
     ///     Current offset from the start of the buffer.
     pub fn tell(&self) -> i64 {
-        "\n        Return the current byte cursor position.\n\n        Returns:\n            Current offset from the start of the buffer.\n        ";
+        let _ = "\n        Return the current byte cursor position.\n\n        Returns:\n            Current offset from the start of the buffer.\n        ";
         let cursor = self.handle.borrow();
         return (cursor.position()) as i64;
     }
@@ -466,13 +466,13 @@ impl _BytesIO {
     /// Example:
     ///     `buf.seek(0, 2)?` moves to the end of the buffer.
     pub fn seek(&self, offset: i64, whence: i64) -> Result<i64, IoError> {
-        "\n        Move the cursor and return the new position.\n\n        Args:\n            offset: Byte offset interpreted relative to `whence`.\n            whence: `0` for start, `1` for current position, and `2` for end.\n\n        Returns:\n            New cursor position, or `Err(IoError)` for invalid positions or `whence` values.\n\n        Example:\n            `buf.seek(0, 2)?` moves to the end of the buffer.\n        ";
+        let _ = "\n        Move the cursor and return the new position.\n\n        Args:\n            offset: Byte offset interpreted relative to `whence`.\n            whence: `0` for start, `1` for current position, and `2` for end.\n\n        Returns:\n            New cursor position, or `Err(IoError)` for invalid positions or `whence` values.\n\n        Example:\n            `buf.seek(0, 2)?` moves to the end of the buffer.\n        ";
         let mut cursor = self.handle.borrow_mut();
         if whence == 0 {
-            match cursor.position() {
+            let _ = match cursor.position() {
                 pos => {
                     let delta = offset - (pos) as i64;
-                    match cursor.seek(SeekFrom::Current(delta)) {
+                    let _ = match cursor.seek(SeekFrom::Current(delta)) {
                         Ok(new_pos) => {
                             return Ok::<i64, IoError>((new_pos) as i64);
                         }
@@ -493,7 +493,7 @@ impl _BytesIO {
             };
         } else {
             if whence == 1 {
-                match cursor.seek(SeekFrom::Current(offset)) {
+                let _ = match cursor.seek(SeekFrom::Current(offset)) {
                     Ok(new_pos) => {
                         return Ok::<i64, IoError>((new_pos) as i64);
                     }
@@ -512,7 +512,7 @@ impl _BytesIO {
                 };
             } else {
                 if whence == 2 {
-                    match cursor.seek(SeekFrom::End(offset)) {
+                    let _ = match cursor.seek(SeekFrom::End(offset)) {
                         Ok(new_pos) => {
                             return Ok::<i64, IoError>((new_pos) as i64);
                         }
@@ -548,8 +548,8 @@ impl _BytesIO {
     /// Returns:
     ///     `Ok(None)` after rewinding, or `Err(IoError)`.
     pub fn rewind(&self) -> Result<(), IoError> {
-        "\n        Move the cursor to the start of the buffer.\n\n        Returns:\n            `Ok(None)` after rewinding, or `Err(IoError)`.\n        ";
-        self.seek(0, 0)?;
+        let _ = "\n        Move the cursor to the start of the buffer.\n\n        Returns:\n            `Ok(None)` after rewinding, or `Err(IoError)`.\n        ";
+        let _ = self.seek(0, 0)?;
         return Ok::<(), IoError>(());
     }
     /// Move the cursor relative to its current position.
@@ -560,8 +560,8 @@ impl _BytesIO {
     /// Returns:
     ///     `Ok(None)` after moving, or `Err(IoError)` when the result would be invalid.
     pub fn seek_relative(&self, offset: i64) -> Result<(), IoError> {
-        "\n        Move the cursor relative to its current position.\n\n        Args:\n            offset: Relative byte offset.\n\n        Returns:\n            `Ok(None)` after moving, or `Err(IoError)` when the result would be invalid.\n        ";
-        self.seek(offset, 1)?;
+        let _ = "\n        Move the cursor relative to its current position.\n\n        Args:\n            offset: Relative byte offset.\n\n        Returns:\n            `Ok(None)` after moving, or `Err(IoError)` when the result would be invalid.\n        ";
+        let _ = self.seek(offset, 1)?;
         return Ok::<(), IoError>(());
     }
     /// Write bytes at the current cursor position.
@@ -575,9 +575,9 @@ impl _BytesIO {
     /// Example:
     ///     `BytesIO().write(b"ok")?` returns `2`.
     pub fn write_bytes(&self, data: Vec<u8>) -> Result<i64, IoError> {
-        "\n        Write bytes at the current cursor position.\n\n        Args:\n            data: Bytes to write.\n\n        Returns:\n            Number of bytes written, or `Err(IoError)`.\n\n        Example:\n            `BytesIO().write(b\"ok\")?` returns `2`.\n        ";
+        let _ = "\n        Write bytes at the current cursor position.\n\n        Args:\n            data: Bytes to write.\n\n        Returns:\n            Number of bytes written, or `Err(IoError)`.\n\n        Example:\n            `BytesIO().write(b\"ok\")?` returns `2`.\n        ";
         let mut cursor = self.handle.borrow_mut();
-        match cursor.write_all(&data) {
+        let _ = match cursor.write_all(&data) {
             Ok(_) => {
                 return Ok::<i64, IoError>(::std::convert::identity(data.len() as i64));
             }
@@ -606,7 +606,7 @@ impl _BytesIO {
     /// Example:
     ///     `BytesIO().write(b"ok")?` returns `2`.
     pub fn write(&self, data: Vec<u8>) -> Result<i64, IoError> {
-        "\n        Write bytes at the current cursor position.\n\n        Args:\n            data: Bytes to write.\n\n        Returns:\n            Number of bytes written, or `Err(IoError)`.\n\n        Example:\n            `BytesIO().write(b\"ok\")?` returns `2`.\n        ";
+        let _ = "\n        Write bytes at the current cursor position.\n\n        Args:\n            data: Bytes to write.\n\n        Returns:\n            Number of bytes written, or `Err(IoError)`.\n\n        Example:\n            `BytesIO().write(b\"ok\")?` returns `2`.\n        ";
         return self.write_bytes(data);
     }
     /// Resize the buffer.
@@ -620,7 +620,7 @@ impl _BytesIO {
     /// Example:
     ///     After reading two bytes from `BytesIO(b"abcd")`, `truncate()?` leaves `b"ab"`.
     pub fn truncate(&self, size: Option<i64>) -> Result<i64, IoError> {
-        "\n        Resize the buffer.\n\n        Args:\n            size: Target size, or `None` to truncate at the current cursor.\n\n        Returns:\n            The new buffer size, or `Err(IoError)`.\n\n        Example:\n            After reading two bytes from `BytesIO(b\"abcd\")`, `truncate()?` leaves `b\"ab\"`.\n        ";
+        let _ = "\n        Resize the buffer.\n\n        Args:\n            size: Target size, or `None` to truncate at the current cursor.\n\n        Returns:\n            The new buffer size, or `Err(IoError)`.\n\n        Example:\n            After reading two bytes from `BytesIO(b\"abcd\")`, `truncate()?` leaves `b\"ab\"`.\n        ";
         let position = self.tell();
         let mut target = position;
         match size {
@@ -644,9 +644,9 @@ impl _BytesIO {
         let mut cursor = self.handle.borrow_mut();
         let target_usize = _truncate_target_usize(target, position)?;
         let target_u64 = _truncate_target_u64(target, position)?;
-        cursor.get_mut().resize(target_usize, 0);
+        let _ = cursor.get_mut().resize(target_usize, 0);
         if (cursor.position()) as i64 > target {
-            cursor.set_position(target_u64);
+            let _ = cursor.set_position(target_u64);
         }
         return Ok::<i64, IoError>(target);
     }
@@ -655,7 +655,7 @@ impl _BytesIO {
     /// Returns:
     ///     Current buffer bytes without changing the cursor.
     pub fn getvalue(&self) -> Vec<u8> {
-        "\n        Return a snapshot of the buffer contents.\n\n        Returns:\n            Current buffer bytes without changing the cursor.\n        ";
+        let _ = "\n        Return a snapshot of the buffer contents.\n\n        Returns:\n            Current buffer bytes without changing the cursor.\n        ";
         let cursor = self.handle.borrow();
         return cursor.get_ref().clone();
     }
@@ -665,7 +665,7 @@ impl _BytesIO {
     ///     Current buffer bytes without changing the cursor. The current implementation returns a snapshot because
     ///     `BytesIO` uses shared interior mutability for method calls.
     pub fn into_bytes(&self) -> Vec<u8> {
-        "\n        Return the buffer bytes.\n\n        Returns:\n            Current buffer bytes without changing the cursor. The current implementation returns a snapshot because\n            `BytesIO` uses shared interior mutability for method calls.\n        ";
+        let _ = "\n        Return the buffer bytes.\n\n        Returns:\n            Current buffer bytes without changing the cursor. The current implementation returns a snapshot because\n            `BytesIO` uses shared interior mutability for method calls.\n        ";
         return self.getvalue();
     }
     /// Return the unread byte count from the current cursor to the end.
@@ -673,7 +673,7 @@ impl _BytesIO {
     /// Returns:
     ///     Number of bytes remaining in the buffer.
     pub fn remaining(&self) -> i64 {
-        "\n        Return the unread byte count from the current cursor to the end.\n\n        Returns:\n            Number of bytes remaining in the buffer.\n        ";
+        let _ = "\n        Return the unread byte count from the current cursor to the end.\n\n        Returns:\n            Number of bytes remaining in the buffer.\n        ";
         let cursor = self.handle.borrow();
         let total = ::std::convert::identity(cursor.get_ref().len() as i64);
         let pos = (cursor.position()) as i64;
@@ -710,7 +710,7 @@ impl _BytesIO {
 }
 impl BinaryReader for _BytesIO {
     fn read_bytes(&self, size: i64) -> Result<Vec<u8>, IoError> {
-        "\n        Read up to `size` bytes through the `BinaryReader` trait surface.\n        ";
+        let _ = "\n        Read up to `size` bytes through the `BinaryReader` trait surface.\n        ";
         return self.read(size);
     }
 }
@@ -846,19 +846,19 @@ impl BinaryWrite<f64> for _BytesIO {
 ///     `BytesIO(b"abc").read(1)?` returns `b"a"`.
 #[allow(non_snake_case)]
 pub fn BytesIO(initial: Vec<u8>) -> _BytesIO {
-    "\n    Construct a writable, seekable in-memory byte stream.\n\n    Args:\n        initial: Initial buffer contents. The cursor starts at `0`.\n\n    Returns:\n        A `BytesIO` stream over `initial`.\n\n    Example:\n        `BytesIO(b\"abc\").read(1)?` returns `b\"a\"`.\n    ";
+    let _ = "\n    Construct a writable, seekable in-memory byte stream.\n\n    Args:\n        initial: Initial buffer contents. The cursor starts at `0`.\n\n    Returns:\n        A `BytesIO` stream over `initial`.\n\n    Example:\n        `BytesIO(b\"abc\").read(1)?` returns `b\"a\"`.\n    ";
     return _BytesIO {
         handle: Rc::new(RefCell::new(Cursor::new(initial))),
     };
 }
 fn _empty_stream() -> _BytesIO {
-    "\n    Construct an internal empty stream without using the public PascalCase factory.\n    ";
+    let _ = "\n    Construct an internal empty stream without using the public PascalCase factory.\n    ";
     return _BytesIO {
         handle: Rc::new(RefCell::new(Cursor::new(b"".to_vec()))),
     };
 }
 fn _zeros(size: i64) -> Vec<u8> {
-    "\n    Build a zero-filled byte vector for numeric writes.\n    ";
+    let _ = "\n    Build a zero-filled byte vector for numeric writes.\n    ";
     let zero: u8 = 0;
     return incan_stdlib::collections::list_repeat(zero, (size) as i64);
 }
@@ -866,13 +866,13 @@ fn _finish_numeric_write(
     stream: _BytesIO,
     cursor: Cursor<Vec<u8>>,
 ) -> Result<(), IoError> {
-    "\n    Write a numeric helper's temporary cursor contents to the target stream.\n    ";
-    stream.write_bytes(cursor.into_inner())?;
+    let _ = "\n    Write a numeric helper's temporary cursor contents to the target stream.\n    ";
+    let _ = stream.write_bytes(cursor.into_inner())?;
     return Ok::<(), IoError>(());
 }
 fn _read_u8_value(stream: _BytesIO, operation: String) -> Result<u8, IoError> {
     let mut cursor = Cursor::new(stream.read_exact(1)?);
-    match cursor.read_u8() {
+    let _ = match cursor.read_u8() {
         Ok(value) => {
             return Ok::<u8, IoError>(value);
         }
@@ -886,7 +886,7 @@ fn _read_u8_value(stream: _BytesIO, operation: String) -> Result<u8, IoError> {
 }
 fn _read_i8_value(stream: _BytesIO, operation: String) -> Result<i8, IoError> {
     let mut cursor = Cursor::new(stream.read_exact(1)?);
-    match cursor.read_i8() {
+    let _ = match cursor.read_i8() {
         Ok(value) => {
             return Ok::<i8, IoError>(value);
         }
@@ -904,7 +904,7 @@ fn _write_u8_value(
     operation: String,
 ) -> Result<(), IoError> {
     let mut cursor = Cursor::new(_zeros(1));
-    match cursor.write_u8(value) {
+    let _ = match cursor.write_u8(value) {
         Ok(_) => {
             return _finish_numeric_write(stream.clone(), cursor.clone());
         }
@@ -922,7 +922,7 @@ fn _write_i8_value(
     operation: String,
 ) -> Result<(), IoError> {
     let mut cursor = Cursor::new(_zeros(1));
-    match cursor.write_i8(value) {
+    let _ = match cursor.write_i8(value) {
         Ok(_) => {
             return _finish_numeric_write(stream.clone(), cursor.clone());
         }
@@ -941,7 +941,7 @@ fn _read_u16_value(
 ) -> Result<u16, IoError> {
     let mut cursor = Cursor::new(stream.read_exact(2)?);
     if endian == Endian::Little {
-        match cursor.read_u16::<LittleEndian>() {
+        let _ = match cursor.read_u16::<LittleEndian>() {
             Ok(value) => {
                 return Ok::<u16, IoError>(value);
             }
@@ -953,7 +953,7 @@ fn _read_u16_value(
             }
         };
     }
-    match cursor.read_u16::<BigEndian>() {
+    let _ = match cursor.read_u16::<BigEndian>() {
         Ok(value) => {
             return Ok::<u16, IoError>(value);
         }
@@ -972,7 +972,7 @@ fn _read_i16_value(
 ) -> Result<i16, IoError> {
     let mut cursor = Cursor::new(stream.read_exact(2)?);
     if endian == Endian::Little {
-        match cursor.read_i16::<LittleEndian>() {
+        let _ = match cursor.read_i16::<LittleEndian>() {
             Ok(value) => {
                 return Ok::<i16, IoError>(value);
             }
@@ -984,7 +984,7 @@ fn _read_i16_value(
             }
         };
     }
-    match cursor.read_i16::<BigEndian>() {
+    let _ = match cursor.read_i16::<BigEndian>() {
         Ok(value) => {
             return Ok::<i16, IoError>(value);
         }
@@ -1004,7 +1004,7 @@ fn _write_u16_value(
 ) -> Result<(), IoError> {
     let mut cursor = Cursor::new(_zeros(2));
     if endian == Endian::Little {
-        match cursor.write_u16::<LittleEndian>(value) {
+        let _ = match cursor.write_u16::<LittleEndian>(value) {
             Ok(_) => {
                 return _finish_numeric_write(stream.clone(), cursor.clone());
             }
@@ -1016,7 +1016,7 @@ fn _write_u16_value(
             }
         };
     }
-    match cursor.write_u16::<BigEndian>(value) {
+    let _ = match cursor.write_u16::<BigEndian>(value) {
         Ok(_) => {
             return _finish_numeric_write(stream.clone(), cursor.clone());
         }
@@ -1036,7 +1036,7 @@ fn _write_i16_value(
 ) -> Result<(), IoError> {
     let mut cursor = Cursor::new(_zeros(2));
     if endian == Endian::Little {
-        match cursor.write_i16::<LittleEndian>(value) {
+        let _ = match cursor.write_i16::<LittleEndian>(value) {
             Ok(_) => {
                 return _finish_numeric_write(stream.clone(), cursor.clone());
             }
@@ -1048,7 +1048,7 @@ fn _write_i16_value(
             }
         };
     }
-    match cursor.write_i16::<BigEndian>(value) {
+    let _ = match cursor.write_i16::<BigEndian>(value) {
         Ok(_) => {
             return _finish_numeric_write(stream.clone(), cursor.clone());
         }
@@ -1067,7 +1067,7 @@ fn _read_u32_value(
 ) -> Result<u32, IoError> {
     let mut cursor = Cursor::new(stream.read_exact(4)?);
     if endian == Endian::Little {
-        match cursor.read_u32::<LittleEndian>() {
+        let _ = match cursor.read_u32::<LittleEndian>() {
             Ok(value) => {
                 return Ok::<u32, IoError>(value);
             }
@@ -1079,7 +1079,7 @@ fn _read_u32_value(
             }
         };
     }
-    match cursor.read_u32::<BigEndian>() {
+    let _ = match cursor.read_u32::<BigEndian>() {
         Ok(value) => {
             return Ok::<u32, IoError>(value);
         }
@@ -1098,7 +1098,7 @@ fn _read_i32_value(
 ) -> Result<i32, IoError> {
     let mut cursor = Cursor::new(stream.read_exact(4)?);
     if endian == Endian::Little {
-        match cursor.read_i32::<LittleEndian>() {
+        let _ = match cursor.read_i32::<LittleEndian>() {
             Ok(value) => {
                 return Ok::<i32, IoError>(value);
             }
@@ -1110,7 +1110,7 @@ fn _read_i32_value(
             }
         };
     }
-    match cursor.read_i32::<BigEndian>() {
+    let _ = match cursor.read_i32::<BigEndian>() {
         Ok(value) => {
             return Ok::<i32, IoError>(value);
         }
@@ -1130,7 +1130,7 @@ fn _write_u32_value(
 ) -> Result<(), IoError> {
     let mut cursor = Cursor::new(_zeros(4));
     if endian == Endian::Little {
-        match cursor.write_u32::<LittleEndian>(value) {
+        let _ = match cursor.write_u32::<LittleEndian>(value) {
             Ok(_) => {
                 return _finish_numeric_write(stream.clone(), cursor.clone());
             }
@@ -1142,7 +1142,7 @@ fn _write_u32_value(
             }
         };
     }
-    match cursor.write_u32::<BigEndian>(value) {
+    let _ = match cursor.write_u32::<BigEndian>(value) {
         Ok(_) => {
             return _finish_numeric_write(stream.clone(), cursor.clone());
         }
@@ -1162,7 +1162,7 @@ fn _write_i32_value(
 ) -> Result<(), IoError> {
     let mut cursor = Cursor::new(_zeros(4));
     if endian == Endian::Little {
-        match cursor.write_i32::<LittleEndian>(value) {
+        let _ = match cursor.write_i32::<LittleEndian>(value) {
             Ok(_) => {
                 return _finish_numeric_write(stream.clone(), cursor.clone());
             }
@@ -1174,7 +1174,7 @@ fn _write_i32_value(
             }
         };
     }
-    match cursor.write_i32::<BigEndian>(value) {
+    let _ = match cursor.write_i32::<BigEndian>(value) {
         Ok(_) => {
             return _finish_numeric_write(stream.clone(), cursor.clone());
         }
@@ -1193,7 +1193,7 @@ fn _read_u64_value(
 ) -> Result<u64, IoError> {
     let mut cursor = Cursor::new(stream.read_exact(8)?);
     if endian == Endian::Little {
-        match cursor.read_u64::<LittleEndian>() {
+        let _ = match cursor.read_u64::<LittleEndian>() {
             Ok(value) => {
                 return Ok::<u64, IoError>(value);
             }
@@ -1205,7 +1205,7 @@ fn _read_u64_value(
             }
         };
     }
-    match cursor.read_u64::<BigEndian>() {
+    let _ = match cursor.read_u64::<BigEndian>() {
         Ok(value) => {
             return Ok::<u64, IoError>(value);
         }
@@ -1224,7 +1224,7 @@ fn _read_i64_value(
 ) -> Result<i64, IoError> {
     let mut cursor = Cursor::new(stream.read_exact(8)?);
     if endian == Endian::Little {
-        match cursor.read_i64::<LittleEndian>() {
+        let _ = match cursor.read_i64::<LittleEndian>() {
             Ok(value) => {
                 return Ok::<i64, IoError>(value);
             }
@@ -1236,7 +1236,7 @@ fn _read_i64_value(
             }
         };
     }
-    match cursor.read_i64::<BigEndian>() {
+    let _ = match cursor.read_i64::<BigEndian>() {
         Ok(value) => {
             return Ok::<i64, IoError>(value);
         }
@@ -1256,7 +1256,7 @@ fn _write_u64_value(
 ) -> Result<(), IoError> {
     let mut cursor = Cursor::new(_zeros(8));
     if endian == Endian::Little {
-        match cursor.write_u64::<LittleEndian>(value) {
+        let _ = match cursor.write_u64::<LittleEndian>(value) {
             Ok(_) => {
                 return _finish_numeric_write(stream.clone(), cursor.clone());
             }
@@ -1268,7 +1268,7 @@ fn _write_u64_value(
             }
         };
     }
-    match cursor.write_u64::<BigEndian>(value) {
+    let _ = match cursor.write_u64::<BigEndian>(value) {
         Ok(_) => {
             return _finish_numeric_write(stream.clone(), cursor.clone());
         }
@@ -1288,7 +1288,7 @@ fn _write_i64_value(
 ) -> Result<(), IoError> {
     let mut cursor = Cursor::new(_zeros(8));
     if endian == Endian::Little {
-        match cursor.write_i64::<LittleEndian>(value) {
+        let _ = match cursor.write_i64::<LittleEndian>(value) {
             Ok(_) => {
                 return _finish_numeric_write(stream.clone(), cursor.clone());
             }
@@ -1300,7 +1300,7 @@ fn _write_i64_value(
             }
         };
     }
-    match cursor.write_i64::<BigEndian>(value) {
+    let _ = match cursor.write_i64::<BigEndian>(value) {
         Ok(_) => {
             return _finish_numeric_write(stream.clone(), cursor.clone());
         }
@@ -1319,7 +1319,7 @@ fn _read_u128_value(
 ) -> Result<u128, IoError> {
     let mut cursor = Cursor::new(stream.read_exact(16)?);
     if endian == Endian::Little {
-        match cursor.read_u128::<LittleEndian>() {
+        let _ = match cursor.read_u128::<LittleEndian>() {
             Ok(value) => {
                 return Ok::<u128, IoError>(value);
             }
@@ -1331,7 +1331,7 @@ fn _read_u128_value(
             }
         };
     }
-    match cursor.read_u128::<BigEndian>() {
+    let _ = match cursor.read_u128::<BigEndian>() {
         Ok(value) => {
             return Ok::<u128, IoError>(value);
         }
@@ -1350,7 +1350,7 @@ fn _read_i128_value(
 ) -> Result<i128, IoError> {
     let mut cursor = Cursor::new(stream.read_exact(16)?);
     if endian == Endian::Little {
-        match cursor.read_i128::<LittleEndian>() {
+        let _ = match cursor.read_i128::<LittleEndian>() {
             Ok(value) => {
                 return Ok::<i128, IoError>(value);
             }
@@ -1362,7 +1362,7 @@ fn _read_i128_value(
             }
         };
     }
-    match cursor.read_i128::<BigEndian>() {
+    let _ = match cursor.read_i128::<BigEndian>() {
         Ok(value) => {
             return Ok::<i128, IoError>(value);
         }
@@ -1382,7 +1382,7 @@ fn _write_u128_value(
 ) -> Result<(), IoError> {
     let mut cursor = Cursor::new(_zeros(16));
     if endian == Endian::Little {
-        match cursor.write_u128::<LittleEndian>(value) {
+        let _ = match cursor.write_u128::<LittleEndian>(value) {
             Ok(_) => {
                 return _finish_numeric_write(stream.clone(), cursor.clone());
             }
@@ -1394,7 +1394,7 @@ fn _write_u128_value(
             }
         };
     }
-    match cursor.write_u128::<BigEndian>(value) {
+    let _ = match cursor.write_u128::<BigEndian>(value) {
         Ok(_) => {
             return _finish_numeric_write(stream.clone(), cursor.clone());
         }
@@ -1414,7 +1414,7 @@ fn _write_i128_value(
 ) -> Result<(), IoError> {
     let mut cursor = Cursor::new(_zeros(16));
     if endian == Endian::Little {
-        match cursor.write_i128::<LittleEndian>(value) {
+        let _ = match cursor.write_i128::<LittleEndian>(value) {
             Ok(_) => {
                 return _finish_numeric_write(stream.clone(), cursor.clone());
             }
@@ -1426,7 +1426,7 @@ fn _write_i128_value(
             }
         };
     }
-    match cursor.write_i128::<BigEndian>(value) {
+    let _ = match cursor.write_i128::<BigEndian>(value) {
         Ok(_) => {
             return _finish_numeric_write(stream.clone(), cursor.clone());
         }
@@ -1445,7 +1445,7 @@ fn _read_f32_value(
 ) -> Result<f32, IoError> {
     let mut cursor = Cursor::new(stream.read_exact(4)?);
     if endian == Endian::Little {
-        match cursor.read_f32::<LittleEndian>() {
+        let _ = match cursor.read_f32::<LittleEndian>() {
             Ok(value) => {
                 return Ok::<f32, IoError>(value);
             }
@@ -1457,7 +1457,7 @@ fn _read_f32_value(
             }
         };
     }
-    match cursor.read_f32::<BigEndian>() {
+    let _ = match cursor.read_f32::<BigEndian>() {
         Ok(value) => {
             return Ok::<f32, IoError>(value);
         }
@@ -1476,7 +1476,7 @@ fn _read_f64_value(
 ) -> Result<f64, IoError> {
     let mut cursor = Cursor::new(stream.read_exact(8)?);
     if endian == Endian::Little {
-        match cursor.read_f64::<LittleEndian>() {
+        let _ = match cursor.read_f64::<LittleEndian>() {
             Ok(value) => {
                 return Ok::<f64, IoError>(value);
             }
@@ -1488,7 +1488,7 @@ fn _read_f64_value(
             }
         };
     }
-    match cursor.read_f64::<BigEndian>() {
+    let _ = match cursor.read_f64::<BigEndian>() {
         Ok(value) => {
             return Ok::<f64, IoError>(value);
         }
@@ -1508,7 +1508,7 @@ fn _write_f32_value(
 ) -> Result<(), IoError> {
     let mut cursor = Cursor::new(_zeros(4));
     if endian == Endian::Little {
-        match cursor.write_f32::<LittleEndian>(value) {
+        let _ = match cursor.write_f32::<LittleEndian>(value) {
             Ok(_) => {
                 return _finish_numeric_write(stream.clone(), cursor.clone());
             }
@@ -1520,7 +1520,7 @@ fn _write_f32_value(
             }
         };
     }
-    match cursor.write_f32::<BigEndian>(value) {
+    let _ = match cursor.write_f32::<BigEndian>(value) {
         Ok(_) => {
             return _finish_numeric_write(stream.clone(), cursor.clone());
         }
@@ -1540,7 +1540,7 @@ fn _write_f64_value(
 ) -> Result<(), IoError> {
     let mut cursor = Cursor::new(_zeros(8));
     if endian == Endian::Little {
-        match cursor.write_f64::<LittleEndian>(value) {
+        let _ = match cursor.write_f64::<LittleEndian>(value) {
             Ok(_) => {
                 return _finish_numeric_write(stream.clone(), cursor.clone());
             }
@@ -1552,7 +1552,7 @@ fn _write_f64_value(
             }
         };
     }
-    match cursor.write_f64::<BigEndian>(value) {
+    let _ = match cursor.write_f64::<BigEndian>(value) {
         Ok(_) => {
             return _finish_numeric_write(stream.clone(), cursor.clone());
         }
@@ -1565,9 +1565,9 @@ fn _write_f64_value(
     };
 }
 fn _truncate_target_usize(target: i64, position: i64) -> Result<usize, IoError> {
-    "\n    Convert a validated truncate target into the host vector size type.\n    ";
+    let _ = "\n    Convert a validated truncate target into the host vector size type.\n    ";
     let maybe_target: Option<usize> = incan_stdlib::num::try_resize::<_, usize>(target);
-    match maybe_target {
+    let _ = match maybe_target {
         Some(value) => {
             return Ok::<usize, IoError>(value);
         }
@@ -1586,9 +1586,9 @@ fn _truncate_target_usize(target: i64, position: i64) -> Result<usize, IoError> 
     };
 }
 fn _truncate_target_u64(target: i64, position: i64) -> Result<u64, IoError> {
-    "\n    Convert a validated truncate target into the cursor position type.\n    ";
+    let _ = "\n    Convert a validated truncate target into the cursor position type.\n    ";
     let maybe_target: Option<u64> = incan_stdlib::num::try_resize::<_, u64>(target);
-    match maybe_target {
+    let _ = match maybe_target {
         Some(value) => {
             return Ok::<u64, IoError>(value);
         }
@@ -1607,7 +1607,7 @@ fn _truncate_target_u64(target: i64, position: i64) -> Result<u64, IoError> {
     };
 }
 fn _invalid_input(operation: String, position: i64, detail: String) -> IoError {
-    "\n    Create a stable invalid-input error.\n    ";
+    let _ = "\n    Create a stable invalid-input error.\n    ";
     return IoError {
         kind: "invalid_input".to_string(),
         detail: detail,
@@ -1617,7 +1617,7 @@ fn _invalid_input(operation: String, position: i64, detail: String) -> IoError {
     };
 }
 fn _rust_io_error(operation: String, position: i64, detail: String) -> IoError {
-    "\n    Convert host I/O error text into a `std.io` error.\n    ";
+    let _ = "\n    Convert host I/O error text into a `std.io` error.\n    ";
     if incan_stdlib::strings::str_contains(&detail, &"invalid") {
         return IoError {
             kind: "invalid_input".to_string(),

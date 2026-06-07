@@ -8,7 +8,6 @@ expression: rust_code
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 use widgets::Widget;
-use widgets::make_widget;
 use widgets::DEFAULT_NAME;
 fn main() {
     std::panic::set_hook(
@@ -23,5 +22,5 @@ fn main() {
         }),
     );
     let _w: Widget = widgets::make_widget(DEFAULT_NAME.to_string());
-    widgets::make_widget(DEFAULT_NAME.to_string());
+    let _ = widgets::make_widget(DEFAULT_NAME.to_string());
 }

@@ -22,6 +22,6 @@ fn main() {
             }
         }),
     );
-    println!("{}", C);
-    println!("{}", concat!("hello world!", "?"));
+    let _ = println!("{}", C);
+    let _ = println!("{}", concat!("hello world!", "?"));
 }

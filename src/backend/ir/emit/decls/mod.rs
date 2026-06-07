@@ -24,7 +24,7 @@ use proc_macro2::{Literal, TokenStream};
 use quote::quote;
 
 use crate::frontend::symbols::is_overload_emitted_name;
-use incan_core::lang::stdlib;
+use incan_core::lang::{stdlib, surface::types as surface_types};
 
 use super::super::decl::{IrDecl, IrDeclKind, IrImportOrigin, IrImportQualifier, Visibility};
 use super::super::expr::{IrDictEntry, IrExprKind, IrListEntry};
@@ -369,6 +369,33 @@ impl<'a> IrEmitter<'a> {
         tokens
     }
 
+    /// Return an absolute runtime path for a stdlib facade re-export of a runtime-owned surface type.
+    ///
+    /// Some stdlib source modules expose runtime-owned types such as `JoinHandle[T]` through ordinary private
+    /// `rust::...` imports because they need those names in signatures. A higher-level stdlib facade can then re-export
+    /// that type from the source module. Rust cannot re-export through the generated module's private `use`, so the
+    /// facade must point at the real runtime definition path instead.
+    fn stdlib_runtime_surface_type_reexport_path(&self, path: &[String], item_name: &str) -> Option<TokenStream> {
+        let id = surface_types::from_str(item_name)?;
+        if surface_types::owner(id) != surface_types::SurfaceTypeOwner::Runtime {
+            return None;
+        }
+        let module_path = surface_types::stdlib_module_path(id)?;
+        let module_segments = module_path.split('.').collect::<Vec<_>>();
+        if path.iter().map(String::as_str).ne(module_segments.iter().copied()) {
+            return None;
+        }
+
+        let mut tokens = vec![quote! { incan_stdlib }];
+        for segment in module_segments.into_iter().skip(1) {
+            let ident = Self::rust_ident(segment);
+            tokens.push(quote! { #ident });
+        }
+        let item_ident = Self::rust_ident(surface_types::as_str(id));
+        tokens.push(quote! { #item_ident });
+        Some(join_path_tokens(&tokens))
+    }
+
     /// Emit the Rust path used by a module-level symbol alias target.
     ///
     /// Imported targets use their original import path so public aliases re-export public items directly instead of
@@ -473,9 +500,7 @@ impl<'a> IrEmitter<'a> {
                 }
             }
 
-            let preserves_stdlib_rust_facade = matches!(qualifier, IrImportQualifier::None)
-                && path.first().is_some_and(|segment| segment == "incan_stdlib");
-            let export_item_import = export_module_import || preserves_stdlib_rust_facade;
+            let export_item_import = export_module_import;
             // If rust-inspect metadata is unavailable for an extension trait, codegen cannot map the later method call
             // back to its trait import. Preserve only the common Rust pattern `from crate import Trait, function` when
             // reachable code uses a lowercase function from the same import group. This keeps `rand::Rng` for
@@ -525,6 +550,11 @@ impl<'a> IrEmitter<'a> {
                     } else {
                         Self::rust_ident(&item.name)
                     };
+                    let runtime_surface_reexport_path = if should_reexport_item(item) && is_incan_source_stdlib {
+                        self.stdlib_runtime_surface_type_reexport_path(path, &item.name)
+                    } else {
+                        None
+                    };
                     let path_tokens_clone = path_tokens.clone();
                     let path_ts_clone = join_path_tokens(&path_tokens_clone);
                     let absolute_path = matches!(qualifier, IrImportQualifier::None) && !is_pub_library_import;
@@ -555,7 +585,9 @@ impl<'a> IrEmitter<'a> {
                         } else {
                             Self::rust_ident(alias)
                         };
-                        if should_reexport_item(item) {
+                        if let Some(runtime_path) = &runtime_surface_reexport_path {
+                            quote! { pub use :: #runtime_path as #alias_ident; }
+                        } else if should_reexport_item(item) {
                             if absolute_path {
                                 quote! { pub use :: #path_ts_clone :: #name_ident as #alias_ident; }
                             } else {
@@ -569,7 +601,9 @@ impl<'a> IrEmitter<'a> {
                             }
                         }
                     } else {
-                        if should_reexport_item(item) {
+                        if let Some(runtime_path) = &runtime_surface_reexport_path {
+                            quote! { pub use :: #runtime_path; }
+                        } else if should_reexport_item(item) {
                             if absolute_path {
                                 quote! { pub use :: #path_ts_clone :: #name_ident; }
                             } else {

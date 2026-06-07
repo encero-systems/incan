@@ -31,5 +31,5 @@ fn main() {
     );
     let response: CustomResponse = CustomResponse::ok("Status".to_string());
     let result: String = response.__into_response__();
-    println!("{}", result);
+    let _ = println!("{}", result);
 }

@@ -7,14 +7,203 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use std::collections::HashSet;
 
-use super::super::expr::{IrDictEntry, IrExprKind, IrGeneratorClause, IrListEntry, Pattern, TypedExpr};
-use super::super::ownership::{ValueUseSite, plan_for_loop_iteration, plan_value_use};
-use super::super::scanners::binding_use_scan;
+use incan_core::lang::stdlib;
+
+use super::super::expr::{
+    BuiltinFn, IrCallArgKind, IrDictEntry, IrExprKind, IrGeneratorClause, IrListEntry, MatchArm, Pattern, TypedExpr,
+    VarAccess,
+};
+use super::super::ownership::{LoopIterationPlan, ValueUseSite, plan_for_loop_iteration, plan_value_use};
+use super::super::scanners::{binding_use_scan, expr_uses_binding_name};
 use super::super::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use super::super::types::IrType;
 use super::super::types::Mutability;
 use super::{EmitError, IrEmitter};
-use crate::backend::ir::emit::expressions::method_kind_uses_mutable_receiver;
+use crate::backend::ir::emit::expressions::{method_kind_uses_mutable_receiver, method_name_uses_mutable_receiver};
+
+/// Get the root variable name of an expression.
+fn root_var_name(expr: &super::super::expr::IrExpr) -> Option<&str> {
+    match &expr.kind {
+        IrExprKind::Var { name, .. } => Some(name.as_str()),
+        IrExprKind::Field { object, .. } => root_var_name(object),
+        IrExprKind::Index { object, .. } => root_var_name(object),
+        _ => None,
+    }
+}
+
+/// Check if an assignment target mutates a variable.
+fn target_mutates_var(target: &AssignTarget, var: &str) -> bool {
+    match target {
+        AssignTarget::Var(name) => name == var,
+        AssignTarget::StaticBinding(name) => name == var,
+        AssignTarget::Static(_) => false,
+        AssignTarget::Field { object, .. } => root_var_name(object).is_some_and(|n| n == var),
+        AssignTarget::Index { object, .. } => root_var_name(object).is_some_and(|n| n == var),
+    }
+}
+
+/// Check if an expression contains a mutation of a variable.
+fn expr_contains_mutation(expr: &super::super::expr::IrExpr, var: &str) -> bool {
+    match &expr.kind {
+        IrExprKind::Var {
+            name,
+            access: VarAccess::BorrowMut,
+            ..
+        } => name == var,
+        IrExprKind::BinOp { left, right, .. } => {
+            expr_contains_mutation(left, var) || expr_contains_mutation(right, var)
+        }
+        IrExprKind::UnaryOp { operand, .. }
+        | IrExprKind::Await(operand)
+        | IrExprKind::Try(operand)
+        | IrExprKind::Cast { expr: operand, .. }
+        | IrExprKind::InteropCoerce { expr: operand, .. } => expr_contains_mutation(operand, var),
+        IrExprKind::Call { func, args, .. } => {
+            expr_contains_mutation(func, var) || args.iter().any(|arg| expr_contains_mutation(&arg.expr, var))
+        }
+        IrExprKind::BuiltinCall { args, .. } => args.iter().any(|arg| expr_contains_mutation(arg, var)),
+        IrExprKind::MethodCall {
+            receiver,
+            method,
+            args,
+            arg_policy,
+            ..
+        } => {
+            (!matches!(arg_policy, super::super::expr::MethodCallArgPolicy::PreserveShape)
+                && method_name_uses_mutable_receiver(method)
+                && root_var_name(receiver).is_some_and(|name| name == var))
+                || expr_contains_mutation(receiver, var)
+                || args.iter().any(|arg| expr_contains_mutation(&arg.expr, var))
+        }
+        IrExprKind::KnownMethodCall { receiver, kind, args } => {
+            (method_kind_uses_mutable_receiver(kind) && root_var_name(receiver).is_some_and(|name| name == var))
+                || expr_contains_mutation(receiver, var)
+                || args.iter().any(|arg| expr_contains_mutation(&arg.expr, var))
+        }
+        IrExprKind::Field { object, .. } => expr_contains_mutation(object, var),
+        IrExprKind::Index { object, index } => {
+            expr_contains_mutation(object, var) || expr_contains_mutation(index, var)
+        }
+        IrExprKind::Slice {
+            target,
+            start,
+            end,
+            step,
+        } => {
+            expr_contains_mutation(target, var)
+                || start.as_ref().is_some_and(|value| expr_contains_mutation(value, var))
+                || end.as_ref().is_some_and(|value| expr_contains_mutation(value, var))
+                || step.as_ref().is_some_and(|value| expr_contains_mutation(value, var))
+        }
+        IrExprKind::Set(items) | IrExprKind::Tuple(items) => items.iter().any(|item| expr_contains_mutation(item, var)),
+        IrExprKind::List(items) => items.iter().any(|item| match item {
+            IrListEntry::Element(value) | IrListEntry::Spread(value) => expr_contains_mutation(value, var),
+        }),
+        IrExprKind::Dict(entries) => entries.iter().any(|entry| match entry {
+            IrDictEntry::Pair(key, value) => expr_contains_mutation(key, var) || expr_contains_mutation(value, var),
+            IrDictEntry::Spread(value) => expr_contains_mutation(value, var),
+        }),
+        IrExprKind::Struct { fields, .. } => fields.iter().any(|(_, value)| expr_contains_mutation(value, var)),
+        IrExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            expr_contains_mutation(condition, var)
+                || expr_contains_mutation(then_branch, var)
+                || else_branch
+                    .as_ref()
+                    .is_some_and(|else_branch| expr_contains_mutation(else_branch, var))
+        }
+        IrExprKind::Block { stmts, value } => {
+            stmts.iter().any(|s| stmt_mutates_var(s, var))
+                || value.as_ref().is_some_and(|v| expr_contains_mutation(v, var))
+        }
+        IrExprKind::Loop { body } => body.iter().any(|stmt| stmt_mutates_var(stmt, var)),
+        IrExprKind::Race { arms, .. } => arms
+            .iter()
+            .any(|arm| expr_contains_mutation(&arm.awaitable, var) || expr_contains_mutation(&arm.body, var)),
+        IrExprKind::Match { arms, .. } => arms.iter().any(|arm| {
+            arm.bindings.iter().any(|binding| {
+                expr_contains_mutation(&binding.value, var)
+                    || binding
+                        .guard_value
+                        .as_ref()
+                        .is_some_and(|guard_value| expr_contains_mutation(guard_value, var))
+            }) || expr_contains_mutation(&arm.body, var)
+        }),
+        IrExprKind::ListComp {
+            element,
+            iterable,
+            filter,
+            ..
+        } => {
+            expr_contains_mutation(element, var)
+                || expr_contains_mutation(iterable, var)
+                || filter
+                    .as_ref()
+                    .is_some_and(|filter| expr_contains_mutation(filter, var))
+        }
+        IrExprKind::DictComp {
+            key,
+            value,
+            iterable,
+            filter,
+            ..
+        } => {
+            expr_contains_mutation(key, var)
+                || expr_contains_mutation(value, var)
+                || expr_contains_mutation(iterable, var)
+                || filter
+                    .as_ref()
+                    .is_some_and(|filter| expr_contains_mutation(filter, var))
+        }
+        IrExprKind::Generator { element, clauses } => {
+            expr_contains_mutation(element, var)
+                || clauses.iter().any(|clause| match clause {
+                    IrGeneratorClause::For { iterable, .. } => expr_contains_mutation(iterable, var),
+                    IrGeneratorClause::If(condition) => expr_contains_mutation(condition, var),
+                })
+        }
+        IrExprKind::Format { parts } => parts.iter().any(|part| match part {
+            super::super::expr::FormatPart::Literal(_) => false,
+            super::super::expr::FormatPart::Expr { expr, .. } => expr_contains_mutation(expr, var),
+        }),
+        _ => false,
+    }
+}
+
+/// Check if a statement mutates a variable.
+fn stmt_mutates_var(stmt: &IrStmt, var: &str) -> bool {
+    match &stmt.kind {
+        IrStmtKind::Assign { target, .. } => target_mutates_var(target, var),
+        IrStmtKind::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            then_branch.iter().any(|s| stmt_mutates_var(s, var))
+                || else_branch
+                    .as_ref()
+                    .is_some_and(|b| b.iter().any(|s| stmt_mutates_var(s, var)))
+        }
+        IrStmtKind::While { body, .. } => body.iter().any(|s| stmt_mutates_var(s, var)),
+        IrStmtKind::For { body, .. } => body.iter().any(|s| stmt_mutates_var(s, var)),
+        IrStmtKind::Loop { body, .. } => body.iter().any(|s| stmt_mutates_var(s, var)),
+        IrStmtKind::Block(stmts) => stmts.iter().any(|s| stmt_mutates_var(s, var)),
+        IrStmtKind::Match { arms, .. } => arms.iter().any(|arm| {
+            arm.bindings.iter().any(|binding| {
+                expr_contains_mutation(&binding.value, var)
+                    || binding
+                        .guard_value
+                        .as_ref()
+                        .is_some_and(|guard_value| expr_contains_mutation(guard_value, var))
+            }) || expr_contains_mutation(&arm.body, var)
+        }),
+        IrStmtKind::Break { label: _, value } => value.as_ref().is_some_and(|value| expr_contains_mutation(value, var)),
+        _ => false,
+    }
+}
 
 /// Determine whether a `for` loop body requires mutable iteration of the loop variable.
 ///
@@ -29,86 +218,50 @@ fn for_body_needs_mut_iteration(pattern: &Pattern, body: &[IrStmt]) -> bool {
         _ => return false,
     };
 
-    /// Get the root variable name of an expression.
-    fn root_var_name(expr: &super::super::expr::IrExpr) -> Option<&str> {
-        match &expr.kind {
-            IrExprKind::Var { name, .. } => Some(name.as_str()),
-            IrExprKind::Field { object, .. } => root_var_name(object),
-            IrExprKind::Index { object, .. } => root_var_name(object),
-            _ => None,
-        }
-    }
-
-    /// Check if an assignment target mutates a variable.
-    fn target_mutates_var(target: &AssignTarget, var: &str) -> bool {
-        match target {
-            AssignTarget::Var(name) => name == var,
-            AssignTarget::StaticBinding(name) => name == var,
-            AssignTarget::Static(_) => false,
-            AssignTarget::Field { object, .. } => root_var_name(object).is_some_and(|n| n == var),
-            AssignTarget::Index { object, .. } => root_var_name(object).is_some_and(|n| n == var),
-        }
-    }
-
-    /// Check if an expression contains a mutation of a variable.
-    fn expr_contains_mutation(expr: &super::super::expr::IrExpr, var: &str) -> bool {
-        match &expr.kind {
-            IrExprKind::Block { stmts, value } => {
-                stmts.iter().any(|s| stmt_mutates_var(s, var))
-                    || value.as_ref().is_some_and(|v| expr_contains_mutation(v, var))
-            }
-            IrExprKind::Loop { body } => body.iter().any(|stmt| stmt_mutates_var(stmt, var)),
-            IrExprKind::Race { arms, .. } => arms
-                .iter()
-                .any(|arm| expr_contains_mutation(&arm.awaitable, var) || expr_contains_mutation(&arm.body, var)),
-            IrExprKind::Match { arms, .. } => arms.iter().any(|arm| {
-                arm.bindings.iter().any(|binding| {
-                    expr_contains_mutation(&binding.value, var)
-                        || binding
-                            .guard_value
-                            .as_ref()
-                            .is_some_and(|guard_value| expr_contains_mutation(guard_value, var))
-                }) || expr_contains_mutation(&arm.body, var)
-            }),
-            _ => false,
-        }
-    }
-
-    /// Check if a statement mutates a variable.
-    fn stmt_mutates_var(stmt: &IrStmt, var: &str) -> bool {
-        match &stmt.kind {
-            IrStmtKind::Assign { target, .. } => target_mutates_var(target, var),
-            IrStmtKind::If {
-                then_branch,
-                else_branch,
-                ..
-            } => {
-                then_branch.iter().any(|s| stmt_mutates_var(s, var))
-                    || else_branch
-                        .as_ref()
-                        .is_some_and(|b| b.iter().any(|s| stmt_mutates_var(s, var)))
-            }
-            IrStmtKind::While { body, .. } => body.iter().any(|s| stmt_mutates_var(s, var)),
-            IrStmtKind::For { body, .. } => body.iter().any(|s| stmt_mutates_var(s, var)),
-            IrStmtKind::Loop { body, .. } => body.iter().any(|s| stmt_mutates_var(s, var)),
-            IrStmtKind::Block(stmts) => stmts.iter().any(|s| stmt_mutates_var(s, var)),
-            IrStmtKind::Match { arms, .. } => arms.iter().any(|arm| {
-                arm.bindings.iter().any(|binding| {
-                    expr_contains_mutation(&binding.value, var)
-                        || binding
-                            .guard_value
-                            .as_ref()
-                            .is_some_and(|guard_value| expr_contains_mutation(guard_value, var))
-                }) || expr_contains_mutation(&arm.body, var)
-            }),
-            IrStmtKind::Break { label: _, value } => {
-                value.as_ref().is_some_and(|value| expr_contains_mutation(value, var))
-            }
-            _ => false,
-        }
-    }
-
     body.iter().any(|s| stmt_mutates_var(s, loop_var))
+}
+
+/// Return whether the expression calls a Rust helper that returns `!`.
+///
+/// Source stdlib code often writes `return raise_value_error(...)` because the source language does not expose Rust's
+/// never type. Rust warns on `return <never-expr>`, so emission renders the diverging call directly.
+fn is_diverging_rust_error_call(expr: &TypedExpr) -> bool {
+    let IrExprKind::Call {
+        func, canonical_path, ..
+    } = &expr.kind
+    else {
+        return false;
+    };
+    let function_name = match &func.kind {
+        IrExprKind::Var { name, .. } | IrExprKind::FunctionItem { name, .. } => Some(name.as_str()),
+        _ => None,
+    };
+    if function_name.is_some_and(is_diverging_rust_error_helper_name) {
+        return true;
+    }
+
+    let Some(path) = canonical_path else {
+        return false;
+    };
+    path.len() == 4
+        && path[0] == stdlib::STDLIB_RUST
+        && path[1] == stdlib::INCAN_STD_NAMESPACE
+        && path[2] == stdlib::INCAN_STD_ERRORS_MODULE
+        && is_diverging_rust_error_helper_name(&path[3])
+}
+
+/// Return whether a Rust stdlib error helper is known to diverge, so statement emission can avoid generating
+/// unreachable cleanup code after a call that always raises.
+fn is_diverging_rust_error_helper_name(name: &str) -> bool {
+    matches!(
+        name,
+        "raise_value_error"
+            | "raise_type_error"
+            | "raise_index_error"
+            | "raise_key_error"
+            | "raise_json_serialization_error"
+            | "raise_json_decode_error"
+    )
 }
 
 /// Return the element target type for assignment into a list index.
@@ -448,6 +601,145 @@ fn collect_local_binding_usage(
         .collect()
 }
 
+/// Return whether an IR statement definitely exits the current statement slice.
+fn stmt_always_diverges(stmt: &IrStmt) -> bool {
+    match &stmt.kind {
+        IrStmtKind::Return(_) | IrStmtKind::Break { .. } | IrStmtKind::Continue(_) => true,
+        IrStmtKind::Block(stmts) => stmts.last().is_some_and(stmt_always_diverges),
+        IrStmtKind::If {
+            then_branch,
+            else_branch: Some(else_branch),
+            ..
+        } => {
+            then_branch.last().is_some_and(stmt_always_diverges) && else_branch.last().is_some_and(stmt_always_diverges)
+        }
+        IrStmtKind::Match { scrutinee, arms } => {
+            match_arms_are_exhaustive(&scrutinee.ty, arms)
+                && arms
+                    .iter()
+                    .all(|arm| arm.guard.is_none() && expr_always_diverges(&arm.body))
+        }
+        _ => false,
+    }
+}
+
+/// Return whether an IR expression definitely exits the current statement slice.
+fn expr_always_diverges(expr: &TypedExpr) -> bool {
+    match &expr.kind {
+        IrExprKind::Block { stmts, value } => {
+            stmts.last().is_some_and(stmt_always_diverges) || value.as_deref().is_some_and(expr_always_diverges)
+        }
+        IrExprKind::If {
+            then_branch,
+            else_branch: Some(else_branch),
+            ..
+        } => expr_always_diverges(then_branch) && expr_always_diverges(else_branch),
+        IrExprKind::Match { scrutinee, arms } => {
+            match_arms_are_exhaustive(&scrutinee.ty, arms)
+                && arms
+                    .iter()
+                    .all(|arm| arm.guard.is_none() && expr_always_diverges(&arm.body))
+        }
+        _ => false,
+    }
+}
+
+/// Return whether a match arm set covers the currently known scrutinee shape.
+fn match_arms_are_exhaustive(scrutinee_ty: &IrType, arms: &[MatchArm]) -> bool {
+    if arms.is_empty() {
+        return false;
+    }
+    if arms
+        .iter()
+        .any(|arm| arm.guard.is_none() && matches!(arm.pattern, Pattern::Wildcard | Pattern::Var(_)))
+    {
+        return true;
+    }
+    let Some(union_name) = scrutinee_ty.union_type_name() else {
+        return false;
+    };
+    let Some(members) = scrutinee_ty.union_members() else {
+        return false;
+    };
+    let mut covered = HashSet::new();
+    for arm in arms {
+        if arm.guard.is_some() {
+            continue;
+        }
+        collect_union_variant_patterns(&arm.pattern, &union_name, &mut covered);
+    }
+    covered.len() == members.len()
+}
+
+/// Collect anonymous-union variant names covered by one pattern.
+fn collect_union_variant_patterns(pattern: &Pattern, union_name: &str, covered: &mut HashSet<String>) {
+    match pattern {
+        Pattern::Enum { variant, .. } => {
+            if let Some((name, variant)) = variant.split_once("::")
+                && name == union_name
+            {
+                covered.insert(variant.to_string());
+            }
+        }
+        Pattern::Or(patterns) => {
+            for pattern in patterns {
+                collect_union_variant_patterns(pattern, union_name, covered);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Replace pattern captures that are not read by the arm body, guard, or compiler-inserted bindings with wildcards.
+fn erase_unused_pattern_bindings(pattern: &Pattern, arm: &MatchArm) -> Pattern {
+    match pattern {
+        Pattern::Var(name) if !arm_uses_pattern_binding(arm, name) => Pattern::Wildcard,
+        Pattern::Var(_) | Pattern::Wildcard | Pattern::Literal(_) => pattern.clone(),
+        Pattern::Tuple(items) => Pattern::Tuple(
+            items
+                .iter()
+                .map(|item| erase_unused_pattern_bindings(item, arm))
+                .collect(),
+        ),
+        Pattern::Struct { name, fields } => Pattern::Struct {
+            name: name.clone(),
+            fields: fields
+                .iter()
+                .map(|(field, pattern)| (field.clone(), erase_unused_pattern_bindings(pattern, arm)))
+                .collect(),
+        },
+        Pattern::Enum { name, variant, fields } => Pattern::Enum {
+            name: name.clone(),
+            variant: variant.clone(),
+            fields: fields
+                .iter()
+                .map(|field| erase_unused_pattern_bindings(field, arm))
+                .collect(),
+        },
+        Pattern::Or(items) => Pattern::Or(
+            items
+                .iter()
+                .map(|item| erase_unused_pattern_bindings(item, arm))
+                .collect(),
+        ),
+    }
+}
+
+/// Return whether one pattern binding is used after pattern matching.
+fn arm_uses_pattern_binding(arm: &MatchArm, name: &str) -> bool {
+    arm.guard
+        .as_ref()
+        .is_some_and(|guard| expr_uses_binding_name(guard, name))
+        || expr_uses_binding_name(&arm.body, name)
+        || arm.bindings.iter().any(|binding| {
+            expr_uses_binding_name(&binding.value, name)
+                || binding
+                    .guard_value
+                    .as_ref()
+                    .is_some_and(|guard_value| expr_uses_binding_name(guard_value, name))
+        })
+}
+
 impl<'a> IrEmitter<'a> {
     /// Emit a sibling statement slice with precomputed binding context.
     ///
@@ -476,16 +768,24 @@ impl<'a> IrEmitter<'a> {
         let mutated = collect_mutated_storage_bindings(stmts);
         let local_usage = collect_local_binding_usage(stmts, following_slices, following_expr);
         self.storage_binding_mut_names.borrow_mut().push(mutated);
-        let emitted = stmts
-            .iter()
-            .enumerate()
-            .map(|(index, stmt)| {
+        let emitted = (|| {
+            let mut emitted = Vec::new();
+            for (index, stmt) in stmts.iter().enumerate() {
                 let mut next_slices = Vec::with_capacity(following_slices.len() + 1);
                 next_slices.push(&stmts[index + 1..]);
                 next_slices.extend_from_slice(following_slices);
-                self.emit_stmt_with_local_usage(stmt, local_usage[index], &next_slices, following_expr)
-            })
-            .collect::<Result<Vec<_>, _>>();
+                emitted.push(self.emit_stmt_with_local_usage(
+                    stmt,
+                    local_usage[index],
+                    &next_slices,
+                    following_expr,
+                )?);
+                if stmt_always_diverges(stmt) {
+                    break;
+                }
+            }
+            Ok(emitted)
+        })();
         self.storage_binding_mut_names.borrow_mut().pop();
         emitted
     }
@@ -716,7 +1016,7 @@ impl<'a> IrEmitter<'a> {
                     return Ok(quote! { #(#inner)* });
                 }
                 let e = self.emit_expr(expr)?;
-                Ok(quote! { #e; })
+                Ok(quote! { let _ = #e; })
             }
             IrStmtKind::Let {
                 name,
@@ -745,8 +1045,15 @@ impl<'a> IrEmitter<'a> {
                     .as_ref()
                     .and_then(|annotated_ty| self.emit_local_let_annotation(annotated_ty));
 
+                let binding_is_mutated_after = following_slices
+                    .iter()
+                    .any(|stmts| stmts.iter().any(|stmt| stmt_mutates_var(stmt, name)))
+                    || following_expr
+                        .as_ref()
+                        .is_some_and(|expr| expr_contains_mutation(expr, name));
                 let needs_mut = binding_is_used
                     && (matches!(mutability, Mutability::Mutable)
+                        || binding_is_mutated_after
                         || matches!(value.kind, IrExprKind::StaticBinding { .. })
                             && self.current_storage_binding_needs_mut(name));
                 if needs_mut {
@@ -844,6 +1151,9 @@ impl<'a> IrEmitter<'a> {
                 };
                 *self.in_return_context.borrow_mut() = false;
 
+                if is_diverging_rust_error_call(expr) {
+                    return Ok(quote! { #converted; });
+                }
                 Ok(quote! { return #converted; })
             }
             IrStmtKind::Return(None) => Ok(quote! { return; }),
@@ -907,7 +1217,6 @@ impl<'a> IrEmitter<'a> {
                 body,
             } => {
                 let pat = self.emit_pattern(pattern);
-                let iter = self.emit_expr(iterable)?;
                 let body_stmts = self.emit_stmts(body)?;
                 // For non-copy collections, iterate by reference to avoid move
                 // This handles the common case where a collection is used multiple times
@@ -931,7 +1240,12 @@ impl<'a> IrEmitter<'a> {
                     needs_mut_items,
                     item_is_user_enum,
                 );
-                let iter_expr = iter_plan.apply(iter);
+                if iter_plan == LoopIterationPlan::AsIs
+                    && let Some(range_for) = self.emit_direct_range_for_stmt(&pat, iterable, &body_stmts)?
+                {
+                    return Ok(range_for);
+                }
+                let iter_expr = self.emit_for_iterable(iterable, iter_plan)?;
                 Ok(quote! {
                     for #pat in #iter_expr {
                         #(#body_stmts)*
@@ -975,7 +1289,8 @@ impl<'a> IrEmitter<'a> {
                 let arm_tokens: Vec<TokenStream> = arms
                     .iter()
                     .map(|arm| {
-                        let (pat, pattern_guard) = self.emit_pattern_for_scrutinee(&arm.pattern, &scrutinee.ty);
+                        let pattern = erase_unused_pattern_bindings(&arm.pattern, arm);
+                        let (pat, pattern_guard) = self.emit_pattern_for_scrutinee(&pattern, &scrutinee.ty);
                         let body = self.emit_match_arm_body(arm)?;
                         let guard = self.emit_match_arm_guard(arm, pattern_guard)?;
                         if let Some(guard) = guard {
@@ -1004,6 +1319,185 @@ impl<'a> IrEmitter<'a> {
             )),
         }
     }
+
+    /// Emit a direct range `for` statement without interpolating the entire range as one grouped expression.
+    fn emit_direct_range_for_stmt(
+        &self,
+        pat: &TokenStream,
+        iterable: &TypedExpr,
+        body_stmts: &[TokenStream],
+    ) -> Result<Option<TokenStream>, EmitError> {
+        match &iterable.kind {
+            IrExprKind::BuiltinCall {
+                func: BuiltinFn::Range,
+                args,
+            } => self.emit_builtin_range_for_stmt(pat, args, body_stmts),
+            IrExprKind::Call {
+                func,
+                args,
+                canonical_path,
+                callable_signature,
+                ..
+            } if canonical_path.is_none() && callable_signature.is_none() && Self::call_expr_is_builtin_range(func) => {
+                let Some(positional) = Self::positional_call_args(args) else {
+                    return Ok(None);
+                };
+                self.emit_builtin_range_for_stmt(pat, &positional, body_stmts)
+            }
+            IrExprKind::Range { start, end, inclusive } => {
+                self.emit_range_expr_for_stmt(pat, start.as_deref(), end.as_deref(), *inclusive, body_stmts)
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// Return whether a call callee names the builtin `range` without an already-resolved real function target.
+    fn call_expr_is_builtin_range(func: &TypedExpr) -> bool {
+        matches!(
+            &func.kind,
+            IrExprKind::Var { name, .. }
+                if BuiltinFn::from_name(name) == Some(BuiltinFn::Range)
+        )
+    }
+
+    /// Convert ordinary positional call arguments into expression values for builtin range emission.
+    fn positional_call_args(args: &[super::super::expr::IrCallArg]) -> Option<Vec<TypedExpr>> {
+        args.iter()
+            .map(|arg| match arg.kind {
+                IrCallArgKind::Positional => Some(arg.expr.clone()),
+                IrCallArgKind::Named | IrCallArgKind::PositionalUnpack | IrCallArgKind::KeywordUnpack => None,
+            })
+            .collect()
+    }
+
+    /// Emit `for` over the `range(...)` builtin when it lowers to a direct Rust range.
+    fn emit_builtin_range_for_stmt(
+        &self,
+        pat: &TokenStream,
+        args: &[TypedExpr],
+        body_stmts: &[TokenStream],
+    ) -> Result<Option<TokenStream>, EmitError> {
+        if args.len() == 1 {
+            if let IrExprKind::Range { start, end, inclusive } = &args[0].kind {
+                return self.emit_range_expr_for_stmt(pat, start.as_deref(), end.as_deref(), *inclusive, body_stmts);
+            }
+            let end = self.emit_expr(&args[0])?;
+            return Ok(Some(quote! {
+                for #pat in 0_i64..(#end as i64) {
+                    #(#body_stmts)*
+                }
+            }));
+        }
+
+        if args.len() == 2 {
+            let start = self.emit_expr(&args[0])?;
+            let end = self.emit_expr(&args[1])?;
+            return Ok(Some(quote! {
+                for #pat in (#start as i64)..(#end as i64) {
+                    #(#body_stmts)*
+                }
+            }));
+        }
+
+        if args.len() == 3 && matches!(&args[2].kind, IrExprKind::Int(1)) {
+            let start = self.emit_expr(&args[0])?;
+            let end = self.emit_expr(&args[1])?;
+            return Ok(Some(quote! {
+                for #pat in (#start as i64)..(#end as i64) {
+                    #(#body_stmts)*
+                }
+            }));
+        }
+
+        Ok(None)
+    }
+
+    /// Emit `for` over an Incan range expression when it lowers to a direct Rust range.
+    fn emit_range_expr_for_stmt(
+        &self,
+        pat: &TokenStream,
+        start: Option<&TypedExpr>,
+        end: Option<&TypedExpr>,
+        inclusive: bool,
+        body_stmts: &[TokenStream],
+    ) -> Result<Option<TokenStream>, EmitError> {
+        match (start, end, inclusive) {
+            (Some(start), Some(end), false) => {
+                let start = self.emit_expr(start)?;
+                let end = self.emit_expr(end)?;
+                Ok(Some(quote! {
+                    for #pat in #start..#end {
+                        #(#body_stmts)*
+                    }
+                }))
+            }
+            (Some(start), Some(end), true) => {
+                let start = self.emit_expr(start)?;
+                let end = self.emit_expr(end)?;
+                Ok(Some(quote! {
+                    for #pat in #start..=#end {
+                        #(#body_stmts)*
+                    }
+                }))
+            }
+            (Some(start), None, _) => {
+                let start = self.emit_expr(start)?;
+                Ok(Some(quote! {
+                    for #pat in #start.. {
+                        #(#body_stmts)*
+                    }
+                }))
+            }
+            (None, Some(end), false) => {
+                let end = self.emit_expr(end)?;
+                Ok(Some(quote! {
+                    for #pat in ..#end {
+                        #(#body_stmts)*
+                    }
+                }))
+            }
+            (None, Some(end), true) => {
+                let end = self.emit_expr(end)?;
+                Ok(Some(quote! {
+                    for #pat in ..=#end {
+                        #(#body_stmts)*
+                    }
+                }))
+            }
+            (None, None, _) => Ok(Some(quote! {
+                for #pat in .. {
+                    #(#body_stmts)*
+                }
+            })),
+        }
+    }
+
+    /// Emit a `for` iterable without introducing warning-prone grouping around direct Rust range iterators.
+    ///
+    /// The generic expression emitter may produce a range token stream that is grouped when substituted into a larger
+    /// expression. That grouping is harmless in most positions but Rust warns on `for x in (a..b)`, so direct range
+    /// iterables are emitted at the `for` site while all adapted iterables keep the normal ownership plan.
+    fn emit_for_iterable(&self, iterable: &TypedExpr, iter_plan: LoopIterationPlan) -> Result<TokenStream, EmitError> {
+        if iter_plan == LoopIterationPlan::AsIs {
+            match &iterable.kind {
+                IrExprKind::BuiltinCall {
+                    func: BuiltinFn::Range,
+                    args,
+                } => {
+                    if let Some(range) = self.emit_range_call(args)? {
+                        return Ok(range);
+                    }
+                }
+                IrExprKind::Range { start, end, inclusive } => {
+                    return self.emit_range_expr(start.as_deref(), end.as_deref(), *inclusive);
+                }
+                _ => {}
+            }
+        }
+
+        let iter = self.emit_expr(iterable)?;
+        Ok(iter_plan.apply(iter))
+    }
 }
 
 #[cfg(test)]
@@ -1012,6 +1506,7 @@ mod tests {
     use crate::backend::ir::FunctionRegistry;
     use crate::backend::ir::TypedExpr;
     use crate::backend::ir::expr::{CollectionMethodKind, IrCallArg, IrCallArgKind, MethodKind, VarAccess, VarRefKind};
+    use crate::backend::ir::types::Mutability;
 
     #[test]
     fn immutable_static_binding_let_does_not_emit_mut() -> Result<(), String> {
@@ -1046,7 +1541,7 @@ mod tests {
     }
 
     #[test]
-    fn mutable_static_binding_let_still_emits_mut() -> Result<(), String> {
+    fn source_mutable_let_still_emits_mut() -> Result<(), String> {
         let registry = FunctionRegistry::new();
         let emitter = IrEmitter::new(&registry);
         let stmt = IrStmt::new(IrStmtKind::Let {
@@ -1070,7 +1565,36 @@ mod tests {
         let rendered = emitted.to_string();
         assert!(
             rendered.contains("let mut flags ="),
-            "mutable lets must still emit `mut`, got `{rendered}`"
+            "source-mutable lets must emit Rust `mut`, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn later_assignment_to_plain_local_emits_mut() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let stmts = vec![
+            IrStmt::new(IrStmtKind::Let {
+                name: "current".to_string(),
+                ty: IrType::Int,
+                type_annotation: None,
+                mutability: Mutability::Immutable,
+                value: TypedExpr::new(IrExprKind::Int(1), IrType::Int),
+            }),
+            IrStmt::new(IrStmtKind::Assign {
+                target: AssignTarget::Var("current".to_string()),
+                value: TypedExpr::new(IrExprKind::Int(2), IrType::Int),
+            }),
+        ];
+
+        let emitted = emitter
+            .emit_stmts(&stmts)
+            .map_err(|err| format!("expected successful statement emission, got {err:?}"))?;
+        let rendered = quote! { #(#emitted)* }.to_string();
+        assert!(
+            rendered.contains("let mut current ="),
+            "later assignment to a local must emit Rust `mut`, got `{rendered}`"
         );
         Ok(())
     }

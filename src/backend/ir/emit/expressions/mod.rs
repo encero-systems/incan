@@ -52,6 +52,7 @@ mod structs_enums;
 
 use proc_macro2::{Literal, TokenStream};
 use quote::{ToTokens, format_ident, quote};
+use std::sync::LazyLock;
 
 use super::super::decl::IrInteropAdapterKind;
 use super::super::expr::{
@@ -61,6 +62,7 @@ use super::super::expr::{
 use super::super::types::IrType;
 use super::{EmitError, IrEmitter};
 use crate::backend::ir::ownership::{ValueUseSite, plan_value_use, value_use_site_target_ty};
+use incan_core::lang::surface::methods::{dict_methods, list_methods};
 use incan_core::lang::types::collections::{self, CollectionTypeId};
 
 #[derive(Debug, Clone)]
@@ -89,6 +91,31 @@ pub(in crate::backend::ir::emit) fn method_kind_uses_mutable_receiver(kind: &Met
                 | CollectionMethodKind::ReserveExact
         )
     )
+}
+
+/// String-named methods that mutate their receiver.
+///
+/// Lowering normally classifies collection methods as [`MethodKind`], but Rust interop and a few compiler-internal
+/// rewrites can still reach emission as string-named method calls. Keep the name policy next to the `MethodKind` policy
+/// so parameter scanning, local-binding emission, and storage-lock analysis do not drift.
+static MUTATING_METHOD_NAMES: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
+    vec![
+        list_methods::as_str(list_methods::ListMethodId::Append),
+        list_methods::as_str(list_methods::ListMethodId::Extend),
+        list_methods::as_str(list_methods::ListMethodId::Pop),
+        list_methods::as_str(list_methods::ListMethodId::Swap),
+        list_methods::as_str(list_methods::ListMethodId::Reserve),
+        list_methods::as_str(list_methods::ListMethodId::ReserveExact),
+        list_methods::as_str(list_methods::ListMethodId::Remove),
+        dict_methods::as_str(dict_methods::DictMethodId::Insert),
+        "push",
+        "clear",
+    ]
+});
+
+/// Return whether a string-named method should be emitted with a mutable receiver borrow.
+pub(in crate::backend::ir::emit) fn method_name_uses_mutable_receiver(name: &str) -> bool {
+    MUTATING_METHOD_NAMES.contains(&name)
 }
 
 impl<'a> IrEmitter<'a> {

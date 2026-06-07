@@ -13,7 +13,6 @@ pub enum __IncanUnionf13d01fefab04049 {
     V1(_BytesIO),
 }
 pub use crate::__incan_std::fs::File;
-use crate::__incan_std::io::_BytesIO;
 pub use crate::__incan_std::traits::error::Error;
 /// Compression codec identity used by `std.compression` autodetection.
 #[derive(Debug, Clone, PartialEq)]
@@ -91,7 +90,7 @@ impl Codec {
     ///
     /// Raw Snappy block compression is intentionally absent because it has no framing signature.
     pub fn all() -> Vec<Codec> {
-        "\n        Return the stable codec order used by default autodetection filters.\n\n        Raw Snappy block compression is intentionally absent because it has no framing signature.\n        ";
+        let _ = "\n        Return the stable codec order used by default autodetection filters.\n\n        Raw Snappy block compression is intentionally absent because it has no framing signature.\n        ";
         return vec![
             Codec::Gzip.clone(), Codec::Zlib.clone(), Codec::Deflate.clone(), Codec::Zstd
             .clone(), Codec::Bz2.clone(), Codec::Lzma.clone(), Codec::Snappy.clone()
@@ -174,14 +173,14 @@ impl incan_stdlib::reflection::HasTypeFieldMetadata for CompressionError {
 impl CompressionError {
     /// Return the human-readable error detail.
     pub fn message(&self) -> String {
-        "\n        Return the human-readable error detail.\n        ";
+        let _ = "\n        Return the human-readable error detail.\n        ";
         return self.detail.clone();
     }
     /// Return a structured source error when one is available.
     ///
     /// Compression currently normalizes backend details into `detail`, so there is no nested source value.
     pub fn source(&self) -> Option<String> {
-        "\n        Return a structured source error when one is available.\n\n        Compression currently normalizes backend details into `detail`, so there is no nested source value.\n        ";
+        let _ = "\n        Return a structured source error when one is available.\n\n        Compression currently normalizes backend details into `detail`, so there is no nested source value.\n        ";
         return None::<_>;
     }
     /// Returns field metadata for this type.
@@ -231,11 +230,11 @@ impl CompressionError {
 }
 impl Error for CompressionError {
     fn message(&self) -> String {
-        "\n        Return the human-readable error detail.\n        ";
+        let _ = "\n        Return the human-readable error detail.\n        ";
         return self.detail.clone();
     }
     fn source(&self) -> Option<String> {
-        "\n        Return a structured source error when one is available.\n\n        Compression currently normalizes backend details into `detail`, so there is no nested source value.\n        ";
+        let _ = "\n        Return a structured source error when one is available.\n\n        Compression currently normalizes backend details into `detail`, so there is no nested source value.\n        ";
         return None::<_>;
     }
 }
@@ -247,8 +246,8 @@ pub fn _level_or_default(
     minimum: i64,
     maximum: i64,
 ) -> Result<i64, CompressionError> {
-    "\n    Validate a portable integer compression-level request.\n    ";
-    match level {
+    let _ = "\n    Validate a portable integer compression-level request.\n    ";
+    let _ = match level {
         Some(value) => {
             if value < minimum || value > maximum {
                 return Err::<
@@ -282,8 +281,8 @@ pub fn _level_or_default(
 }
 /// Reject a level argument for codecs without level support.
 pub fn _reject_level(codec: Codec, level: Option<i64>) -> Result<(), CompressionError> {
-    "\n    Reject a level argument for codecs without level support.\n    ";
-    match level {
+    let _ = "\n    Reject a level argument for codecs without level support.\n    ";
+    let _ = match level {
         Some(_) => {
             return Err::<
                 (),
@@ -316,7 +315,7 @@ pub fn _codec_error(
     operation: String,
     detail: String,
 ) -> CompressionError {
-    "\n    Build a codec failure from backend error text.\n\n    Backend crates expose different error enums and messages. The first source pass keeps a stable Incan `kind` by\n    classifying the most common invalid/truncated markers and otherwise preserving the backend text as `backend`.\n    ";
+    let _ = "\n    Build a codec failure from backend error text.\n\n    Backend crates expose different error enums and messages. The first source pass keeps a stable Incan `kind` by\n    classifying the most common invalid/truncated markers and otherwise preserving the backend text as `backend`.\n    ";
     let mut kind = "backend".to_string();
     if incan_stdlib::strings::str_contains(&detail, &"EOF")
         || incan_stdlib::strings::str_contains(&detail, &"eof")
@@ -345,7 +344,7 @@ pub fn _io_error(
     operation: String,
     detail: String,
 ) -> CompressionError {
-    "\n    Build an I/O failure.\n    ";
+    let _ = "\n    Build an I/O failure.\n    ";
     return CompressionError {
         kind: "io".to_string(),
         codec: codec,
@@ -359,7 +358,7 @@ pub fn _validate_chunk_size(
     operation: String,
     chunk_size: i64,
 ) -> Result<(), CompressionError> {
-    "\n    Reject a non-positive stream chunk size before touching source or target streams.\n    ";
+    let _ = "\n    Reject a non-positive stream chunk size before touching source or target streams.\n    ";
     if chunk_size <= 0 {
         return Err::<
             (),
@@ -383,10 +382,10 @@ pub fn _write_sink_bytes(
     target: __IncanUnionf13d01fefab04049,
     data: Vec<u8>,
 ) -> Result<(), CompressionError> {
-    "\n    Write one compressed or decompressed chunk to a `BytesIO` or `File` sink.\n\n    Stream helpers keep codec adapters in their codec modules, but use this shared sink boundary so `IoError`\n    normalization stays identical across modules.\n    ";
+    let _ = "\n    Write one compressed or decompressed chunk to a `BytesIO` or `File` sink.\n\n    Stream helpers keep codec adapters in their codec modules, but use this shared sink boundary so `IoError`\n    normalization stays identical across modules.\n    ";
     match target.clone() {
         __IncanUnionf13d01fefab04049::V1(target) => {
-            match target.write_bytes(data) {
+            let _ = match target.write_bytes(data) {
                 Ok(_) => {
                     return Ok::<(), CompressionError>(());
                 }
@@ -399,7 +398,7 @@ pub fn _write_sink_bytes(
             };
         }
         __IncanUnionf13d01fefab04049::V0(target) => {
-            match target.write_bytes(data) {
+            let _ = match target.write_bytes(data) {
                 Ok(_) => {
                     return Ok::<(), CompressionError>(());
                 }
@@ -415,32 +414,32 @@ pub fn _write_sink_bytes(
 }
 /// Read one byte as an integer for signature checks.
 pub fn _byte_at(data: Vec<u8>, index: i64) -> i64 {
-    "\n    Read one byte as an integer for signature checks.\n    ";
+    let _ = "\n    Read one byte as an integer for signature checks.\n    ";
     return (data[(index) as usize]) as i64;
 }
 /// Return whether `data` starts with the gzip magic bytes.
 pub fn _looks_like_gzip(data: Vec<u8>) -> bool {
-    "\n    Return whether `data` starts with the gzip magic bytes.\n    ";
+    let _ = "\n    Return whether `data` starts with the gzip magic bytes.\n    ";
     return ::std::convert::identity(data.len() as i64) >= 2
         && _byte_at(data.clone(), 0) == 31 && _byte_at(data, 1) == 139;
 }
 /// Return whether `data` starts with the zstd frame magic bytes.
 pub fn _looks_like_zstd(data: Vec<u8>) -> bool {
-    "\n    Return whether `data` starts with the zstd frame magic bytes.\n    ";
+    let _ = "\n    Return whether `data` starts with the zstd frame magic bytes.\n    ";
     return ::std::convert::identity(data.len() as i64) >= 4
         && _byte_at(data.clone(), 0) == 40 && _byte_at(data.clone(), 1) == 181
         && _byte_at(data.clone(), 2) == 47 && _byte_at(data, 3) == 253;
 }
 /// Return whether `data` starts with the bzip2 stream signature.
 pub fn _looks_like_bz2(data: Vec<u8>) -> bool {
-    "\n    Return whether `data` starts with the bzip2 stream signature.\n    ";
+    let _ = "\n    Return whether `data` starts with the bzip2 stream signature.\n    ";
     return ::std::convert::identity(data.len() as i64) >= 3
         && _byte_at(data.clone(), 0) == 66 && _byte_at(data.clone(), 1) == 90
         && _byte_at(data, 2) == 104;
 }
 /// Return whether `data` starts with the XZ container magic bytes.
 pub fn _looks_like_xz(data: Vec<u8>) -> bool {
-    "\n    Return whether `data` starts with the XZ container magic bytes.\n    ";
+    let _ = "\n    Return whether `data` starts with the XZ container magic bytes.\n    ";
     return ::std::convert::identity(data.len() as i64) >= 6
         && _byte_at(data.clone(), 0) == 253 && _byte_at(data.clone(), 1) == 55
         && _byte_at(data.clone(), 2) == 122 && _byte_at(data.clone(), 3) == 88
@@ -448,7 +447,7 @@ pub fn _looks_like_xz(data: Vec<u8>) -> bool {
 }
 /// Return whether `data` starts with the framed Snappy stream identifier.
 pub fn _looks_like_snappy_frame(data: Vec<u8>) -> bool {
-    "\n    Return whether `data` starts with the framed Snappy stream identifier.\n    ";
+    let _ = "\n    Return whether `data` starts with the framed Snappy stream identifier.\n    ";
     return ::std::convert::identity(data.len() as i64) >= 10
         && _byte_at(data.clone(), 0) == 255 && _byte_at(data.clone(), 1) == 6
         && _byte_at(data.clone(), 2) == 0 && _byte_at(data.clone(), 3) == 0
@@ -461,7 +460,7 @@ pub fn _looks_like_snappy_frame(data: Vec<u8>) -> bool {
 /// Zlib's header does not have a fixed magic sequence. The RFC 1950 check below validates the compression method and
 /// header checksum; decompression still owns the final data-validity decision.
 pub fn _looks_like_zlib(data: Vec<u8>) -> bool {
-    "\n    Return whether `data` has a valid zlib header.\n\n    Zlib's header does not have a fixed magic sequence. The RFC 1950 check below validates the compression method and\n    header checksum; decompression still owns the final data-validity decision.\n    ";
+    let _ = "\n    Return whether `data` has a valid zlib header.\n\n    Zlib's header does not have a fixed magic sequence. The RFC 1950 check below validates the compression method and\n    header checksum; decompression still owns the final data-validity decision.\n    ";
     if ::std::convert::identity(data.len() as i64) < 2 {
         return false;
     }

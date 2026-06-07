@@ -24,7 +24,7 @@ fn test_function_references() -> (i64, i64) {
 fn map_list(items: Vec<i64>, transformer: fn(i64) -> i64) -> Vec<i64> {
     let mut result: Vec<i64> = vec![];
     for item in items.iter().copied() {
-        result.push(transformer(item));
+        let _ = result.push(transformer(item));
     }
     return result.clone();
 }
@@ -33,7 +33,7 @@ fn test_callable_syntax() -> Vec<i64> {
     let mut doubled_arrows = map_list(nums.clone(), double.clone());
     let doubled_callable = map_list(nums, double);
     for item in doubled_callable.iter().copied() {
-        doubled_arrows.push(item);
+        let _ = doubled_arrows.push(item);
     }
     return doubled_arrows.clone();
 }

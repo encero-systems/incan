@@ -52,7 +52,7 @@ fn drain_items() {
         let item: PopRegressItem = incan_stdlib::collections::__private::list_pop(
             &mut xs,
         );
-        println!("{}", item.id);
+        let _ = println!("{}", item.id);
     }
 }
 fn main() {
@@ -67,5 +67,5 @@ fn main() {
             }
         }),
     );
-    drain_items();
+    let _ = drain_items();
 }

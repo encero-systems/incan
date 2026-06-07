@@ -22,5 +22,5 @@ fn main() {
             }
         }),
     );
-    println!("{}", panic("not the macro".to_string()));
+    let _ = println!("{}", panic("not the macro".to_string()));
 }

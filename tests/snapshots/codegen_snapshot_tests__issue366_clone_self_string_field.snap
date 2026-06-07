@@ -107,5 +107,5 @@ fn main() {
         rank: 1,
     };
     let copied = reg.clone();
-    println!("{}", copied.logical_name);
+    let _ = println!("{}", copied.logical_name);
 }

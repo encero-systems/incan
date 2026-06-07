@@ -20,7 +20,7 @@ fn test_lowercase_types() {
         .collect::<std::collections::HashSet<_>>();
     let _pair: (i64, String) = (42, "hello".to_string());
     let _maybe: Option<i64> = None::<i64>;
-    println!("{}", "All lowercase types work!");
+    let _ = println!("{}", "All lowercase types work!");
 }
 fn main() {
     std::panic::set_hook(
@@ -34,5 +34,5 @@ fn main() {
             }
         }),
     );
-    test_lowercase_types();
+    let _ = test_lowercase_types();
 }

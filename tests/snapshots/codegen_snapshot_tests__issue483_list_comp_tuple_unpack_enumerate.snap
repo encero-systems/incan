@@ -93,5 +93,5 @@ fn main() {
             }
         }),
     );
-    bind(vec!["a".to_string(), "bb".to_string()]);
+    let _ = bind(vec!["a".to_string(), "bb".to_string()]);
 }
