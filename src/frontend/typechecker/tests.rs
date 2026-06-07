@@ -1,6 +1,10 @@
 //! Typechecker unit tests.
 
 use super::*;
+use crate::frontend::api_metadata::{
+    ApiDeclaration, ApiFunction, CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadata, CheckedApiMetadataPackage,
+    SourceAnchor, SourceSpan,
+};
 use crate::frontend::ast::TypeConstraintKey;
 use crate::frontend::library_exports::{
     CheckedExportKind, CheckedPartialTargetKind, CheckedPresetValue, collect_checked_public_exports,
@@ -13,10 +17,12 @@ use crate::frontend::testing_markers::TestingFixtureScope;
 use crate::frontend::{lexer, parser};
 use crate::library_manifest::{
     AliasExport, ClassExport, ConstExport, EnumExport, EnumValueExport, EnumValueTypeExport, EnumVariantExport,
-    FunctionExport, LibraryContractMetadata, LibraryExports, LibraryManifest, LibraryRustAbi, MethodExport,
-    ModelExport, ParamDefaultCallArgExport, ParamDefaultCallSignatureExport, ParamDefaultExport, ParamExport,
-    ParamKindExport, PartialExport, PartialPresetExport, PartialTargetKindExport, PresetValueExport, ReceiverExport,
-    StaticExport, TraitExport, TypeAliasExport, TypeBoundExport, TypeParamExport, TypeRef,
+    ExportIdentity, ExportIdentityKind, ExportIdentityProjection, FunctionExport,
+    LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION, LibraryContractMetadata, LibraryExports, LibraryIdentityGraph,
+    LibraryManifest, LibraryRustAbi, MethodExport, ModelExport, ParamDefaultCallArgExport,
+    ParamDefaultCallSignatureExport, ParamDefaultExport, ParamExport, ParamKindExport, PartialExport,
+    PartialPresetExport, PartialTargetKindExport, PresetValueExport, ReceiverExport, StaticExport, TraitExport,
+    TypeAliasExport, TypeBoundExport, TypeParamExport, TypeRef,
 };
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect::{Inspector, InspectorConfig, write_borrowed_param_probe_crate, write_substrait_probe_crate};
@@ -1919,6 +1925,109 @@ fn library_index_with_callable_alias_export() -> LibraryManifestIndex {
         vocab: None,
         soft_keywords: Default::default(),
         contract_metadata: LibraryContractMetadata::default(),
+        rust_abi: None,
+    };
+
+    LibraryManifestIndex::from_entries(HashMap::from([(
+        "mylib".to_string(),
+        LibraryManifestIndexEntry::Loaded {
+            manifest: Box::new(manifest),
+            metadata: LibraryArtifactMetadata::from_crate_root("mylib", "mylib", synthetic_artifact_root("mylib")),
+        },
+    )]))
+}
+
+fn library_index_with_identity_graph_alias_collision() -> LibraryManifestIndex {
+    let root_cast = FunctionExport {
+        name: "cast".to_string(),
+        emitted_name: None,
+        type_params: Vec::new(),
+        params: vec![ParamExport {
+            name: "value".to_string(),
+            ty: TypeRef::Named {
+                name: "int".to_string(),
+            },
+            kind: ParamKindExport::Normal,
+            has_default: false,
+            default: None,
+        }],
+        return_type: TypeRef::Named {
+            name: "int".to_string(),
+        },
+        is_async: false,
+    };
+    let helper_cast = ApiFunction {
+        name: "cast".to_string(),
+        anchor: SourceAnchor {
+            id: "helpers.cast".to_string(),
+            span: SourceSpan { start: 0, end: 0 },
+        },
+        docstring: None,
+        docstring_sections: None,
+        decorators: Vec::new(),
+        type_params: Vec::new(),
+        params: vec![ParamExport {
+            name: "value".to_string(),
+            ty: TypeRef::Named {
+                name: "str".to_string(),
+            },
+            kind: ParamKindExport::Normal,
+            has_default: false,
+            default: None,
+        }],
+        return_type: TypeRef::Named {
+            name: "str".to_string(),
+        },
+        is_async: false,
+    };
+    let manifest = LibraryManifest {
+        name: "mylib".to_string(),
+        version: "0.1.0".to_string(),
+        incan_version: crate::version::INCAN_VERSION.to_string(),
+        manifest_format: crate::library_manifest::LIBRARY_MANIFEST_FORMAT,
+        exports: LibraryExports {
+            aliases: vec![AliasExport {
+                name: "safe_cast".to_string(),
+                target_path: vec!["helpers".to_string(), "cast".to_string()],
+                projected_function: None,
+            }],
+            partials: Vec::new(),
+            models: Vec::new(),
+            classes: Vec::new(),
+            functions: vec![root_cast],
+            traits: Vec::new(),
+            enums: Vec::new(),
+            type_aliases: Vec::new(),
+            newtypes: Vec::new(),
+            consts: Vec::new(),
+            statics: Vec::new(),
+        },
+        vocab: None,
+        soft_keywords: Default::default(),
+        contract_metadata: LibraryContractMetadata {
+            models: Default::default(),
+            api: Some(CheckedApiMetadataPackage {
+                schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+                package: None,
+                modules: vec![CheckedApiMetadata {
+                    schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+                    module_path: vec!["helpers".to_string()],
+                    declarations: vec![ApiDeclaration::Function(helper_cast)],
+                }],
+            }),
+            identity_graph: LibraryIdentityGraph {
+                schema_version: LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION,
+                exports: vec![ExportIdentity {
+                    public_name: "safe_cast".to_string(),
+                    public_path: vec!["mylib".to_string(), "safe_cast".to_string()],
+                    source_path: vec!["facade".to_string(), "safe_cast".to_string()],
+                    kind: ExportIdentityKind::Alias,
+                    projection: ExportIdentityProjection::Alias {
+                        target_path: vec!["helpers".to_string(), "cast".to_string()],
+                    },
+                }],
+            },
+        },
         rust_abi: None,
     };
 
@@ -12046,6 +12155,21 @@ def build() -> int:
     assert!(
         result.is_ok(),
         "expected pub-imported callable alias to typecheck, got: {result:?}"
+    );
+}
+
+#[test]
+fn test_pub_from_import_alias_uses_identity_graph_before_short_target_lookup() {
+    let source = r#"
+from pub::mylib import safe_cast
+
+def build() -> str:
+  return safe_cast("ok")
+"#;
+    let result = check_str_with_library_index(source, library_index_with_identity_graph_alias_collision());
+    assert!(
+        result.is_ok(),
+        "expected identity graph to resolve alias to helpers.cast instead of root cast, got: {result:?}"
     );
 }
 

@@ -183,8 +183,8 @@
     {
       "path": "src/backend/ir/lower/expr/calls.rs",
       "category": "public dependency call/default lowering, checked API target paths, and assert-raises policy",
-      "expected_count": 6,
-      "expected_fingerprint": "0x6e1861379f651336"
+      "expected_count": 5,
+      "expected_fingerprint": "0x2a9295afdba175d8"
     },
     {
       "path": "src/backend/ir/lower/expr/mod.rs",

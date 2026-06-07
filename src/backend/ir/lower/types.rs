@@ -12,17 +12,20 @@ use super::super::expr::BinOp;
 use super::super::types::{IR_UNION_TYPE_NAME, IrType};
 use super::errors::LoweringError;
 use super::{AstLowering, FunctionSignature};
+use crate::frontend::api_metadata::ApiDeclaration;
 use crate::frontend::ast;
 use crate::frontend::library_manifest_index::LibraryManifestIndexEntry;
 use crate::frontend::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::frontend::symbols::ResolvedType;
-use crate::library_manifest::resolved_type_from_manifest_type_ref;
+use crate::library_manifest::{TypeAliasExport, resolved_type_from_manifest_type_ref};
 use crate::numeric_adapters::{ir_type_to_numeric_ty, numeric_op_from_ast};
 use incan_core::lang::conventions;
 use incan_core::lang::types::collections::{self, CollectionTypeId};
 use incan_core::lang::types::numerics::{self, NumericFamily, NumericTypeId};
 use incan_core::lang::types::stringlike::{self, StringLikeId};
 use incan_core::{NumericTy, PowExponentKind, result_numeric_type};
+
+const API_CRATE_ROOT_SEGMENT: &str = "crate";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum GenericBaseKind {
@@ -278,15 +281,10 @@ impl AstLowering {
         name: String,
         expanding: &mut std::collections::HashSet<String>,
     ) -> Option<IrType> {
-        let manifest_index = self.library_manifest_index.as_ref()?;
-        let LibraryManifestIndexEntry::Loaded { manifest, .. } = manifest_index.get(library)? else {
+        let alias = self.pub_type_alias_export(library, &name)?;
+        if !alias.type_params.is_empty() {
             return None;
-        };
-        let alias = manifest
-            .exports
-            .type_aliases
-            .iter()
-            .find(|alias| alias.name == name && alias.type_params.is_empty())?;
+        }
         if !expanding.insert(name.clone()) {
             return None;
         }
@@ -365,11 +363,7 @@ impl AstLowering {
         args: Vec<ResolvedType>,
         expanding: &mut std::collections::HashSet<String>,
     ) -> Option<ResolvedType> {
-        let manifest_index = self.library_manifest_index.as_ref()?;
-        let LibraryManifestIndexEntry::Loaded { manifest, .. } = manifest_index.get(library)? else {
-            return None;
-        };
-        let alias = manifest.exports.type_aliases.iter().find(|alias| alias.name == name)?;
+        let alias = self.pub_type_alias_export(library, &name)?;
         if alias.type_params.len() != args.len() || !expanding.insert(name.clone()) {
             return None;
         }
@@ -388,6 +382,55 @@ impl AstLowering {
         let expanded = self.expand_pub_manifest_type_aliases(library, substituted, expanding);
         expanding.remove(&name);
         Some(expanded)
+    }
+
+    /// Resolve a provider-local public type alias through the same identity graph/API metadata used for callables.
+    fn pub_type_alias_export(&self, library: &str, name: &str) -> Option<TypeAliasExport> {
+        let manifest_index = self.library_manifest_index.as_ref()?;
+        let LibraryManifestIndexEntry::Loaded { manifest, .. } = manifest_index.get(library)? else {
+            return None;
+        };
+        if let Some(alias) = manifest.exports.type_aliases.iter().find(|alias| alias.name == name) {
+            return Some(alias.clone());
+        }
+        if let Some(target_path) = manifest
+            .contract_metadata
+            .identity_graph
+            .entry_for_public_name(name)
+            .and_then(|entry| entry.target_path())
+            && let Some(alias) = Self::api_type_alias_export_for_target_path(manifest, target_path)
+        {
+            return Some(alias);
+        }
+        manifest
+            .exports
+            .aliases
+            .iter()
+            .find(|alias| alias.name == name)
+            .and_then(|alias| Self::api_type_alias_export_for_target_path(manifest, &alias.target_path))
+    }
+
+    /// Resolve one checked API type alias from a module-qualified provider target path.
+    fn api_type_alias_export_for_target_path(
+        manifest: &crate::library_manifest::LibraryManifest,
+        target_path: &[String],
+    ) -> Option<TypeAliasExport> {
+        let alias_name = target_path.last()?;
+        let path = if target_path
+            .first()
+            .is_some_and(|segment| segment == API_CRATE_ROOT_SEGMENT)
+        {
+            &target_path[1..]
+        } else {
+            target_path
+        };
+        let module_path = path.get(..path.len().saturating_sub(1))?;
+        let api = manifest.contract_metadata.api.as_ref()?;
+        let module = api.modules.iter().find(|module| module.module_path == module_path)?;
+        module.declarations.iter().find_map(|declaration| match declaration {
+            ApiDeclaration::TypeAlias(alias) if alias.name == *alias_name => Some(alias.type_alias.clone()),
+            _ => None,
+        })
     }
 
     /// Lower a simple imported public type alias from manifest metadata instead of trusting the raw source name.

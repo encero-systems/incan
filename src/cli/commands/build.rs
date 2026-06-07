@@ -1436,6 +1436,7 @@ pub fn run_file(
 mod tests {
     use super::*;
     use crate::frontend::lexer;
+    use crate::frontend::library_exports::CheckedExportIdentity;
     use crate::frontend::parser;
     use crate::frontend::symbols::ResolvedType;
     use crate::lockfile::{IncanLock, compute_deps_fingerprint};
@@ -1603,6 +1604,7 @@ mod tests {
 
         let widget_export = CheckedNamedExport {
             name: "Widget".to_string(),
+            identity: CheckedExportIdentity::direct(vec!["widgets".to_string(), "Widget".to_string()]),
             kind: CheckedExportKind::TypeAlias(crate::frontend::library_exports::CheckedTypeAliasExport {
                 name: "Widget".to_string(),
                 type_params: Vec::new(),
@@ -1663,6 +1665,7 @@ mod tests {
 
         let widget_export = CheckedNamedExport {
             name: "Widget".to_string(),
+            identity: CheckedExportIdentity::direct(vec!["widgets".to_string(), "Widget".to_string()]),
             kind: CheckedExportKind::TypeAlias(crate::frontend::library_exports::CheckedTypeAliasExport {
                 name: "Widget".to_string(),
                 type_params: Vec::new(),
@@ -1696,6 +1699,7 @@ mod tests {
 
         let dataset_export = CheckedNamedExport {
             name: "DataSet".to_string(),
+            identity: CheckedExportIdentity::direct(vec!["dataset".to_string(), "DataSet".to_string()]),
             kind: CheckedExportKind::TypeAlias(crate::frontend::library_exports::CheckedTypeAliasExport {
                 name: "DataSet".to_string(),
                 type_params: Vec::new(),
@@ -1704,6 +1708,7 @@ mod tests {
         };
         let filter_export = CheckedNamedExport {
             name: "filter_ds".to_string(),
+            identity: CheckedExportIdentity::direct(vec!["dataset_ops".to_string(), "filter_ds".to_string()]),
             kind: CheckedExportKind::Function(crate::frontend::library_exports::CheckedFunctionExport {
                 name: "filter_ds".to_string(),
                 emitted_name: None,
@@ -1750,6 +1755,7 @@ mod tests {
 
         let dataset_export = CheckedNamedExport {
             name: "DataSet".to_string(),
+            identity: CheckedExportIdentity::direct(vec!["dataset".to_string(), "DataSet".to_string()]),
             kind: CheckedExportKind::TypeAlias(crate::frontend::library_exports::CheckedTypeAliasExport {
                 name: "DataSet".to_string(),
                 type_params: Vec::new(),
@@ -1758,6 +1764,7 @@ mod tests {
         };
         let filter_export = CheckedNamedExport {
             name: "filter_ds".to_string(),
+            identity: CheckedExportIdentity::direct(vec!["dataset_ops".to_string(), "filter_ds".to_string()]),
             kind: CheckedExportKind::Function(crate::frontend::library_exports::CheckedFunctionExport {
                 name: "filter_ds".to_string(),
                 emitted_name: None,

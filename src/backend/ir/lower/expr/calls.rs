@@ -13,7 +13,9 @@ use super::super::super::types::IrType;
 use super::super::super::{FunctionSignature, IrStmt, Mutability, TypedExpr};
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
-use crate::frontend::api_metadata::{ApiDeclaration, method_export_from_api};
+use crate::frontend::api_metadata::{
+    ApiDeclaration, function_export_from_api, function_export_from_api_projected, method_export_from_api,
+};
 use crate::frontend::ast::{self, TypeConstraintKey};
 use crate::frontend::library_manifest_index::LibraryManifestIndexEntry;
 use crate::frontend::partial_projection::{PartialPresetRef, merge_named_partial_args};
@@ -33,6 +35,7 @@ use incan_core::lang::testing::{self, TestingAssertHelperId};
 use incan_core::lang::types::collections::{self, CollectionTypeId};
 
 const TYPE_CONSTRUCTOR_HOOK: &str = "__incan_new";
+const API_CRATE_ROOT_SEGMENT: &str = "crate";
 
 impl AstLowering {
     /// Return the builtin member name for an explicit `std.builtins.<name>` callee.
@@ -215,12 +218,68 @@ impl AstLowering {
         {
             return Some(function.clone());
         }
+        if let Some(function) = Self::api_function_export_for_public_name(manifest, function_name) {
+            return Some(function);
+        }
         manifest
             .exports
             .aliases
             .iter()
             .find(|alias| alias.name == function_name)
             .and_then(|alias| alias.projected_function.clone())
+    }
+
+    /// Resolve public callable aliases through the manifest identity graph before falling back to public-name scans.
+    fn api_function_export_for_public_name(
+        manifest: &crate::library_manifest::LibraryManifest,
+        function_name: &str,
+    ) -> Option<FunctionExport> {
+        let target_path = manifest
+            .contract_metadata
+            .identity_graph
+            .entry_for_public_name(function_name)
+            .and_then(|entry| entry.target_path())?;
+        let api = manifest.contract_metadata.api.as_ref()?;
+        Self::api_function_export_for_target_path(api, target_path)
+    }
+
+    /// Resolve one checked API function from a module-qualified public callable target path.
+    fn api_function_export_for_target_path(
+        api: &crate::frontend::api_metadata::CheckedApiMetadataPackage,
+        target_path: &[String],
+    ) -> Option<FunctionExport> {
+        let function_name = target_path.last()?;
+        let path = if target_path
+            .first()
+            .is_some_and(|segment| segment == API_CRATE_ROOT_SEGMENT)
+        {
+            &target_path[1..]
+        } else {
+            target_path
+        };
+        let module_path = path.get(..path.len().saturating_sub(1))?;
+        let module = api.modules.iter().find(|module| module.module_path == module_path)?;
+        module
+            .declarations
+            .iter()
+            .find_map(|declaration| Self::api_function_export_for_declaration(declaration, function_name))
+    }
+
+    /// Convert one checked API declaration into the function export requested by backend call planning.
+    fn api_function_export_for_declaration(
+        declaration: &ApiDeclaration,
+        function_name: &str,
+    ) -> Option<FunctionExport> {
+        match declaration {
+            ApiDeclaration::Function(function) if function.name == function_name => {
+                Some(function_export_from_api(function))
+            }
+            ApiDeclaration::Alias(alias) if alias.name == function_name => alias
+                .projected_function
+                .as_ref()
+                .map(function_export_from_api_projected),
+            _ => None,
+        }
     }
 
     /// Rebuild a public dependency callable signature from manifest metadata, including materialized parameter
@@ -538,7 +597,10 @@ impl AstLowering {
         method_name: &str,
     ) -> Option<MethodExport> {
         let type_name = target_path.last()?;
-        let path = if target_path.first().is_some_and(|segment| segment == "crate") {
+        let path = if target_path
+            .first()
+            .is_some_and(|segment| segment == API_CRATE_ROOT_SEGMENT)
+        {
             &target_path[1..]
         } else {
             target_path
@@ -2670,16 +2732,31 @@ fn param_kind_from_manifest(kind: ParamKindExport) -> ast::ParamKind {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
     use super::AstLowering;
     use crate::backend::ir::decl::IrDeclKind;
     use crate::backend::ir::expr::{IrExprKind, MethodCallArgPolicy, VarRefKind};
     use crate::backend::ir::stmt::IrStmtKind;
     use crate::backend::ir::types::IrType;
+    use crate::frontend::api_metadata::{
+        ApiDeclaration, ApiFunction, CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadata,
+        CheckedApiMetadataPackage, SourceAnchor, SourceSpan,
+    };
     use crate::frontend::ast::{
         CallArg, Expr, InteropAdapterKind, InteropDirection, InteropEdgeDecl, Literal, Span, Spanned, Type,
     };
+    use crate::frontend::library_manifest_index::{
+        LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
+    };
     use crate::frontend::symbols::ResolvedType;
     use crate::frontend::typechecker::{RustArgCoercionInfo, RustArgCoercionKind, TypeCheckInfo};
+    use crate::library_manifest::{
+        AliasExport, ExportIdentity, ExportIdentityKind, ExportIdentityProjection, FunctionExport,
+        LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION, LibraryExports, LibraryIdentityGraph, LibraryManifest, ParamExport,
+        ParamKindExport, TypeRef,
+    };
     use incan_core::interop::CoercionPolicy;
 
     fn mk_edge(
@@ -2694,6 +2771,100 @@ mod tests {
             adapter_kind,
             adapter: Spanned::new(Expr::Ident(adapter_name.to_string()), Span::new(0, 0)),
         }
+    }
+
+    fn exported_fn(name: &str, param: &str, ret: &str) -> FunctionExport {
+        FunctionExport {
+            name: name.to_string(),
+            emitted_name: None,
+            type_params: Vec::new(),
+            params: vec![ParamExport {
+                name: "value".to_string(),
+                ty: TypeRef::Named {
+                    name: param.to_string(),
+                },
+                kind: ParamKindExport::Normal,
+                has_default: false,
+                default: None,
+            }],
+            return_type: TypeRef::Named { name: ret.to_string() },
+            is_async: false,
+        }
+    }
+
+    #[test]
+    fn imported_pub_callable_signature_uses_identity_graph_before_short_name_lookup() {
+        let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+        manifest.exports = LibraryExports {
+            functions: vec![exported_fn("cast", "int", "int")],
+            aliases: vec![AliasExport {
+                name: "safe_cast".to_string(),
+                target_path: vec!["helpers".to_string(), "cast".to_string()],
+                projected_function: None,
+            }],
+            ..LibraryExports::default()
+        };
+        manifest.contract_metadata.api = Some(CheckedApiMetadataPackage {
+            schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+            package: None,
+            modules: vec![CheckedApiMetadata {
+                schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+                module_path: vec!["helpers".to_string()],
+                declarations: vec![ApiDeclaration::Function(ApiFunction {
+                    name: "cast".to_string(),
+                    anchor: SourceAnchor {
+                        id: "helpers.cast".to_string(),
+                        span: SourceSpan { start: 0, end: 0 },
+                    },
+                    docstring: None,
+                    docstring_sections: None,
+                    decorators: Vec::new(),
+                    type_params: Vec::new(),
+                    params: exported_fn("cast", "str", "str").params,
+                    return_type: TypeRef::Named {
+                        name: "str".to_string(),
+                    },
+                    is_async: false,
+                })],
+            }],
+        });
+        manifest.contract_metadata.identity_graph = LibraryIdentityGraph {
+            schema_version: LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION,
+            exports: vec![ExportIdentity {
+                public_name: "safe_cast".to_string(),
+                public_path: vec!["mylib".to_string(), "safe_cast".to_string()],
+                source_path: vec!["facade".to_string(), "safe_cast".to_string()],
+                kind: ExportIdentityKind::Alias,
+                projection: ExportIdentityProjection::Alias {
+                    target_path: vec!["helpers".to_string(), "cast".to_string()],
+                },
+            }],
+        };
+
+        let index = LibraryManifestIndex::from_entries(HashMap::from([(
+            "mylib".to_string(),
+            LibraryManifestIndexEntry::Loaded {
+                manifest: Box::new(manifest),
+                metadata: LibraryArtifactMetadata::from_crate_root(
+                    "mylib",
+                    "mylib",
+                    std::env::temp_dir().join("incan_identity_graph_backend_test"),
+                ),
+            },
+        )]));
+        let mut lowering = AstLowering::new();
+        lowering.set_library_manifest_index(Some(Arc::new(index)));
+
+        let signature = lowering
+            .callable_signature_for_imported_pub_path(&[
+                "pub".to_string(),
+                "mylib".to_string(),
+                "safe_cast".to_string(),
+            ])
+            .expect("expected identity graph to resolve safe_cast through helpers.cast");
+
+        assert_eq!(signature.params[0].ty, IrType::String);
+        assert_eq!(signature.return_type, IrType::String);
     }
 
     #[test]

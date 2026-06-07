@@ -12,10 +12,11 @@ use super::{
 use crate::frontend::api_metadata::CheckedApiMetadataPackage;
 use crate::frontend::contract_metadata::ContractMetadataPackage as ModelContractMetadataPackage;
 use crate::frontend::library_exports::{
-    CheckedAliasExport, CheckedClassExport, CheckedConstExport, CheckedEnumExport, CheckedExportKind,
-    CheckedFunctionExport, CheckedModelExport, CheckedNamedExport, CheckedNewtypeExport, CheckedParamDefault,
-    CheckedParamDefaultCallSignature, CheckedPartialExport, CheckedPartialTargetKind, CheckedPresetValue,
-    CheckedStaticExport, CheckedTraitExport, CheckedTypeAliasExport, CheckedTypeBound, CheckedTypeParam,
+    CheckedAliasExport, CheckedClassExport, CheckedConstExport, CheckedEnumExport, CheckedExportIdentity,
+    CheckedExportKind, CheckedExportProjection, CheckedFunctionExport, CheckedModelExport, CheckedNamedExport,
+    CheckedNewtypeExport, CheckedParamDefault, CheckedParamDefaultCallSignature, CheckedPartialExport,
+    CheckedPartialTargetKind, CheckedPresetValue, CheckedStaticExport, CheckedTraitExport, CheckedTypeAliasExport,
+    CheckedTypeBound, CheckedTypeParam,
 };
 use crate::frontend::symbols::{CallableParam, ValueEnumBacking, ValueEnumValue};
 use incan_core::interop::RustItemMetadata;
@@ -168,6 +169,126 @@ pub struct LibraryContractMetadata {
     /// Checked public API metadata extracted from the producer source.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api: Option<CheckedApiMetadataPackage>,
+    /// Stable semantic identities for public exports.
+    #[serde(default, skip_serializing_if = "LibraryIdentityGraph::is_empty")]
+    pub identity_graph: LibraryIdentityGraph,
+}
+
+pub const LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION: u32 = 1;
+
+/// Serializable semantic identity graph for exported library declarations.
+///
+/// The graph separates a public export's spelling from the declaration identity and projection it represents. Consumers
+/// should consult this graph before falling back to short-name manifest lookup whenever aliases, reexports, partial
+/// presets, decorators, generated helpers, or public package boundaries can observe the symbol.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LibraryIdentityGraph {
+    #[serde(default = "default_identity_graph_schema_version")]
+    pub schema_version: u32,
+    #[serde(default)]
+    pub exports: Vec<ExportIdentity>,
+}
+
+impl Default for LibraryIdentityGraph {
+    fn default() -> Self {
+        Self {
+            schema_version: LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION,
+            exports: Vec::new(),
+        }
+    }
+}
+
+impl LibraryIdentityGraph {
+    /// Build the serialized identity graph from checked public exports while deduplicating overload-set projections.
+    pub fn from_checked_exports(package_name: &str, exports: &[CheckedNamedExport]) -> Self {
+        let mut graph = Self {
+            schema_version: LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION,
+            exports: exports
+                .iter()
+                .map(|export| export_identity_from_checked(package_name, export))
+                .collect(),
+        };
+        graph.exports.sort_by(|left, right| {
+            left.public_name
+                .cmp(&right.public_name)
+                .then(left.source_path.cmp(&right.source_path))
+        });
+        graph.exports.dedup_by(|left, right| {
+            left.public_name == right.public_name
+                && left.source_path == right.source_path
+                && left.projection == right.projection
+        });
+        graph
+    }
+
+    /// Return whether the graph has no public export identities to serialize.
+    pub fn is_empty(&self) -> bool {
+        self.exports.is_empty()
+    }
+
+    /// Return the first identity entry for a public export name, which represents the shared projection for overload
+    /// sets.
+    pub fn entry_for_public_name(&self, name: &str) -> Option<&ExportIdentity> {
+        self.exports.iter().find(|entry| entry.public_name == name)
+    }
+}
+
+/// Return the current identity graph schema version when deserializing manifests that predate the field.
+fn default_identity_graph_schema_version() -> u32 {
+    LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExportIdentity {
+    pub public_name: String,
+    pub public_path: Vec<String>,
+    pub source_path: Vec<String>,
+    pub kind: ExportIdentityKind,
+    pub projection: ExportIdentityProjection,
+}
+
+impl ExportIdentity {
+    /// Return the projected target path when this public export is an alias, reexport, or partial preset.
+    pub fn target_path(&self) -> Option<&[String]> {
+        match &self.projection {
+            ExportIdentityProjection::Direct => None,
+            ExportIdentityProjection::Alias { target_path }
+            | ExportIdentityProjection::Reexport { target_path }
+            | ExportIdentityProjection::Partial { target_path, .. } => Some(target_path.as_slice()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExportIdentityKind {
+    Function,
+    Partial,
+    Alias,
+    TypeAlias,
+    Model,
+    Class,
+    Trait,
+    Enum,
+    Newtype,
+    Const,
+    Static,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ExportIdentityProjection {
+    Direct,
+    Alias {
+        target_path: Vec<String>,
+    },
+    Reexport {
+        target_path: Vec<String>,
+    },
+    Partial {
+        target_path: Vec<String>,
+        target_kind: PartialTargetKindExport,
+    },
 }
 
 /// Versioned Rust ABI payload persisted into `.incnlib`.
@@ -637,6 +758,7 @@ impl LibraryManifest {
         let name = name.into();
         let mut manifest = Self::new(name.clone(), version);
         manifest.exports = LibraryExports::from_checked_exports(checked_exports);
+        manifest.contract_metadata.identity_graph = LibraryIdentityGraph::from_checked_exports(&name, checked_exports);
         for enum_export in &mut manifest.exports.enums {
             if enum_export.value_type.is_some() && enum_export.ordinal_type_identity.is_none() {
                 enum_export.ordinal_type_identity = Some(format!("{name}.{}", enum_export.name));
@@ -741,6 +863,54 @@ impl LibraryExports {
         self.newtypes.sort_by(|left, right| left.name.cmp(&right.name));
         self.consts.sort_by(|left, right| left.name.cmp(&right.name));
         self.statics.sort_by(|left, right| left.name.cmp(&right.name));
+    }
+}
+
+/// Build one manifest identity-graph entry from checked export metadata.
+fn export_identity_from_checked(package_name: &str, export: &CheckedNamedExport) -> ExportIdentity {
+    ExportIdentity {
+        public_name: export.name.clone(),
+        public_path: vec![package_name.to_string(), export.name.clone()],
+        source_path: export.identity.source_path.clone(),
+        kind: export_identity_kind_from_checked(&export.kind),
+        projection: export_identity_projection_from_checked(&export.identity),
+    }
+}
+
+/// Classify a checked public export for the stable manifest identity graph.
+fn export_identity_kind_from_checked(kind: &CheckedExportKind) -> ExportIdentityKind {
+    match kind {
+        CheckedExportKind::Function(_) => ExportIdentityKind::Function,
+        CheckedExportKind::Partial(_) => ExportIdentityKind::Partial,
+        CheckedExportKind::Alias(_) => ExportIdentityKind::Alias,
+        CheckedExportKind::TypeAlias(_) => ExportIdentityKind::TypeAlias,
+        CheckedExportKind::Model(_) => ExportIdentityKind::Model,
+        CheckedExportKind::Class(_) => ExportIdentityKind::Class,
+        CheckedExportKind::Trait(_) => ExportIdentityKind::Trait,
+        CheckedExportKind::Enum(_) => ExportIdentityKind::Enum,
+        CheckedExportKind::Newtype(_) => ExportIdentityKind::Newtype,
+        CheckedExportKind::Const(_) => ExportIdentityKind::Const,
+        CheckedExportKind::Static(_) => ExportIdentityKind::Static,
+    }
+}
+
+/// Convert checked identity projection metadata into the serializable manifest representation.
+fn export_identity_projection_from_checked(identity: &CheckedExportIdentity) -> ExportIdentityProjection {
+    match &identity.projection {
+        CheckedExportProjection::Direct => ExportIdentityProjection::Direct,
+        CheckedExportProjection::Alias { target_path } => ExportIdentityProjection::Alias {
+            target_path: target_path.clone(),
+        },
+        CheckedExportProjection::Reexport { target_path } => ExportIdentityProjection::Reexport {
+            target_path: target_path.clone(),
+        },
+        CheckedExportProjection::Partial {
+            target_path,
+            target_kind,
+        } => ExportIdentityProjection::Partial {
+            target_path: target_path.clone(),
+            target_kind: partial_target_kind_from_checked(*target_kind),
+        },
     }
 }
 

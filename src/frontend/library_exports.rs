@@ -121,6 +121,64 @@ pub struct CheckedFunctionExport {
     pub is_async: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckedExportIdentity {
+    pub source_path: Vec<String>,
+    pub projection: CheckedExportProjection,
+}
+
+impl CheckedExportIdentity {
+    /// Build identity metadata for a public export that exposes its own source declaration directly.
+    pub fn direct(source_path: Vec<String>) -> Self {
+        Self {
+            source_path,
+            projection: CheckedExportProjection::Direct,
+        }
+    }
+
+    /// Build identity metadata for a public alias that projects another source declaration or overload set.
+    pub fn alias(source_path: Vec<String>, target_path: Vec<String>) -> Self {
+        Self {
+            source_path,
+            projection: CheckedExportProjection::Alias { target_path },
+        }
+    }
+
+    /// Build identity metadata for a public reexport that preserves the target declaration identity through a facade.
+    pub fn reexport(source_path: Vec<String>, target_path: Vec<String>) -> Self {
+        Self {
+            source_path,
+            projection: CheckedExportProjection::Reexport { target_path },
+        }
+    }
+
+    /// Build identity metadata for a public partial preset that projects a callable or constructor target.
+    pub fn partial(source_path: Vec<String>, target_path: Vec<String>, target_kind: CheckedPartialTargetKind) -> Self {
+        Self {
+            source_path,
+            projection: CheckedExportProjection::Partial {
+                target_path,
+                target_kind,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CheckedExportProjection {
+    Direct,
+    Alias {
+        target_path: Vec<String>,
+    },
+    Reexport {
+        target_path: Vec<String>,
+    },
+    Partial {
+        target_path: Vec<String>,
+        target_kind: CheckedPartialTargetKind,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum CheckedParamDefault {
     Int(i64),
@@ -316,6 +374,7 @@ pub enum CheckedExportKind {
 #[derive(Debug, Clone)]
 pub struct CheckedNamedExport {
     pub name: String,
+    pub identity: CheckedExportIdentity,
     pub kind: CheckedExportKind,
 }
 
@@ -329,6 +388,7 @@ pub fn collect_checked_public_exports(program: &Program, checker: &TypeChecker) 
                 if let Some(export) = checked_function_export(function, checker, decl.span) {
                     exports.push(CheckedNamedExport {
                         name: export.name.clone(),
+                        identity: checked_direct_identity(checker, &export.name),
                         kind: CheckedExportKind::Function(export),
                     });
                 }
@@ -336,6 +396,7 @@ pub fn collect_checked_public_exports(program: &Program, checker: &TypeChecker) 
             Declaration::TypeAlias(alias) if matches!(alias.visibility, Visibility::Public) => {
                 exports.push(CheckedNamedExport {
                     name: alias.name.clone(),
+                    identity: checked_direct_identity(checker, &alias.name),
                     kind: CheckedExportKind::TypeAlias(checked_type_alias_export(alias, checker)),
                 });
             }
@@ -343,6 +404,7 @@ pub fn collect_checked_public_exports(program: &Program, checker: &TypeChecker) 
                 if let Some(export) = checked_model_export(model, checker) {
                     exports.push(CheckedNamedExport {
                         name: export.name.clone(),
+                        identity: checked_direct_identity(checker, &export.name),
                         kind: CheckedExportKind::Model(export),
                     });
                 }
@@ -351,6 +413,7 @@ pub fn collect_checked_public_exports(program: &Program, checker: &TypeChecker) 
                 if let Some(export) = checked_class_export(class, checker) {
                     exports.push(CheckedNamedExport {
                         name: export.name.clone(),
+                        identity: checked_direct_identity(checker, &export.name),
                         kind: CheckedExportKind::Class(export),
                     });
                 }
@@ -359,6 +422,7 @@ pub fn collect_checked_public_exports(program: &Program, checker: &TypeChecker) 
                 if let Some(export) = checked_trait_export(trait_decl, checker) {
                     exports.push(CheckedNamedExport {
                         name: export.name.clone(),
+                        identity: checked_direct_identity(checker, &export.name),
                         kind: CheckedExportKind::Trait(export),
                     });
                 }
@@ -367,6 +431,7 @@ pub fn collect_checked_public_exports(program: &Program, checker: &TypeChecker) 
                 if let Some(export) = checked_enum_export(enum_decl, checker) {
                     exports.push(CheckedNamedExport {
                         name: export.name.clone(),
+                        identity: checked_direct_identity(checker, &export.name),
                         kind: CheckedExportKind::Enum(export),
                     });
                 }
@@ -375,6 +440,7 @@ pub fn collect_checked_public_exports(program: &Program, checker: &TypeChecker) 
                 if let Some(export) = checked_newtype_export(newtype_decl, checker) {
                     exports.push(CheckedNamedExport {
                         name: export.name.clone(),
+                        identity: checked_direct_identity(checker, &export.name),
                         kind: CheckedExportKind::Newtype(export),
                     });
                 }
@@ -383,6 +449,7 @@ pub fn collect_checked_public_exports(program: &Program, checker: &TypeChecker) 
                 if let Some(export) = checked_const_export(konst.name.as_str(), checker) {
                     exports.push(CheckedNamedExport {
                         name: export.name.clone(),
+                        identity: checked_direct_identity(checker, &export.name),
                         kind: CheckedExportKind::Const(export),
                     });
                 }
@@ -391,6 +458,7 @@ pub fn collect_checked_public_exports(program: &Program, checker: &TypeChecker) 
                 if let Some(export) = checked_static_export(static_decl.name.as_str(), checker) {
                     exports.push(CheckedNamedExport {
                         name: export.name.clone(),
+                        identity: checked_direct_identity(checker, &export.name),
                         kind: CheckedExportKind::Static(export),
                     });
                 }
@@ -405,6 +473,11 @@ pub fn collect_checked_public_exports(program: &Program, checker: &TypeChecker) 
                 if let Some(export) = checked_partial_export(partial, checker) {
                     exports.push(CheckedNamedExport {
                         name: export.name.clone(),
+                        identity: CheckedExportIdentity::partial(
+                            checked_export_source_path(checker, &export.name),
+                            export.target_path.clone(),
+                            export.target_kind,
+                        ),
                         kind: CheckedExportKind::Partial(export),
                     });
                 }
@@ -417,20 +490,35 @@ pub fn collect_checked_public_exports(program: &Program, checker: &TypeChecker) 
     exports
 }
 
+/// Return the source identity path for one public binding in the currently exported module.
+fn checked_export_source_path(checker: &TypeChecker, name: &str) -> Vec<String> {
+    let mut path = checker.current_module_path.clone().unwrap_or_default();
+    path.push(name.to_string());
+    path
+}
+
+/// Return direct identity metadata for an export that is not projecting another declaration.
+fn checked_direct_identity(checker: &TypeChecker, name: &str) -> CheckedExportIdentity {
+    CheckedExportIdentity::direct(checked_export_source_path(checker, name))
+}
+
 /// Build checked public export entries for a module-level alias.
 fn checked_alias_exports(alias: &AliasDecl, checker: &TypeChecker) -> Vec<CheckedNamedExport> {
     let Some(symbol) = checker.lookup_symbol(alias.name.as_str()) else {
         return Vec::new();
     };
+    let target_path = DefaultPathContext::for_checker(checker).canonical_value_path(alias.target.segments.clone());
+    let identity = CheckedExportIdentity::alias(checked_export_source_path(checker, &alias.name), target_path.clone());
     if let SymbolKind::FunctionOverloads(overloads) = &symbol.kind {
-        return checked_overload_function_exports(alias.name.clone(), overloads);
+        return checked_overload_function_exports(alias.name.clone(), overloads, identity);
     }
     let projected_function = checked_projected_function_export(&alias.name, &symbol.kind);
     vec![CheckedNamedExport {
         name: alias.name.clone(),
+        identity,
         kind: CheckedExportKind::Alias(CheckedAliasExport {
             name: alias.name.clone(),
-            target_path: alias.target.segments.clone(),
+            target_path,
             projected_function,
         }),
     }]
@@ -475,8 +563,9 @@ fn checked_source_import_item_exports(
             let exported_name = item.alias.as_ref().unwrap_or(&item.name).clone();
             let mut target_path = base_path.clone();
             target_path.push(item.name.clone());
+            let identity = CheckedExportIdentity::reexport(target_path.clone(), target_path.clone());
             if let Some(overloads) = checker.type_info().function_overloads(&exported_name) {
-                return checked_overload_function_exports(exported_name, overloads);
+                return checked_overload_function_exports(exported_name, overloads, identity);
             }
             let symbol_kind = checker
                 .dependency_member_symbol_for_path(module, &item.name)
@@ -485,7 +574,7 @@ fn checked_source_import_item_exports(
                         .lookup_symbol(exported_name.as_str())
                         .map(|symbol| symbol.kind.clone())
                 });
-            checked_import_export_from_symbol_kind(exported_name, target_path, symbol_kind.as_ref())
+            checked_import_export_from_symbol_kind(exported_name, target_path, symbol_kind.as_ref(), identity)
         })
         .collect()
 }
@@ -503,7 +592,8 @@ fn checked_import_item_exports(
             let mut target_path = base_path.clone();
             target_path.push(item.name.clone());
             let symbol_kind = checker.lookup_symbol(exported_name.as_str()).map(|symbol| &symbol.kind);
-            checked_import_export_from_symbol_kind(exported_name, target_path, symbol_kind)
+            let identity = CheckedExportIdentity::reexport(target_path.clone(), target_path.clone());
+            checked_import_export_from_symbol_kind(exported_name, target_path, symbol_kind, identity)
         })
         .collect()
 }
@@ -513,13 +603,15 @@ fn checked_import_export_from_symbol_kind(
     exported_name: String,
     target_path: Vec<String>,
     symbol_kind: Option<&SymbolKind>,
+    identity: CheckedExportIdentity,
 ) -> Vec<CheckedNamedExport> {
     if let Some(SymbolKind::FunctionOverloads(overloads)) = symbol_kind {
-        return checked_overload_function_exports(exported_name, overloads);
+        return checked_overload_function_exports(exported_name, overloads, identity);
     }
     let projected_function = symbol_kind.and_then(|kind| checked_projected_function_export(&exported_name, kind));
     vec![CheckedNamedExport {
         name: exported_name.clone(),
+        identity,
         kind: CheckedExportKind::Alias(CheckedAliasExport {
             name: exported_name,
             target_path,
@@ -532,6 +624,7 @@ fn checked_import_export_from_symbol_kind(
 fn checked_overload_function_exports(
     exported_name: String,
     overloads: &[crate::frontend::symbols::FunctionOverloadInfo],
+    identity: CheckedExportIdentity,
 ) -> Vec<CheckedNamedExport> {
     overloads
         .iter()
@@ -539,6 +632,7 @@ fn checked_overload_function_exports(
             let export = checked_alias_function_export(&exported_name, &overload.info);
             CheckedNamedExport {
                 name: export.name.clone(),
+                identity: identity.clone(),
                 kind: CheckedExportKind::Function(export),
             }
         })
