@@ -5119,6 +5119,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#boundary-identity-invariant" class="md-nav__link">
+    <span class="md-ellipsis">
+      Boundary Identity Invariant
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#rule-of-thumb" class="md-nav__link">
     <span class="md-ellipsis">
       Rule of Thumb
@@ -5888,6 +5897,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#boundary-identity-invariant" class="md-nav__link">
+    <span class="md-ellipsis">
+      Boundary Identity Invariant
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#rule-of-thumb" class="md-nav__link">
     <span class="md-ellipsis">
       Rule of Thumb
@@ -6078,6 +6096,11 @@
 </tbody>
 </table>
 <p>When you’re unsure where to implement something, start by deciding which crate owns the responsibility.</p>
+<h2 id="boundary-identity-invariant">Boundary Identity Invariant<a class="headerlink" href="#boundary-identity-invariant" title="Permanent link">&para;</a></h2>
+<p>Import, reexport, package, stdlib, vocab, formatter, and test-batch boundaries may change visibility, initialization timing, and emitted Rust path selection, but they must not change the semantic identity of a source item. A function, method, type, static, alias, partial preset, decorator-backed callable, or exported package member should keep the same resolved callable surface, default arguments, metadata, and type identity whether it is used locally, imported directly, reexported through a facade, consumed through <code>pub::package</code>, desugared from a vocab helper, or lowered into a generated Rust test harness.</p>
+<p>When adding or fixing a boundary-sensitive feature, resolve the source item once in the frontend/typechecker or checked manifest metadata, then pass that resolved identity forward. Checked exports carry source identity and projection metadata, and <code>.incnlib</code> manifests serialize the public identity graph so package consumers reconstruct the same provider-owned facts instead of guessing from the public spelling. An alias, facade reexport, partial preset, decorated callable, generated vocab helper, or test harness binding is a projection over the original semantic identity; it is not a copied callable summary that may drift.</p>
+<p>Backend lowering and emission should project semantic identity into Rust paths; they should not rediscover semantics from short names, facade names, generated harness names, or stringly manifest lookups. If a feature needs different Rust spelling at a package boundary, that is an emission projection of the same source identity, not a second semantic model. Compatibility fallback for older manifests is allowed, but new package-boundary behavior should consult the checked identity graph first.</p>
+<p>Boundary parity tests are required for any new feature whose behavior could differ across local, import, reexport, package, stdlib, vocab, formatter, or test-runner surfaces. Prefer compact synthetic fixtures that prove the invariant without heavy downstream dependencies; downstream acceptance lanes such as InQL are proof lanes, not substitutes for Incan-owned regression coverage.</p>
 <h2 id="rule-of-thumb">Rule of Thumb<a class="headerlink" href="#rule-of-thumb" title="Permanent link">&para;</a></h2>
 <p><strong>Prefer a library/builtin over a new keyword.</strong></p>
 <p>Add a new <strong>keyword / syntax form</strong> only when the feature:</p>
