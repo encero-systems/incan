@@ -51,6 +51,16 @@ struct ValueEnumGeneratedCall<'a> {
     span: Span,
 }
 
+struct RustTraitMethodCall<'a> {
+    rust_path: &'a str,
+    method: &'a str,
+    sig: &'a RustFunctionSig,
+    args: &'a [CallArg],
+    arg_types: &'a [ResolvedType],
+    preserves_lookup_arg_shape: bool,
+    span: Span,
+}
+
 #[derive(Debug, Clone)]
 struct RustCallableAliasParam {
     rust_display: String,
@@ -1648,19 +1658,18 @@ impl TypeChecker {
             self.type_info.record_regular_method_arg_shape(receiver_span, method);
         }
         let Some(metadata) = self.rust_item_metadata_for_path(rust_path) else {
-            if let Some(import_use) = self.record_unique_rust_trait_import_for_unresolved_receiver_call(method, span)
+            if let Some(import_use) = self.record_unique_rust_trait_import_for_method_call(method, span)
                 && let Some(sig) = import_use.signature.as_ref()
             {
-                let callable_display = format!("rust::{rust_path}.{method}");
-                let ret = self.validate_rust_method_call(
-                    callable_display.as_str(),
+                return Some(self.validate_rust_trait_method_call(RustTraitMethodCall {
+                    rust_path,
+                    method,
                     sig,
                     args,
                     arg_types,
                     preserves_lookup_arg_shape,
                     span,
-                );
-                return Some(Self::substitute_rust_self_type(ret, rust_path));
+                }));
             }
             if let Some(ret) = self.validate_metadata_free_rust_method_call(
                 rust_path,
@@ -1680,16 +1689,28 @@ impl TypeChecker {
                     if let Some(import_use) = self.record_rust_extension_trait_import_for_call(&metadata, method, span)
                         && let Some(sig) = import_use.signature.as_ref()
                     {
-                        let callable_display = format!("rust::{rust_path}.{method}");
-                        let ret = self.validate_rust_method_call(
-                            callable_display.as_str(),
+                        return Some(self.validate_rust_trait_method_call(RustTraitMethodCall {
+                            rust_path,
+                            method,
                             sig,
                             args,
                             arg_types,
                             preserves_lookup_arg_shape,
                             span,
-                        );
-                        return Some(Self::substitute_rust_self_type(ret, rust_path));
+                        }));
+                    }
+                    if let Some(import_use) = self.record_unique_rust_trait_import_for_method_call(method, span)
+                        && let Some(sig) = import_use.signature.as_ref()
+                    {
+                        return Some(self.validate_rust_trait_method_call(RustTraitMethodCall {
+                            rust_path,
+                            method,
+                            sig,
+                            args,
+                            arg_types,
+                            preserves_lookup_arg_shape,
+                            span,
+                        }));
                     }
                     if let Some(ret) = self.validate_metadata_free_rust_method_call(
                         rust_path,
@@ -1734,6 +1755,49 @@ impl TypeChecker {
             // Function, Trait, Module, Constant: metadata is incomplete for method surfaces.
             // Stay permissive and let rustc catch genuine errors at compile time.
             _ => Some(ResolvedType::Unknown),
+        }
+    }
+
+    /// Validate a Rust trait method call and expose only source-meaningful return types.
+    ///
+    /// Imported Rust trait signatures are useful for parameter planning even when rust-inspect cannot prove the
+    /// receiver trait edge. Some generic Rust methods, however, return an unbound Rust type parameter such as `T`;
+    /// that is not an Incan type variable and must not leak into source typing as `rust::T`. Keep those call results
+    /// permissive until the Rust compiler infers the concrete type from the emitted Rust context.
+    fn validate_rust_trait_method_call(&mut self, call: RustTraitMethodCall<'_>) -> ResolvedType {
+        let callable_display = format!("rust::{}.{}", call.rust_path, call.method);
+        let ret = self.validate_rust_method_call(
+            callable_display.as_str(),
+            call.sig,
+            call.args,
+            call.arg_types,
+            call.preserves_lookup_arg_shape,
+            call.span,
+        );
+        let ret = Self::substitute_rust_self_type(ret, call.rust_path);
+        if Self::contains_unbound_rust_type_var(&ret) {
+            ResolvedType::Unknown
+        } else {
+            ret
+        }
+    }
+
+    /// Return whether a Rust return type still contains a generic placeholder the Incan checker cannot bind.
+    fn contains_unbound_rust_type_var(ty: &ResolvedType) -> bool {
+        match ty {
+            ResolvedType::TypeVar(_) => true,
+            ResolvedType::RustPath(path) => Self::rust_display_type_var_name(path.trim()).is_some(),
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => Self::contains_unbound_rust_type_var(inner),
+            ResolvedType::Generic(_, args) | ResolvedType::Tuple(args) => {
+                args.iter().any(Self::contains_unbound_rust_type_var)
+            }
+            ResolvedType::Function(params, ret) => {
+                params
+                    .iter()
+                    .any(|param| Self::contains_unbound_rust_type_var(&param.ty))
+                    || Self::contains_unbound_rust_type_var(ret)
+            }
+            _ => false,
         }
     }
 
@@ -1803,12 +1867,12 @@ impl TypeChecker {
         Some(import_use.clone())
     }
 
-    /// Record a unique imported Rust trait method when receiver metadata is unavailable.
+    /// Record a unique imported Rust trait method when receiver metadata cannot prove one.
     ///
-    /// rust-inspect can miss generated or re-export-heavy concrete types while still extracting the imported trait or
-    /// falling back to core extension-trait vocabulary. In that case the import itself is enough for Rust method
-    /// lookup; a recovered signature only adds call-site parameter shape metadata.
-    fn record_unique_rust_trait_import_for_unresolved_receiver_call(
+    /// rust-inspect can miss generated or re-export-heavy concrete types, or extract receiver metadata without a full
+    /// implemented-trait list, while still extracting the imported trait. In that case a unique imported trait is
+    /// enough for Rust method lookup; a recovered signature also preserves call-site parameter shape metadata.
+    fn record_unique_rust_trait_import_for_method_call(
         &mut self,
         method: &str,
         span: Span,

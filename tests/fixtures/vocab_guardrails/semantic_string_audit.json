@@ -117,8 +117,8 @@
     {
       "path": "src/backend/ir/emit/expressions/methods.rs",
       "category": "quarantined metadata-free method compatibility",
-      "expected_count": 9,
-      "expected_fingerprint": "0x2bda7f88a3c65087"
+      "expected_count": 7,
+      "expected_fingerprint": "0xd980f50534954c82"
     },
     {
       "path": "src/backend/ir/emit/expressions/methods/fast_paths.rs",
@@ -215,6 +215,12 @@
       "category": "lowered primitive and type-token spelling compatibility",
       "expected_count": 9,
       "expected_fingerprint": "0xeeb0ca6fafb43da6"
+    },
+    {
+      "path": "src/backend/ir/ownership.rs",
+      "category": "central external Rust duckborrower byte-buffer planning",
+      "expected_count": 4,
+      "expected_fingerprint": "0xa001bd9bca8bb353"
     },
     {
       "path": "src/backend/ir/reference_shape.rs",

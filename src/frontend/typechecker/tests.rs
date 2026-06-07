@@ -9479,7 +9479,7 @@ fn test_rust_extension_trait_associated_call_records_param_shape() -> Result<(),
 from rust::demo import FileDescriptorSet, Message
 
 def f(encoded: bytes) -> None:
-  _ = FileDescriptorSet.decode(encoded.as_slice())
+  _ = FileDescriptorSet.decode(encoded)
 "#;
     let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
     let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
@@ -9537,11 +9537,29 @@ def f(encoded: bytes) -> None:
     checker
         .check_program(&ast)
         .map_err(|errs| std::io::Error::other(format!("typecheck failed: {errs:?}")))?;
+    let call_start = source
+        .find("FileDescriptorSet.decode(encoded)")
+        .ok_or_else(|| std::io::Error::other("test source should contain decode call"))?;
+    let call_span = crate::frontend::ast::Span::new(call_start, call_start + "FileDescriptorSet.decode(encoded)".len());
     let uses = &checker.type_info().rust.method_trait_import_uses;
     assert!(
         uses.values()
             .any(|import_use| import_use.binding == "Message" && import_use.method == "decode"),
         "expected Message import use, got {uses:?}"
+    );
+    let params = checker
+        .type_info()
+        .call_site_callable_params(call_span)
+        .ok_or_else(|| std::io::Error::other("decode call should record params on the full call span"))?;
+    assert_eq!(
+        params,
+        &[CallableParam {
+            name: Some("buf".to_string()),
+            ty: ResolvedType::TypeVar("implBuf".to_string()),
+            kind: ParamKind::Normal,
+            has_default: false,
+        }],
+        "expected exact call-span decode parameter shape"
     );
     assert!(
         checker
@@ -9563,14 +9581,14 @@ def f(encoded: bytes) -> None:
 
 #[cfg(feature = "rust_inspect")]
 #[test]
-fn test_rust_extension_trait_associated_call_records_param_shape_without_receiver_metadata()
+fn test_rust_extension_trait_associated_call_records_param_shape_without_receiver_trait_impl_metadata()
 -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 from rust::demo import Message
 from rust::datafusion_substrait::substrait::proto import Plan as ConsumerPlan
 
 def f(encoded: bytes) -> None:
-  _ = ConsumerPlan.decode(encoded.as_slice())
+  _ = ConsumerPlan.decode(encoded)
 "#;
     let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
     let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
@@ -9603,15 +9621,51 @@ def f(encoded: bytes) -> None:
             },
         )
         .map_err(|err| std::io::Error::other(format!("seed trait metadata: {err}")))?;
+    checker
+        .rust_inspect_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "datafusion_substrait::substrait::proto::Plan".to_string(),
+                definition_path: Some("substrait::proto::Plan".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
+                    methods: Vec::new(),
+                    implemented_traits: Vec::new(),
+                    fields: Vec::new(),
+                    variants: Vec::new(),
+                }),
+            },
+        )
+        .map_err(|err| std::io::Error::other(format!("seed receiver metadata: {err}")))?;
 
     checker
         .check_program(&ast)
         .map_err(|errs| std::io::Error::other(format!("typecheck failed: {errs:?}")))?;
+    let call_start = source
+        .find("ConsumerPlan.decode(encoded)")
+        .ok_or_else(|| std::io::Error::other("test source should contain decode call"))?;
+    let call_span = crate::frontend::ast::Span::new(call_start, call_start + "ConsumerPlan.decode(encoded)".len());
     let uses = &checker.type_info().rust.method_trait_import_uses;
     assert!(
         uses.values()
             .any(|import_use| import_use.binding == "Message" && import_use.method == "decode"),
         "expected Message import use for unresolved receiver metadata, got {uses:?}"
+    );
+    let params = checker
+        .type_info()
+        .call_site_callable_params(call_span)
+        .ok_or_else(|| std::io::Error::other("decode call should record params on the full call span"))?;
+    assert_eq!(
+        params,
+        &[CallableParam {
+            name: Some("buf".to_string()),
+            ty: ResolvedType::TypeVar("implBuf".to_string()),
+            kind: ParamKind::Normal,
+            has_default: false,
+        }],
+        "expected exact call-span decode parameter shape when receiver metadata lacks the trait edge"
     );
     assert!(
         checker
@@ -9627,6 +9681,87 @@ def f(encoded: bytes) -> None:
         checker.type_info().rust.arg_coercions.is_empty(),
         "expected unresolved receiver trait signature to avoid borrow coercions, got {:?}",
         checker.type_info().rust.arg_coercions
+    );
+    Ok(())
+}
+
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn test_rust_trait_method_unbound_generic_return_stays_unknown_for_source_typing()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+from rust::demo import Rng, ThreadRng
+
+def choose(rng: ThreadRng, items: List[str]) -> str:
+  index = rng.gen_range(0..len(items))
+  return items[index]
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    let tmp = seeded_rust_inspect_workspace()?;
+    let manifest_dir = tmp.path().to_path_buf();
+    checker.set_rust_inspect_manifest_dir(manifest_dir.clone());
+    checker
+        .rust_inspect_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::Rng".to_string(),
+                definition_path: Some("demo::Rng".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Trait(RustTraitInfo {
+                    items: vec![RustTraitAssoc::Function {
+                        name: "gen_range".to_string(),
+                        signature: RustFunctionSig {
+                            params: vec![
+                                RustParam {
+                                    name: Some("self".to_string()),
+                                    type_display: "&self".to_string(),
+                                },
+                                RustParam {
+                                    name: Some("range".to_string()),
+                                    type_display: "R".to_string(),
+                                },
+                            ],
+                            return_type: "T".to_string(),
+                            is_async: false,
+                            is_unsafe: false,
+                        },
+                    }],
+                }),
+            },
+        )
+        .map_err(|err| std::io::Error::other(format!("seed trait metadata: {err}")))?;
+    checker
+        .rust_inspect_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::ThreadRng".to_string(),
+                definition_path: Some("demo::ThreadRng".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
+                    methods: Vec::new(),
+                    implemented_traits: vec![RustImplementedTrait {
+                        path: "demo::Rng".to_string(),
+                    }],
+                    fields: Vec::new(),
+                    variants: Vec::new(),
+                }),
+            },
+        )
+        .map_err(|err| std::io::Error::other(format!("seed receiver metadata: {err}")))?;
+
+    checker
+        .check_program(&ast)
+        .map_err(|errs| std::io::Error::other(format!("typecheck failed: {errs:?}")))?;
+    let uses = &checker.type_info().rust.method_trait_import_uses;
+    assert!(
+        uses.values()
+            .any(|import_use| import_use.binding == "Rng" && import_use.method == "gen_range"),
+        "expected Rng import use to be retained for gen_range, got {uses:?}"
     );
     Ok(())
 }

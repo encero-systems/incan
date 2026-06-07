@@ -473,8 +473,8 @@ fn dependency_generated_out_dir_items_resolve_through_root_workspace() -> Result
     )?;
     fs::write(
         dep.join("build.rs"),
-        r#"fn main() {
-    let out_dir = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
+        r#"fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let out_dir = std::path::PathBuf::from(std::env::var("OUT_DIR")?);
     std::fs::write(
         out_dir.join("generated.rs"),
         "pub struct Nested { pub count: u32 }\n\
@@ -493,9 +493,9 @@ fn dependency_generated_out_dir_items_resolve_through_root_workspace() -> Result
          pub mod nested {\n\
              pub struct Child { pub parent: super::Nested }\n\
          }\n",
-    )
-    .unwrap();
+    )?;
     println!("cargo:rerun-if-changed=build.rs");
+    Ok(())
 }
 "#,
     )?;

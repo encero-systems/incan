@@ -2797,7 +2797,7 @@ mod tests {
     }
 
     #[test]
-    fn imported_pub_callable_signature_uses_identity_graph_before_short_name_lookup() {
+    fn imported_pub_callable_signature_uses_identity_graph_before_short_name_lookup() -> Result<(), String> {
         let mut manifest = LibraryManifest::new("mylib", "0.1.0");
         manifest.exports = LibraryExports {
             functions: vec![exported_fn("cast", "int", "int")],
@@ -2865,10 +2865,11 @@ mod tests {
                 "mylib".to_string(),
                 "safe_cast".to_string(),
             ])
-            .expect("expected identity graph to resolve safe_cast through helpers.cast");
+            .ok_or_else(|| "expected identity graph to resolve safe_cast through helpers.cast".to_string())?;
 
         assert_eq!(signature.params[0].ty, IrType::String);
         assert_eq!(signature.return_type, IrType::String);
+        Ok(())
     }
 
     #[test]

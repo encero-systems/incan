@@ -2093,7 +2093,7 @@ from rust::prost_types import FileDescriptorSet, ProducerPlan
 pub def cross_crate_decode_case() -> str:
   producer = ProducerPlan.new()
   encoded = producer.encode_to_vec()
-  match FileDescriptorSet.decode(encoded.as_slice()):
+  match FileDescriptorSet.decode(encoded):
     Ok(_) => return "cross_crate:ok"
     Err(_) => return "cross_crate:err"
 "#,
