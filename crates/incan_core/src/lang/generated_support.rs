@@ -25,6 +25,15 @@ pub struct GeneratedPathSupport {
     pub generated_module: &'static str,
     /// Local generated items directly named by backend emission.
     pub required_items: &'static [&'static str],
+    /// Lowered semantic surface that makes these generated paths reachable.
+    pub trigger: GeneratedPathSupportTrigger,
+}
+
+/// Lowered semantic surfaces that make generated Rust path support items reachable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GeneratedPathSupportTrigger {
+    /// Iterator method lowering routes through `std.derives.collection` support types.
+    IteratorMethod,
 }
 
 /// Borrowed argument shape expected by a generated-method fast path.
@@ -87,6 +96,7 @@ const DIRECT_GENERATED_PATH_SUPPORTS: &[GeneratedPathSupport] = &[GeneratedPathS
         "FlatMapIterator",
         "BatchIterator",
     ],
+    trigger: GeneratedPathSupportTrigger::IteratorMethod,
 }];
 
 const ORDINAL_MAP_METHOD_FAST_PATHS: &[MethodFastPath] = &[

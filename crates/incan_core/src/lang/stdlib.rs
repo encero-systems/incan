@@ -31,6 +31,15 @@ pub const STDLIB_GRAPH: &str = "graph";
 pub const STDLIB_RUST: &str = "rust";
 /// Runtime error helper module under the compiled stdlib Rust namespace.
 pub const INCAN_STD_ERRORS_MODULE: &str = "errors";
+/// Rust stdlib error helpers known to diverge.
+pub const DIVERGING_RUST_ERROR_HELPERS: &[&str] = &[
+    "raise_value_error",
+    "raise_type_error",
+    "raise_index_error",
+    "raise_key_error",
+    "raise_json_serialization_error",
+    "raise_json_decode_error",
+];
 /// `std.builtins` module name for explicit builtin-function escape calls (RFC 045).
 pub const STDLIB_BUILTINS: &str = "builtins";
 /// `std.json` module name.
@@ -69,6 +78,12 @@ const STDLIB_JSON_DESERIALIZE_TRAIT_NAMES: &[&str] = &[
 #[must_use]
 pub fn is_json_value_type_name(name: &str) -> bool {
     name == JSON_VALUE_TYPE_NAME
+}
+
+/// Return whether `name` is a Rust stdlib error helper that always diverges.
+#[must_use]
+pub fn is_diverging_rust_error_helper_name(name: &str) -> bool {
+    DIVERGING_RUST_ERROR_HELPERS.contains(&name)
 }
 
 /// Return the stdlib JSON trait id for a source, alias, or qualified trait spelling.

@@ -236,7 +236,7 @@ fn is_diverging_rust_error_call(expr: &TypedExpr) -> bool {
         IrExprKind::Var { name, .. } | IrExprKind::FunctionItem { name, .. } => Some(name.as_str()),
         _ => None,
     };
-    if function_name.is_some_and(is_diverging_rust_error_helper_name) {
+    if function_name.is_some_and(stdlib::is_diverging_rust_error_helper_name) {
         return true;
     }
 
@@ -247,21 +247,7 @@ fn is_diverging_rust_error_call(expr: &TypedExpr) -> bool {
         && path[0] == stdlib::STDLIB_RUST
         && path[1] == stdlib::INCAN_STD_NAMESPACE
         && path[2] == stdlib::INCAN_STD_ERRORS_MODULE
-        && is_diverging_rust_error_helper_name(&path[3])
-}
-
-/// Return whether a Rust stdlib error helper is known to diverge, so statement emission can avoid generating
-/// unreachable cleanup code after a call that always raises.
-fn is_diverging_rust_error_helper_name(name: &str) -> bool {
-    matches!(
-        name,
-        "raise_value_error"
-            | "raise_type_error"
-            | "raise_index_error"
-            | "raise_key_error"
-            | "raise_json_serialization_error"
-            | "raise_json_decode_error"
-    )
+        && stdlib::is_diverging_rust_error_helper_name(&path[3])
 }
 
 /// Return the element target type for assignment into a list index.

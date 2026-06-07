@@ -165,127 +165,111 @@ pub(super) fn record_direct_generated_path_support_items_from_ir(
 /// Return whether one lowered program uses a surface that backend emission routes through generated Rust paths.
 fn ir_program_uses_direct_generated_path_support(
     program: &IrProgram,
-    _support: &generated_support::GeneratedPathSupport,
+    support: &generated_support::GeneratedPathSupport,
 ) -> bool {
-    program
-        .declarations
-        .iter()
-        .any(ir_decl_uses_direct_generated_path_support)
+    match support.trigger {
+        generated_support::GeneratedPathSupportTrigger::IteratorMethod => {
+            program.declarations.iter().any(ir_decl_uses_iterator_method)
+        }
+    }
 }
 
-/// Return whether a top-level lowered declaration contains a direct generated-path support trigger.
-fn ir_decl_uses_direct_generated_path_support(decl: &crate::backend::ir::IrDecl) -> bool {
+/// Return whether a top-level lowered declaration contains iterator method lowering.
+fn ir_decl_uses_iterator_method(decl: &crate::backend::ir::IrDecl) -> bool {
     match &decl.kind {
-        IrDeclKind::Function(func) => ir_stmts_use_direct_generated_path_support(&func.body),
+        IrDeclKind::Function(func) => ir_stmts_use_iterator_method(&func.body),
         IrDeclKind::Struct(_) | IrDeclKind::Enum(_) => false,
         IrDeclKind::Trait(trait_decl) => trait_decl
             .methods
             .iter()
-            .any(|method| ir_stmts_use_direct_generated_path_support(&method.body)),
+            .any(|method| ir_stmts_use_iterator_method(&method.body)),
         IrDeclKind::Impl(impl_decl) => impl_decl
             .methods
             .iter()
-            .any(|method| ir_stmts_use_direct_generated_path_support(&method.body)),
-        IrDeclKind::Const { value, .. } | IrDeclKind::Static { value, .. } => {
-            ir_expr_uses_direct_generated_path_support(value)
-        }
+            .any(|method| ir_stmts_use_iterator_method(&method.body)),
+        IrDeclKind::Const { value, .. } | IrDeclKind::Static { value, .. } => ir_expr_uses_iterator_method(value),
         IrDeclKind::TypeAlias { .. } | IrDeclKind::SymbolAlias { .. } | IrDeclKind::Import { .. } => false,
     }
 }
 
-/// Return whether any statement in a lowered block contains a direct generated-path support trigger.
-fn ir_stmts_use_direct_generated_path_support(stmts: &[IrStmt]) -> bool {
-    stmts.iter().any(ir_stmt_uses_direct_generated_path_support)
+/// Return whether any statement in a lowered block contains iterator method lowering.
+fn ir_stmts_use_iterator_method(stmts: &[IrStmt]) -> bool {
+    stmts.iter().any(ir_stmt_uses_iterator_method)
 }
 
-/// Return whether one lowered statement contains a direct generated-path support trigger in an expression position.
-fn ir_stmt_uses_direct_generated_path_support(stmt: &IrStmt) -> bool {
+/// Return whether one lowered statement contains iterator method lowering in an expression position.
+fn ir_stmt_uses_iterator_method(stmt: &IrStmt) -> bool {
     match &stmt.kind {
         IrStmtKind::Expr(expr)
         | IrStmtKind::Yield(expr)
         | IrStmtKind::Let { value: expr, .. }
         | IrStmtKind::Assign { value: expr, .. }
-        | IrStmtKind::CompoundAssign { value: expr, .. } => ir_expr_uses_direct_generated_path_support(expr),
-        IrStmtKind::Return(expr) => expr.as_ref().is_some_and(ir_expr_uses_direct_generated_path_support),
-        IrStmtKind::Break { value, .. } => value.as_ref().is_some_and(ir_expr_uses_direct_generated_path_support),
+        | IrStmtKind::CompoundAssign { value: expr, .. } => ir_expr_uses_iterator_method(expr),
+        IrStmtKind::Return(expr) => expr.as_ref().is_some_and(ir_expr_uses_iterator_method),
+        IrStmtKind::Break { value, .. } => value.as_ref().is_some_and(ir_expr_uses_iterator_method),
         IrStmtKind::While { condition, body, .. } => {
-            ir_expr_uses_direct_generated_path_support(condition) || ir_stmts_use_direct_generated_path_support(body)
+            ir_expr_uses_iterator_method(condition) || ir_stmts_use_iterator_method(body)
         }
         IrStmtKind::For { iterable, body, .. } => {
-            ir_expr_uses_direct_generated_path_support(iterable) || ir_stmts_use_direct_generated_path_support(body)
+            ir_expr_uses_iterator_method(iterable) || ir_stmts_use_iterator_method(body)
         }
-        IrStmtKind::Loop { body, .. } | IrStmtKind::Block(body) => ir_stmts_use_direct_generated_path_support(body),
+        IrStmtKind::Loop { body, .. } | IrStmtKind::Block(body) => ir_stmts_use_iterator_method(body),
         IrStmtKind::If {
             condition,
             then_branch,
             else_branch,
         } => {
-            ir_expr_uses_direct_generated_path_support(condition)
-                || ir_stmts_use_direct_generated_path_support(then_branch)
+            ir_expr_uses_iterator_method(condition)
+                || ir_stmts_use_iterator_method(then_branch)
                 || else_branch
                     .as_ref()
-                    .is_some_and(|branch| ir_stmts_use_direct_generated_path_support(branch))
+                    .is_some_and(|branch| ir_stmts_use_iterator_method(branch))
         }
         IrStmtKind::Match { scrutinee, arms } => {
-            ir_expr_uses_direct_generated_path_support(scrutinee)
+            ir_expr_uses_iterator_method(scrutinee)
                 || arms.iter().any(|arm| {
                     arm.bindings.iter().any(|binding| {
-                        ir_expr_uses_direct_generated_path_support(&binding.value)
-                            || binding
-                                .guard_value
-                                .as_ref()
-                                .is_some_and(ir_expr_uses_direct_generated_path_support)
-                    }) || arm
-                        .guard
-                        .as_ref()
-                        .is_some_and(ir_expr_uses_direct_generated_path_support)
-                        || ir_expr_uses_direct_generated_path_support(&arm.body)
+                        ir_expr_uses_iterator_method(&binding.value)
+                            || binding.guard_value.as_ref().is_some_and(ir_expr_uses_iterator_method)
+                    }) || arm.guard.as_ref().is_some_and(ir_expr_uses_iterator_method)
+                        || ir_expr_uses_iterator_method(&arm.body)
                 })
         }
         IrStmtKind::Continue(_) => false,
     }
 }
 
-/// Return whether one lowered expression contains semantics that emission routes through generated Rust paths.
-fn ir_expr_uses_direct_generated_path_support(expr: &IrExpr) -> bool {
+/// Return whether one lowered expression contains iterator method lowering.
+fn ir_expr_uses_iterator_method(expr: &IrExpr) -> bool {
     match &expr.kind {
         IrExprKind::KnownMethodCall {
             kind: MethodKind::Iterator(_),
             ..
         } => true,
         IrExprKind::KnownMethodCall { receiver, args, .. } => {
-            ir_expr_uses_direct_generated_path_support(receiver)
-                || args
-                    .iter()
-                    .any(|arg| ir_expr_uses_direct_generated_path_support(&arg.expr))
+            ir_expr_uses_iterator_method(receiver) || args.iter().any(|arg| ir_expr_uses_iterator_method(&arg.expr))
         }
         IrExprKind::MethodCall { receiver, args, .. } => {
-            ir_expr_uses_direct_generated_path_support(receiver)
-                || args
-                    .iter()
-                    .any(|arg| ir_expr_uses_direct_generated_path_support(&arg.expr))
+            ir_expr_uses_iterator_method(receiver) || args.iter().any(|arg| ir_expr_uses_iterator_method(&arg.expr))
         }
         IrExprKind::Call { func, args, .. } => {
-            ir_expr_uses_direct_generated_path_support(func)
-                || args
-                    .iter()
-                    .any(|arg| ir_expr_uses_direct_generated_path_support(&arg.expr))
+            ir_expr_uses_iterator_method(func) || args.iter().any(|arg| ir_expr_uses_iterator_method(&arg.expr))
         }
-        IrExprKind::BuiltinCall { args, .. } => args.iter().any(ir_expr_uses_direct_generated_path_support),
+        IrExprKind::BuiltinCall { args, .. } => args.iter().any(ir_expr_uses_iterator_method),
         IrExprKind::BinOp { left, right, .. } => {
-            ir_expr_uses_direct_generated_path_support(left) || ir_expr_uses_direct_generated_path_support(right)
+            ir_expr_uses_iterator_method(left) || ir_expr_uses_iterator_method(right)
         }
         IrExprKind::UnaryOp { operand, .. }
         | IrExprKind::Await(operand)
         | IrExprKind::Try(operand)
         | IrExprKind::Cast { expr: operand, .. }
         | IrExprKind::NumericResize { expr: operand, .. }
-        | IrExprKind::InteropCoerce { expr: operand, .. } => ir_expr_uses_direct_generated_path_support(operand),
-        IrExprKind::RegisterCallableName { callable, .. } => ir_expr_uses_direct_generated_path_support(callable),
-        IrExprKind::CacheGenericDecoratedFunction { value, .. } => ir_expr_uses_direct_generated_path_support(value),
-        IrExprKind::Field { object, .. } => ir_expr_uses_direct_generated_path_support(object),
+        | IrExprKind::InteropCoerce { expr: operand, .. } => ir_expr_uses_iterator_method(operand),
+        IrExprKind::RegisterCallableName { callable, .. } => ir_expr_uses_iterator_method(callable),
+        IrExprKind::CacheGenericDecoratedFunction { value, .. } => ir_expr_uses_iterator_method(value),
+        IrExprKind::Field { object, .. } => ir_expr_uses_iterator_method(object),
         IrExprKind::Index { object, index } => {
-            ir_expr_uses_direct_generated_path_support(object) || ir_expr_uses_direct_generated_path_support(index)
+            ir_expr_uses_iterator_method(object) || ir_expr_uses_iterator_method(index)
         }
         IrExprKind::Slice {
             target,
@@ -293,11 +277,11 @@ fn ir_expr_uses_direct_generated_path_support(expr: &IrExpr) -> bool {
             end,
             step,
         } => {
-            ir_expr_uses_direct_generated_path_support(target)
+            ir_expr_uses_iterator_method(target)
                 || [start, end, step]
                     .into_iter()
                     .flatten()
-                    .any(|expr| ir_expr_uses_direct_generated_path_support(expr))
+                    .any(|expr| ir_expr_uses_iterator_method(expr))
         }
         IrExprKind::ListComp {
             element,
@@ -305,12 +289,10 @@ fn ir_expr_uses_direct_generated_path_support(expr: &IrExpr) -> bool {
             iterable,
             filter,
         } => {
-            ir_expr_uses_direct_generated_path_support(element)
-                || ir_pattern_uses_direct_generated_path_support(pattern)
-                || ir_expr_uses_direct_generated_path_support(iterable)
-                || filter
-                    .as_ref()
-                    .is_some_and(|expr| ir_expr_uses_direct_generated_path_support(expr))
+            ir_expr_uses_iterator_method(element)
+                || ir_pattern_uses_iterator_method(pattern)
+                || ir_expr_uses_iterator_method(iterable)
+                || filter.as_ref().is_some_and(|expr| ir_expr_uses_iterator_method(expr))
         }
         IrExprKind::DictComp {
             key,
@@ -319,87 +301,68 @@ fn ir_expr_uses_direct_generated_path_support(expr: &IrExpr) -> bool {
             iterable,
             filter,
         } => {
-            ir_expr_uses_direct_generated_path_support(key)
-                || ir_expr_uses_direct_generated_path_support(value)
-                || ir_pattern_uses_direct_generated_path_support(pattern)
-                || ir_expr_uses_direct_generated_path_support(iterable)
-                || filter
-                    .as_ref()
-                    .is_some_and(|expr| ir_expr_uses_direct_generated_path_support(expr))
+            ir_expr_uses_iterator_method(key)
+                || ir_expr_uses_iterator_method(value)
+                || ir_pattern_uses_iterator_method(pattern)
+                || ir_expr_uses_iterator_method(iterable)
+                || filter.as_ref().is_some_and(|expr| ir_expr_uses_iterator_method(expr))
         }
         IrExprKind::Generator { element, clauses } => {
-            ir_expr_uses_direct_generated_path_support(element)
+            ir_expr_uses_iterator_method(element)
                 || clauses.iter().any(|clause| match clause {
                     IrGeneratorClause::For { pattern, iterable } => {
-                        ir_pattern_uses_direct_generated_path_support(pattern)
-                            || ir_expr_uses_direct_generated_path_support(iterable)
+                        ir_pattern_uses_iterator_method(pattern) || ir_expr_uses_iterator_method(iterable)
                     }
-                    IrGeneratorClause::If(expr) => ir_expr_uses_direct_generated_path_support(expr),
+                    IrGeneratorClause::If(expr) => ir_expr_uses_iterator_method(expr),
                 })
         }
         IrExprKind::List(items) => items.iter().any(|item| match item {
-            IrListEntry::Element(expr) | IrListEntry::Spread(expr) => ir_expr_uses_direct_generated_path_support(expr),
+            IrListEntry::Element(expr) | IrListEntry::Spread(expr) => ir_expr_uses_iterator_method(expr),
         }),
         IrExprKind::Dict(items) => items.iter().any(|item| match item {
-            IrDictEntry::Pair(key, value) => {
-                ir_expr_uses_direct_generated_path_support(key) || ir_expr_uses_direct_generated_path_support(value)
-            }
-            IrDictEntry::Spread(expr) => ir_expr_uses_direct_generated_path_support(expr),
+            IrDictEntry::Pair(key, value) => ir_expr_uses_iterator_method(key) || ir_expr_uses_iterator_method(value),
+            IrDictEntry::Spread(expr) => ir_expr_uses_iterator_method(expr),
         }),
-        IrExprKind::Set(items) | IrExprKind::Tuple(items) => {
-            items.iter().any(ir_expr_uses_direct_generated_path_support)
-        }
-        IrExprKind::Struct { fields, .. } => fields
-            .iter()
-            .any(|(_, value)| ir_expr_uses_direct_generated_path_support(value)),
+        IrExprKind::Set(items) | IrExprKind::Tuple(items) => items.iter().any(ir_expr_uses_iterator_method),
+        IrExprKind::Struct { fields, .. } => fields.iter().any(|(_, value)| ir_expr_uses_iterator_method(value)),
         IrExprKind::If {
             condition,
             then_branch,
             else_branch,
         } => {
-            ir_expr_uses_direct_generated_path_support(condition)
-                || ir_expr_uses_direct_generated_path_support(then_branch)
+            ir_expr_uses_iterator_method(condition)
+                || ir_expr_uses_iterator_method(then_branch)
                 || else_branch
                     .as_ref()
-                    .is_some_and(|expr| ir_expr_uses_direct_generated_path_support(expr))
+                    .is_some_and(|expr| ir_expr_uses_iterator_method(expr))
         }
         IrExprKind::Match { scrutinee, arms } => {
-            ir_expr_uses_direct_generated_path_support(scrutinee)
+            ir_expr_uses_iterator_method(scrutinee)
                 || arms.iter().any(|arm| {
-                    ir_pattern_uses_direct_generated_path_support(&arm.pattern)
+                    ir_pattern_uses_iterator_method(&arm.pattern)
                         || arm.bindings.iter().any(|binding| {
-                            ir_expr_uses_direct_generated_path_support(&binding.value)
-                                || binding
-                                    .guard_value
-                                    .as_ref()
-                                    .is_some_and(ir_expr_uses_direct_generated_path_support)
+                            ir_expr_uses_iterator_method(&binding.value)
+                                || binding.guard_value.as_ref().is_some_and(ir_expr_uses_iterator_method)
                         })
-                        || arm
-                            .guard
-                            .as_ref()
-                            .is_some_and(ir_expr_uses_direct_generated_path_support)
-                        || ir_expr_uses_direct_generated_path_support(&arm.body)
+                        || arm.guard.as_ref().is_some_and(ir_expr_uses_iterator_method)
+                        || ir_expr_uses_iterator_method(&arm.body)
                 })
         }
-        IrExprKind::Closure { body, .. } => ir_expr_uses_direct_generated_path_support(body),
+        IrExprKind::Closure { body, .. } => ir_expr_uses_iterator_method(body),
         IrExprKind::Block { stmts, value } => {
-            ir_stmts_use_direct_generated_path_support(stmts)
-                || value
-                    .as_ref()
-                    .is_some_and(|expr| ir_expr_uses_direct_generated_path_support(expr))
+            ir_stmts_use_iterator_method(stmts) || value.as_ref().is_some_and(|expr| ir_expr_uses_iterator_method(expr))
         }
-        IrExprKind::Loop { body } => ir_stmts_use_direct_generated_path_support(body),
-        IrExprKind::Race { arms, .. } => arms.iter().any(|arm| {
-            ir_expr_uses_direct_generated_path_support(&arm.awaitable)
-                || ir_expr_uses_direct_generated_path_support(&arm.body)
-        }),
+        IrExprKind::Loop { body } => ir_stmts_use_iterator_method(body),
+        IrExprKind::Race { arms, .. } => arms
+            .iter()
+            .any(|arm| ir_expr_uses_iterator_method(&arm.awaitable) || ir_expr_uses_iterator_method(&arm.body)),
         IrExprKind::Range { start, end, .. } => [start, end]
             .into_iter()
             .flatten()
-            .any(|expr| ir_expr_uses_direct_generated_path_support(expr)),
+            .any(|expr| ir_expr_uses_iterator_method(expr)),
         IrExprKind::Format { parts } => parts.iter().any(|part| match part {
             crate::backend::ir::expr::FormatPart::Literal(_) => false,
-            crate::backend::ir::expr::FormatPart::Expr { expr, .. } => ir_expr_uses_direct_generated_path_support(expr),
+            crate::backend::ir::expr::FormatPart::Expr { expr, .. } => ir_expr_uses_iterator_method(expr),
         }),
         IrExprKind::Var { .. }
         | IrExprKind::StaticRead { .. }
@@ -423,15 +386,15 @@ fn ir_expr_uses_direct_generated_path_support(expr: &IrExpr) -> bool {
     }
 }
 
-/// Return whether a lowered pattern contains expression payloads that require direct generated-path support.
-fn ir_pattern_uses_direct_generated_path_support(pattern: &Pattern) -> bool {
+/// Return whether a lowered pattern contains expression payloads with iterator method lowering.
+fn ir_pattern_uses_iterator_method(pattern: &Pattern) -> bool {
     match pattern {
-        Pattern::Literal(expr) => ir_expr_uses_direct_generated_path_support(expr),
-        Pattern::Tuple(items) | Pattern::Or(items) => items.iter().any(ir_pattern_uses_direct_generated_path_support),
+        Pattern::Literal(expr) => ir_expr_uses_iterator_method(expr),
+        Pattern::Tuple(items) | Pattern::Or(items) => items.iter().any(ir_pattern_uses_iterator_method),
         Pattern::Struct { fields, .. } => fields
             .iter()
-            .any(|(_, pattern)| ir_pattern_uses_direct_generated_path_support(pattern)),
-        Pattern::Enum { fields, .. } => fields.iter().any(ir_pattern_uses_direct_generated_path_support),
+            .any(|(_, pattern)| ir_pattern_uses_iterator_method(pattern)),
+        Pattern::Enum { fields, .. } => fields.iter().any(ir_pattern_uses_iterator_method),
         Pattern::Wildcard | Pattern::Var(_) => false,
     }
 }
