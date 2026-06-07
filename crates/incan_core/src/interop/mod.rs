@@ -17,7 +17,7 @@ pub use metadata::{
     MetadataFreeMethodArgBorrowPolicy, MetadataFreeMethodBorrowRule, MetadataFreeMethodParamRule,
     MetadataFreeMethodSignatureRule, MetadataFreeReceiverClass, RustCollectionFamily, RustFieldInfo, RustFunctionSig,
     RustImplementedTrait, RustItemKind, RustItemMetadata, RustMethodSig, RustModuleChild, RustModuleChildKind,
-    RustModuleInfo, RustParam, RustTraitAssoc, RustTraitInfo, RustTypeInfo, RustTypeShape, RustVariantInfo,
-    RustVisibility, metadata_free_method_signature, render_rust_type_shape, render_rust_type_shape_path,
-    split_top_level_rust_args, strip_rust_borrow_lifetimes,
+    RustModuleInfo, RustParam, RustTraitAssoc, RustTraitInfo, RustTypeInfo, RustTypeMetadataCompleteness,
+    RustTypeShape, RustVariantInfo, RustVisibility, metadata_free_method_signature, render_rust_type_shape,
+    render_rust_type_shape_path, split_top_level_rust_args, strip_rust_borrow_lifetimes,
 };

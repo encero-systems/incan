@@ -52,6 +52,7 @@ mod structs_enums;
 
 use proc_macro2::{Literal, TokenStream};
 use quote::{ToTokens, format_ident, quote};
+use std::sync::LazyLock;
 
 use super::super::decl::IrInteropAdapterKind;
 use super::super::expr::{
@@ -61,6 +62,7 @@ use super::super::expr::{
 use super::super::types::IrType;
 use super::{EmitError, IrEmitter};
 use crate::backend::ir::ownership::{ValueUseSite, plan_value_use, value_use_site_target_ty};
+use incan_core::lang::surface::methods::{dict_methods, list_methods};
 use incan_core::lang::types::collections::{self, CollectionTypeId};
 
 #[derive(Debug, Clone)]
@@ -89,6 +91,31 @@ pub(in crate::backend::ir::emit) fn method_kind_uses_mutable_receiver(kind: &Met
                 | CollectionMethodKind::ReserveExact
         )
     )
+}
+
+/// String-named methods that mutate their receiver.
+///
+/// Lowering normally classifies collection methods as [`MethodKind`], but Rust interop and a few compiler-internal
+/// rewrites can still reach emission as string-named method calls. Keep the name policy next to the `MethodKind` policy
+/// so parameter scanning, local-binding emission, and storage-lock analysis do not drift.
+static MUTATING_METHOD_NAMES: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
+    vec![
+        list_methods::as_str(list_methods::ListMethodId::Append),
+        list_methods::as_str(list_methods::ListMethodId::Extend),
+        list_methods::as_str(list_methods::ListMethodId::Pop),
+        list_methods::as_str(list_methods::ListMethodId::Swap),
+        list_methods::as_str(list_methods::ListMethodId::Reserve),
+        list_methods::as_str(list_methods::ListMethodId::ReserveExact),
+        list_methods::as_str(list_methods::ListMethodId::Remove),
+        dict_methods::as_str(dict_methods::DictMethodId::Insert),
+        "push",
+        "clear",
+    ]
+});
+
+/// Return whether a string-named method should be emitted with a mutable receiver borrow.
+pub(in crate::backend::ir::emit) fn method_name_uses_mutable_receiver(name: &str) -> bool {
+    MUTATING_METHOD_NAMES.contains(&name)
 }
 
 impl<'a> IrEmitter<'a> {
@@ -1468,6 +1495,7 @@ mod tests {
     };
     use crate::backend::ir::{FunctionParam, FunctionRegistry, FunctionSignature, Mutability};
     use incan_core::lang::traits::{self as core_traits, TraitId};
+    use incan_core::lang::types::numerics::NumericTypeId;
 
     fn prost_decode_signature(return_type: IrType) -> FunctionSignature {
         FunctionSignature {
@@ -1669,6 +1697,171 @@ mod tests {
         assert!(
             !rendered.contains("FileDescriptorSet :: decode (& cursor)"),
             "generic by-value Rust method params must not borrow the argument, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn external_decode_metadata_lends_owned_rust_vec_to_buf_as_slice() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let descriptor_set = IrType::Struct("prost_types::FileDescriptorSet".to_string());
+        let result_ty = IrType::Result(
+            Box::new(descriptor_set.clone()),
+            Box::new(IrType::Struct("prost::DecodeError".to_string())),
+        );
+        let expr = TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "FileDescriptorSet".to_string(),
+                        access: VarAccess::Copy,
+                        ref_kind: VarRefKind::ExternalRustName,
+                    },
+                    descriptor_set.clone(),
+                )),
+                method: "decode".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: vec![IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: TypedExpr::new(
+                        IrExprKind::Var {
+                            name: "encoded".to_string(),
+                            access: VarAccess::Read,
+                            ref_kind: VarRefKind::Value,
+                        },
+                        IrType::Struct("alloc::vec::Vec<u8>".to_string()),
+                    ),
+                }],
+                callable_signature: Some(prost_decode_signature(result_ty.clone())),
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            result_ty,
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains("FileDescriptorSet :: decode ((encoded) . as_slice ())"),
+            "owned Rust Vec<u8> should be passed to Buf as a byte slice, got `{rendered}`"
+        );
+        assert!(
+            !rendered.contains("FileDescriptorSet :: decode (encoded)"),
+            "owned Rust Vec<u8> must not be passed directly to Buf, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn external_decode_metadata_lends_owned_incan_bytes_to_buf_as_slice() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let descriptor_set = IrType::Struct("prost_types::FileDescriptorSet".to_string());
+        let result_ty = IrType::Result(
+            Box::new(descriptor_set.clone()),
+            Box::new(IrType::Struct("prost::DecodeError".to_string())),
+        );
+        let expr = TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "FileDescriptorSet".to_string(),
+                        access: VarAccess::Copy,
+                        ref_kind: VarRefKind::ExternalRustName,
+                    },
+                    descriptor_set.clone(),
+                )),
+                method: "decode".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: vec![IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: TypedExpr::new(
+                        IrExprKind::Var {
+                            name: "encoded".to_string(),
+                            access: VarAccess::Read,
+                            ref_kind: VarRefKind::Value,
+                        },
+                        IrType::Bytes,
+                    ),
+                }],
+                callable_signature: Some(prost_decode_signature(result_ty.clone())),
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            result_ty,
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains("FileDescriptorSet :: decode ((encoded) . as_slice ())"),
+            "owned Incan bytes should be passed to Buf as a byte slice, got `{rendered}`"
+        );
+        assert!(
+            !rendered.contains("FileDescriptorSet :: decode (encoded)"),
+            "owned Incan bytes must not be passed directly to Buf, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn external_rust_associated_decode_lends_generic_vec_u8_to_buf_as_slice() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let consumer_plan = IrType::Struct("datafusion_substrait::substrait::proto::Plan".to_string());
+        let result_ty = IrType::Result(
+            Box::new(consumer_plan.clone()),
+            Box::new(IrType::Struct("prost::DecodeError".to_string())),
+        );
+        let expr = TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "ConsumerPlan".to_string(),
+                        access: VarAccess::Copy,
+                        ref_kind: VarRefKind::ExternalRustName,
+                    },
+                    consumer_plan.clone(),
+                )),
+                method: "decode".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: vec![IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: TypedExpr::new(
+                        IrExprKind::Var {
+                            name: "encoded".to_string(),
+                            access: VarAccess::Read,
+                            ref_kind: VarRefKind::Value,
+                        },
+                        IrType::NamedGeneric("Vec".to_string(), vec![IrType::Numeric(NumericTypeId::U8)]),
+                    ),
+                }],
+                callable_signature: Some(prost_decode_signature(result_ty.clone())),
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            result_ty,
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains("ConsumerPlan :: decode ((encoded) . as_slice ())"),
+            "inspected Rust associated calls should pass owned Vec<u8> to Buf as a byte slice, got `{rendered}`"
+        );
+        assert!(
+            !rendered.contains("ConsumerPlan :: decode (encoded)"),
+            "inspected Rust associated calls must not pass owned Vec<u8> directly to Buf, got `{rendered}`"
         );
         Ok(())
     }

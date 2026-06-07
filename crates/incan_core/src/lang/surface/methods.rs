@@ -1353,6 +1353,22 @@ pub mod iterator_methods {
         super::info_for_impl(ITERATOR_METHODS, id, "iterator method info missing")
     }
 
+    /// Return whether this method consumes an iterator and therefore ends the iterator pipeline.
+    pub const fn is_terminal(id: IteratorMethodId) -> bool {
+        matches!(
+            id,
+            IteratorMethodId::Collect
+                | IteratorMethodId::Count
+                | IteratorMethodId::Reduce
+                | IteratorMethodId::Fold
+                | IteratorMethodId::Any
+                | IteratorMethodId::All
+                | IteratorMethodId::Find
+                | IteratorMethodId::ForEach
+                | IteratorMethodId::Sum
+        )
+    }
+
     /// Return static metadata for this language-surface method.
     const fn info(id: IteratorMethodId, canonical: &'static str, description: &'static str) -> IteratorMethodInfo {
         LangItemInfo {

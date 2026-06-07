@@ -179,8 +179,8 @@ fn main() {
     );
     let t = Thing { x: 1 };
     let r = upcast_mid_to_root(t);
-    println!("{}", r.root_id());
+    let _ = println!("{}", r.root_id());
     let w = Wrapper { value: Row { id: 1 } };
     let d = upcast_bounded_row(w);
-    println!("{}", d.tag().id);
+    let _ = println!("{}", d.tag().id);
 }

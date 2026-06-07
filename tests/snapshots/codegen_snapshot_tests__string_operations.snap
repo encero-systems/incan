@@ -55,7 +55,7 @@ fn test_string_concatenation() {
     let mut result: String = "hello".to_string();
     result = incan_stdlib::strings::str_concat(&result, &" ");
     result = incan_stdlib::strings::str_concat(&result, &"world");
-    println!("{}", result);
+    let _ = println!("{}", result);
 }
 fn main() {
     std::panic::set_hook(
@@ -69,12 +69,12 @@ fn main() {
             }
         }),
     );
-    test_string_methods();
-    test_string_contains();
-    test_string_split();
-    test_string_replace();
-    test_string_slice();
-    test_string_startswith_endswith();
-    test_string_join();
-    test_string_concatenation();
+    let _ = test_string_methods();
+    let _ = test_string_contains();
+    let _ = test_string_split();
+    let _ = test_string_replace();
+    let _ = test_string_slice();
+    let _ = test_string_startswith_endswith();
+    let _ = test_string_join();
+    let _ = test_string_concatenation();
 }

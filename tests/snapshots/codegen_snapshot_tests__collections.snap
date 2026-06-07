@@ -89,7 +89,7 @@ fn test_collections() {
         (-1) as i64,
     );
     let mut extended: Vec<i64> = vec![8, 9];
-    incan_stdlib::collections::list_extend(&mut extended, &more_numbers);
+    let _ = incan_stdlib::collections::list_extend(&mut extended, &more_numbers);
     let _extended_tail: i64 = *incan_stdlib::collections::list_get(
         &extended,
         (-1) as i64,
@@ -111,5 +111,5 @@ fn main() {
             }
         }),
     );
-    test_collections();
+    let _ = test_collections();
 }

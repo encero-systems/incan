@@ -2,12 +2,13 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::backend::ir::expr::{IrDictEntry, IrGeneratorClause, IrListEntry, MethodKind, Pattern, VarRefKind};
+use crate::backend::ir::{IrDecl, IrDeclKind, IrExpr, IrExprKind, IrProgram, IrStmt, IrStmtKind, IrType};
 use crate::frontend::ast::{self, Declaration, Expr, ImportKind, ImportPath, Program};
 use crate::frontend::decorator_resolution;
 use crate::frontend::module::canonicalize_source_module_segments;
 use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
-use incan_core::lang::stdlib;
-use incan_core::lang::traits::{self as core_traits, TraitId};
+use incan_core::lang::{generated_support, stdlib, surface::result_methods};
 
 /// Collect field-alias metadata for exported models.
 pub(super) fn collect_model_field_aliases(
@@ -64,15 +65,9 @@ fn generated_module_path_for_source_import(path: &ImportPath, current_module_pat
 
 /// True when a dependency module should keep its public API even if the main module does not import every item.
 pub(super) fn should_preserve_dependency_public_items(
-    module_path: &[String],
+    _module_path: &[String],
     preserve_non_stdlib_public_items: bool,
 ) -> bool {
-    if matches!(
-        module_path.first().map(String::as_str),
-        Some(stdlib::STDLIB_ROOT | stdlib::INCAN_STD_NAMESPACE)
-    ) {
-        return true;
-    }
     preserve_non_stdlib_public_items
 }
 
@@ -99,6 +94,416 @@ fn has_web_route_passthrough_decorator(
     })
 }
 
+/// Return whether a dependency module path is the source or generated owner of registered generated support.
+fn module_path_matches_generated_support(
+    module_path: &[String],
+    support: &generated_support::GeneratedModuleSupport,
+) -> bool {
+    let dotted = module_path.join(".");
+    dotted == support.source_module || dotted == support.generated_module
+}
+
+/// Keep the exact generated items that registered support macros expand against.
+fn record_generated_support_required_items(
+    reachable: &mut HashMap<Vec<String>, HashSet<String>>,
+    current_module_path: &[String],
+) {
+    for support in generated_support::generated_module_supports() {
+        if !module_path_matches_generated_support(current_module_path, support) {
+            continue;
+        }
+        let required_items = reachable.entry(current_module_path.to_vec()).or_default();
+        required_items.extend(support.required_items.iter().map(|item| (*item).to_string()));
+    }
+}
+
+/// Keep support items for compiler-generated Rust paths when lowered IR uses the triggering semantic surface.
+///
+/// This deliberately runs on IR instead of source spelling. Domain APIs may legitimately define methods named
+/// `filter`, `map`, or `count`; only calls that lowering classified as `MethodKind::Iterator` cause the emitter to
+/// name `__incan_std.derives.collection` directly.
+pub(super) fn record_direct_generated_path_support_items_from_ir(
+    reachable: &mut HashMap<Vec<String>, HashSet<String>>,
+    program: &IrProgram,
+) {
+    for support in generated_support::generated_path_supports() {
+        if !ir_program_uses_direct_generated_path_support(program, support) {
+            continue;
+        }
+        for module in [support.source_module, support.generated_module] {
+            let module_path = module.split('.').map(str::to_string).collect::<Vec<_>>();
+            let required_items = reachable.entry(module_path).or_default();
+            required_items.extend(support.required_items.iter().map(|item| (*item).to_string()));
+        }
+    }
+    record_result_helper_support_items_from_ir(reachable, program);
+}
+
+/// Return whether one lowered program uses a surface that backend emission routes through generated Rust paths.
+fn ir_program_uses_direct_generated_path_support(
+    program: &IrProgram,
+    support: &generated_support::GeneratedPathSupport,
+) -> bool {
+    match support.trigger {
+        generated_support::GeneratedPathSupportTrigger::IteratorMethod => ir_program_any_expr(program, &mut |expr| {
+            matches!(
+                expr.kind,
+                IrExprKind::KnownMethodCall {
+                    kind: MethodKind::Iterator(_),
+                    ..
+                }
+            )
+        }),
+    }
+}
+
+/// Keep `std.result` helper items when lowered Result method calls route through Incan-authored helpers.
+fn record_result_helper_support_items_from_ir(
+    reachable: &mut HashMap<Vec<String>, HashSet<String>>,
+    program: &IrProgram,
+) {
+    let mut helpers = HashSet::new();
+    let _ = ir_program_any_expr(program, &mut |expr| {
+        if let Some(helper) = result_helper_used_by_known_method_call(program, expr) {
+            helpers.insert(helper.to_string());
+        }
+        false
+    });
+    if helpers.is_empty() {
+        return;
+    }
+    reachable
+        .entry(vec![
+            stdlib::INCAN_STD_NAMESPACE.to_string(),
+            stdlib::STDLIB_RESULT.to_string(),
+        ])
+        .or_default()
+        .extend(helpers);
+}
+
+/// Return a `std.result` helper when a lowered Result method call will emit through that helper.
+fn result_helper_used_by_known_method_call(program: &IrProgram, expr: &IrExpr) -> Option<&'static str> {
+    let IrExprKind::KnownMethodCall {
+        kind: MethodKind::Result(id),
+        args,
+        ..
+    } = &expr.kind
+    else {
+        return None;
+    };
+    if !matches!(
+        id,
+        result_methods::ResultMethodId::Map
+            | result_methods::ResultMethodId::MapErr
+            | result_methods::ResultMethodId::AndThen
+            | result_methods::ResultMethodId::OrElse
+            | result_methods::ResultMethodId::Inspect
+            | result_methods::ResultMethodId::InspectErr
+    ) {
+        return None;
+    }
+    let callback = args.first().map(|arg| &arg.expr)?;
+    let IrExprKind::Var {
+        name,
+        ref_kind: VarRefKind::Value,
+        ..
+    } = &callback.kind
+    else {
+        return None;
+    };
+    if !matches!(callback.ty, IrType::Function { .. }) || program.function_registry.get(name).is_none() {
+        return None;
+    }
+    Some(result_methods::as_str(*id))
+}
+
+/// Return whether any expression in a lowered program satisfies `predicate`.
+fn ir_program_any_expr<P>(program: &IrProgram, predicate: &mut P) -> bool
+where
+    P: FnMut(&IrExpr) -> bool,
+{
+    program
+        .declarations
+        .iter()
+        .any(|decl| ir_decl_any_expr(decl, predicate))
+}
+
+/// Return whether any expression in a top-level lowered declaration satisfies `predicate`.
+fn ir_decl_any_expr<P>(decl: &IrDecl, predicate: &mut P) -> bool
+where
+    P: FnMut(&IrExpr) -> bool,
+{
+    match &decl.kind {
+        IrDeclKind::Function(func) => ir_stmts_any_expr(&func.body, predicate),
+        IrDeclKind::Struct(_) | IrDeclKind::Enum(_) => false,
+        IrDeclKind::Trait(trait_decl) => trait_decl
+            .methods
+            .iter()
+            .any(|method| ir_stmts_any_expr(&method.body, predicate)),
+        IrDeclKind::Impl(impl_decl) => impl_decl
+            .methods
+            .iter()
+            .any(|method| ir_stmts_any_expr(&method.body, predicate)),
+        IrDeclKind::Const { value, .. } | IrDeclKind::Static { value, .. } => ir_expr_any_expr(value, predicate),
+        IrDeclKind::TypeAlias { .. } | IrDeclKind::SymbolAlias { .. } | IrDeclKind::Import { .. } => false,
+    }
+}
+
+/// Return whether any statement in a lowered block contains an expression satisfying `predicate`.
+fn ir_stmts_any_expr<P>(stmts: &[IrStmt], predicate: &mut P) -> bool
+where
+    P: FnMut(&IrExpr) -> bool,
+{
+    stmts.iter().any(|stmt| ir_stmt_any_expr(stmt, predicate))
+}
+
+/// Return whether one lowered statement contains an expression satisfying `predicate`.
+fn ir_stmt_any_expr<P>(stmt: &IrStmt, predicate: &mut P) -> bool
+where
+    P: FnMut(&IrExpr) -> bool,
+{
+    match &stmt.kind {
+        IrStmtKind::Expr(expr)
+        | IrStmtKind::Yield(expr)
+        | IrStmtKind::Let { value: expr, .. }
+        | IrStmtKind::Assign { value: expr, .. }
+        | IrStmtKind::CompoundAssign { value: expr, .. } => ir_expr_any_expr(expr, predicate),
+        IrStmtKind::Return(expr) => expr.as_ref().is_some_and(|expr| ir_expr_any_expr(expr, predicate)),
+        IrStmtKind::Break { value, .. } => value.as_ref().is_some_and(|expr| ir_expr_any_expr(expr, predicate)),
+        IrStmtKind::While { condition, body, .. } => {
+            ir_expr_any_expr(condition, predicate) || ir_stmts_any_expr(body, predicate)
+        }
+        IrStmtKind::For { iterable, body, .. } => {
+            ir_expr_any_expr(iterable, predicate) || ir_stmts_any_expr(body, predicate)
+        }
+        IrStmtKind::Loop { body, .. } | IrStmtKind::Block(body) => ir_stmts_any_expr(body, predicate),
+        IrStmtKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            ir_expr_any_expr(condition, predicate)
+                || ir_stmts_any_expr(then_branch, predicate)
+                || else_branch
+                    .as_ref()
+                    .is_some_and(|branch| ir_stmts_any_expr(branch, predicate))
+        }
+        IrStmtKind::Match { scrutinee, arms } => {
+            ir_expr_any_expr(scrutinee, predicate)
+                || arms.iter().any(|arm| {
+                    arm.bindings.iter().any(|binding| {
+                        ir_expr_any_expr(&binding.value, predicate)
+                            || binding
+                                .guard_value
+                                .as_ref()
+                                .is_some_and(|expr| ir_expr_any_expr(expr, predicate))
+                    }) || arm.guard.as_ref().is_some_and(|expr| ir_expr_any_expr(expr, predicate))
+                        || ir_expr_any_expr(&arm.body, predicate)
+                })
+        }
+        IrStmtKind::Continue(_) => false,
+    }
+}
+
+/// Return whether one lowered expression or any nested expression satisfies `predicate`.
+fn ir_expr_any_expr<P>(expr: &IrExpr, predicate: &mut P) -> bool
+where
+    P: FnMut(&IrExpr) -> bool,
+{
+    if predicate(expr) {
+        return true;
+    }
+    match &expr.kind {
+        IrExprKind::KnownMethodCall { receiver, args, .. } => {
+            ir_expr_any_expr(receiver, predicate) || args.iter().any(|arg| ir_expr_any_expr(&arg.expr, predicate))
+        }
+        IrExprKind::MethodCall { receiver, args, .. } => {
+            ir_expr_any_expr(receiver, predicate) || args.iter().any(|arg| ir_expr_any_expr(&arg.expr, predicate))
+        }
+        IrExprKind::Call { func, args, .. } => {
+            ir_expr_any_expr(func, predicate) || args.iter().any(|arg| ir_expr_any_expr(&arg.expr, predicate))
+        }
+        IrExprKind::BuiltinCall { args, .. } => args.iter().any(|expr| ir_expr_any_expr(expr, predicate)),
+        IrExprKind::BinOp { left, right, .. } => {
+            ir_expr_any_expr(left, predicate) || ir_expr_any_expr(right, predicate)
+        }
+        IrExprKind::UnaryOp { operand, .. }
+        | IrExprKind::Await(operand)
+        | IrExprKind::Try(operand)
+        | IrExprKind::Cast { expr: operand, .. }
+        | IrExprKind::NumericResize { expr: operand, .. }
+        | IrExprKind::InteropCoerce { expr: operand, .. } => ir_expr_any_expr(operand, predicate),
+        IrExprKind::RegisterCallableName { callable, .. } => ir_expr_any_expr(callable, predicate),
+        IrExprKind::CacheGenericDecoratedFunction { value, .. } => ir_expr_any_expr(value, predicate),
+        IrExprKind::Field { object, .. } => ir_expr_any_expr(object, predicate),
+        IrExprKind::Index { object, index } => {
+            ir_expr_any_expr(object, predicate) || ir_expr_any_expr(index, predicate)
+        }
+        IrExprKind::Slice {
+            target,
+            start,
+            end,
+            step,
+        } => {
+            ir_expr_any_expr(target, predicate)
+                || [start, end, step]
+                    .into_iter()
+                    .flatten()
+                    .any(|expr| ir_expr_any_expr(expr, predicate))
+        }
+        IrExprKind::ListComp {
+            element,
+            pattern,
+            iterable,
+            filter,
+        } => {
+            ir_expr_any_expr(element, predicate)
+                || ir_pattern_any_expr(pattern, predicate)
+                || ir_expr_any_expr(iterable, predicate)
+                || filter.as_ref().is_some_and(|expr| ir_expr_any_expr(expr, predicate))
+        }
+        IrExprKind::DictComp {
+            key,
+            value,
+            pattern,
+            iterable,
+            filter,
+        } => {
+            ir_expr_any_expr(key, predicate)
+                || ir_expr_any_expr(value, predicate)
+                || ir_pattern_any_expr(pattern, predicate)
+                || ir_expr_any_expr(iterable, predicate)
+                || filter.as_ref().is_some_and(|expr| ir_expr_any_expr(expr, predicate))
+        }
+        IrExprKind::Generator { element, clauses } => {
+            ir_expr_any_expr(element, predicate)
+                || clauses.iter().any(|clause| match clause {
+                    IrGeneratorClause::For { pattern, iterable } => {
+                        ir_pattern_any_expr(pattern, predicate) || ir_expr_any_expr(iterable, predicate)
+                    }
+                    IrGeneratorClause::If(expr) => ir_expr_any_expr(expr, predicate),
+                })
+        }
+        IrExprKind::List(items) => items.iter().any(|item| match item {
+            IrListEntry::Element(expr) | IrListEntry::Spread(expr) => ir_expr_any_expr(expr, predicate),
+        }),
+        IrExprKind::Dict(items) => items.iter().any(|item| match item {
+            IrDictEntry::Pair(key, value) => ir_expr_any_expr(key, predicate) || ir_expr_any_expr(value, predicate),
+            IrDictEntry::Spread(expr) => ir_expr_any_expr(expr, predicate),
+        }),
+        IrExprKind::Set(items) | IrExprKind::Tuple(items) => items.iter().any(|expr| ir_expr_any_expr(expr, predicate)),
+        IrExprKind::Struct { fields, .. } => fields.iter().any(|(_, value)| ir_expr_any_expr(value, predicate)),
+        IrExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            ir_expr_any_expr(condition, predicate)
+                || ir_expr_any_expr(then_branch, predicate)
+                || else_branch
+                    .as_ref()
+                    .is_some_and(|expr| ir_expr_any_expr(expr, predicate))
+        }
+        IrExprKind::Match { scrutinee, arms } => {
+            ir_expr_any_expr(scrutinee, predicate)
+                || arms.iter().any(|arm| {
+                    ir_pattern_any_expr(&arm.pattern, predicate)
+                        || arm.bindings.iter().any(|binding| {
+                            ir_expr_any_expr(&binding.value, predicate)
+                                || binding
+                                    .guard_value
+                                    .as_ref()
+                                    .is_some_and(|expr| ir_expr_any_expr(expr, predicate))
+                        })
+                        || arm.guard.as_ref().is_some_and(|expr| ir_expr_any_expr(expr, predicate))
+                        || ir_expr_any_expr(&arm.body, predicate)
+                })
+        }
+        IrExprKind::Closure { body, .. } => ir_expr_any_expr(body, predicate),
+        IrExprKind::Block { stmts, value } => {
+            ir_stmts_any_expr(stmts, predicate) || value.as_ref().is_some_and(|expr| ir_expr_any_expr(expr, predicate))
+        }
+        IrExprKind::Loop { body } => ir_stmts_any_expr(body, predicate),
+        IrExprKind::Race { arms, .. } => arms
+            .iter()
+            .any(|arm| ir_expr_any_expr(&arm.awaitable, predicate) || ir_expr_any_expr(&arm.body, predicate)),
+        IrExprKind::Range { start, end, .. } => [start, end]
+            .into_iter()
+            .flatten()
+            .any(|expr| ir_expr_any_expr(expr, predicate)),
+        IrExprKind::Format { parts } => parts.iter().any(|part| match part {
+            crate::backend::ir::expr::FormatPart::Literal(_) => false,
+            crate::backend::ir::expr::FormatPart::Expr { expr, .. } => ir_expr_any_expr(expr, predicate),
+        }),
+        IrExprKind::Var { .. }
+        | IrExprKind::StaticRead { .. }
+        | IrExprKind::StaticBinding { .. }
+        | IrExprKind::AssociatedFunction { .. }
+        | IrExprKind::TypeToken { .. }
+        | IrExprKind::FunctionItem { .. }
+        | IrExprKind::Unit
+        | IrExprKind::None
+        | IrExprKind::Bool(_)
+        | IrExprKind::Int(_)
+        | IrExprKind::IntLiteral(_)
+        | IrExprKind::Float(_)
+        | IrExprKind::Decimal(_)
+        | IrExprKind::String(_)
+        | IrExprKind::Bytes(_)
+        | IrExprKind::Literal(_)
+        | IrExprKind::FieldsList(_)
+        | IrExprKind::SerdeToJson
+        | IrExprKind::SerdeFromJson(_) => false,
+    }
+}
+
+/// Return whether a lowered pattern contains expression payloads satisfying `predicate`.
+fn ir_pattern_any_expr<P>(pattern: &Pattern, predicate: &mut P) -> bool
+where
+    P: FnMut(&IrExpr) -> bool,
+{
+    match pattern {
+        Pattern::Literal(expr) => ir_expr_any_expr(expr, predicate),
+        Pattern::Tuple(items) | Pattern::Or(items) => {
+            items.iter().any(|pattern| ir_pattern_any_expr(pattern, predicate))
+        }
+        Pattern::Struct { fields, .. } => fields
+            .iter()
+            .any(|(_, pattern)| ir_pattern_any_expr(pattern, predicate)),
+        Pattern::Enum { fields, .. } => fields.iter().any(|pattern| ir_pattern_any_expr(pattern, predicate)),
+        Pattern::Wildcard | Pattern::Var(_) => false,
+    }
+}
+
+/// Keep serde JSON traits when the serde activation planner will emit impls against the generated `json` module.
+fn record_serde_json_trait_support_items(
+    reachable: &mut HashMap<Vec<String>, HashSet<String>>,
+    main: &Program,
+    dependency_modules: &[(&str, &Program, Option<Vec<String>>)],
+) {
+    let deps = dependency_modules
+        .iter()
+        .map(|(name, program, _)| (*name, *program))
+        .collect::<Vec<_>>();
+    let (needs_serialize, needs_deserialize) = super::serde_activation::collect_serde_derives(main, &deps);
+    if !needs_serialize && !needs_deserialize {
+        return;
+    }
+    let items = reachable
+        .entry(vec![
+            stdlib::INCAN_STD_NAMESPACE.to_string(),
+            stdlib::STDLIB_SERDE.to_string(),
+            stdlib::STDLIB_JSON.to_string(),
+        ])
+        .or_default();
+    if needs_serialize {
+        items.insert("Serialize".to_string());
+    }
+    if needs_deserialize {
+        items.insert("Deserialize".to_string());
+    }
+}
+
 /// Collect dependency-module declarations that must remain reachable from externally visible roots such as imports,
 /// ambient logging, and web route registration.
 pub(super) fn collect_externally_reachable_items_by_module(
@@ -117,6 +522,7 @@ pub(super) fn collect_externally_reachable_items_by_module(
         current_module_path: &[String],
         module_paths: &HashSet<Vec<String>>,
     ) {
+        record_generated_support_required_items(reachable, current_module_path);
         if crate::frontend::surface_semantics::uses_ambient_log_surface(program) {
             reachable
                 .entry(vec!["std".to_string(), "logging".to_string()])
@@ -133,9 +539,15 @@ pub(super) fn collect_externally_reachable_items_by_module(
                     let Some(module_path) = generated_module_path_for_source_import(module, current_module_path) else {
                         continue;
                     };
-                    let reachable_items = reachable.entry(module_path).or_default();
+                    let reachable_items = reachable.entry(module_path.clone()).or_default();
                     for item in items {
                         reachable_items.insert(item.name.clone());
+                        let mut submodule_path = module_path.clone();
+                        submodule_path.push(item.name.clone());
+                        if module_paths.contains(&submodule_path) {
+                            let binding = item.alias.clone().unwrap_or_else(|| item.name.clone());
+                            module_import_bindings.insert(binding, submodule_path);
+                        }
                     }
                 }
                 ImportKind::Module(path) => {
@@ -203,6 +615,7 @@ pub(super) fn collect_externally_reachable_items_by_module(
     }
 
     let mut reachable = HashMap::new();
+    record_serde_json_trait_support_items(&mut reachable, main, dependency_modules);
     record_imports(&mut reachable, main, &[String::from("main")], &module_paths);
     for (name, program, path_segments) in dependency_modules {
         let module_path = path_segments.clone().unwrap_or_else(|| vec![(*name).to_string()]);
@@ -219,7 +632,6 @@ pub(super) struct DependencySymbolMetadata {
     pub(super) value_module_paths: HashMap<String, Vec<String>>,
     pub(super) ambiguous_value_names: HashSet<String>,
     pub(super) enum_type_names: HashSet<String>,
-    pub(super) error_trait_type_names: HashSet<String>,
 }
 
 /// Collect dependency symbol metadata needed by IR emission for cross-module nominal types and values.
@@ -232,8 +644,6 @@ pub(super) fn collect_dependency_symbol_metadata(
     let mut ambiguous_values: HashSet<String> = HashSet::new();
     let mut enum_type_names: HashSet<String> = HashSet::new();
     let mut non_enum_type_names: HashSet<String> = HashSet::new();
-    let mut error_trait_type_names: HashSet<String> = HashSet::new();
-    let error_trait_name = core_traits::as_str(TraitId::Error);
 
     for (_name, program, path_segments) in deps {
         for decl in &program.declarations {
@@ -265,18 +675,8 @@ pub(super) fn collect_dependency_symbol_metadata(
             }
 
             let type_name = match &decl.node {
-                Declaration::Model(m) => {
-                    if m.traits.iter().any(|bound| bound.node.name == error_trait_name) {
-                        error_trait_type_names.insert(m.name.clone());
-                    }
-                    Some((&m.name, false))
-                }
-                Declaration::Class(c) => {
-                    if c.traits.iter().any(|bound| bound.node.name == error_trait_name) {
-                        error_trait_type_names.insert(c.name.clone());
-                    }
-                    Some((&c.name, false))
-                }
+                Declaration::Model(m) => Some((&m.name, false)),
+                Declaration::Class(c) => Some((&c.name, false)),
                 Declaration::Enum(e) => Some((&e.name, true)),
                 Declaration::TypeAlias(a) => Some((&a.name, false)),
                 Declaration::Newtype(n) => Some((&n.name, false)),
@@ -320,6 +720,5 @@ pub(super) fn collect_dependency_symbol_metadata(
         value_module_paths: value_paths,
         ambiguous_value_names: ambiguous_values,
         enum_type_names,
-        error_trait_type_names,
     }
 }

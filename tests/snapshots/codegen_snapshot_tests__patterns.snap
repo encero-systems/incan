@@ -9,139 +9,139 @@ expression: rust_code
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 fn test_pattern_wildcard() {
     let x: i64 = 42;
-    match x {
+    let _ = match x {
         _ => {
-            println!("{}", "wildcard matches anything");
+            let _ = println!("{}", "wildcard matches anything");
         }
     };
 }
 fn test_pattern_literals() {
     let value: i64 = 5;
-    match value {
+    let _ = match value {
         0 => {
-            println!("{}", "zero");
+            let _ = println!("{}", "zero");
         }
         1 => {
-            println!("{}", "one");
+            let _ = println!("{}", "one");
         }
         5 => {
-            println!("{}", "five");
+            let _ = println!("{}", "five");
         }
         _ => {
-            println!("{}", "other");
+            let _ = println!("{}", "other");
         }
     };
 }
 fn test_pattern_string_literal() {
     let name: String = "Alice".to_string();
-    match name {
+    let _ = match name {
         ref __incan_match_string_literal if __incan_match_string_literal.as_str()
             == "Alice" => {
-            println!("{}", "Hello Alice");
+            let _ = println!("{}", "Hello Alice");
         }
         ref __incan_match_string_literal if __incan_match_string_literal.as_str()
             == "Bob" => {
-            println!("{}", "Hello Bob");
+            let _ = println!("{}", "Hello Bob");
         }
         _ => {
-            println!("{}", "Hello stranger");
+            let _ = println!("{}", "Hello stranger");
         }
     };
 }
 fn test_pattern_bool() {
     let flag: bool = true;
-    match flag {
+    let _ = match flag {
         true => {
-            println!("{}", "yes");
+            let _ = println!("{}", "yes");
         }
         false => {
-            println!("{}", "no");
+            let _ = println!("{}", "no");
         }
     };
 }
 fn test_pattern_option_some() {
     let maybe: Option<i64> = Some(42);
-    match maybe {
+    let _ = match maybe {
         Some(n) => {
-            println!("{}", n);
+            let _ = println!("{}", n);
         }
         None => {
-            println!("{}", "nothing");
+            let _ = println!("{}", "nothing");
         }
     };
 }
 fn test_pattern_option_none() {
     let maybe: Option<i64> = None::<i64>;
-    match maybe {
+    let _ = match maybe {
         Some(n) => {
-            println!("{}", n);
+            let _ = println!("{}", n);
         }
         None => {
-            println!("{}", "nothing");
+            let _ = println!("{}", "nothing");
         }
     };
 }
 fn test_pattern_result_ok() {
     let result: Result<i64, String> = Ok::<i64, String>(42);
-    match result {
+    let _ = match result {
         Ok(value) => {
-            println!("{}", value);
+            let _ = println!("{}", value);
         }
         Err(error) => {
-            println!("{}", error);
+            let _ = println!("{}", error);
         }
     };
 }
 fn test_pattern_result_err() {
     let result: Result<i64, String> = Err::<i64, String>(("failed").to_string());
-    match result {
+    let _ = match result {
         Ok(value) => {
-            println!("{}", value);
+            let _ = println!("{}", value);
         }
         Err(error) => {
-            println!("{}", error);
+            let _ = println!("{}", error);
         }
     };
 }
 fn test_pattern_nested_option() {
     let nested: Option<Option<i64>> = Some(Some(42));
-    match nested {
+    let _ = match nested {
         Some(Some(n)) => {
-            println!("{}", n);
+            let _ = println!("{}", n);
         }
         Some(None) => {
-            println!("{}", "inner none");
+            let _ = println!("{}", "inner none");
         }
         None => {
-            println!("{}", "outer none");
+            let _ = println!("{}", "outer none");
         }
     };
 }
 fn test_pattern_tuple() {
     let pair: (i64, String) = (42, "answer".to_string());
-    match pair {
+    let _ = match pair {
         (0, _) => {
-            println!("{}", "first is zero");
+            let _ = println!("{}", "first is zero");
         }
         (_, "answer") => {
-            println!("{}", "second is answer");
+            let _ = println!("{}", "second is answer");
         }
         _ => {
-            println!("{}", "something else");
+            let _ = println!("{}", "something else");
         }
     };
 }
 fn test_pattern_multiple_bindings() {
     let value: Option<i64> = Some(10);
-    match value {
+    let _ = match value {
         Some(x) if x > 5 => {
-            println!("{}", "large");
+            let _ = println!("{}", "large");
         }
         Some(x) => {
-            println!("{}", "small");
+            let _ = println!("{}", "small");
         }
         None => {
-            println!("{}", "none");
+            let _ = println!("{}", "none");
         }
     };
 }
@@ -157,15 +157,15 @@ fn main() {
             }
         }),
     );
-    test_pattern_wildcard();
-    test_pattern_literals();
-    test_pattern_string_literal();
-    test_pattern_bool();
-    test_pattern_option_some();
-    test_pattern_option_none();
-    test_pattern_result_ok();
-    test_pattern_result_err();
-    test_pattern_nested_option();
-    test_pattern_tuple();
-    test_pattern_multiple_bindings();
+    let _ = test_pattern_wildcard();
+    let _ = test_pattern_literals();
+    let _ = test_pattern_string_literal();
+    let _ = test_pattern_bool();
+    let _ = test_pattern_option_some();
+    let _ = test_pattern_option_none();
+    let _ = test_pattern_result_ok();
+    let _ = test_pattern_result_err();
+    let _ = test_pattern_nested_option();
+    let _ = test_pattern_tuple();
+    let _ = test_pattern_multiple_bindings();
 }

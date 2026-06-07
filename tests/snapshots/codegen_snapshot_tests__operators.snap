@@ -61,5 +61,5 @@ fn main() {
             }
         }),
     );
-    test_operators();
+    let _ = test_operators();
 }

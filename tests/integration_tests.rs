@@ -10541,6 +10541,13 @@ mod rfc031_pub_import_integration_tests {
             .output()?)
     }
 
+    fn run_run(main_path: &Path) -> Result<std::process::Output, Box<dyn std::error::Error>> {
+        Ok(super::incan_command()
+            .args(["run", main_path.to_string_lossy().as_ref()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?)
+    }
+
     fn run_lock(entry_path: &Path) -> Result<std::process::Output, Box<dyn std::error::Error>> {
         Ok(super::incan_command()
             .args(["lock", entry_path.to_string_lossy().as_ref()])
@@ -10705,6 +10712,7 @@ def main() -> None:
 
 pub static registered_names: list[str] = []
 pub static registered_specs: list[FunctionSpec] = []
+pub static package_markers: list[str] = []
 
 pub deterministic_spec = partial FunctionSpec(namespace="core", deterministic=true)
 
@@ -10734,13 +10742,71 @@ pub def registered_spec_name(index: int) -> str:
         )?;
         std::fs::write(
             producer_root.join("src/facade.incn"),
-            r#"pub from registry import FunctionSpec, deterministic_spec, registered_count, registered_name, registered_spec_name, scale, scale_alias
+            r#"pub from registry import FunctionSpec, deterministic_spec, package_markers, registered_count, registered_name, registered_spec_name, scale, scale_alias
 "#,
         )?;
         std::fs::write(
             producer_root.join("src/lib.incn"),
-            "pub from facade import FunctionSpec, deterministic_spec, registered_count, registered_name, registered_spec_name, scale, scale_alias\n",
+            "pub from facade import FunctionSpec, deterministic_spec, package_markers, registered_count, registered_name, registered_spec_name, scale, scale_alias\n",
         )?;
+        std::fs::create_dir_all(producer_root.join("tests"))?;
+        std::fs::write(
+            producer_root.join("tests/test_direct_identity.incn"),
+            r#"from registry import registered_count, registered_name, registered_spec_name, scale, scale_alias
+
+
+def test_direct_source_import_identity() -> None:
+  assert scale(3) == 6
+  assert scale_alias(4) == 8
+  assert registered_count() == 1
+  assert registered_name(0) == "scale"
+  assert registered_spec_name(0) == "scale"
+"#,
+        )?;
+        std::fs::write(
+            producer_root.join("tests/test_facade_identity.incn"),
+            r#"from facade import registered_count, registered_name, registered_spec_name, scale, scale_alias
+
+
+def test_facade_source_import_identity() -> None:
+  assert scale(5) == 10
+  assert scale_alias(6) == 12
+  assert registered_count() == 1
+  assert registered_name(0) == "scale"
+  assert registered_spec_name(0) == "scale"
+"#,
+        )?;
+        std::fs::write(
+            producer_root.join("tests/test_mixed_identity.incn"),
+            r#"from registry import registered_count, registered_name, registered_spec_name, scale as direct_scale, scale_alias as direct_scale_alias
+from facade import scale as facade_scale, scale_alias as facade_scale_alias
+
+
+def test_direct_and_facade_identity_share_one_static() -> None:
+  assert direct_scale(3) == 6
+  assert direct_scale_alias(4) == 8
+  assert facade_scale(5) == 10
+  assert facade_scale_alias(6) == 12
+  assert registered_count() == 1
+  assert registered_name(0) == "scale"
+  assert registered_spec_name(0) == "scale"
+"#,
+        )?;
+
+        let producer_tests = run_test(&producer_root.join("tests"))?;
+        assert!(
+            producer_tests.status.success(),
+            "expected decorated alias partial identity source and facade test batch to succeed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&producer_tests.stdout),
+            String::from_utf8_lossy(&producer_tests.stderr)
+        );
+        let mixed_identity_test = run_test(&producer_root.join("tests/test_mixed_identity.incn"))?;
+        assert!(
+            mixed_identity_test.status.success(),
+            "expected combined direct/facade identity fixture to succeed by itself.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&mixed_identity_test.stdout),
+            String::from_utf8_lossy(&mixed_identity_test.stderr)
+        );
 
         let producer_build = run_build_lib(&producer_root)?;
         assert!(
@@ -10754,7 +10820,7 @@ pub def registered_spec_name(index: int) -> str:
         let main_path = write_project_files(
             &consumer_root,
             "[project]\nname = \"consumer\"\n\n[dependencies]\ncallkit = { path = \"../callkit_provider\" }\n",
-            r#"from pub::callkit import registered_count, registered_name, registered_spec_name, scale, scale_alias
+            r#"from pub::callkit import package_markers, registered_count, registered_name, registered_spec_name, scale, scale_alias
 
 def main() -> None:
   assert scale(3) == 6
@@ -10762,6 +10828,8 @@ def main() -> None:
   assert registered_count() == 1
   assert registered_name(0) == "scale"
   assert registered_spec_name(0) == "scale"
+  package_markers.append(f"consumer")
+  assert len(package_markers) == 1
 "#,
         )?;
 
@@ -10777,6 +10845,68 @@ def main() -> None:
         assert!(
             consumer_build.status.success(),
             "expected decorated alias partial identity consumer build to succeed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&consumer_build.stdout),
+            String::from_utf8_lossy(&consumer_build.stderr)
+        );
+        let consumer_run = run_run(&main_path)?;
+        assert!(
+            consumer_run.status.success(),
+            "expected decorated alias partial identity consumer run to execute shared package statics.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&consumer_run.stdout),
+            String::from_utf8_lossy(&consumer_run.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn boundary_parity_preserves_enum_method_defaults_through_facade() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let producer_root = tmp.path().join("enumkit_provider");
+        std::fs::create_dir_all(producer_root.join("src"))?;
+        std::fs::write(
+            producer_root.join("incan.toml"),
+            "[project]\nname = \"enumkit\"\nversion = \"0.1.0\"\n",
+        )?;
+        std::fs::write(
+            producer_root.join("src/status.incn"),
+            r#"pub enum Status(str):
+  Ready = "ready"
+  Paused = "paused"
+
+  def label(self, prefix: str = "state") -> str:
+    match self:
+      Status.Ready => return f"{prefix}:ready"
+      Status.Paused => return f"{prefix}:paused"
+"#,
+        )?;
+        std::fs::write(producer_root.join("src/facade.incn"), "pub from status import Status\n")?;
+        std::fs::write(producer_root.join("src/lib.incn"), "pub from facade import Status\n")?;
+
+        let producer_build = run_build_lib(&producer_root)?;
+        assert!(
+            producer_build.status.success(),
+            "expected enumkit provider library build to succeed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&producer_build.stdout),
+            String::from_utf8_lossy(&producer_build.stderr)
+        );
+
+        let consumer_root = tmp.path().join("consumer");
+        let main_path = write_project_files(
+            &consumer_root,
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nenumkit = { path = \"../enumkit_provider\" }\n",
+            r#"from pub::enumkit import Status
+
+
+def main() -> None:
+  assert Status.Ready.label() == "state:ready"
+  assert Status.Paused.label(prefix="custom") == "custom:paused"
+"#,
+        )?;
+        let out_dir = consumer_root.join("out");
+        let consumer_build = run_build(&main_path, &out_dir)?;
+        assert!(
+            consumer_build.status.success(),
+            "expected enum method defaults to survive provider/facade/consumer boundary.\nstdout:\n{}\nstderr:\n{}",
             String::from_utf8_lossy(&consumer_build.stdout),
             String::from_utf8_lossy(&consumer_build.stderr)
         );
@@ -13179,7 +13309,7 @@ def main() -> Result[None, SessionError]:
     }
 
     #[test]
-    fn consumer_build_injects_helper_import_for_vocab_desugarer_calls() -> Result<(), Box<dyn std::error::Error>> {
+    fn consumer_build_uses_provider_paths_for_vocab_desugarer_calls() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let response = incan_vocab::DesugarResponse::expression(incan_vocab::IncanExpr::Call {
             callee: Box::new(incan_vocab::IncanExpr::Helper("filter".to_string())),
@@ -13220,12 +13350,12 @@ def main() -> Result[None, SessionError]:
 
         let generated_main_rs = std::fs::read_to_string(out_dir.join("src/main.rs"))?;
         assert!(
-            generated_main_rs.contains("__incan_vocab_helper_filterkit_filter"),
-            "expected hidden helper alias in generated Rust, got:\n{generated_main_rs}"
+            !generated_main_rs.contains("__incan_vocab_helper_filterkit_filter"),
+            "expected generated Rust to avoid hidden helper aliases, got:\n{generated_main_rs}"
         );
         assert!(
             generated_main_rs.contains("filterkit::filter"),
-            "expected generated Rust to import the provider helper from the dependency crate, got:\n{generated_main_rs}"
+            "expected generated Rust to call the provider helper through its dependency crate path, got:\n{generated_main_rs}"
         );
         Ok(())
     }

@@ -73,5 +73,5 @@ fn main() {
         name: "Alice".to_string(),
         age: 30,
     };
-    println!("{}", user.name);
+    let _ = println!("{}", user.name);
 }

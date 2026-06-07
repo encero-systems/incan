@@ -763,6 +763,9 @@ const RUST_INSPECT_WORKSPACE_FINGERPRINT_FILE: &str = ".incan_rust_inspect_finge
 #[cfg(feature = "rust_inspect")]
 const RUST_INSPECT_WORKSPACE_FINGERPRINT_PREFIX: &str = "v1:";
 
+#[cfg(feature = "rust_inspect")]
+const RUST_INSPECT_OUT_DIRS_FINGERPRINT_FILE: &str = ".incan_rust_inspect_out_dirs_fingerprint";
+
 /// Counts how many times each rust-inspect stub workspace is fully regenerated instead of skipped via fingerprint.
 ///
 /// Full lib tests run in parallel and other tests can legitimately create unrelated rust-inspect workspaces, so this
@@ -963,6 +966,183 @@ fn rust_inspect_workspace_dir(project_root: &Path, project_name: &str, fingerpri
         .join(format!("{safe_name}-{suffix}"))
 }
 
+#[cfg(feature = "rust_inspect")]
+/// Return the shared Cargo target directory used by rust-inspect prewarm workspaces that sit below `target/incan_lock`.
+fn rust_inspect_shared_target_dir(manifest_dir: &Path) -> PathBuf {
+    let Some(rust_inspect_dir) = manifest_dir.parent() else {
+        return manifest_dir.join("target");
+    };
+    let Some(incan_lock_dir) = rust_inspect_dir.parent() else {
+        return manifest_dir.join("target");
+    };
+    let Some(project_target_dir) = incan_lock_dir.parent() else {
+        return manifest_dir.join("target");
+    };
+    project_target_dir.join(".cargo-target")
+}
+
+#[cfg(feature = "rust_inspect")]
+/// Build a deterministic fingerprint for generated build-script metadata prewarm inputs and requested Rust paths.
+fn rust_inspect_out_dirs_fingerprint(
+    manifest_dir: &Path,
+    target_dir: &Path,
+    query_paths: &[String],
+) -> CliResult<String> {
+    let mut hasher = Sha256::new();
+    hasher.update(b"incan_rust_inspect_out_dirs/1\0");
+    hasher.update(target_dir.as_os_str().as_encoded_bytes());
+    hasher.update(b"\0");
+    for relative in ["Cargo.toml", "Cargo.lock", "src/main.rs"] {
+        let path = manifest_dir.join(relative);
+        match fs::read(&path) {
+            Ok(bytes) => {
+                hasher.update(relative.as_bytes());
+                hasher.update(b"\0");
+                hasher.update(bytes);
+                hasher.update(b"\0");
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound && relative == "Cargo.lock" => {}
+            Err(err) => {
+                return Err(CliError::failure(format!(
+                    "Failed to fingerprint rust-inspect out-dir prewarm input {}: {err}",
+                    path.display()
+                )));
+            }
+        }
+    }
+    let mut sorted_paths = query_paths.to_vec();
+    sorted_paths.sort();
+    sorted_paths.dedup();
+    for query_path in sorted_paths {
+        hasher.update(query_path.as_bytes());
+        hasher.update(b"\0");
+    }
+    Ok(format!(
+        "{}{}",
+        RUST_INSPECT_OUT_DIRS_FINGERPRINT_FILE,
+        hex::encode(hasher.finalize())
+    ))
+}
+
+#[cfg(feature = "rust_inspect")]
+/// Return whether the stored out-dir prewarm stamp matches the current fingerprint and the shared target still exists.
+fn rust_inspect_out_dirs_stamp_matches(stamp_path: &Path, fingerprint: &str, target_dir: &Path) -> bool {
+    target_dir.is_dir()
+        && fs::read_to_string(stamp_path)
+            .map(|existing| existing.trim() == fingerprint)
+            .unwrap_or(false)
+}
+
+#[cfg(feature = "rust_inspect")]
+/// Write a Cargo config that points the generated rust-inspect workspace at the shared target directory.
+fn write_rust_inspect_cargo_config(manifest_dir: &Path, target_dir: &Path) -> CliResult<()> {
+    let cargo_dir = manifest_dir.join(".cargo");
+    fs::create_dir_all(&cargo_dir).map_err(|err| {
+        CliError::failure(format!(
+            "Failed to create rust-inspect Cargo config directory {}: {err}",
+            cargo_dir.display()
+        ))
+    })?;
+    let escaped_target_dir = target_dir.to_string_lossy().replace('\\', "\\\\").replace('"', "\\\"");
+    fs::write(
+        cargo_dir.join("config.toml"),
+        format!("[build]\ntarget-dir = \"{escaped_target_dir}\"\n"),
+    )
+    .map_err(|err| {
+        CliError::failure(format!(
+            "Failed to write rust-inspect Cargo config {}: {err}",
+            cargo_dir.join("config.toml").display()
+        ))
+    })
+}
+
+#[cfg(feature = "rust_inspect")]
+/// Detect Cargo's stale-lockfile failure so prewarm can retry with an offline lock refresh instead of silently
+/// skipping.
+fn rust_inspect_locked_prewarm_needs_lock_update(stderr: &str) -> bool {
+    stderr.contains("cannot update the lock file") && stderr.contains("because --locked was passed")
+}
+
+#[cfg(feature = "rust_inspect")]
+/// Run the Cargo command that warms generated build-script output for rust-inspect metadata extraction.
+fn run_rust_inspect_out_dirs_prewarm_command(
+    manifest_dir: &Path,
+    target_dir: &Path,
+    mode: RustInspectPrewarmCargoMode,
+) -> CliResult<std::process::Output> {
+    let mut command = Command::new("cargo");
+    command.arg("check");
+    command.arg("--manifest-path");
+    command.arg(manifest_dir.join("Cargo.toml"));
+    match mode {
+        RustInspectPrewarmCargoMode::Locked if manifest_dir.join("Cargo.lock").is_file() => {
+            command.arg("--locked");
+        }
+        RustInspectPrewarmCargoMode::Offline => {
+            command.arg("--offline");
+        }
+        RustInspectPrewarmCargoMode::Locked => {}
+    }
+    command
+        .env_remove("SSL_CERT_FILE")
+        .env_remove("SSL_CERT_DIR")
+        .env_remove("CURL_CA_BUNDLE")
+        .env_remove("REQUESTS_CA_BUNDLE")
+        .env_remove("CARGO_HTTP_CAINFO")
+        .env("CARGO_TARGET_DIR", target_dir)
+        .output()
+        .map_err(|err| CliError::failure(format!("Failed to run rust-inspect build-script prewarm: {err}")))
+}
+
+#[cfg(feature = "rust_inspect")]
+#[derive(Debug, Clone, Copy)]
+enum RustInspectPrewarmCargoMode {
+    Locked,
+    Offline,
+}
+
+#[cfg(feature = "rust_inspect")]
+/// Prewarm generated build-script output directories for rust-inspect lookups and stamp successful runs for reuse.
+fn prewarm_rust_inspect_out_dirs(manifest_dir: &Path, query_paths: &[String]) -> CliResult<()> {
+    let target_dir = rust_inspect_shared_target_dir(manifest_dir);
+    write_rust_inspect_cargo_config(manifest_dir, &target_dir)?;
+    let fingerprint = rust_inspect_out_dirs_fingerprint(manifest_dir, &target_dir, query_paths)?;
+    let stamp_path = manifest_dir.join(RUST_INSPECT_OUT_DIRS_FINGERPRINT_FILE);
+    if rust_inspect_out_dirs_stamp_matches(&stamp_path, &fingerprint, &target_dir) {
+        return Ok(());
+    }
+
+    eprintln!(
+        "rust-inspect build-script prewarm: checking generated metadata workspace into {}",
+        target_dir.display()
+    );
+    let mut output =
+        run_rust_inspect_out_dirs_prewarm_command(manifest_dir, &target_dir, RustInspectPrewarmCargoMode::Locked)?;
+    if !output.status.success()
+        && rust_inspect_locked_prewarm_needs_lock_update(String::from_utf8_lossy(&output.stderr).as_ref())
+    {
+        eprintln!("rust-inspect build-script prewarm: generated Cargo.lock is stale; retrying offline lock refresh");
+        output =
+            run_rust_inspect_out_dirs_prewarm_command(manifest_dir, &target_dir, RustInspectPrewarmCargoMode::Offline)?;
+    }
+
+    if !output.status.success() {
+        return Err(CliError::failure(format!(
+            "rust-inspect build-script prewarm failed with status {}:\n{}{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+    fs::write(&stamp_path, &fingerprint).map_err(|err| {
+        CliError::failure(format!(
+            "Failed to write rust-inspect out-dir prewarm fingerprint {}: {err}",
+            stamp_path.display()
+        ))
+    })?;
+    Ok(())
+}
+
 /// Generate the rust-inspect workspace that semantic Rust extraction should query for this project.
 ///
 /// The generated workspace intentionally uses the Rust import spelling for dependency keys, while preserving the
@@ -1135,6 +1315,7 @@ pub(crate) fn prewarm_rust_inspect_workspace(manifest_dir: &Path, query_paths: &
     if query_paths.is_empty() {
         return Ok(());
     }
+    prewarm_rust_inspect_out_dirs(manifest_dir, query_paths)?;
     let inspector = Inspector::new(InspectorConfig::new(manifest_dir.to_path_buf()));
     inspector
         .prewarm(query_paths.iter().cloned(), &print_rust_inspect_prewarm_progress)
@@ -3162,6 +3343,50 @@ pub def main() -> int:
         assert_ne!(first, second);
         assert!(first.ends_with(Path::new("target/incan_lock/rust_inspect/demo-aaaaaaaaaaaaaaaa")));
         assert!(second.ends_with(Path::new("target/incan_lock/rust_inspect/demo-bbbbbbbbbbbbbbbb")));
+    }
+
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn rust_inspect_shared_target_dir_matches_generated_project_target_layout() {
+        let manifest_dir = Path::new("/workspace/target/incan_lock/rust_inspect/demo-1234");
+        assert_eq!(
+            super::rust_inspect_shared_target_dir(manifest_dir),
+            PathBuf::from("/workspace/target/.cargo-target")
+        );
+    }
+
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn rust_inspect_out_dirs_fingerprint_tracks_query_surface() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let manifest_dir = tmp.path();
+        fs::create_dir_all(manifest_dir.join("src"))?;
+        fs::write(
+            manifest_dir.join("Cargo.toml"),
+            "[package]\nname = \"probe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        fs::write(manifest_dir.join("src").join("main.rs"), "fn main() {}\n")?;
+        let target_dir = manifest_dir.join("target");
+
+        let one = super::rust_inspect_out_dirs_fingerprint(manifest_dir, &target_dir, &["demo::One".to_string()])?;
+        let two = super::rust_inspect_out_dirs_fingerprint(manifest_dir, &target_dir, &["demo::Two".to_string()])?;
+
+        assert_ne!(
+            one, two,
+            "rust-inspect out-dir prewarm must rerun when the inspected ABI query surface changes"
+        );
+        assert!(one.starts_with(super::RUST_INSPECT_OUT_DIRS_FINGERPRINT_FILE));
+        Ok(())
+    }
+
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn rust_inspect_locked_prewarm_detects_stale_generated_lockfile() {
+        let stderr = "error: cannot update the lock file /tmp/target/incan_lock/rust_inspect/demo/Cargo.lock because --locked was passed to prevent this";
+        assert!(super::rust_inspect_locked_prewarm_needs_lock_update(stderr));
+        assert!(!super::rust_inspect_locked_prewarm_needs_lock_update(
+            "error: failed to select a version for `demo`"
+        ));
     }
 
     #[cfg(feature = "rust_inspect")]

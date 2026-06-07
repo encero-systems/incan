@@ -25,64 +25,64 @@ fn exercise_uuid() -> Result<(), UuidError> {
     let same = UUID::from_int(parsed.to_int());
     let raw = parsed.to_bytes()?;
     let roundtrip = UUID::from_bytes(raw)?;
-    if same != parsed {
+    let _ = if same != parsed {
         panic!("AssertionError: left != right");
-    }
-    if roundtrip != parsed {
+    };
+    let _ = if roundtrip != parsed {
         panic!("AssertionError: left != right");
-    }
-    if NIL != UUID::nil() {
+    };
+    let _ = if NIL != UUID::nil() {
         panic!("AssertionError: left != right");
-    }
-    if MAX != UUID::max() {
+    };
+    let _ = if MAX != UUID::max() {
         panic!("AssertionError: left != right");
-    }
-    if parsed.version()? != UuidVersion::V4 {
+    };
+    let _ = if parsed.version()? != UuidVersion::V4 {
         panic!("AssertionError: left != right");
-    }
-    if parsed.variant()? != UuidVariant::Rfc9562 {
+    };
+    let _ = if parsed.variant()? != UuidVariant::Rfc9562 {
         panic!("AssertionError: left != right");
-    }
-    if UUID::from_int(parsed.to_int()) != parsed {
+    };
+    let _ = if UUID::from_int(parsed.to_int()) != parsed {
         panic!("AssertionError: left != right");
-    }
-    if incan_stdlib::strings::str_ne(
+    };
+    let _ = if incan_stdlib::strings::str_ne(
         &NAMESPACE_DNS.canonical()?,
         &"6ba7b810-9dad-11d1-80b4-00c04fd430c8",
     ) {
         panic!("AssertionError: left != right");
-    }
-    if incan_stdlib::strings::str_ne(
+    };
+    let _ = if incan_stdlib::strings::str_ne(
         &NAMESPACE_URL.canonical()?,
         &"6ba7b811-9dad-11d1-80b4-00c04fd430c8",
     ) {
         panic!("AssertionError: left != right");
-    }
-    if UUID::v3(
+    };
+    let _ = if UUID::v3(
             NAMESPACE_DNS.clone(),
             __IncanUniond83007a429c21b6f::V0("www.example.com".to_string()),
         )?
         .version()? != UuidVersion::V3
     {
         panic!("AssertionError: left != right");
-    }
-    if UUID::v4()?.version()? != UuidVersion::V4 {
+    };
+    let _ = if UUID::v4()?.version()? != UuidVersion::V4 {
         panic!("AssertionError: left != right");
-    }
-    if UUID::v5(
+    };
+    let _ = if UUID::v5(
             NAMESPACE_DNS,
             __IncanUniond83007a429c21b6f::V0("www.example.com".to_string()),
         )?
         .version()? != UuidVersion::V5
     {
         panic!("AssertionError: left != right");
-    }
-    if UUID::v7()?.variant()? != UuidVariant::Rfc9562 {
+    };
+    let _ = if UUID::v7()?.variant()? != UuidVariant::Rfc9562 {
         panic!("AssertionError: left != right");
-    }
-    if UUID::v8(b"abcdefghijklmnop".to_vec())?.version()? != UuidVersion::V8 {
+    };
+    let _ = if UUID::v8(b"abcdefghijklmnop".to_vec())?.version()? != UuidVersion::V8 {
         panic!("AssertionError: left != right");
-    }
+    };
     return Ok::<(), UuidError>(());
 }
 fn main() {
@@ -97,9 +97,9 @@ fn main() {
             }
         }),
     );
-    match exercise_uuid() {
+    let _ = match exercise_uuid() {
         Ok(_) => {
-            ();
+            let _ = ();
         }
         Err(err) => println!("{}", err.message()),
     };

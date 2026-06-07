@@ -26,5 +26,5 @@ fn main() {
             }
         }),
     );
-    println!("{}", selected_column_name());
+    let _ = println!("{}", selected_column_name());
 }

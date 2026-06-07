@@ -182,10 +182,10 @@ fn generated_callable_artifact_and_consumers_share_producer_build() -> Result<()
     );
     let generated_main = fs::read_to_string(out_dir.join("src/main.rs"))?;
     assert!(
-        generated_main.contains("use callability::map_owned;")
+        !generated_main.contains("use callability::map_owned;")
             && generated_main.contains("use callability::plus_one;")
-            && generated_main.contains("map_owned(vec![1, 2, 3], plus_one)"),
-        "expected final generated Rust project to call imported callable export, got:\n{generated_main}"
+            && generated_main.contains("callability::map_owned(vec![1, 2, 3], plus_one)"),
+        "expected final generated Rust project to qualify the provider-owned call while importing the callable value, got:\n{generated_main}"
     );
 
     Ok(())

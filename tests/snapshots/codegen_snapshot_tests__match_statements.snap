@@ -9,57 +9,57 @@ expression: rust_code
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 fn test_match_simple() {
     let x: i64 = 42;
-    match x {
+    let _ = match x {
         0 => {
-            println!("{}", "zero");
+            let _ = println!("{}", "zero");
         }
         1 => {
-            println!("{}", "one");
+            let _ = println!("{}", "one");
         }
         _ => {
-            println!("{}", "other");
+            let _ = println!("{}", "other");
         }
     };
 }
 fn test_match_with_option() {
     let value: Option<i64> = Some(42);
-    match value {
+    let _ = match value {
         Some(n) => {
-            println!("{}", n);
+            let _ = println!("{}", n);
         }
         None => {
-            println!("{}", "nothing");
+            let _ = println!("{}", "nothing");
         }
     };
 }
 fn test_match_multiple_patterns() {
     let x: i64 = 5;
-    match x {
+    let _ = match x {
         1 => {
-            println!("{}", "one");
+            let _ = println!("{}", "one");
         }
         2 => {
-            println!("{}", "two");
+            let _ = println!("{}", "two");
         }
         3 => {
-            println!("{}", "three");
+            let _ = println!("{}", "three");
         }
         _ => {
-            println!("{}", "many");
+            let _ = println!("{}", "many");
         }
     };
 }
 fn test_match_with_guard() {
     let x: i64 = 15;
-    match x {
+    let _ = match x {
         n if n < 10 => {
-            println!("{}", "small");
+            let _ = println!("{}", "small");
         }
         n if n < 20 => {
-            println!("{}", "medium");
+            let _ = println!("{}", "medium");
         }
         _ => {
-            println!("{}", "large");
+            let _ = println!("{}", "large");
         }
     };
 }
@@ -75,8 +75,8 @@ fn main() {
             }
         }),
     );
-    test_match_simple();
-    test_match_with_option();
-    test_match_multiple_patterns();
-    test_match_with_guard();
+    let _ = test_match_simple();
+    let _ = test_match_with_option();
+    let _ = test_match_multiple_patterns();
+    let _ = test_match_with_guard();
 }

@@ -68,7 +68,7 @@ impl incan_stdlib::reflection::HasTypeFieldMetadata for Job {
     }
 }
 fn take_attempts(a: Attempts) {
-    println!(
+    let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["", ""]; let __args : Vec < String > =
         vec![format!("{}", a.0)]; incan_stdlib::strings::fstring(& __parts, & __args) }
     );
@@ -85,7 +85,7 @@ fn main() {
             }
         }),
     );
-    take_attempts(
+    let _ = take_attempts(
         match Attempts::from_underlying(3) {
             Ok(__incan_newtype_value) => __incan_newtype_value,
             Err(__incan_validation_error) => {
@@ -133,7 +133,7 @@ fn main() {
                 >(__incan_attempts_validation_value)
             }
             Err(__incan_attempts_validation_error) => {
-                __incan_validation_errors
+                let _ = __incan_validation_errors
                     .push_field_error(
                         "attempts",
                         __incan_attempts_validation_error.clone(),
@@ -144,7 +144,7 @@ fn main() {
                 >(__incan_attempts_validation_error)
             }
         };
-        __incan_validation_errors.raise_if_any();
+        let _ = __incan_validation_errors.raise_if_any();
         Job {
             attempts: match __incan_field_0_validated_result {
                 Ok(__incan_newtype_value) => __incan_newtype_value,
@@ -159,7 +159,7 @@ fn main() {
         }
     };
     let retry_attempts = retry.0;
-    println!(
+    let _ = println!(
         "{}", { let __parts : [& str; 4usize] = ["", " ", " ", ""]; let __args : Vec <
         String > = vec![format!("{}", attempts.0), format!("{}", retry_attempts.0),
         format!("{}", job.attempts.0)]; incan_stdlib::strings::fstring(& __parts, &

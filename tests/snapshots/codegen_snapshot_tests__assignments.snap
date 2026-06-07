@@ -59,8 +59,8 @@ fn main() {
             }
         }),
     );
-    test_basic_assignments();
-    test_augmented_assignments();
-    test_collection_assignments();
-    test_multiple_targets();
+    let _ = test_basic_assignments();
+    let _ = test_augmented_assignments();
+    let _ = test_collection_assignments();
+    let _ = test_multiple_targets();
 }

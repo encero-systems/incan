@@ -29,5 +29,5 @@ fn main() {
         }),
     );
     let result = mixed_ops(2, 3.5f64);
-    println!("{}", result);
+    let _ = println!("{}", result);
 }

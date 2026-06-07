@@ -21,7 +21,7 @@ fn main() {
         }),
     );
     if let Err(error) = incan_stdlib::r#async::runtime::block_on(async move {
-        println!("{}", "hello");
+        let _ = println!("{}", "hello");
     }) {
         eprintln!("{error}");
         std::process::exit(1);

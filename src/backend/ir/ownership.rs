@@ -86,6 +86,18 @@ pub struct RegularMethodArgumentContext {
     pub in_return: bool,
 }
 
+/// Receiver and lookup facts needed to choose the value-use site for a type-style associated function argument.
+///
+/// These calls all share the same source shape, `Type.function(arg)`, but the ownership boundary differs. Incan-owned
+/// type methods expect ordinary Incan argument conversion, while inspected Rust associated functions must preserve Rust
+/// API shapes such as `impl Buf`.
+#[derive(Debug, Clone, Copy)]
+pub struct AssociatedFunctionArgumentContext {
+    pub receiver_ref_kind: Option<VarRefKind>,
+    pub is_incan_owned_nominal_receiver: bool,
+    pub in_return: bool,
+}
+
 /// Choose the value-use site for an ordinary method-call argument from shared receiver facts.
 pub fn regular_method_argument_use_site<'a>(
     context: RegularMethodArgumentContext,
@@ -112,6 +124,39 @@ pub fn regular_method_argument_use_site<'a>(
     } else {
         ValueUseSite::ExternalCallArg { target_ty }
     }
+}
+
+/// Choose the value-use site for an associated function call argument from shared receiver facts.
+pub fn associated_function_argument_use_site<'a>(
+    context: AssociatedFunctionArgumentContext,
+    callee_param: Option<&'a FunctionParam>,
+) -> ValueUseSite<'a> {
+    let target_ty = callee_param.map(|param| &param.ty);
+    if context.receiver_ref_kind != Some(VarRefKind::ExternalRustName) && context.is_incan_owned_nominal_receiver {
+        return ValueUseSite::IncanCallArg {
+            target_ty,
+            callee_param,
+            in_return: false,
+        };
+    }
+
+    if context.receiver_ref_kind == Some(VarRefKind::TypeName) {
+        return ValueUseSite::IncanCallArg {
+            target_ty,
+            callee_param,
+            in_return: context.in_return,
+        };
+    }
+
+    if context.receiver_ref_kind == Some(VarRefKind::ExternalName) {
+        return ValueUseSite::IncanCallArg {
+            target_ty,
+            callee_param,
+            in_return: context.in_return,
+        };
+    }
+
+    ValueUseSite::ExternalCallArg { target_ty }
 }
 
 /// Plan how one IR expression should be emitted at a specific ownership boundary.
@@ -184,9 +229,16 @@ pub enum ArgumentValuePlan {
     Ownership(OwnershipPlan),
     /// Convert `Vec<T>` into `Vec<U>` at an external Rust call boundary.
     ExternalListElementInto,
+    /// Pass an owned byte buffer to a Rust `Buf`-like parameter as a shared byte slice.
+    ExternalBytesAsBufSlice,
 }
 
 impl ArgumentValuePlan {
+    /// Return whether this plan applies a Rust-target-specific value adapter before final argument passing.
+    fn has_external_value_adapter(&self) -> bool {
+        matches!(self, Self::ExternalListElementInto | Self::ExternalBytesAsBufSlice)
+    }
+
     /// Apply the value-level plan to an unplanned emitted argument expression.
     fn apply_full(&self, tokens: TokenStream) -> TokenStream {
         match self {
@@ -194,6 +246,7 @@ impl ArgumentValuePlan {
             Self::ExternalListElementInto => quote! {
                 (#tokens).into_iter().map(|__incan_item| ::std::convert::Into::into(__incan_item)).collect::<Vec<_>>()
             },
+            Self::ExternalBytesAsBufSlice => quote! { (#tokens).as_slice() },
         }
     }
 
@@ -201,7 +254,7 @@ impl ArgumentValuePlan {
     fn apply_after_value_plan(&self, tokens: TokenStream) -> TokenStream {
         match self {
             Self::Ownership(_) => tokens,
-            Self::ExternalListElementInto => self.apply_full(tokens),
+            Self::ExternalListElementInto | Self::ExternalBytesAsBufSlice => self.apply_full(tokens),
         }
     }
 }
@@ -246,6 +299,9 @@ impl ArgumentPassingPlan {
             ValueUseSite::ExternalCallArg { target_ty } if external_list_arg_needs_element_into(expr, target_ty) => {
                 ArgumentValuePlan::ExternalListElementInto
             }
+            ValueUseSite::ExternalCallArg { target_ty } if external_buf_arg_needs_bytes_as_slice(expr, target_ty) => {
+                ArgumentValuePlan::ExternalBytesAsBufSlice
+            }
             _ => ArgumentValuePlan::Ownership(plan_value_use(expr, site)),
         };
         let mut passing = ArgumentPassingMode::ByValue;
@@ -282,6 +338,11 @@ impl ArgumentPassingPlan {
         self.passing.apply(self.value.apply_full(tokens))
     }
 
+    /// Return whether this plan carries a Rust-target-specific value adapter.
+    pub fn has_external_value_adapter(&self) -> bool {
+        self.value.has_external_value_adapter()
+    }
+
     /// Apply only the portion of the plan that remains after `emit_expr_for_use` or literal seeding already shaped the
     /// value.
     pub fn apply_after_value_plan(&self, tokens: TokenStream) -> TokenStream {
@@ -308,6 +369,66 @@ fn external_list_arg_needs_element_into(expr: &IrExpr, target_ty: Option<&IrType
     source_elem != target_elem
         && !is_unresolved_call_seed_type(source_elem)
         && !is_unresolved_call_seed_type(target_elem)
+}
+
+/// Return whether an external Rust buffer argument needs `Vec<u8>`/`bytes` to become `&[u8]`.
+fn external_buf_arg_needs_bytes_as_slice(expr: &IrExpr, target_ty: Option<&IrType>) -> bool {
+    target_ty.is_some_and(is_rust_buf_like_target) && is_byte_buffer_type(&expr.ty) && !is_explicit_as_slice_call(expr)
+}
+
+/// Whether a target type is the Rust `Buf` shape produced by inspection for `impl Buf` parameters.
+fn is_rust_buf_like_target(ty: &IrType) -> bool {
+    match ty {
+        IrType::Generic(name) | IrType::Struct(name) | IrType::Trait(name) | IrType::RustDisplay(name) => {
+            rust_type_leaf(name) == "Buf" || name == "implBuf"
+        }
+        IrType::ImplTrait(bound) => rust_type_leaf(&bound.trait_path) == "Buf",
+        _ => false,
+    }
+}
+
+/// Return whether an IR type is represented as a byte buffer at Rust boundaries.
+pub fn is_byte_buffer_type(ty: &IrType) -> bool {
+    match ty {
+        IrType::Bytes | IrType::FrozenBytes => true,
+        IrType::Struct(name) | IrType::RustDisplay(name) => rust_vec_u8_shape(name),
+        IrType::NamedGeneric(name, args)
+            if matches!(name.as_str(), "Vec" | "std::vec::Vec" | "alloc::vec::Vec")
+                && matches!(
+                    args.as_slice(),
+                    [IrType::Int | IrType::Numeric(incan_core::lang::types::numerics::NumericTypeId::U8)]
+                ) =>
+        {
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Return the final path segment of a Rust type display or path.
+fn rust_type_leaf(name: &str) -> &str {
+    name.rsplit("::").next().unwrap_or(name)
+}
+
+/// Return whether a Rust type display denotes a `Vec<u8>` byte buffer.
+fn rust_vec_u8_shape(name: &str) -> bool {
+    let compact: String = name.chars().filter(|ch| !ch.is_whitespace()).collect();
+    matches!(
+        compact.as_str(),
+        "Vec<u8>" | "std::vec::Vec<u8>" | "alloc::vec::Vec<u8>"
+    )
+}
+
+/// Return whether the source already called `.as_slice()` for this argument.
+fn is_explicit_as_slice_call(expr: &IrExpr) -> bool {
+    matches!(
+        &expr.kind,
+        IrExprKind::MethodCall {
+            method,
+            args,
+            ..
+        } if method == "as_slice" && args.is_empty()
+    )
 }
 
 /// Return whether a call-seed target still contains unresolved generic or unknown parts.
@@ -650,7 +771,7 @@ fn expr_can_move_into_owned_iterator(expr: &IrExpr) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::ir::expr::{IrExpr, IrExprKind, VarAccess, VarRefKind};
+    use crate::backend::ir::expr::{IrExpr, IrExprKind, MethodCallArgPolicy, VarAccess, VarRefKind};
     use crate::backend::ir::types::Mutability;
 
     fn render(tokens: TokenStream) -> String {
@@ -806,6 +927,123 @@ mod tests {
         let rendered = render(plan.apply_full(quote! { vec![] }));
         assert!(!rendered.contains("into_iter"));
         assert!(!rendered.contains("Into::into"));
+    }
+
+    #[test]
+    fn argument_plan_external_buf_param_lends_incan_bytes_as_slice() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "encoded".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Bytes,
+        );
+        let target = IrType::Generic("Buf".to_string());
+        let plan = ArgumentPassingPlan::for_use_site(
+            &expr,
+            ValueUseSite::ExternalCallArg {
+                target_ty: Some(&target),
+            },
+        );
+        assert_eq!(render(plan.apply_full(quote! { encoded })), "(encoded).as_slice()");
+    }
+
+    #[test]
+    fn argument_plan_external_buf_param_lends_rust_vec_u8_as_slice() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "encoded".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Struct("alloc::vec::Vec<u8>".to_string()),
+        );
+        let target = IrType::Generic("implBuf".to_string());
+        let plan = ArgumentPassingPlan::for_use_site(
+            &expr,
+            ValueUseSite::ExternalCallArg {
+                target_ty: Some(&target),
+            },
+        );
+        assert_eq!(render(plan.apply_full(quote! { encoded })), "(encoded).as_slice()");
+    }
+
+    #[test]
+    fn argument_plan_external_buf_param_lends_generic_rust_vec_u8_as_slice() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "encoded".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::NamedGeneric(
+                "Vec".to_string(),
+                vec![IrType::Numeric(incan_core::lang::types::numerics::NumericTypeId::U8)],
+            ),
+        );
+        let target = IrType::Generic("implBuf".to_string());
+        let plan = ArgumentPassingPlan::for_use_site(
+            &expr,
+            ValueUseSite::ExternalCallArg {
+                target_ty: Some(&target),
+            },
+        );
+        assert_eq!(render(plan.apply_full(quote! { encoded })), "(encoded).as_slice()");
+    }
+
+    #[test]
+    fn argument_plan_external_buf_param_keeps_explicit_as_slice_shape() {
+        let expr = IrExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(IrExpr::new(
+                    IrExprKind::Var {
+                        name: "encoded".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Struct("alloc::vec::Vec<u8>".to_string()),
+                )),
+                method: "as_slice".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: Vec::new(),
+                callable_signature: None,
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            IrType::Bytes,
+        );
+        let target = IrType::Generic("Buf".to_string());
+        let plan = ArgumentPassingPlan::for_use_site(
+            &expr,
+            ValueUseSite::ExternalCallArg {
+                target_ty: Some(&target),
+            },
+        );
+        assert_eq!(
+            render(plan.apply_full(quote! { encoded.as_slice() })),
+            "encoded.as_slice()"
+        );
+    }
+
+    #[test]
+    fn argument_plan_external_buf_param_keeps_non_byte_buf_implementors_by_value() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "cursor".to_string(),
+                access: VarAccess::Move,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Struct("std::io::Cursor<Vec<u8>>".to_string()),
+        );
+        let target = IrType::Generic("Buf".to_string());
+        let plan = ArgumentPassingPlan::for_use_site(
+            &expr,
+            ValueUseSite::ExternalCallArg {
+                target_ty: Some(&target),
+            },
+        );
+        assert_eq!(render(plan.apply_full(quote! { cursor })), "cursor");
     }
 
     #[test]

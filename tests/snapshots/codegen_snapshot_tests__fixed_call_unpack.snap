@@ -71,7 +71,7 @@ fn main() {
     );
     let xy: (i64, String, i64) = (1, "Ada".to_string(), 7);
     let counter = Counter {};
-    combine(
+    let _ = combine(
         1,
         "Ada".to_string(),
         {
@@ -86,7 +86,7 @@ fn main() {
             __incan_rest_kwargs
         },
     );
-    combine(
+    let _ = combine(
         xy.0,
         xy.1.clone(),
         {
@@ -101,6 +101,6 @@ fn main() {
             __incan_rest_kwargs
         },
     );
-    route("/status".to_string(), "GET".to_string());
-    counter.add(5, 6);
+    let _ = route("/status".to_string(), "GET".to_string());
+    let _ = counter.add(5, 6);
 }

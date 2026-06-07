@@ -472,31 +472,29 @@ impl TypeChecker {
             if info.is_rusttype
                 && let ResolvedType::RustPath(path) = &info.underlying
                 && let Some(meta) = self.rust_item_metadata_for_path(path)
+                && let RustItemKind::Type(type_info) = &meta.kind
             {
-                rust_inspect_available = true;
-                if let RustItemKind::Type(type_info) = &meta.kind {
-                    for method in type_info.methods.iter().filter(|m| m.name == name) {
-                        let has_receiver = Self::rust_signature_has_receiver(&method.signature);
-                        let receiver = if has_receiver { Some(Receiver::Immutable) } else { None };
-                        let skip = usize::from(has_receiver);
-                        let params = method
-                            .signature
-                            .params
-                            .iter()
-                            .skip(skip)
-                            .map(|p| {
-                                self.resolved_param_type_from_rust_display_for_owner_path(p.type_display.as_str(), path)
-                            })
-                            .collect();
-                        let return_display =
-                            self.rust_display_for_owner_path(method.signature.return_type.as_str(), path);
-                        candidates.push(InteropAdapterSig {
-                            name: format!("rust::{}.{name}", path),
-                            receiver,
-                            params,
-                            return_type: self.resolved_type_from_rust_display(return_display.as_str()),
-                        });
-                    }
+                rust_inspect_available = type_info.metadata_completeness.has_methods();
+                for method in type_info.methods.iter().filter(|m| m.name == name) {
+                    let has_receiver = Self::rust_signature_has_receiver(&method.signature);
+                    let receiver = if has_receiver { Some(Receiver::Immutable) } else { None };
+                    let skip = usize::from(has_receiver);
+                    let params = method
+                        .signature
+                        .params
+                        .iter()
+                        .skip(skip)
+                        .map(|p| {
+                            self.resolved_param_type_from_rust_display_for_owner_path(p.type_display.as_str(), path)
+                        })
+                        .collect();
+                    let return_display = self.rust_display_for_owner_path(method.signature.return_type.as_str(), path);
+                    candidates.push(InteropAdapterSig {
+                        name: format!("rust::{}.{name}", path),
+                        receiver,
+                        params,
+                        return_type: self.resolved_type_from_rust_display(return_display.as_str()),
+                    });
                 }
             }
         }
@@ -3120,6 +3118,9 @@ impl TypeChecker {
         let RustItemKind::Type(type_info) = &type_metadata.kind else {
             return false;
         };
+        if !type_info.metadata_completeness.has_trait_impls() {
+            return false;
+        }
         let trait_suffix = Self::rust_trait_path_suffix(trait_path);
         type_info.implemented_traits.iter().any(|implemented| {
             implemented.path == trait_path

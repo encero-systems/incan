@@ -15,10 +15,10 @@ fn walk(node_id: i64, pending: &mut Vec<i64>, visited: &mut Vec<bool>) {
         return;
     }
     *incan_stdlib::collections::list_get_mut(visited, (node_id) as i64) = true;
-    pending.push(node_id - 1);
+    let _ = pending.push(node_id - 1);
     while ::std::convert::identity(pending.len() as i64) > 0 {
         let nxt = incan_stdlib::collections::__private::list_pop(pending);
-        walk(nxt, pending, visited);
+        let _ = walk(nxt, pending, visited);
     }
 }
 fn main() {
@@ -35,6 +35,6 @@ fn main() {
     );
     let mut q: Vec<i64> = vec![];
     let mut seen: Vec<bool> = vec![false, false, false];
-    walk(0, &mut q, &mut seen);
-    println!("{}", "ok");
+    let _ = walk(0, &mut q, &mut seen);
+    let _ = println!("{}", "ok");
 }

@@ -127,13 +127,14 @@ impl<'a> IrEmitter<'a> {
         let iter = self.emit_expr(iterable)?;
         let is_range = self.is_range_iterable(iterable);
         let iter_wrapped = quote! { (#iter) };
+        let iter_for_loop = if is_range { iter.clone() } else { iter_wrapped.clone() };
         let plan = plan_list_comprehension_iteration(
             Self::comprehension_iterable_item_ty(&iterable.ty),
             is_range,
             filter.is_some(),
         );
         if body_can_propagate {
-            return self.emit_list_comp_loop(plan, iter_wrapped, pattern, pattern_tokens, elem, filter);
+            return self.emit_list_comp_loop(plan, iter_for_loop, pattern, pattern_tokens, elem, filter);
         }
 
         match plan {

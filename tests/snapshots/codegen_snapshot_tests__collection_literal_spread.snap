@@ -42,14 +42,14 @@ fn main() {
         __incan_dict.insert("trace".to_string(), "enabled".to_string());
         __incan_dict
     };
-    println!(
+    let _ = println!(
         "{}", * incan_stdlib::collections::list_get(& values, (0) as i64) + *
         incan_stdlib::collections::list_get(& values, (1) as i64) + *
         incan_stdlib::collections::list_get(& values, (2) as i64) + *
         incan_stdlib::collections::list_get(& values, (3) as i64) + *
         incan_stdlib::collections::list_get(& values, (4) as i64)
     );
-    println!(
+    let _ = println!(
         "{}", incan_stdlib::collections::dict_get(& merged, < _ as AsRef < str >>
         ::as_ref(& "trace")).clone()
     );

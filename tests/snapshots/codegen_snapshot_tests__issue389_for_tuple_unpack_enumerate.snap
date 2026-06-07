@@ -79,11 +79,12 @@ pub fn bind(xs: Vec<String>) -> Vec<Binding> {
         .enumerate()
         .map(|(idx, value)| (idx as i64, value.clone()))
     {
-        out.push(Binding {
-            name: name.to_string(),
-            output_index: idx,
-            expr_index: field_ref(idx),
-        });
+        let _ = out
+            .push(Binding {
+                name: name.to_string(),
+                output_index: idx,
+                expr_index: field_ref(idx),
+            });
     }
     return out.clone();
 }
@@ -99,5 +100,5 @@ fn main() {
             }
         }),
     );
-    bind(vec!["a".to_string(), "bb".to_string()]);
+    let _ = bind(vec!["a".to_string(), "bb".to_string()]);
 }

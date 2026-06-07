@@ -8,7 +8,7 @@ expression: rust_code
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 fn bump(s: &mut String) {
-    println!("{}", s);
+    let _ = println!("{}", s);
 }
 fn main() {
     std::panic::set_hook(
@@ -22,5 +22,5 @@ fn main() {
             }
         }),
     );
-    bump(&mut "hello".to_string());
+    let _ = bump(&mut "hello".to_string());
 }

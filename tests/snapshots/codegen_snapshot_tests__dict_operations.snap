@@ -23,6 +23,6 @@ fn main() {
     data.insert("one".to_string(), 1);
     data.insert("two".to_string(), 2);
     for key in data.keys() {
-        println!("{}", key);
+        let _ = println!("{}", key);
     }
 }

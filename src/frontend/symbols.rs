@@ -26,7 +26,7 @@ pub type SymbolId = usize;
 pub const UNION_TYPE_NAME: &str = "Union";
 
 /// Separator used in generated Rust symbols for source overload implementations.
-const OVERLOAD_EMITTED_NAME_SEPARATOR: &str = "__overload_";
+const OVERLOAD_EMITTED_NAME_SEPARATOR: &str = "_overload_";
 
 /// Build the generated Rust symbol name for one overload implementation.
 pub(crate) fn overload_emitted_name(source_name: &str, hash: u64) -> String {
@@ -1152,10 +1152,10 @@ mod tests {
         assert_eq!(overload_source_name_from_emitted(&emitted), "cast");
         assert!(is_overload_emitted_name(&emitted));
         assert_eq!(
-            overload_source_name_from_emitted("cast__overload_suffix"),
-            "cast__overload_suffix"
+            overload_source_name_from_emitted("cast_overload_suffix"),
+            "cast_overload_suffix"
         );
-        assert!(!is_overload_emitted_name("cast__overload_suffix"));
+        assert!(!is_overload_emitted_name("cast_overload_suffix"));
     }
 
     #[test]

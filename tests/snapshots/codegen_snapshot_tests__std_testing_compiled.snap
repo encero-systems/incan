@@ -17,7 +17,7 @@ incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 /// fail("this test should not reach here")
 /// ```
 pub fn fail(msg: String) {
-    "Explicitly fail a test with a message.\n\n    Fail makes the program raise a panic.\n\n    Example:\n    \n    ```incan\n    fail(\"this test should not reach here\")\n    ```\n    ";
+    let _ = "Explicitly fail a test with a message.\n\n    Fail makes the program raise a panic.\n\n    Example:\n    \n    ```incan\n    fail(\"this test should not reach here\")\n    ```\n    ";
     return fail_t(msg);
 }
 /// Generic failure primitive for helper functions returning `T`.
@@ -207,9 +207,9 @@ pub fn param_case<T>(value: T, marks: Vec<String>, id: String) -> T {
 ///
 /// Note: Prefer plain `assert left == right` for most cases.
 pub fn assert(condition: bool, msg: String) {
-    "Assert condition is true.\n\n    Example:\n\n    ```incan\n    assert(False, \"This test will fail with this message\")\n    ```\n\n    Note: Prefer plain `assert left == right` for most cases.\n    ";
+    let _ = "Assert condition is true.\n\n    Example:\n\n    ```incan\n    assert(False, \"This test will fail with this message\")\n    ```\n\n    Note: Prefer plain `assert left == right` for most cases.\n    ";
     if !condition {
-        fail(msg);
+        let _ = fail(msg);
     }
 }
 /// Assert two values are equal.
@@ -222,30 +222,30 @@ pub fn assert(condition: bool, msg: String) {
 /// assert_eq(result, expected, "calculation was wrong")
 /// ```
 pub fn assert_eq<T: PartialEq>(left: T, right: T, msg: String) {
-    "\n    Assert two values are equal.\n\n    Prefer plain `assert left == right` for most cases.\n\n    Example:\n\n    ```incan\n    assert_eq(result, expected, \"calculation was wrong\")\n    ```\n    ";
+    let _ = "\n    Assert two values are equal.\n\n    Prefer plain `assert left == right` for most cases.\n\n    Example:\n\n    ```incan\n    assert_eq(result, expected, \"calculation was wrong\")\n    ```\n    ";
     if left != right {
-        fail(msg);
+        let _ = fail(msg);
     }
 }
 /// Assert two values are not equal.
 pub fn assert_ne<T: PartialEq>(left: T, right: T, msg: String) {
-    "Assert two values are not equal.";
+    let _ = "Assert two values are not equal.";
     if left == right {
-        fail(msg);
+        let _ = fail(msg);
     }
 }
 /// Assert condition is true.
 pub fn assert_true(condition: bool, msg: String) {
-    "Assert condition is true.";
+    let _ = "Assert condition is true.";
     if !condition {
-        fail(msg);
+        let _ = fail(msg);
     }
 }
 /// Assert condition is false.
 pub fn assert_false(condition: bool, msg: String) {
-    "Assert condition is false.";
+    let _ = "Assert condition is false.";
     if condition {
-        fail(msg);
+        let _ = fail(msg);
     }
 }
 /// Assert Option is Some and return the value.
@@ -257,8 +257,8 @@ pub fn assert_false(condition: bool, msg: String) {
 /// assert value.name == "Alice"
 /// ```
 pub fn assert_is_some<T>(option: Option<T>, msg: String) -> T {
-    "\n    Assert Option is Some and return the value.\n\n    Example:\n\n    ```incan\n    value = assert_is_some(get_user(id))\n    assert value.name == \"Alice\"\n    ```\n    ";
-    match option {
+    let _ = "\n    Assert Option is Some and return the value.\n\n    Example:\n\n    ```incan\n    value = assert_is_some(get_user(id))\n    assert value.name == \"Alice\"\n    ```\n    ";
+    let _ = match option {
         Some(value) => {
             return value;
         }
@@ -269,8 +269,8 @@ pub fn assert_is_some<T>(option: Option<T>, msg: String) -> T {
 }
 /// Assert Option is None.
 pub fn assert_is_none<T>(option: Option<T>, msg: String) {
-    "Assert Option is None.";
-    match option {
+    let _ = "Assert Option is None.";
+    let _ = match option {
         Some(_) => fail(msg),
         None => {
             return;
@@ -286,8 +286,8 @@ pub fn assert_is_none<T>(option: Option<T>, msg: String) {
 /// assert user.active
 /// ```
 pub fn assert_is_ok<T, E>(result: Result<T, E>, msg: String) -> T {
-    "\n    Assert Result is Ok and return the value.\n\n    Example:\n\n    ```incan\n    user = assert_is_ok(fetch_user(id))\n    assert user.active\n    ```\n    ";
-    match result {
+    let _ = "\n    Assert Result is Ok and return the value.\n\n    Example:\n\n    ```incan\n    user = assert_is_ok(fetch_user(id))\n    assert user.active\n    ```\n    ";
+    let _ = match result {
         Ok(value) => {
             return value;
         }
@@ -298,8 +298,8 @@ pub fn assert_is_ok<T, E>(result: Result<T, E>, msg: String) -> T {
 }
 /// Assert Result is Err and return the error.
 pub fn assert_is_err<T, E>(result: Result<T, E>, msg: String) -> E {
-    "Assert Result is Err and return the error.";
-    match result {
+    let _ = "Assert Result is Err and return the error.";
+    let _ = match result {
         Err(err) => {
             return err;
         }
@@ -321,7 +321,7 @@ pub fn assert_is_err<T, E>(result: Result<T, E>, msg: String) -> E {
 /// assert_raises[ValueError](bad_parse)
 /// ```
 pub fn assert_raises<E>(_: fn() -> (), msg: String) {
-    "\n    Assert that a zero-argument block raises/panics with error type E.\n\n    The compiler recognizes this helper at call sites and emits runtime panic-payload matching.\n\n    Example:\n\n    ```incan\n    def bad_parse() -> None:\n        int(\"not a number\")\n\n    assert_raises[ValueError](bad_parse)\n    ```\n    ";
+    let _ = "\n    Assert that a zero-argument block raises/panics with error type E.\n\n    The compiler recognizes this helper at call sites and emits runtime panic-payload matching.\n\n    Example:\n\n    ```incan\n    def bad_parse() -> None:\n        int(\"not a number\")\n\n    assert_raises[ValueError](bad_parse)\n    ```\n    ";
     if incan_stdlib::strings::str_eq(&msg, &"") {
         return fail_t(
             "std.testing.assert_raises requires compiler lowering".to_string(),

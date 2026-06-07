@@ -30,7 +30,7 @@ fn main() {
         (2) as i64,
     );
     let named: Vec<i64> = incan_stdlib::collections::list_repeat(7, (3) as i64);
-    println!(
+    let _ = println!(
         "{}", { let __parts : [& str; 6usize] = ["", " ", " ", " ", " ", ""]; let __args
         : Vec < String > = vec![format!("{}", * incan_stdlib::collections::list_get(&
         ints, (0) as i64)), format!("{}", incan_stdlib::collections::list_get(& words,

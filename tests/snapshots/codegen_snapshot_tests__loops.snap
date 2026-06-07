@@ -10,29 +10,29 @@ incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 fn test_while_loop() {
     let mut count: i64 = 0;
     while count < 5 {
-        println!("{}", count);
+        let _ = println!("{}", count);
         count = count + 1;
     }
 }
 fn test_for_range_one_arg() {
     for i in 0_i64..(5 as i64) {
-        println!("{}", i);
+        let _ = println!("{}", i);
     }
 }
 fn test_for_range_two_args() {
     for i in (1 as i64)..(10 as i64) {
-        println!("{}", i);
+        let _ = println!("{}", i);
     }
 }
 fn test_for_range_three_args() {
     for i in incan_stdlib::iter::range(0, 100, (10) as i64) {
-        println!("{}", i);
+        let _ = println!("{}", i);
     }
 }
 fn test_for_list() {
     let numbers: Vec<i64> = vec![1, 2, 3, 4, 5];
     for n in numbers.iter().copied() {
-        println!("{}", n);
+        let _ = println!("{}", n);
     }
 }
 fn test_for_with_break() {
@@ -40,7 +40,7 @@ fn test_for_with_break() {
         if i == 5 {
             break;
         }
-        println!("{}", i);
+        let _ = println!("{}", i);
     }
 }
 fn test_for_with_continue() {
@@ -48,13 +48,13 @@ fn test_for_with_continue() {
         if incan_stdlib::num::py_mod_i64(i, 2) == 0 {
             continue;
         }
-        println!("{}", i);
+        let _ = println!("{}", i);
     }
 }
 fn test_nested_loops() {
     for i in 0_i64..(3 as i64) {
         for j in 0_i64..(3 as i64) {
-            println!("{}", i * 10 + j);
+            let _ = println!("{}", i * 10 + j);
         }
     }
 }
@@ -70,12 +70,12 @@ fn main() {
             }
         }),
     );
-    test_while_loop();
-    test_for_range_one_arg();
-    test_for_range_two_args();
-    test_for_range_three_args();
-    test_for_list();
-    test_for_with_break();
-    test_for_with_continue();
-    test_nested_loops();
+    let _ = test_while_loop();
+    let _ = test_for_range_one_arg();
+    let _ = test_for_range_two_args();
+    let _ = test_for_range_three_args();
+    let _ = test_for_list();
+    let _ = test_for_with_break();
+    let _ = test_for_with_continue();
+    let _ = test_nested_loops();
 }

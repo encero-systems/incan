@@ -963,6 +963,7 @@ fn extract_rust_item_inner(
             let ty = adt.ty(db);
             RustItemKind::Type(RustTypeInfo {
                 alias_target: None,
+                metadata_completeness: Default::default(),
                 methods: collect_inherent_methods(ty.clone(), db, dt),
                 implemented_traits: collect_implemented_traits(ty.clone(), db),
                 fields: collect_public_fields(ty.clone(), db, dt, crate_name),
@@ -976,6 +977,7 @@ fn extract_rust_item_inner(
             let ty = b.ty(db);
             RustItemKind::Type(RustTypeInfo {
                 alias_target: None,
+                metadata_completeness: Default::default(),
                 methods: collect_inherent_methods(ty.clone(), db, dt),
                 implemented_traits: collect_implemented_traits(ty.clone(), db),
                 fields: collect_public_fields(ty, db, dt, crate_name),
@@ -993,6 +995,7 @@ fn extract_rust_item_inner(
             let ty = a.ty(db);
             RustItemKind::Type(RustTypeInfo {
                 alias_target: source_type_alias_target_display(a, db).or_else(|| Some(format_ty(&ty, db, dt))),
+                metadata_completeness: Default::default(),
                 methods: collect_inherent_methods(ty.clone(), db, dt),
                 implemented_traits: collect_implemented_traits(ty.clone(), db),
                 fields: collect_public_fields(ty, db, dt, crate_name),

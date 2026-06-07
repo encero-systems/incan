@@ -7,7 +7,7 @@ This module keeps concrete `+HH:MM` / `-HH:MM` offset datetime values separate f
 from std.collections import OrdinalKey, OrdinalMapError
 from std.datetime.error import DateTimeError
 from std.datetime.civil.intervals import TimeDelta, YearMonthInterval, DateTimeInterval
-from std.datetime.civil.naive import DateTime, FixedOffset, utc, _ParsedOffset, _ParsedTemporal, _parse_offset, _strptime_temporal, _strftime_datetime_inner
+from std.datetime.civil.naive import DateTime, FixedOffset, utc, _parse_offset, _strptime_temporal, _strftime_datetime_inner
 from std.datetime.civil.naive import ordinal_key_bytes, ordinal_key_signed_magnitude_i64, ordinal_key_read_signed_magnitude_i64, ordinal_key_signed_magnitude_i64_is_canonical
 
 pub model DateTimeOffset with OrdinalKey:

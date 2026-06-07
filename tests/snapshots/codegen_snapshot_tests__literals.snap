@@ -33,5 +33,5 @@ fn main() {
             }
         }),
     );
-    test_literals();
+    let _ = test_literals();
 }

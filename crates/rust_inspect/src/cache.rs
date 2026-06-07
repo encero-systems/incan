@@ -3,8 +3,8 @@
 //! The cache is the boundary that keeps rust-analyzer/Cargo extraction out of compiler hot paths. Preparation code may
 //! call `get_or_extract`; ordinary semantic/codegen consumers should use cache-only reads through `Inspector::get`.
 
-use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -13,10 +13,14 @@ use std::sync::OnceLock;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use incan_core::interop::RustItemMetadata;
+use incan_core::interop::{
+    RustFieldInfo, RustItemKind, RustItemMetadata, RustTypeInfo, RustTypeMetadataCompleteness, RustTypeShape,
+    RustVariantInfo, RustVisibility, split_top_level_rust_args,
+};
+use incan_core::lang::types::collections::{self, CollectionTypeId};
 use ra_ap_syntax::{
     AstNode, Edition, SourceFile, SyntaxKind, T,
-    ast::{self, HasModuleItem, HasName},
+    ast::{self, HasModuleItem, HasName, HasVisibility},
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -97,7 +101,7 @@ struct DiskCacheEnvelope {
 }
 
 // Bump when extracted metadata semantics change in a way that makes previously persisted items unsafe to reuse.
-const DISK_CACHE_FORMAT: u32 = 7;
+const DISK_CACHE_FORMAT: u32 = 10;
 const DISK_CACHE_FILE: &str = ".incan_rust_inspect_cache.json";
 // Backward-compatibility read path for caches written before the crate/module rename.
 const LEGACY_DISK_CACHE_FILE: &str = ".incan_rust_metadata_cache.json";
@@ -450,6 +454,38 @@ fn manifest_string_field(value: &toml::Value, table: &str, key: &str) -> Option<
         .map(normalized_crate_cache_key)
 }
 
+/// Add dependency crate names from one Cargo manifest dependency table, including renamed `package = "..."`
+/// targets that appear in generated dependency workspaces.
+fn manifest_dependency_crate_names(manifest: &toml::Value, table: &str, names: &mut HashSet<String>) {
+    let Some(deps) = manifest.get(table).and_then(toml::Value::as_table) else {
+        return;
+    };
+    for (key, value) in deps {
+        names.insert(normalized_crate_cache_key(key));
+        if let Some(package) = value.get("package").and_then(toml::Value::as_str) {
+            names.insert(normalized_crate_cache_key(package));
+        }
+    }
+}
+
+/// Load normalized dependency crate names from the crate whose generated `OUT_DIR` Rust is being parsed.
+///
+/// The generated-source fallback uses this to distinguish local relative paths from external dependency paths while it
+/// normalizes syntax-only field and variant metadata.
+fn load_dependency_crate_names(root: &Path) -> HashSet<String> {
+    let Ok(payload) = fs::read_to_string(root.join("Cargo.toml")) else {
+        return HashSet::new();
+    };
+    let Ok(manifest) = toml::from_str::<toml::Value>(payload.as_str()) else {
+        return HashSet::new();
+    };
+    let mut names = HashSet::new();
+    for table in ["dependencies", "dev-dependencies", "build-dependencies"] {
+        manifest_dependency_crate_names(&manifest, table, &mut names);
+    }
+    names
+}
+
 /// Load the crate names declared by the generated root workspace so root out-dir extraction only runs for root items.
 fn load_root_crate_names(root: &Path) -> Vec<String> {
     let Ok(payload) = fs::read_to_string(root.join("Cargo.toml")) else {
@@ -585,6 +621,610 @@ fn dependency_reexport_alias_candidate(
     }
 }
 
+/// Return the Cargo target directory configured for a generated workspace, falling back to the workspace-local
+/// `target` directory when no `.cargo/config.toml` target override is present.
+fn cargo_configured_target_dir(root: &Path) -> PathBuf {
+    let config_path = root.join(".cargo").join("config.toml");
+    let Ok(payload) = fs::read_to_string(config_path) else {
+        return root.join("target");
+    };
+    let Ok(config) = toml::from_str::<toml::Value>(payload.as_str()) else {
+        return root.join("target");
+    };
+    let Some(target_dir) = config
+        .get("build")
+        .and_then(|build| build.get("target-dir"))
+        .and_then(toml::Value::as_str)
+    else {
+        return root.join("target");
+    };
+    let path = PathBuf::from(target_dir);
+    if path.is_absolute() { path } else { root.join(path) }
+}
+
+/// Find generated Rust files under build-script `OUT_DIR` directories that may define metadata for a dependency-owned
+/// item referenced through the root generated workspace.
+fn generated_out_dir_candidates(root: &Path, dep_root: &Path, crate_name: &str) -> Vec<PathBuf> {
+    let target_dir = cargo_configured_target_dir(root);
+    let mut crate_names = load_root_crate_names(dep_root);
+    crate_names.push(normalized_crate_cache_key(crate_name));
+    crate_names.sort();
+    crate_names.dedup();
+    let mut files = Vec::new();
+    for profile in ["debug", "release"] {
+        let build_dir = target_dir.join(profile).join("build");
+        let Ok(entries) = fs::read_dir(build_dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let file_name = entry.file_name().to_string_lossy().to_string();
+            let normalized = normalized_crate_cache_key(file_name.as_str());
+            if !crate_names
+                .iter()
+                .any(|name| normalized == *name || normalized.starts_with(format!("{name}_").as_str()))
+            {
+                continue;
+            }
+            let out_dir = entry.path().join("out");
+            let Ok(out_entries) = fs::read_dir(out_dir) else {
+                continue;
+            };
+            for out_entry in out_entries.flatten() {
+                let path = out_entry.path();
+                if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+                    files.push(path);
+                }
+            }
+        }
+    }
+    files.sort();
+    files.dedup();
+    files
+}
+
+/// Collect file names from `include!(concat!(env!("OUT_DIR"), "..."))` macro text.
+fn generated_include_file_names(text: &str) -> Vec<String> {
+    if !text.contains("include!") || !text.contains("OUT_DIR") {
+        return Vec::new();
+    }
+    let mut names = Vec::new();
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut current = String::new();
+    for ch in text.chars() {
+        if in_string {
+            if escaped {
+                current.push(ch);
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                if current.ends_with(".rs")
+                    && let Some(file_name) = Path::new(current.as_str()).file_name().and_then(|name| name.to_str())
+                {
+                    names.push(file_name.to_string());
+                }
+                current.clear();
+                in_string = false;
+            } else {
+                current.push(ch);
+            }
+            continue;
+        }
+        if ch == '"' {
+            in_string = true;
+        }
+    }
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// Record generated `OUT_DIR` file owners from one module-item list.
+fn collect_generated_include_owners<'a>(
+    mut items: impl Iterator<Item = ast::Item> + 'a,
+    module_path: &[String],
+    owners: &mut HashMap<String, Vec<Vec<String>>>,
+) {
+    for item in items.by_ref() {
+        match item {
+            ast::Item::MacroCall(macro_call) => {
+                for file_name in generated_include_file_names(macro_call.syntax().text().to_string().as_str()) {
+                    owners.entry(file_name).or_default().push(module_path.to_vec());
+                }
+            }
+            ast::Item::Module(module) => {
+                let Some(name) = module.name() else {
+                    continue;
+                };
+                let mut nested_path = module_path.to_vec();
+                nested_path.push(generated_source_name(name.to_string().as_str()));
+                let Some(item_list) = module.item_list() else {
+                    continue;
+                };
+                for file_name in generated_include_file_names(item_list.syntax().text().to_string().as_str()) {
+                    owners.entry(file_name).or_default().push(nested_path.clone());
+                }
+                collect_generated_include_owners(item_list.items(), &nested_path, owners);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Load generated-file owner modules from the dependency crate source that includes build-script output.
+fn load_generated_include_owners(dep_root: &Path) -> HashMap<String, Vec<Vec<String>>> {
+    let Ok(payload) = fs::read_to_string(dep_root.join("Cargo.toml")) else {
+        return HashMap::new();
+    };
+    let Ok(manifest) = toml::from_str::<toml::Value>(payload.as_str()) else {
+        return HashMap::new();
+    };
+    let Ok(source) = fs::read_to_string(manifest_lib_source_path(dep_root, &manifest)) else {
+        return HashMap::new();
+    };
+    let parsed = SourceFile::parse(source.as_str(), Edition::CURRENT).tree();
+    let mut owners = HashMap::new();
+    collect_generated_include_owners(parsed.items(), &[], &mut owners);
+    for paths in owners.values_mut() {
+        paths.sort();
+        paths.dedup();
+    }
+    owners
+}
+
+/// Return the path suffix inside a generated Rust file only when the requested item is owned by that include module.
+fn generated_item_suffix_for_owner<'a>(item_segments: &'a [&'a str], owner_path: &[String]) -> Option<&'a [&'a str]> {
+    if owner_path.is_empty() {
+        return Some(item_segments);
+    }
+    if item_segments.len() <= owner_path.len() {
+        return None;
+    }
+    let matches_owner = owner_path
+        .iter()
+        .zip(item_segments)
+        .all(|(owner, segment)| owner.trim_start_matches("r#") == segment.trim_start_matches("r#"));
+    matches_owner.then_some(&item_segments[owner_path.len()..])
+}
+
+/// Return whether rust-analyzer parsed a plain public visibility marker, excluding private and restricted public forms.
+fn ast_visibility_is_public(vis: Option<ast::Visibility>) -> bool {
+    vis.is_some_and(|visibility| {
+        let text = visibility.syntax().text().to_string();
+        text.trim() == "pub"
+    })
+}
+
+/// Normalize raw Rust identifiers from generated source so identity comparisons use the source spelling without `r#`.
+fn generated_source_name(name: &str) -> String {
+    name.strip_prefix("r#").unwrap_or(name).to_string()
+}
+
+/// Return the Rust display base for std/core/alloc/prost generic containers that map onto Incan collection identities.
+fn generated_known_collection_base(compact: &str) -> Option<&str> {
+    let segments = compact
+        .split("::")
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    let tail = segments.last().copied().unwrap_or(compact);
+    let id = collections::from_rust_display_base(tail)?;
+    if !matches!(
+        id,
+        CollectionTypeId::Option | CollectionTypeId::Result | CollectionTypeId::List
+    ) {
+        return None;
+    }
+    let public_rust_namespace =
+        segments.len() == 1 || matches!(segments.first().copied(), Some("core" | "std" | "alloc" | "prost"));
+    public_rust_namespace.then_some(tail)
+}
+
+/// Convert a generated Rust type path into the same stable display form rust-inspect would report from HIR metadata.
+fn generated_type_path_display(
+    path: &str,
+    crate_name: &str,
+    module_path: &[String],
+    external_crates: &HashSet<String>,
+) -> String {
+    let compact = path.trim().trim_start_matches("::").replace(' ', "");
+    if compact.is_empty() {
+        return compact;
+    }
+    if let Some(base) = generated_known_collection_base(compact.as_str()) {
+        return base.to_string();
+    }
+    match compact.as_str() {
+        "bool" | "f32" | "f64" | "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64"
+        | "u128" | "usize" | "str" | "String" | "()" | "[u8]" => return compact,
+        "alloc::string::String" | "std::string::String" | "prost::alloc::string::String" => {
+            return "String".to_string();
+        }
+        "alloc::boxed::Box" | "std::boxed::Box" | "prost::alloc::boxed::Box" | "Box" => return "Box".to_string(),
+        _ => {}
+    }
+
+    let mut segments = compact
+        .split("::")
+        .filter(|segment| !segment.is_empty())
+        .map(generated_source_name)
+        .collect::<Vec<_>>();
+    if segments.is_empty() {
+        return compact;
+    }
+
+    if matches!(
+        segments.first().map(String::as_str),
+        Some("core" | "std" | "alloc" | "prost")
+    ) {
+        return segments.join("::");
+    }
+    if segments
+        .first()
+        .is_some_and(|segment| segment == crate_name || external_crates.contains(segment))
+    {
+        return segments.join("::");
+    }
+
+    if segments.first().is_some_and(|segment| segment == "crate") {
+        segments[0] = crate_name.to_string();
+        return segments.join("::");
+    }
+
+    let mut owner = module_path.to_vec();
+    while segments.first().is_some_and(|segment| segment == "super") {
+        segments.remove(0);
+        owner.pop();
+    }
+    if segments.first().is_some_and(|segment| segment == "self") {
+        segments.remove(0);
+    }
+
+    if segments.len() == 1 && segments[0].len() == 1 && segments[0].chars().all(|ch| ch.is_ascii_uppercase()) {
+        return segments.remove(0);
+    }
+
+    let mut out = Vec::with_capacity(1 + owner.len() + segments.len());
+    out.push(crate_name.to_string());
+    out.extend(owner);
+    out.extend(segments);
+    out.join("::")
+}
+
+/// Convert a generated Rust type syntax fragment into a normalized type display string, preserving ownership-relevant
+/// container shape while removing formatting noise from generated source.
+fn generated_type_display(
+    text: &str,
+    crate_name: &str,
+    module_path: &[String],
+    external_crates: &HashSet<String>,
+) -> String {
+    let text = text.trim().replace(['\n', '\r', '\t', ' '], "");
+    if let Some(inner) = text.strip_prefix('&') {
+        let inner = inner.strip_prefix("mut").unwrap_or(inner);
+        return format!(
+            "&{}",
+            generated_type_display(inner, crate_name, module_path, external_crates)
+        );
+    }
+    if text.starts_with('(') && text.ends_with(')') {
+        let inner = &text[1..text.len() - 1];
+        if inner.is_empty() {
+            return "()".to_string();
+        }
+        let items = split_top_level_rust_args(inner)
+            .into_iter()
+            .map(|arg| generated_type_display(arg, crate_name, module_path, external_crates))
+            .collect::<Vec<_>>();
+        return format!("({})", items.join(","));
+    }
+    if let Some(start) = text.find('<')
+        && text.ends_with('>')
+    {
+        let base = generated_type_path_display(&text[..start], crate_name, module_path, external_crates);
+        let inner = &text[start + 1..text.len() - 1];
+        let args = split_top_level_rust_args(inner)
+            .into_iter()
+            .map(|arg| generated_type_display(arg, crate_name, module_path, external_crates))
+            .collect::<Vec<_>>();
+        return format!("{base}<{}>", args.join(", "));
+    }
+    generated_type_path_display(text.as_str(), crate_name, module_path, external_crates)
+}
+
+/// Extract public record-field metadata from generated Rust syntax so build-script output can feed the same field
+/// lookup path as rust-inspect HIR metadata.
+fn generated_field_info(
+    field: ast::RecordField,
+    crate_name: &str,
+    module_path: &[String],
+    external_crates: &HashSet<String>,
+) -> Option<RustFieldInfo> {
+    if !ast_visibility_is_public(field.visibility()) {
+        return None;
+    }
+    let name = generated_source_name(field.name()?.to_string().as_str());
+    let type_display = generated_type_display(
+        field.ty()?.syntax().text().to_string().as_str(),
+        crate_name,
+        module_path,
+        external_crates,
+    );
+    let type_shape = generated_type_shape(type_display.as_str());
+    Some(RustFieldInfo {
+        name,
+        type_display,
+        type_shape,
+    })
+}
+
+/// Convert a normalized generated Rust type display into the structural shape used by boundary coercion planning.
+fn generated_type_shape(text: &str) -> RustTypeShape {
+    let text = text.trim().replace(' ', "");
+    match text.as_str() {
+        "bool" => return RustTypeShape::Bool,
+        "f32" | "f64" => return RustTypeShape::Float,
+        "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64" | "u128" | "usize" => {
+            return RustTypeShape::Int;
+        }
+        "str" | "String" | "std::string::String" | "alloc::string::String" => return RustTypeShape::Str,
+        "()" => return RustTypeShape::Unit,
+        "[u8]" => return RustTypeShape::Bytes,
+        _ => {}
+    }
+
+    if let Some(inner) = text.strip_prefix('&') {
+        let inner = inner.strip_prefix("mut").unwrap_or(inner).trim();
+        return RustTypeShape::Ref(Box::new(generated_type_shape(inner)));
+    }
+    if text.starts_with('(') && text.ends_with(')') {
+        let inner = &text[1..text.len() - 1];
+        if inner.is_empty() {
+            return RustTypeShape::Unit;
+        }
+        return RustTypeShape::Tuple(
+            split_top_level_rust_args(inner)
+                .into_iter()
+                .map(generated_type_shape)
+                .collect(),
+        );
+    }
+    if let Some(start) = text.find('<')
+        && text.ends_with('>')
+    {
+        let base = text[..start].to_string();
+        let inner = &text[start + 1..text.len() - 1];
+        let args: Vec<RustTypeShape> = split_top_level_rust_args(inner)
+            .into_iter()
+            .map(generated_type_shape)
+            .collect();
+        match base.as_str() {
+            "Option" | "std::option::Option" | "core::option::Option" => {
+                return RustTypeShape::Option(Box::new(args.into_iter().next().unwrap_or(RustTypeShape::Unknown)));
+            }
+            "Result" | "std::result::Result" | "core::result::Result" => {
+                let mut it = args.into_iter();
+                return RustTypeShape::Result(
+                    Box::new(it.next().unwrap_or(RustTypeShape::Unknown)),
+                    Box::new(it.next().unwrap_or(RustTypeShape::Unknown)),
+                );
+            }
+            "Vec" | "std::vec::Vec" | "alloc::vec::Vec" if text.ends_with("<u8>") => return RustTypeShape::Bytes,
+            _ => {}
+        }
+        return RustTypeShape::RustPath { path: base, args };
+    }
+    if text.chars().next().is_some_and(|ch| ch.is_ascii_uppercase()) && !text.contains("::") {
+        return RustTypeShape::TypeParam(text);
+    }
+    RustTypeShape::RustPath {
+        path: text,
+        args: Vec::new(),
+    }
+}
+
+/// Build metadata for a public generated Rust struct discovered in build-script output.
+fn generated_struct_metadata(
+    struct_item: ast::Struct,
+    crate_name: &str,
+    module_path: &[String],
+    external_crates: &HashSet<String>,
+) -> Option<RustTypeInfo> {
+    if !ast_visibility_is_public(struct_item.visibility()) {
+        return None;
+    }
+    let fields = match struct_item.field_list()? {
+        ast::FieldList::RecordFieldList(list) => list
+            .fields()
+            .filter_map(|field| generated_field_info(field, crate_name, module_path, external_crates))
+            .collect(),
+        _ => Vec::new(),
+    };
+    Some(RustTypeInfo {
+        alias_target: None,
+        metadata_completeness: RustTypeMetadataCompleteness::FieldsAndVariantsOnly,
+        methods: Vec::new(),
+        implemented_traits: Vec::new(),
+        fields,
+        variants: Vec::new(),
+    })
+}
+
+/// Remove transparent generated `Box<T>` payload wrappers from enum variant shapes because Incan pattern/coercion logic
+/// cares about the semantic payload type, not prost's storage carrier.
+fn normalize_generated_variant_payload_shape(shape: RustTypeShape) -> RustTypeShape {
+    match shape {
+        RustTypeShape::RustPath { path, args }
+            if matches!(path.as_str(), "Box" | "std::boxed::Box" | "alloc::boxed::Box") =>
+        {
+            args.into_iter().next().unwrap_or(RustTypeShape::Unknown)
+        }
+        other => other,
+    }
+}
+
+/// Extract tuple variant payload shapes from a generated Rust enum variant.
+fn generated_variant_payload_shapes(
+    variant: ast::Variant,
+    crate_name: &str,
+    module_path: &[String],
+    external_crates: &HashSet<String>,
+) -> Vec<RustTypeShape> {
+    let Some(ast::FieldList::TupleFieldList(fields)) = variant.field_list() else {
+        return Vec::new();
+    };
+    fields
+        .fields()
+        .filter_map(|field| field.ty())
+        .map(|ty| {
+            let display = generated_type_display(
+                ty.syntax().text().to_string().as_str(),
+                crate_name,
+                module_path,
+                external_crates,
+            );
+            normalize_generated_variant_payload_shape(generated_type_shape(display.as_str()))
+        })
+        .collect()
+}
+
+/// Build metadata for a public generated Rust enum discovered in build-script output.
+fn generated_enum_metadata(
+    enum_item: ast::Enum,
+    crate_name: &str,
+    module_path: &[String],
+    external_crates: &HashSet<String>,
+) -> Option<RustTypeInfo> {
+    if !ast_visibility_is_public(enum_item.visibility()) {
+        return None;
+    }
+    let mut variants = enum_item
+        .variant_list()?
+        .variants()
+        .filter_map(|variant| {
+            let name = variant.name()?.to_string();
+            Some(RustVariantInfo {
+                name,
+                fields: generated_variant_payload_shapes(variant, crate_name, module_path, external_crates),
+            })
+        })
+        .collect::<Vec<_>>();
+    variants.sort_by(|a, b| a.name.cmp(&b.name));
+    Some(RustTypeInfo {
+        alias_target: None,
+        metadata_completeness: RustTypeMetadataCompleteness::FieldsAndVariantsOnly,
+        methods: Vec::new(),
+        implemented_traits: Vec::new(),
+        fields: Vec::new(),
+        variants,
+    })
+}
+
+/// Walk generated Rust syntax items along a module path and return metadata for the requested struct or enum.
+fn generated_type_info_in_items<'a>(
+    mut items: impl Iterator<Item = ast::Item> + 'a,
+    path: &[&str],
+    crate_name: &str,
+    module_path: &[String],
+    external_crates: &HashSet<String>,
+) -> Option<RustTypeInfo> {
+    let (head, tail) = path.split_first()?;
+    for item in items.by_ref() {
+        match item {
+            ast::Item::Struct(struct_item) if tail.is_empty() => {
+                let name = struct_item.name()?.to_string();
+                if name.trim_start_matches("r#") == head.trim_start_matches("r#") {
+                    return generated_struct_metadata(struct_item, crate_name, module_path, external_crates);
+                }
+            }
+            ast::Item::Enum(enum_item) if tail.is_empty() => {
+                let name = enum_item.name()?.to_string();
+                if name.trim_start_matches("r#") == head.trim_start_matches("r#") {
+                    return generated_enum_metadata(enum_item, crate_name, module_path, external_crates);
+                }
+            }
+            ast::Item::Module(module) if !tail.is_empty() => {
+                let name = module.name()?.to_string();
+                if name.trim_start_matches("r#") != head.trim_start_matches("r#") {
+                    continue;
+                }
+                let item_list = module.item_list()?;
+                let mut nested_module_path = module_path.to_vec();
+                nested_module_path.push(generated_source_name(name.as_str()));
+                if let Some(info) = generated_type_info_in_items(
+                    item_list.items(),
+                    tail,
+                    crate_name,
+                    &nested_module_path,
+                    external_crates,
+                ) {
+                    return Some(info);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Parse a generated Rust file and look up metadata for one item path within that file.
+fn generated_type_info_from_source(
+    source: &str,
+    path: &[&str],
+    crate_name: &str,
+    module_path: &[String],
+    external_crates: &HashSet<String>,
+) -> Option<RustTypeInfo> {
+    let parsed = SourceFile::parse(source, Edition::CURRENT).tree();
+    generated_type_info_in_items(parsed.items(), path, crate_name, module_path, external_crates)
+}
+
+/// Resolve dependency-owned metadata directly from generated build-script Rust when rust-inspect cannot resolve the
+/// item through the dependency crate's normal HIR workspace.
+fn generated_out_dir_metadata(root: &Path, dep_root: &Path, canonical_path: &str) -> Option<RustItemMetadata> {
+    let mut segments = canonical_path.split("::").filter(|segment| !segment.is_empty());
+    let crate_name = segments.next()?;
+    let item_segments = segments.collect::<Vec<_>>();
+    if item_segments.is_empty() {
+        return None;
+    }
+    let external_crates = load_dependency_crate_names(dep_root);
+    let include_owners = load_generated_include_owners(dep_root);
+    for generated_file in generated_out_dir_candidates(root, dep_root, crate_name) {
+        let Ok(source) = fs::read_to_string(&generated_file) else {
+            continue;
+        };
+        let file_name = generated_file
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        let empty_owner_paths;
+        let owner_paths = include_owners.get(file_name).map_or([].as_slice(), Vec::as_slice);
+        let owner_paths: &[Vec<String>] = if owner_paths.is_empty() {
+            empty_owner_paths = vec![Vec::new()];
+            empty_owner_paths.as_slice()
+        } else {
+            owner_paths
+        };
+        for module_path in owner_paths {
+            let Some(suffix) = generated_item_suffix_for_owner(&item_segments, module_path) else {
+                continue;
+            };
+            if let Some(type_info) =
+                generated_type_info_from_source(source.as_str(), suffix, crate_name, module_path, &external_crates)
+            {
+                return Some(RustItemMetadata {
+                    canonical_path: canonical_path.to_string(),
+                    definition_path: Some(canonical_path.to_string()),
+                    visibility: RustVisibility::Public,
+                    kind: RustItemKind::Type(type_info),
+                });
+            }
+        }
+    }
+    None
+}
+
 /// Return whether the generated root workspace itself declares the crate segment used by a query path.
 fn root_workspace_declares_crate(inner: &mut CacheInner, root: &Path, crate_name: &str) -> bool {
     let names = inner
@@ -596,8 +1236,198 @@ fn root_workspace_declares_crate(inner: &mut CacheInner, root: &Path, crate_name
         .any(|name| name == normalized_crate_cache_key(crate_name).as_str())
 }
 
-/// Attempt extraction through one planned route: primary workspace, dependency workspace, then root out-dir workspace
-/// only for root-package items.
+/// Typed rust-inspect workspace route used for one extraction attempt.
+#[derive(Debug)]
+enum WorkspaceExtractionRoute {
+    Primary,
+    DependencyOutDirs { manifest_dir: PathBuf },
+    RootOutDirs,
+}
+
+impl WorkspaceExtractionRoute {
+    /// Return the in-memory workspace-cache key for this route.
+    fn key(&self, root: &Path) -> (PathBuf, bool) {
+        match self {
+            Self::Primary => (root.to_path_buf(), false),
+            Self::DependencyOutDirs { manifest_dir } => (manifest_dir.clone(), true),
+            Self::RootOutDirs => (root.to_path_buf(), true),
+        }
+    }
+
+    /// Return the Cargo manifest directory that should be loaded for this route.
+    fn manifest_dir<'a>(&'a self, root: &'a Path) -> &'a Path {
+        match self {
+            Self::Primary | Self::RootOutDirs => root,
+            Self::DependencyOutDirs { manifest_dir } => manifest_dir.as_path(),
+        }
+    }
+
+    /// Return whether build-script `OUT_DIR` output should be included while loading the route workspace.
+    fn include_out_dirs(&self) -> bool {
+        matches!(self, Self::DependencyOutDirs { .. } | Self::RootOutDirs)
+    }
+
+    /// Return the timing stage label for loading this route's workspace.
+    fn load_stage(&self) -> &'static str {
+        match self {
+            Self::Primary => "workspace.load.primary",
+            Self::DependencyOutDirs { .. } => "workspace.load.dependency.out_dirs",
+            Self::RootOutDirs => "workspace.load.out_dirs",
+        }
+    }
+
+    /// Return the timing stage label for extracting metadata through this route.
+    fn extract_stage(&self) -> &'static str {
+        match self {
+            Self::Primary => "extract.workspace.primary",
+            Self::DependencyOutDirs { .. } => "extract.workspace.dependency",
+            Self::RootOutDirs => "extract.workspace.out_dirs",
+        }
+    }
+
+    /// Return timing detail for a workspace load outcome.
+    fn load_detail(&self, status: &str) -> String {
+        match self {
+            Self::DependencyOutDirs { manifest_dir } => manifest_dir.display().to_string(),
+            Self::Primary | Self::RootOutDirs => {
+                format!("out_dirs={} status={status}", self.include_out_dirs())
+            }
+        }
+    }
+
+    /// Return timing detail for a successful extraction outcome.
+    fn extract_detail(&self, workspace_hit: bool) -> String {
+        match self {
+            Self::DependencyOutDirs { manifest_dir } => manifest_dir.display().to_string(),
+            Self::Primary | Self::RootOutDirs => {
+                format!("workspace_hit={workspace_hit} out_dirs={}", self.include_out_dirs())
+            }
+        }
+    }
+
+    /// Return timing detail for an extraction miss.
+    fn extract_miss_detail(&self, workspace_hit: bool) -> String {
+        match self {
+            Self::DependencyOutDirs { manifest_dir } => manifest_dir.display().to_string(),
+            Self::Primary | Self::RootOutDirs => {
+                format!(
+                    "workspace_hit={workspace_hit} out_dirs={} status=miss",
+                    self.include_out_dirs()
+                )
+            }
+        }
+    }
+}
+
+/// Return whether an extraction error is a route miss that can fall through to the next route.
+fn metadata_extraction_missed(err: &RustMetadataError) -> bool {
+    matches!(
+        err,
+        RustMetadataError::CrateNotFound(_) | RustMetadataError::PathNotResolved(_)
+    )
+}
+
+/// Return whether the primary route failed to load and can be deferred until fallback routes are exhausted.
+fn workspace_load_failed(err: &RustMetadataError) -> bool {
+    matches!(err, RustMetadataError::Io(_) | RustMetadataError::LoadWorkspace { .. })
+}
+
+/// Extract metadata through one typed workspace route.
+fn extract_from_workspace_route(
+    inner: &mut CacheInner,
+    root: &Path,
+    canonical_path: &str,
+    route: WorkspaceExtractionRoute,
+    progress: &(dyn Fn(String) + Sync),
+    timing_enabled: bool,
+) -> Result<RustItemMetadata, RustMetadataError> {
+    match inner.workspaces.entry(route.key(root)) {
+        Entry::Occupied(o) => {
+            let started = Instant::now();
+            match extract_rust_item(o.into_mut(), canonical_path) {
+                Ok(meta) => {
+                    log_timing_stage(
+                        timing_enabled,
+                        root,
+                        canonical_path,
+                        route.extract_stage(),
+                        started.elapsed(),
+                        route.extract_detail(true).as_str(),
+                    );
+                    return Ok(meta);
+                }
+                Err(err) if metadata_extraction_missed(&err) => {}
+                Err(err) => return Err(err),
+            }
+            log_timing_stage(
+                timing_enabled,
+                root,
+                canonical_path,
+                route.extract_stage(),
+                started.elapsed(),
+                route.extract_miss_detail(true).as_str(),
+            );
+        }
+        Entry::Vacant(v) => {
+            let load_started = Instant::now();
+            match RustWorkspace::load_with_options(route.manifest_dir(root), progress, route.include_out_dirs()) {
+                Ok(workspace) => {
+                    log_timing_stage(
+                        timing_enabled,
+                        root,
+                        canonical_path,
+                        route.load_stage(),
+                        load_started.elapsed(),
+                        route.load_detail("ok").as_str(),
+                    );
+                    let extract_started = Instant::now();
+                    match extract_rust_item(v.insert(workspace), canonical_path) {
+                        Ok(meta) => {
+                            log_timing_stage(
+                                timing_enabled,
+                                root,
+                                canonical_path,
+                                route.extract_stage(),
+                                extract_started.elapsed(),
+                                route.extract_detail(false).as_str(),
+                            );
+                            return Ok(meta);
+                        }
+                        Err(err) if metadata_extraction_missed(&err) => {}
+                        Err(err) => return Err(err),
+                    }
+                    log_timing_stage(
+                        timing_enabled,
+                        root,
+                        canonical_path,
+                        route.extract_stage(),
+                        extract_started.elapsed(),
+                        route.extract_miss_detail(false).as_str(),
+                    );
+                }
+                Err(err) => {
+                    log_timing_stage(
+                        timing_enabled,
+                        root,
+                        canonical_path,
+                        route.load_stage(),
+                        load_started.elapsed(),
+                        route.load_detail("error").as_str(),
+                    );
+                    return Err(err);
+                }
+            }
+        }
+    }
+
+    Err(RustMetadataError::PathNotResolved(canonical_path.to_string()))
+}
+
+/// Attempt extraction through one planned route: primary workspace, dependency workspace, then root `OUT_DIR`
+/// workspace.
+///
+/// The root `OUT_DIR` route is reached only after the primary route misses and dependency resolution either misses or
+/// determines that the queried crate belongs to the generated root workspace.
 fn extract_in_workspace_set(
     inner: &mut CacheInner,
     root: &Path,
@@ -608,83 +1438,18 @@ fn extract_in_workspace_set(
 ) -> Result<RustItemMetadata, RustMetadataError> {
     let mut deferred_load_error = None;
 
-    match inner.workspaces.entry((root.to_path_buf(), false)) {
-        Entry::Occupied(o) => {
-            let started = Instant::now();
-            match extract_rust_item(o.into_mut(), canonical_path) {
-                Ok(meta) => {
-                    log_timing_stage(
-                        timing_enabled,
-                        root,
-                        canonical_path,
-                        "extract.workspace.primary",
-                        started.elapsed(),
-                        "workspace_hit=true out_dirs=false",
-                    );
-                    return Ok(meta);
-                }
-                Err(RustMetadataError::CrateNotFound(_)) | Err(RustMetadataError::PathNotResolved(_)) => {}
-                Err(err) => return Err(err),
-            }
-            log_timing_stage(
-                timing_enabled,
-                root,
-                canonical_path,
-                "extract.workspace.primary",
-                started.elapsed(),
-                "workspace_hit=true out_dirs=false status=miss",
-            );
-        }
-        Entry::Vacant(v) => {
-            let load_started = Instant::now();
-            match RustWorkspace::load(root, progress) {
-                Ok(workspace) => {
-                    log_timing_stage(
-                        timing_enabled,
-                        root,
-                        canonical_path,
-                        "workspace.load.primary",
-                        load_started.elapsed(),
-                        "out_dirs=false status=ok",
-                    );
-                    let extract_started = Instant::now();
-                    match extract_rust_item(v.insert(workspace), canonical_path) {
-                        Ok(meta) => {
-                            log_timing_stage(
-                                timing_enabled,
-                                root,
-                                canonical_path,
-                                "extract.workspace.primary",
-                                extract_started.elapsed(),
-                                "workspace_hit=false out_dirs=false",
-                            );
-                            return Ok(meta);
-                        }
-                        Err(RustMetadataError::CrateNotFound(_)) | Err(RustMetadataError::PathNotResolved(_)) => {}
-                        Err(err) => return Err(err),
-                    }
-                    log_timing_stage(
-                        timing_enabled,
-                        root,
-                        canonical_path,
-                        "extract.workspace.primary",
-                        extract_started.elapsed(),
-                        "workspace_hit=false out_dirs=false status=miss",
-                    );
-                }
-                Err(err) => {
-                    log_timing_stage(
-                        timing_enabled,
-                        root,
-                        canonical_path,
-                        "workspace.load.primary",
-                        load_started.elapsed(),
-                        "out_dirs=false status=error",
-                    );
-                    deferred_load_error = Some(err);
-                }
-            }
-        }
+    match extract_from_workspace_route(
+        inner,
+        root,
+        canonical_path,
+        WorkspaceExtractionRoute::Primary,
+        progress,
+        timing_enabled,
+    ) {
+        Ok(meta) => return Ok(meta),
+        Err(err) if metadata_extraction_missed(&err) => {}
+        Err(err) if workspace_load_failed(&err) => deferred_load_error = Some(err),
+        Err(err) => return Err(err),
     }
 
     let crate_name = crate_name_for_path(canonical_path);
@@ -741,34 +1506,38 @@ fn extract_in_workspace_set(
                 Err(err) => return Err(err),
             }
         }
-        let dep_root_display = dep_root.display().to_string();
-        let dep_workspace = match inner.workspaces.entry((dep_root.clone(), true)) {
-            Entry::Occupied(o) => o.into_mut(),
-            Entry::Vacant(v) => {
-                let load_started = Instant::now();
-                let workspace = RustWorkspace::load_with_options(&dep_root, progress, true)?;
+        match extract_from_workspace_route(
+            inner,
+            root,
+            canonical_path,
+            WorkspaceExtractionRoute::DependencyOutDirs {
+                manifest_dir: dep_root.clone(),
+            },
+            progress,
+            timing_enabled,
+        ) {
+            Ok(meta) => return Ok(meta),
+            Err(err) if metadata_extraction_missed(&err) => {
                 log_timing_stage(
                     timing_enabled,
                     root,
                     canonical_path,
-                    "workspace.load.dependency.out_dirs",
-                    load_started.elapsed(),
-                    dep_root_display.as_str(),
+                    "extract.workspace.dependency",
+                    std::time::Duration::ZERO,
+                    "status=miss root_out_dirs_fallback=true",
                 );
-                v.insert(workspace)
+                if let Ok(meta) =
+                    extract_from_root_out_dir_workspace(inner, root, canonical_path, progress, timing_enabled)
+                {
+                    return Ok(meta);
+                }
+                if let Some(meta) = generated_out_dir_metadata(root, &dep_root, canonical_path) {
+                    return Ok(meta);
+                }
+                return Err(err);
             }
-        };
-        let extract_started = Instant::now();
-        let meta = extract_rust_item(dep_workspace, canonical_path);
-        log_timing_stage(
-            timing_enabled,
-            root,
-            canonical_path,
-            "extract.workspace.dependency",
-            extract_started.elapsed(),
-            dep_root_display.as_str(),
-        );
-        return meta;
+            Err(err) => return Err(err),
+        }
     }
 
     if !root_workspace_declares_crate(inner, root, crate_name) {
@@ -778,92 +1547,26 @@ fn extract_in_workspace_set(
         return Err(RustMetadataError::CrateNotFound(crate_name.to_string()));
     }
 
-    match inner.workspaces.entry((root.to_path_buf(), true)) {
-        Entry::Occupied(o) => {
-            let started = Instant::now();
-            match extract_rust_item(o.into_mut(), canonical_path) {
-                Ok(meta) => {
-                    log_timing_stage(
-                        timing_enabled,
-                        root,
-                        canonical_path,
-                        "extract.workspace.out_dirs",
-                        started.elapsed(),
-                        "workspace_hit=true out_dirs=true",
-                    );
-                    return Ok(meta);
-                }
-                Err(RustMetadataError::CrateNotFound(_)) | Err(RustMetadataError::PathNotResolved(_)) => {}
-                Err(err) => return Err(err),
-            }
-            log_timing_stage(
-                timing_enabled,
-                root,
-                canonical_path,
-                "extract.workspace.out_dirs",
-                started.elapsed(),
-                "workspace_hit=true out_dirs=true status=miss",
-            );
-        }
-        Entry::Vacant(v) => {
-            let load_started = Instant::now();
-            match RustWorkspace::load_with_options(root, progress, true) {
-                Ok(workspace) => {
-                    log_timing_stage(
-                        timing_enabled,
-                        root,
-                        canonical_path,
-                        "workspace.load.out_dirs",
-                        load_started.elapsed(),
-                        "out_dirs=true status=ok",
-                    );
-                    let extract_started = Instant::now();
-                    match extract_rust_item(v.insert(workspace), canonical_path) {
-                        Ok(meta) => {
-                            log_timing_stage(
-                                timing_enabled,
-                                root,
-                                canonical_path,
-                                "extract.workspace.out_dirs",
-                                extract_started.elapsed(),
-                                "workspace_hit=false out_dirs=true",
-                            );
-                            return Ok(meta);
-                        }
-                        Err(RustMetadataError::CrateNotFound(_)) | Err(RustMetadataError::PathNotResolved(_)) => {}
-                        Err(err) => return Err(err),
-                    }
-                    log_timing_stage(
-                        timing_enabled,
-                        root,
-                        canonical_path,
-                        "extract.workspace.out_dirs",
-                        extract_started.elapsed(),
-                        "workspace_hit=false out_dirs=true status=miss",
-                    );
-                }
-                Err(err) => {
-                    log_timing_stage(
-                        timing_enabled,
-                        root,
-                        canonical_path,
-                        "workspace.load.out_dirs",
-                        load_started.elapsed(),
-                        "out_dirs=true status=error",
-                    );
-                    if deferred_load_error.is_none() {
-                        deferred_load_error = Some(err);
-                    }
-                }
-            }
-        }
-    }
+    extract_from_root_out_dir_workspace(inner, root, canonical_path, progress, timing_enabled)
+}
 
-    if let Some(err) = deferred_load_error {
-        return Err(err);
-    }
-
-    Err(RustMetadataError::CrateNotFound(crate_name.to_string()))
+/// Extract metadata from the root workspace with build-script output directories enabled, preserving the same workspace
+/// cache entry for repeated generated dependency lookups.
+fn extract_from_root_out_dir_workspace(
+    inner: &mut CacheInner,
+    root: &Path,
+    canonical_path: &str,
+    progress: &(dyn Fn(String) + Sync),
+    timing_enabled: bool,
+) -> Result<RustItemMetadata, RustMetadataError> {
+    extract_from_workspace_route(
+        inner,
+        root,
+        canonical_path,
+        WorkspaceExtractionRoute::RootOutDirs,
+        progress,
+        timing_enabled,
+    )
 }
 
 impl RustMetadataCache {

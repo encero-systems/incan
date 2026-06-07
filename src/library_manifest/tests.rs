@@ -181,6 +181,133 @@ fn function_export_from_checked_marks_only_materializable_defaults_as_omittable(
 }
 
 #[test]
+fn checked_exports_publish_semantic_identity_graph() -> Result<(), Box<dyn std::error::Error>> {
+    let callable = crate::frontend::library_exports::CheckedFunctionExport {
+        name: "cast".to_string(),
+        emitted_name: Some("cast_overload_abcd".to_string()),
+        type_params: Vec::new(),
+        params: Vec::new(),
+        param_defaults: Vec::new(),
+        return_type: crate::frontend::symbols::ResolvedType::Int,
+        is_async: false,
+    };
+    let exports = vec![
+        crate::frontend::library_exports::CheckedNamedExport {
+            name: "cast".to_string(),
+            identity: crate::frontend::library_exports::CheckedExportIdentity::direct(vec![
+                "helpers".to_string(),
+                "cast".to_string(),
+            ]),
+            kind: crate::frontend::library_exports::CheckedExportKind::Function(callable.clone()),
+        },
+        crate::frontend::library_exports::CheckedNamedExport {
+            name: "safe_cast".to_string(),
+            identity: crate::frontend::library_exports::CheckedExportIdentity::alias(
+                vec!["facade".to_string(), "safe_cast".to_string()],
+                vec!["helpers".to_string(), "cast".to_string()],
+            ),
+            kind: crate::frontend::library_exports::CheckedExportKind::Alias(
+                crate::frontend::library_exports::CheckedAliasExport {
+                    name: "safe_cast".to_string(),
+                    target_path: vec!["helpers".to_string(), "cast".to_string()],
+                    projected_function: Some(crate::frontend::library_exports::CheckedFunctionExport {
+                        name: "safe_cast".to_string(),
+                        ..callable.clone()
+                    }),
+                },
+            ),
+        },
+        crate::frontend::library_exports::CheckedNamedExport {
+            name: "public_cast".to_string(),
+            identity: crate::frontend::library_exports::CheckedExportIdentity::reexport(
+                vec!["helpers".to_string(), "cast".to_string()],
+                vec!["helpers".to_string(), "cast".to_string()],
+            ),
+            kind: crate::frontend::library_exports::CheckedExportKind::Function(callable.clone()),
+        },
+        crate::frontend::library_exports::CheckedNamedExport {
+            name: "core_cast".to_string(),
+            identity: crate::frontend::library_exports::CheckedExportIdentity::partial(
+                vec!["helpers".to_string(), "core_cast".to_string()],
+                vec!["helpers".to_string(), "cast".to_string()],
+                crate::frontend::library_exports::CheckedPartialTargetKind::Function,
+            ),
+            kind: crate::frontend::library_exports::CheckedExportKind::Partial(
+                crate::frontend::library_exports::CheckedPartialExport {
+                    name: "core_cast".to_string(),
+                    target_path: vec!["helpers".to_string(), "cast".to_string()],
+                    target_kind: crate::frontend::library_exports::CheckedPartialTargetKind::Function,
+                    presets: vec![crate::frontend::library_exports::CheckedPartialPreset {
+                        name: "target".to_string(),
+                        ty: crate::frontend::symbols::ResolvedType::Str,
+                        value: crate::frontend::library_exports::CheckedPresetValue::String("core".to_string()),
+                    }],
+                    type_params: Vec::new(),
+                    params: Vec::new(),
+                    return_type: crate::frontend::symbols::ResolvedType::Int,
+                    is_async: false,
+                },
+            ),
+        },
+    ];
+
+    let manifest = LibraryManifest::from_checked_exports("mylib", "0.1.0", &exports);
+    let graph = &manifest.contract_metadata.identity_graph;
+    assert_eq!(graph.schema_version, LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION);
+
+    let cast = graph.entry_for_public_name("cast").ok_or("missing cast identity")?;
+    assert_eq!(cast.public_path, vec!["mylib".to_string(), "cast".to_string()]);
+    assert_eq!(cast.source_path, vec!["helpers".to_string(), "cast".to_string()]);
+    assert_eq!(cast.projection, ExportIdentityProjection::Direct);
+
+    let safe_cast = graph
+        .entry_for_public_name("safe_cast")
+        .ok_or("missing safe_cast identity")?;
+    assert_eq!(
+        safe_cast.public_path,
+        vec!["mylib".to_string(), "safe_cast".to_string()]
+    );
+    assert_eq!(
+        safe_cast.projection,
+        ExportIdentityProjection::Alias {
+            target_path: vec!["helpers".to_string(), "cast".to_string()]
+        }
+    );
+
+    let public_cast = graph
+        .entry_for_public_name("public_cast")
+        .ok_or("missing public_cast identity")?;
+    assert_eq!(
+        public_cast.projection,
+        ExportIdentityProjection::Reexport {
+            target_path: vec!["helpers".to_string(), "cast".to_string()]
+        }
+    );
+
+    let core_cast = graph
+        .entry_for_public_name("core_cast")
+        .ok_or("missing core_cast identity")?;
+    assert_eq!(
+        core_cast.projection,
+        ExportIdentityProjection::Partial {
+            target_path: vec!["helpers".to_string(), "cast".to_string()],
+            target_kind: PartialTargetKindExport::Function,
+        }
+    );
+
+    let tmp = tempfile::tempdir()?;
+    let path = tmp.path().join("identity.incnlib");
+    manifest.write_to_path(&path)?;
+    let loaded = LibraryManifest::read_from_path(&path)?;
+    assert_eq!(
+        loaded.contract_metadata.identity_graph,
+        manifest.contract_metadata.identity_graph
+    );
+
+    Ok(())
+}
+
+#[test]
 fn parameter_default_materializability_is_all_or_nothing() {
     let empty_call = ParamDefaultExport::Call {
         path: Vec::new(),

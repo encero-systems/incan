@@ -20,9 +20,15 @@
     },
     {
       "path": "crates/rust_inspect/src/cache.rs",
-      "category": "rust-inspect cache migration compatibility",
-      "expected_count": 1,
-      "expected_fingerprint": "0x57ff753cfc22d019"
+      "category": "rust-inspect cache migration and generated Rust syntax metadata compatibility",
+      "expected_count": 20,
+      "expected_fingerprint": "0xaee7fb876de04bcc"
+    },
+    {
+      "path": "crates/rust_inspect/src/cache_tests.rs",
+      "category": "rust-inspect generated enum metadata regression assertions",
+      "expected_count": 2,
+      "expected_fingerprint": "0x207c0f7ecc97dd0b"
     },
     {
       "path": "crates/rust_inspect/src/cache_timing.rs",
@@ -111,8 +117,8 @@
     {
       "path": "src/backend/ir/emit/expressions/methods.rs",
       "category": "quarantined metadata-free method compatibility",
-      "expected_count": 9,
-      "expected_fingerprint": "0x2bda7f88a3c65087"
+      "expected_count": 7,
+      "expected_fingerprint": "0xd980f50534954c82"
     },
     {
       "path": "src/backend/ir/emit/expressions/methods/fast_paths.rs",
@@ -183,8 +189,8 @@
     {
       "path": "src/backend/ir/lower/expr/calls.rs",
       "category": "public dependency call/default lowering, checked API target paths, and assert-raises policy",
-      "expected_count": 6,
-      "expected_fingerprint": "0x6e1861379f651336"
+      "expected_count": 5,
+      "expected_fingerprint": "0x2a9295afdba175d8"
     },
     {
       "path": "src/backend/ir/lower/expr/mod.rs",
@@ -211,6 +217,12 @@
       "expected_fingerprint": "0xeeb0ca6fafb43da6"
     },
     {
+      "path": "src/backend/ir/ownership.rs",
+      "category": "central external Rust duckborrower byte-buffer planning",
+      "expected_count": 4,
+      "expected_fingerprint": "0xa001bd9bca8bb353"
+    },
+    {
       "path": "src/backend/ir/reference_shape.rs",
       "category": "central Rust reference-shape compatibility",
       "expected_count": 1,
@@ -224,9 +236,9 @@
     },
     {
       "path": "src/cli/commands/common.rs",
-      "category": "project materialization and dependency compatibility",
-      "expected_count": 5,
-      "expected_fingerprint": "0x3990288339d2b3b3"
+      "category": "project materialization, dependency, and rust-inspect prewarm compatibility",
+      "expected_count": 6,
+      "expected_fingerprint": "0x50734692a52de5d3"
     },
     {
       "path": "src/dependency_resolver.rs",
@@ -249,8 +261,8 @@
     {
       "path": "src/frontend/typechecker/check_expr/access.rs",
       "category": "method/type access surface classification",
-      "expected_count": 45,
-      "expected_fingerprint": "0x04cd6395cd9125c3"
+      "expected_count": 46,
+      "expected_fingerprint": "0xadce01bf76021778"
     },
     {
       "path": "src/frontend/typechecker/check_expr/basics.rs",

@@ -37,5 +37,5 @@ fn main() {
         }),
     );
     let answer: i64 = find_value(true);
-    spin(answer);
+    let _ = spin(answer);
 }

@@ -819,16 +819,8 @@ impl<'a> IrEmitter<'a> {
                     });
                 let sig_param = function_sig.and_then(|sig| sig.params.get(idx));
                 let in_return = *self.in_return_context.borrow();
-                let use_site = if let IrExprKind::Var { name, ref_kind, .. } = &func.kind {
-                    if matches!(ref_kind, VarRefKind::ExternalRustName) || self.external_rust_functions.contains(name) {
-                        ValueUseSite::ExternalCallArg { target_ty }
-                    } else {
-                        ValueUseSite::IncanCallArg {
-                            target_ty,
-                            callee_param: sig_param,
-                            in_return,
-                        }
-                    }
+                let use_site = if self.callee_is_external_rust_path(func) {
+                    ValueUseSite::ExternalCallArg { target_ty }
                 } else {
                     ValueUseSite::IncanCallArg {
                         target_ty,
@@ -984,6 +976,17 @@ impl<'a> IrEmitter<'a> {
             IrExprKind::Field { object, .. } => Self::callee_is_imported_module_path(object),
             IrExprKind::Var { ref_kind, .. } => {
                 matches!(ref_kind, VarRefKind::ExternalName | VarRefKind::ExternalRustName)
+            }
+            _ => false,
+        }
+    }
+
+    /// Return whether a callee path is rooted in an inspected external Rust item.
+    fn callee_is_external_rust_path(&self, func: &TypedExpr) -> bool {
+        match &func.kind {
+            IrExprKind::Field { object, .. } => self.callee_is_external_rust_path(object),
+            IrExprKind::Var { name, ref_kind, .. } => {
+                matches!(ref_kind, VarRefKind::ExternalRustName) || self.external_rust_functions.contains(name)
             }
             _ => false,
         }
@@ -1146,16 +1149,8 @@ impl<'a> IrEmitter<'a> {
             return Ok(adapter);
         }
         let in_return = *self.in_return_context.borrow();
-        let use_site = if let IrExprKind::Var { name, ref_kind, .. } = &func.kind {
-            if matches!(ref_kind, VarRefKind::ExternalRustName) || self.external_rust_functions.contains(name) {
-                ValueUseSite::ExternalCallArg { target_ty }
-            } else {
-                ValueUseSite::IncanCallArg {
-                    target_ty,
-                    callee_param: Some(param),
-                    in_return,
-                }
-            }
+        let use_site = if self.callee_is_external_rust_path(func) {
+            ValueUseSite::ExternalCallArg { target_ty }
         } else {
             ValueUseSite::IncanCallArg {
                 target_ty,
@@ -1419,6 +1414,26 @@ mod tests {
                 name: name.to_string(),
                 access: VarAccess::Copy,
                 ref_kind: VarRefKind::ExternalRustName,
+            },
+            IrType::Function {
+                params,
+                ret: Box::new(IrType::Unit),
+            },
+        )
+    }
+
+    fn external_rust_field_call_target(receiver_name: &str, method: &str, params: Vec<IrType>) -> TypedExpr {
+        TypedExpr::new(
+            IrExprKind::Field {
+                object: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: receiver_name.to_string(),
+                        access: VarAccess::Copy,
+                        ref_kind: VarRefKind::ExternalRustName,
+                    },
+                    IrType::Struct(receiver_name.to_string()),
+                )),
+                field: method.to_string(),
             },
             IrType::Function {
                 params,
@@ -2039,6 +2054,26 @@ mod tests {
                 ))
             })?;
         assert_eq!(render(tokens), "consume(&state,&plan)");
+        Ok(())
+    }
+
+    #[test]
+    fn emit_call_expr_uses_external_planning_for_rust_rooted_field_callee() -> Result<(), Box<dyn std::error::Error>> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let func = external_rust_field_call_target("ConsumerPlan", "decode", vec![IrType::Generic("Buf".to_string())]);
+        let encoded = local_arg(
+            "encoded",
+            IrType::NamedGeneric("Vec".to_string(), vec![IrType::Numeric(NumericTypeId::U8)]),
+        );
+        let tokens = emitter
+            .emit_call_expr(&func, &[], &[pos_arg(encoded)], None, None)
+            .map_err(|err| {
+                std::io::Error::other(format!(
+                    "Rust-rooted field callees should use external argument planning: {err:?}"
+                ))
+            })?;
+        assert_eq!(render(tokens), "ConsumerPlan::decode((encoded).as_slice())");
         Ok(())
     }
 

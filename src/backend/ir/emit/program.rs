@@ -24,7 +24,6 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::frontend::symbols::{overload_emitted_name_prefix, overload_source_name_from_emitted};
 use incan_core::lang::surface::result_methods::ResultMethodId;
-use incan_core::lang::traits::{self as core_traits, TraitId};
 use incan_core::lang::{conventions, magic_methods, stdlib as core_stdlib, trait_capabilities};
 
 use super::super::decl::{
@@ -58,7 +57,6 @@ struct GeneratedUseAnalyzer<'program> {
     function_registry: &'program FunctionRegistry,
     impls_by_target: HashMap<String, Vec<&'program super::super::decl::IrImpl>>,
     rust_extension_trait_imports: HashMap<String, IrRustTraitImport>,
-    external_error_trait_types: HashSet<String>,
     preserve_public_items: bool,
     variable_types: HashMap<String, IrType>,
     struct_field_aliases: HashMap<(String, String), String>,
@@ -72,14 +70,12 @@ impl<'program> GeneratedUseAnalyzer<'program> {
         program: &'program IrProgram,
         externally_reachable_items: &HashSet<String>,
         preserve_public_items: bool,
-        external_error_trait_types: &HashSet<String>,
     ) -> GeneratedUseAnalysis {
         let mut analyzer = Self {
             declarations_by_name: HashMap::new(),
             function_registry: &program.function_registry,
             impls_by_target: HashMap::new(),
             rust_extension_trait_imports: HashMap::new(),
-            external_error_trait_types: external_error_trait_types.clone(),
             preserve_public_items,
             variable_types: HashMap::new(),
             struct_field_aliases: HashMap::new(),
@@ -241,6 +237,20 @@ impl<'program> GeneratedUseAnalyzer<'program> {
         self.analysis.used_imports.insert(name.to_string());
         if self.declarations_by_name.contains_key(name) && self.analysis.reachable_items.insert(name.to_string()) {
             self.pending.push(name.to_string());
+        }
+    }
+
+    /// Mark a top-level generated type declaration as semantically reachable without retaining a Rust `use` binding.
+    ///
+    /// Type annotations keep local declarations alive. Imported type names still need their Rust `use` binding because
+    /// the current type emitter prints their local binding name in signatures.
+    fn mark_reachable_type(&mut self, name: &str) {
+        if self.declarations_by_name.contains_key(name) {
+            if self.analysis.reachable_items.insert(name.to_string()) {
+                self.pending.push(name.to_string());
+            }
+        } else {
+            self.analysis.used_imports.insert(name.to_string());
         }
     }
 
@@ -550,7 +560,7 @@ impl<'program> GeneratedUseAnalyzer<'program> {
 
     /// Scan an expression tree for generated Rust dependencies and observed field/method uses.
     fn scan_expr(&mut self, expr: &TypedExpr) {
-        self.scan_type(&expr.ty);
+        self.scan_non_textual_type(&expr.ty);
         match &expr.kind {
             IrExprKind::Var { name, .. } | IrExprKind::StaticRead { name } | IrExprKind::StaticBinding { name } => {
                 self.mark_reachable_item(name);
@@ -607,7 +617,9 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                     self.analysis.used_constructors.insert(name.clone());
                 }
                 self.record_borrowed_function_value_adapters(func, args, callable_signature.as_ref(), canonical_path);
-                self.scan_expr(func);
+                if !Self::call_emits_via_canonical_callee_path(func, canonical_path.as_deref()) {
+                    self.scan_expr(func);
+                }
                 for ty in type_args {
                     self.scan_type(ty);
                 }
@@ -633,7 +645,6 @@ impl<'program> GeneratedUseAnalyzer<'program> {
             } => {
                 self.scan_expr(receiver);
                 self.mark_rust_extension_trait_imports(receiver, method, dispatch.as_ref());
-                self.mark_stdlib_error_trait_import(receiver, method);
                 if let Some(type_name) = Self::nominal_type_name(&receiver.ty) {
                     self.analysis
                         .used_methods
@@ -1001,6 +1012,35 @@ impl<'program> GeneratedUseAnalyzer<'program> {
         }
     }
 
+    /// Return whether call emission will use the resolved canonical path instead of the source callee expression.
+    ///
+    /// The use analyzer must mirror that emission choice. Otherwise imported aliases, especially dependency-provided
+    /// vocab helper aliases, are retained as Rust `use` bindings even though the emitted call is already qualified
+    /// through the owning crate or generated stdlib module.
+    fn call_emits_via_canonical_callee_path(func: &TypedExpr, canonical_path: Option<&[String]>) -> bool {
+        let Some(path) = canonical_path else {
+            return false;
+        };
+
+        match path.first().map(String::as_str) {
+            Some("pub") => !Self::callee_is_imported_module_path(func),
+            Some(core_stdlib::STDLIB_ROOT | core_stdlib::INCAN_STD_NAMESPACE) => true,
+            _ => false,
+        }
+    }
+
+    /// Return whether the callee is already spelled as an imported module-rooted path in source, such as
+    /// `lib.function`. Public package calls keep that source path so package module imports remain reachable.
+    fn callee_is_imported_module_path(func: &TypedExpr) -> bool {
+        match &func.kind {
+            IrExprKind::Field { object, .. } => Self::callee_is_imported_module_path(object),
+            IrExprKind::Var { ref_kind, .. } => {
+                matches!(ref_kind, VarRefKind::ExternalName | VarRefKind::ExternalRustName)
+            }
+            _ => false,
+        }
+    }
+
     /// Return the branch payload type observed by `inspect` or `inspect_err` during generated-use analysis.
     fn result_observed_type(method: ResultMethodId, receiver_ty: &IrType, callback: &TypedExpr) -> Option<IrType> {
         match (method, receiver_ty) {
@@ -1044,19 +1084,6 @@ impl<'program> GeneratedUseAnalyzer<'program> {
         };
         if matches.next().is_none() {
             self.analysis.used_extension_trait_imports.insert(binding);
-        }
-    }
-
-    /// Mark the stdlib `Error` trait import required for Rust method lookup on imported error types.
-    fn mark_stdlib_error_trait_import(&mut self, receiver: &TypedExpr, method: &str) {
-        if !core_traits::method_names(TraitId::Error).contains(&method) {
-            return;
-        }
-        let Some(type_name) = Self::nominal_type_name(&receiver.ty) else {
-            return;
-        };
-        if self.external_error_trait_types.contains(type_name) {
-            self.analysis.uses_stdlib_error_trait = true;
         }
     }
 
@@ -1108,8 +1135,13 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                     self.scan_type(item);
                 }
             }
+            IrType::NamedGeneric(name, args) if name == IR_UNION_TYPE_NAME => {
+                for arg in args {
+                    self.scan_non_textual_type(arg);
+                }
+            }
             IrType::Struct(name) | IrType::Enum(name) | IrType::Trait(name) | IrType::NamedGeneric(name, _) => {
-                self.mark_reachable_item(name);
+                self.mark_reachable_type(name);
                 if let IrType::NamedGeneric(_, args) = ty {
                     for arg in args {
                         self.scan_type(arg);
@@ -1117,7 +1149,7 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                 }
             }
             IrType::ImplTrait(bound) => {
-                self.mark_reachable_item(&bound.trait_path);
+                self.mark_reachable_type(&bound.trait_path);
                 for arg in &bound.type_args {
                     self.scan_type(arg);
                 }
@@ -1130,6 +1162,75 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                     self.scan_type(param);
                 }
                 self.scan_type(ret);
+            }
+            IrType::Unit
+            | IrType::Bool
+            | IrType::Int
+            | IrType::Float
+            | IrType::Numeric(_)
+            | IrType::Decimal { .. }
+            | IrType::String
+            | IrType::Bytes
+            | IrType::StaticStr
+            | IrType::StaticBytes
+            | IrType::FrozenStr
+            | IrType::FrozenBytes
+            | IrType::StrRef
+            | IrType::Generic(_)
+            | IrType::RustDisplay(_)
+            | IrType::SelfType
+            | IrType::Unknown => {}
+        }
+    }
+
+    /// Scan types that are semantically relevant but not printed through the current module's Rust type syntax.
+    ///
+    /// This keeps local declarations reachable while avoiding `use` bindings for imported types whose names appear only
+    /// in inferred expression types or crate-root generated union payloads.
+    fn scan_non_textual_type(&mut self, ty: &IrType) {
+        match ty {
+            IrType::List(inner)
+            | IrType::Set(inner)
+            | IrType::Option(inner)
+            | IrType::Ref(inner)
+            | IrType::RefMut(inner)
+            | IrType::TypeToken(inner)
+            | IrType::ExternalUnion { union: inner, .. } => self.scan_non_textual_type(inner),
+            IrType::Dict(key, value) | IrType::Result(key, value) => {
+                self.scan_non_textual_type(key);
+                self.scan_non_textual_type(value);
+            }
+            IrType::Tuple(items) | IrType::NamedGeneric(_, items) => {
+                if let Some(name) = ty.nominal_type_name()
+                    && self.declarations_by_name.contains_key(name)
+                    && self.analysis.reachable_items.insert(name.to_string())
+                {
+                    self.pending.push(name.to_string());
+                }
+                for item in items {
+                    self.scan_non_textual_type(item);
+                }
+            }
+            IrType::Struct(name) | IrType::Enum(name) | IrType::Trait(name) => {
+                if self.declarations_by_name.contains_key(name)
+                    && self.analysis.reachable_items.insert(name.to_string())
+                {
+                    self.pending.push(name.to_string());
+                }
+            }
+            IrType::ImplTrait(bound) => {
+                for arg in &bound.type_args {
+                    self.scan_non_textual_type(arg);
+                }
+                for (_, ty) in &bound.assoc_types {
+                    self.scan_non_textual_type(ty);
+                }
+            }
+            IrType::Function { params, ret } => {
+                for param in params {
+                    self.scan_non_textual_type(param);
+                }
+                self.scan_non_textual_type(ret);
             }
             IrType::Unit
             | IrType::Bool
@@ -2616,14 +2717,8 @@ impl<'a> IrEmitter<'a> {
         program: &IrProgram,
         externally_reachable_items: &HashSet<String>,
         preserve_public_items: bool,
-        external_error_trait_types: &HashSet<String>,
     ) -> CallableNameUseFacts {
-        let analysis = GeneratedUseAnalyzer::analyze(
-            program,
-            externally_reachable_items,
-            preserve_public_items,
-            external_error_trait_types,
-        );
+        let analysis = GeneratedUseAnalyzer::analyze(program, externally_reachable_items, preserve_public_items);
         CallableNameUseFacts {
             signature_keys: analysis.callable_name_signature_keys,
             function_arg_signature_keys: analysis.callable_name_function_arg_signature_keys,
@@ -2876,13 +2971,8 @@ impl<'a> IrEmitter<'a> {
     /// Emit a program to TokenStream (without formatting).
     pub fn emit_program_tokens(&self, program: &IrProgram) -> Result<TokenStream, EmitError> {
         let mut items = Vec::new();
-        let analysis = GeneratedUseAnalyzer::analyze(
-            program,
-            &self.externally_reachable_items,
-            self.preserve_public_items,
-            &self.external_error_trait_types,
-        );
-        let uses_stdlib_error_trait = analysis.uses_stdlib_error_trait;
+        let analysis =
+            GeneratedUseAnalyzer::analyze(program, &self.externally_reachable_items, self.preserve_public_items);
         let result_observer_callable_types = analysis.result_observer_callable_types.clone();
         let borrowed_function_adapters = analysis.borrowed_function_adapters.clone();
         let local_callable_name_signature_keys = analysis.callable_name_signature_keys.clone();
@@ -2920,10 +3010,6 @@ impl<'a> IrEmitter<'a> {
         let compiler_version = crate::version::INCAN_VERSION;
         items.push(quote! { incan_stdlib::__incan_stdlib_version_check!(#compiler_version); });
 
-        if uses_stdlib_error_trait {
-            let std_namespace = Self::rust_ident(incan_core::lang::stdlib::INCAN_STD_NAMESPACE);
-            items.push(quote! { use crate::#std_namespace::traits::error::Error as _; });
-        }
         let needs_json_serialize_trait_scope = emitted_declarations.iter().any(|decl| {
             matches!(
                 &decl.kind,

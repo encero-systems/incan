@@ -296,7 +296,7 @@ def _encode_base85(data: bytes, alphabet: str, zero_shortcut: bool, require_full
         remaining = len(data) - index
         if require_full_blocks and remaining < 4:
             return out
-        mut b0 = int(data[index])
+        b0 = int(data[index])
         mut b1 = 0
         mut b2 = 0
         mut b3 = 0

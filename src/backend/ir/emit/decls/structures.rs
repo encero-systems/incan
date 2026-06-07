@@ -313,31 +313,44 @@ impl<'a> IrEmitter<'a> {
         let lint_allows = self.emit_rust_lint_allows(&e.lint_allows);
         let doc_attrs = self.emit_public_rustdoc_attrs(&e.visibility, e.docstring.as_deref());
 
-        let variant_match_arms: Vec<TokenStream> = e
-            .variants
-            .iter()
-            .map(|v| {
-                let vname = format_ident!("{}", &v.name);
-                let vname_str = &v.name;
-                match &v.fields {
-                    VariantFields::Unit => {
-                        quote! { Self::#vname => #vname_str.to_string() }
-                    }
-                    VariantFields::Tuple(types) => {
-                        let wildcards: Vec<_> = (0..types.len()).map(|_| quote! { _ }).collect();
-                        quote! { Self::#vname(#(#wildcards),*) => #vname_str.to_string() }
-                    }
-                    VariantFields::Struct(_) => {
-                        quote! { Self::#vname { .. } => #vname_str.to_string() }
-                    }
-                }
-            })
-            .collect();
-
         // RFC 023: emit generic type parameters with trait bounds (declaration) and bare names (type positions).
         let generics = self.emit_type_params(&e.type_params);
         let generics_bare = self.emit_type_params_bare(&e.type_params);
         let value_enum_helpers = self.emit_value_enum_helpers(e, &name, &generics, &generics_bare)?;
+        let message_impl = if self.should_emit_enum_message_method(&e.name, &e.visibility) {
+            let variant_match_arms: Vec<TokenStream> = e
+                .variants
+                .iter()
+                .map(|v| {
+                    let vname = format_ident!("{}", &v.name);
+                    let vname_str = &v.name;
+                    match &v.fields {
+                        VariantFields::Unit => {
+                            quote! { Self::#vname => #vname_str.to_string() }
+                        }
+                        VariantFields::Tuple(types) => {
+                            let wildcards: Vec<_> = (0..types.len()).map(|_| quote! { _ }).collect();
+                            quote! { Self::#vname(#(#wildcards),*) => #vname_str.to_string() }
+                        }
+                        VariantFields::Struct(_) => {
+                            quote! { Self::#vname { .. } => #vname_str.to_string() }
+                        }
+                    }
+                })
+                .collect();
+
+            quote! {
+                impl #generics #name #generics_bare {
+                    pub fn message(&self) -> String {
+                        match self {
+                            #(#variant_match_arms),*
+                        }
+                    }
+                }
+            }
+        } else {
+            quote! {}
+        };
 
         Ok(quote! {
             #(#doc_attrs)*
@@ -347,14 +360,7 @@ impl<'a> IrEmitter<'a> {
                 #(#variants),*
             }
 
-            impl #generics #name #generics_bare {
-                pub fn message(&self) -> String {
-                    match self {
-                        #(#variant_match_arms),*
-                    }
-                }
-            }
-
+            #message_impl
             #value_enum_helpers
         })
     }
@@ -611,19 +617,51 @@ impl<'a> IrEmitter<'a> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
     use super::*;
     use crate::backend::ir::decl::{EnumVariant, IrEnum, IrEnumValue, IrEnumValueType, IrTypeParam, Visibility};
+    use crate::backend::ir::emit::GeneratedUseAnalysis;
     use crate::backend::ir::{FunctionRegistry, IrType};
     use incan_core::lang::surface::constructors::{self, ConstructorId};
 
     fn render_enum(e: &IrEnum) -> Result<String, String> {
+        render_enum_with_used_methods(e, HashSet::new())
+    }
+
+    fn render_enum_with_used_methods(e: &IrEnum, used_methods: HashSet<(String, String)>) -> Result<String, String> {
         let registry = FunctionRegistry::new();
         let emitter = IrEmitter::new(&registry);
+        emitter.set_generated_use_analysis(GeneratedUseAnalysis {
+            used_methods,
+            ..GeneratedUseAnalysis::default()
+        });
         let tokens = emitter.emit_enum(e).map_err(|err| err.to_string())?;
         let file = syn::parse2::<syn::File>(tokens).map_err(|err| err.to_string())?;
         Ok(prettyplease::unparse(&file))
+    }
+
+    fn base_enum(name: &str, visibility: Visibility) -> IrEnum {
+        IrEnum {
+            name: name.to_string(),
+            docstring: None,
+            variants: vec![EnumVariant {
+                name: "Ready".to_string(),
+                fields: VariantFields::Unit,
+                raw_value: None,
+            }],
+            variant_aliases: Vec::new(),
+            value_type: None,
+            derives: vec![
+                derives::as_str(DeriveId::Debug).to_string(),
+                derives::as_str(DeriveId::Clone).to_string(),
+                derives::as_str(DeriveId::PartialEq).to_string(),
+            ],
+            visibility,
+            type_params: Vec::<IrTypeParam>::new(),
+            derive_rust_modules: HashMap::new(),
+            lint_allows: Vec::new(),
+        }
     }
 
     fn base_value_enum(name: &str, value_type: IrEnumValueType, variants: Vec<EnumVariant>) -> IrEnum {
@@ -675,6 +713,34 @@ mod tests {
             rendered.contains("Self::Dev => \"Dev\".to_string()"),
             "message() must stay variant-name based:\n{rendered}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn private_enum_omits_unused_message_helper() -> Result<(), String> {
+        let rendered = render_enum(&base_enum("PrivateState", Visibility::Private))?;
+
+        assert!(!rendered.contains("fn message(&self)"), "{rendered}");
+        Ok(())
+    }
+
+    #[test]
+    fn crate_visible_enum_omits_unused_message_helper() -> Result<(), String> {
+        let rendered = render_enum(&base_enum("CrateState", Visibility::Crate))?;
+
+        assert!(!rendered.contains("fn message(&self)"), "{rendered}");
+        Ok(())
+    }
+
+    #[test]
+    fn private_enum_keeps_used_message_helper() -> Result<(), String> {
+        let rendered = render_enum_with_used_methods(
+            &base_enum("PrivateState", Visibility::Private),
+            HashSet::from([("PrivateState".to_string(), "message".to_string())]),
+        )?;
+
+        assert!(rendered.contains("pub fn message(&self) -> String"), "{rendered}");
+        assert!(rendered.contains("Self::Ready => \"Ready\".to_string()"), "{rendered}");
         Ok(())
     }
 

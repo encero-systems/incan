@@ -37,7 +37,11 @@ use super::decl::{IrDeclKind, IrEnumValue, IrEnumValueType, IrStruct, VariantFie
 use super::expr::TypedExpr;
 use super::types::{IR_UNION_TYPE_NAME, IrType};
 use super::{FunctionRegistry, FunctionSignature, IrProgram};
+use crate::frontend::library_manifest_index::{LibraryManifestIndex, LibraryManifestIndexEntry};
+use crate::frontend::symbols::ResolvedType;
+use crate::library_manifest::{FieldExport, TypeRef, resolved_type_from_manifest_type_ref};
 use incan_core::lang::rust_keywords;
+use incan_core::lang::types::collections::{self, CollectionTypeId};
 
 /// Value-enum metadata loaded from a `.incnlib` dependency for consumer-side trait bridges.
 #[derive(Debug, Clone)]
@@ -126,8 +130,6 @@ pub(super) struct GeneratedUseAnalysis {
     pub(super) used_constructors: HashSet<String>,
     /// Type names whose Rust visibility prevents private helper methods from warning when retained.
     pub(super) public_types: HashSet<String>,
-    /// Whether emitted method calls require the stdlib `Error` trait in Rust scope.
-    pub(super) uses_stdlib_error_trait: bool,
     /// Source-owned callable object types used as non-Copy `Result.inspect` / `inspect_err` observers.
     pub(super) result_observer_callable_types: HashSet<String>,
     /// Top-level function values adapted to a borrowed function-pointer parameter.
@@ -316,8 +318,6 @@ pub struct IrEmitter<'a> {
     /// Imported enums usually lower to `IrType::Struct(name)` in consumer modules, so for-loop emission needs this
     /// side-channel to recognize that `list[name]` elements should be iterated as owned enum values.
     dependency_enum_types: HashSet<String>,
-    /// Imported stdlib error type names whose trait methods need Rust trait imports at call sites.
-    external_error_trait_types: HashSet<String>,
     /// Known internal module roots for this compilation unit (e.g. {"db", "store"}).
     ///
     /// Used to disambiguate crate-internal module imports vs external crate imports when emitting `use` paths.
@@ -430,7 +430,6 @@ impl<'a> IrEmitter<'a> {
             value_module_paths: HashMap::new(),
             ambiguous_value_names: HashSet::new(),
             dependency_enum_types: HashSet::new(),
-            external_error_trait_types: HashSet::new(),
             internal_module_roots: HashSet::new(),
             rust_module_path: None,
             rust_import_paths: RefCell::new(std::collections::HashMap::new()),
@@ -1021,6 +1020,20 @@ impl<'a> IrEmitter<'a> {
         )
     }
 
+    /// True when the compiler-provided enum `message()` helper should be emitted.
+    ///
+    /// Public enums keep the helper as part of their exported Rust-facing surface. Private and crate-visible helper
+    /// enums emit it only when reachable generated code actually calls `.message()`, which avoids dead-code warnings
+    /// without hiding them behind crate-level lint suppressions.
+    pub(super) fn should_emit_enum_message_method(&self, enum_name: &str, visibility: &Visibility) -> bool {
+        (self.preserve_public_items && matches!(visibility, Visibility::Public))
+            || self
+                .generated_use_analysis
+                .borrow()
+                .used_methods
+                .contains(&(enum_name.to_string(), "message".to_string()))
+    }
+
     /// True when the generated free constructor function for a struct should be retained.
     pub(super) fn should_emit_struct_constructor(&self, struct_name: &str) -> bool {
         let analysis = self.generated_use_analysis.borrow();
@@ -1103,11 +1116,6 @@ impl<'a> IrEmitter<'a> {
         self.dependency_enum_types = enum_type_names;
     }
 
-    /// Set imported stdlib error types whose trait methods may be called from this module.
-    pub fn set_external_error_trait_types(&mut self, type_names: HashSet<String>) {
-        self.external_error_trait_types = type_names;
-    }
-
     /// Seed nominal declaration metadata from another lowered module.
     ///
     /// Multi-file emission creates one Rust module at a time, but constructor/default emission still needs the
@@ -1123,6 +1131,42 @@ impl<'a> IrEmitter<'a> {
     /// ambiguous imported types can make one module validate a constructor against another module's fields.
     pub(crate) fn seed_dependency_nominal_metadata_from_program(&mut self, program: &IrProgram) {
         self.seed_nominal_metadata_from_program_inner(program, true);
+    }
+
+    /// Seed public dependency nominal metadata from `.incnlib` manifests.
+    ///
+    /// Package consumers do not have the provider's lowered IR available, but const validation and constructor emission
+    /// need the same field metadata for public models/classes that source-module consumers receive from lowered
+    /// dependency modules.
+    pub(crate) fn seed_public_dependency_nominal_metadata(&mut self, index: &LibraryManifestIndex) {
+        let mut counts = HashMap::<String, usize>::new();
+        for library in index.known_libraries() {
+            let Some(LibraryManifestIndexEntry::Loaded { manifest, .. }) = index.get(&library) else {
+                continue;
+            };
+            for model in &manifest.exports.models {
+                *counts.entry(model.name.clone()).or_default() += 1;
+            }
+            for class in &manifest.exports.classes {
+                *counts.entry(class.name.clone()).or_default() += 1;
+            }
+        }
+
+        for library in index.known_libraries() {
+            let Some(LibraryManifestIndexEntry::Loaded { manifest, .. }) = index.get(&library) else {
+                continue;
+            };
+            for model in &manifest.exports.models {
+                if counts.get(&model.name).copied().unwrap_or_default() == 1 {
+                    self.register_manifest_constructor_metadata(&model.name, &model.fields);
+                }
+            }
+            for class in &manifest.exports.classes {
+                if counts.get(&class.name).copied().unwrap_or_default() == 1 {
+                    self.register_manifest_constructor_metadata(&class.name, &class.fields);
+                }
+            }
+        }
     }
 
     /// Seed nominal metadata, optionally skipping ambiguous dependency names.
@@ -1208,6 +1252,124 @@ impl<'a> IrEmitter<'a> {
         let variants = self.struct_constructor_metadata.entry(s.name.clone()).or_default();
         if !variants.iter().any(|existing| existing.fields == metadata.fields) {
             variants.push(metadata);
+        }
+    }
+
+    /// Register constructor metadata reconstructed from a public dependency manifest.
+    fn register_manifest_constructor_metadata(&mut self, name: &str, fields: &[FieldExport]) {
+        let metadata = StructConstructorMetadata {
+            fields: fields.iter().map(|field| field.name.clone()).collect(),
+            field_types: fields
+                .iter()
+                .map(|field| (field.name.clone(), Self::manifest_type_ref_to_ir_type(&field.ty)))
+                .collect(),
+            field_defaults: HashMap::new(),
+            field_aliases: fields
+                .iter()
+                .filter_map(|field| {
+                    field
+                        .alias
+                        .as_ref()
+                        .filter(|alias| *alias != &field.name)
+                        .map(|alias| (alias.clone(), field.name.clone()))
+                })
+                .collect(),
+        };
+        let variants = self.struct_constructor_metadata.entry(name.to_string()).or_default();
+        if !variants.iter().any(|existing| existing.fields == metadata.fields) {
+            variants.push(metadata);
+        }
+        self.struct_field_names.insert(
+            name.to_string(),
+            fields.iter().map(|field| field.name.clone()).collect(),
+        );
+        for field in fields {
+            self.struct_field_types.insert(
+                (name.to_string(), field.name.clone()),
+                Self::manifest_type_ref_to_ir_type(&field.ty),
+            );
+            self.struct_field_aliases
+                .insert((name.to_string(), field.name.clone()), field.alias.clone());
+            self.struct_field_descriptions
+                .insert((name.to_string(), field.name.clone()), field.description.clone());
+        }
+    }
+
+    /// Convert a public manifest type reference into the IR vocabulary used by emission metadata.
+    fn manifest_type_ref_to_ir_type(ty: &TypeRef) -> IrType {
+        Self::resolved_type_to_ir_type(&resolved_type_from_manifest_type_ref(ty))
+    }
+
+    /// Convert resolved frontend metadata into IR type metadata without requiring an AST lowering context.
+    fn resolved_type_to_ir_type(ty: &ResolvedType) -> IrType {
+        match ty {
+            ResolvedType::Int => IrType::Int,
+            ResolvedType::Float => IrType::Float,
+            ResolvedType::Numeric(id) => IrType::Numeric(*id),
+            ResolvedType::Bool => IrType::Bool,
+            ResolvedType::Str => IrType::String,
+            ResolvedType::Bytes => IrType::Bytes,
+            ResolvedType::FrozenStr => IrType::FrozenStr,
+            ResolvedType::FrozenBytes => IrType::FrozenBytes,
+            ResolvedType::FrozenList(inner) => IrType::NamedGeneric(
+                collections::as_str(CollectionTypeId::FrozenList).to_string(),
+                vec![Self::resolved_type_to_ir_type(inner)],
+            ),
+            ResolvedType::FrozenSet(inner) => IrType::NamedGeneric(
+                collections::as_str(CollectionTypeId::FrozenSet).to_string(),
+                vec![Self::resolved_type_to_ir_type(inner)],
+            ),
+            ResolvedType::FrozenDict(key, value) => IrType::NamedGeneric(
+                collections::as_str(CollectionTypeId::FrozenDict).to_string(),
+                vec![
+                    Self::resolved_type_to_ir_type(key),
+                    Self::resolved_type_to_ir_type(value),
+                ],
+            ),
+            ResolvedType::Unit => IrType::Unit,
+            ResolvedType::Named(name) => IrType::Struct(name.clone()),
+            ResolvedType::Generic(name, args) => {
+                let args = args.iter().map(Self::resolved_type_to_ir_type).collect::<Vec<_>>();
+                match collections::from_str(name) {
+                    Some(CollectionTypeId::List) => {
+                        IrType::List(Box::new(args.first().cloned().unwrap_or(IrType::Unknown)))
+                    }
+                    Some(CollectionTypeId::Dict) => IrType::Dict(
+                        Box::new(args.first().cloned().unwrap_or(IrType::Unknown)),
+                        Box::new(args.get(1).cloned().unwrap_or(IrType::Unknown)),
+                    ),
+                    Some(CollectionTypeId::Set) => {
+                        IrType::Set(Box::new(args.first().cloned().unwrap_or(IrType::Unknown)))
+                    }
+                    Some(CollectionTypeId::Option) => {
+                        IrType::Option(Box::new(args.first().cloned().unwrap_or(IrType::Unknown)))
+                    }
+                    Some(CollectionTypeId::Result) => IrType::Result(
+                        Box::new(args.first().cloned().unwrap_or(IrType::Unknown)),
+                        Box::new(args.get(1).cloned().unwrap_or(IrType::Unknown)),
+                    ),
+                    Some(CollectionTypeId::Tuple) => IrType::Tuple(args),
+                    Some(id) => IrType::NamedGeneric(collections::as_str(id).to_string(), args),
+                    None if name == IR_UNION_TYPE_NAME => IrType::NamedGeneric(name.clone(), args),
+                    None if args.is_empty() => IrType::Struct(name.clone()),
+                    None => IrType::NamedGeneric(name.clone(), args),
+                }
+            }
+            ResolvedType::Function(params, ret) => IrType::Function {
+                params: params
+                    .iter()
+                    .map(|param| Self::resolved_type_to_ir_type(&param.ty))
+                    .collect(),
+                ret: Box::new(Self::resolved_type_to_ir_type(ret)),
+            },
+            ResolvedType::TypeToken(inner) => IrType::TypeToken(Box::new(Self::resolved_type_to_ir_type(inner))),
+            ResolvedType::Tuple(items) => IrType::Tuple(items.iter().map(Self::resolved_type_to_ir_type).collect()),
+            ResolvedType::TypeVar(name) => IrType::Generic(name.clone()),
+            ResolvedType::SelfType => IrType::SelfType,
+            ResolvedType::Ref(inner) => IrType::Ref(Box::new(Self::resolved_type_to_ir_type(inner))),
+            ResolvedType::RefMut(inner) => IrType::RefMut(Box::new(Self::resolved_type_to_ir_type(inner))),
+            ResolvedType::RustPath(path) => IrType::Struct(path.clone()),
+            ResolvedType::CallSiteInfer | ResolvedType::Unknown => IrType::Unknown,
         }
     }
 

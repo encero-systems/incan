@@ -12,14 +12,6 @@ enum RootKind {
     A,
     B,
 }
-impl RootKind {
-    pub fn message(&self) -> String {
-        match self {
-            Self::A => "A".to_string(),
-            Self::B => "B".to_string(),
-        }
-    }
-}
 fn matches_any(root_kind: RootKind, required: Vec<RootKind>) -> bool {
     for expected in required.iter().cloned() {
         if expected == root_kind {
@@ -40,5 +32,5 @@ fn main() {
             }
         }),
     );
-    println!("{}", matches_any(RootKind::A.clone(), vec![RootKind::A.clone()]));
+    let _ = println!("{}", matches_any(RootKind::A.clone(), vec![RootKind::A.clone()]));
 }

@@ -13,7 +13,8 @@ use super::super::super::expr::{
     MethodCallArgPolicy, MethodKind, TypedExpr, VarAccess, VarRefKind,
 };
 use super::super::super::ownership::{
-    ArgumentPassingPlan, RegularMethodArgumentContext, ValueUseSite, regular_method_argument_use_site,
+    ArgumentPassingPlan, AssociatedFunctionArgumentContext, RegularMethodArgumentContext, ValueUseSite,
+    associated_function_argument_use_site, is_byte_buffer_type, regular_method_argument_use_site,
 };
 use super::super::super::reference_shape::{expr_has_rust_reference_shape, type_has_rust_reference_shape};
 use super::super::super::types::IrType;
@@ -367,7 +368,9 @@ impl<'a> IrEmitter<'a> {
                 let direct_mut_trait_receiver = external_method_shape
                     && idx == 0
                     && Self::external_trait_first_arg_needs_mut_borrow(receiver, method);
+                let target_arg_plan = ArgumentPassingPlan::for_use_site(arg, arg_use_site);
                 let metadata_free_policy = if (external_method_shape || !has_incan_receiver_signature)
+                    && !target_arg_plan.has_external_value_adapter()
                     && idx == 0
                     && !param.is_some_and(|param| Self::method_arg_already_borrowed_for_ref_param(&param.ty))
                 {
@@ -380,7 +383,11 @@ impl<'a> IrEmitter<'a> {
                 } else {
                     arg_use_site
                 };
-                let arg_plan = ArgumentPassingPlan::for_use_site(arg, effective_arg_use_site);
+                let arg_plan = if metadata_free_policy.is_some() {
+                    ArgumentPassingPlan::for_use_site(arg, effective_arg_use_site)
+                } else {
+                    target_arg_plan
+                };
                 let emitted = if direct_mut_trait_receiver {
                     self.emit_expr(arg)
                 } else {
@@ -493,7 +500,7 @@ impl<'a> IrEmitter<'a> {
     fn metadata_free_arg_matches(arg_ty: &IrType, class: MetadataFreeArgClass) -> bool {
         match class {
             MetadataFreeArgClass::StringBuffer => Self::is_string_buffer_type(arg_ty),
-            MetadataFreeArgClass::ByteBuffer => Self::is_byte_buffer_type(arg_ty),
+            MetadataFreeArgClass::ByteBuffer => is_byte_buffer_type(arg_ty),
             MetadataFreeArgClass::Any => true,
         }
     }
@@ -539,25 +546,6 @@ impl<'a> IrEmitter<'a> {
                     name == *expected_name || short_name == expected_name.rsplit("::").next().unwrap_or(expected_name)
                 })
             })
-    }
-
-    /// Return whether an IR type can stand in for a mutable Rust byte buffer.
-    fn is_byte_buffer_type(ty: &IrType) -> bool {
-        matches!(ty, IrType::Bytes | IrType::FrozenBytes)
-            || matches!(
-                ty,
-                IrType::Struct(name)
-                    if matches!(name.as_str(), "Vec<u8>" | "std::vec::Vec<u8>" | "alloc::vec::Vec<u8>")
-            )
-            || matches!(
-                ty,
-                IrType::NamedGeneric(name, args)
-                    if matches!(name.as_str(), "Vec" | "std::vec::Vec" | "alloc::vec::Vec")
-                        && matches!(
-                            args.as_slice(),
-                            [IrType::Int | IrType::Numeric(incan_core::lang::types::numerics::NumericTypeId::U8)]
-                        )
-            )
     }
 
     /// Return whether an IR type can stand in for a mutable Rust string buffer.
@@ -1053,36 +1041,14 @@ impl<'a> IrEmitter<'a> {
                     IrExprKind::Var { ref_kind, .. } => Some(*ref_kind),
                     _ => None,
                 };
-                // Apply Incan-style argument conversions when calling associated functions on Incan-owned types
-                // (structs/enums/traits). This is important for `str` literals which are emitted as `&'static str`,
-                // but many Incan-level signatures expect owned `String` in Rust (e.g., newtype `from_underlying(v:
-                // str)`).
-                //
-                // `VarRefKind::TypeName` covers imported Incan types like `std.web.Response` (typechecker
-                // `IdentKind::TypeName`). Those calls must use Incan arg rules — `ExternalFunctionArg`
-                // would borrow `String` as `&String` and break signatures such as
-                // `Response::html(content: String)` in generated stdlib.
-                //
-                // For external Rust types (VarRefKind::ExternalRustName), use ExternalFunctionArg conversions so that
-                // string literals get `.into()` — this lets the Rust compiler resolve the target type via the Into
-                // trait (e.g., Polars' PlSmallStr, sqlx identifiers, etc.).
-                let use_site = if receiver_ref_kind != Some(VarRefKind::ExternalRustName)
-                    && self.is_incan_owned_nominal_receiver(&receiver.ty)
-                {
-                    ValueUseSite::IncanCallArg {
-                        target_ty: None,
-                        callee_param: None,
-                        in_return: false,
-                    }
-                } else if matches!(receiver_ref_kind, Some(VarRefKind::ExternalName | VarRefKind::TypeName)) {
-                    ValueUseSite::IncanCallArg {
-                        target_ty: None,
-                        callee_param: None,
+                let use_site = associated_function_argument_use_site(
+                    AssociatedFunctionArgumentContext {
+                        receiver_ref_kind,
+                        is_incan_owned_nominal_receiver: self.is_incan_owned_nominal_receiver(&receiver.ty),
                         in_return,
-                    }
-                } else {
-                    ValueUseSite::ExternalCallArg { target_ty: None }
-                };
+                    },
+                    None,
+                );
                 let arg_tokens =
                     self.emit_method_call_args(method, receiver, args, callable_signature, use_site, result_target_ty)?;
                 return Ok(quote! { #type_path::#m #method_turbofish (#(#arg_tokens),*) });

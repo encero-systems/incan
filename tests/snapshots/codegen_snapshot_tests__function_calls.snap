@@ -8,7 +8,7 @@ expression: rust_code
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 fn greet(name: String) -> String {
-    "Simple function for testing calls";
+    let _ = "Simple function for testing calls";
     return {
         let __parts: [&str; 2usize] = ["Hello, ", "!"];
         let __args: Vec<String> = vec![format!("{}", name)];
@@ -16,11 +16,11 @@ fn greet(name: String) -> String {
     };
 }
 fn add(a: i64, b: i64) -> i64 {
-    "Test positional arguments";
+    let _ = "Test positional arguments";
     return a + b;
 }
 fn greet_with_title(name: String, title: String) -> String {
-    "Test default arguments";
+    let _ = "Test default arguments";
     return {
         let __parts: [&str; 3usize] = ["Hello, ", " ", "!"];
         let __args: Vec<String> = vec![format!("{}", title), format!("{}", name)];
@@ -44,7 +44,7 @@ fn test_function_calls() {
         &incan_stdlib::strings::str_upper(&"hello world"),
     );
     let numbers: Vec<i64> = vec![1, 2, 3];
-    numbers.push(4);
+    let _ = numbers.push(4);
     let _popped: i64 = incan_stdlib::collections::__private::list_pop(&mut numbers);
     let _data: std::collections::HashMap<String, i64> = [
         ("a".to_string(), 1),
@@ -65,5 +65,5 @@ fn main() {
             }
         }),
     );
-    test_function_calls();
+    let _ = test_function_calls();
 }

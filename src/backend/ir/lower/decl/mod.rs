@@ -54,6 +54,23 @@ impl AstLowering {
         mapped
     }
 
+    /// Map nominal type visibility, keeping private source stdlib helper types aligned with crate-visible helpers.
+    pub(in crate::backend::ir::lower) fn map_type_visibility(
+        &self,
+        vis: crate::frontend::ast::Visibility,
+    ) -> Visibility {
+        let mapped = Self::map_visibility(vis);
+        if mapped == Visibility::Private
+            && self
+                .current_source_module_name
+                .as_deref()
+                .is_some_and(|name| name.starts_with("__incan_std.") || name.starts_with("std."))
+        {
+            return Visibility::Crate;
+        }
+        mapped
+    }
+
     /// Lower a declaration to IR.
     ///
     /// # Parameters
@@ -136,7 +153,7 @@ impl AstLowering {
                 IrDeclKind::Enum(enum_ir)
             }
             ast::Declaration::TypeAlias(a) => IrDeclKind::TypeAlias {
-                visibility: Self::map_visibility(a.visibility),
+                visibility: self.map_type_visibility(a.visibility),
                 name: a.name.clone(),
                 type_params: Self::lower_type_params(&a.type_params),
                 ty: self.lower_type(&a.target.node),

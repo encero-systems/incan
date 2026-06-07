@@ -19,5 +19,5 @@ fn main() {
             }
         }),
     );
-    println!("{}", "Newtype codegen test");
+    let _ = println!("{}", "Newtype codegen test");
 }

@@ -243,7 +243,7 @@ impl incan_stdlib::reflection::HasTypeFieldMetadata for Stack {
 }
 impl Stack {
     pub fn push(&mut self, item: i64) {
-        self.items.push(item);
+        let _ = self.items.push(item);
     }
     pub fn pop(&self) -> i64 {
         if ::std::convert::identity(self.items.len() as i64) > 0 {
@@ -435,13 +435,13 @@ fn main() {
     let mut p: Point = Point { x: 0, y: 0 };
     p.x = 10;
     p.y = 20;
-    println!(
+    let _ = println!(
         "{}", { let __parts : [& str; 3usize] = ["Point: (", ", ", ")"]; let __args : Vec
         < String > = vec![format!("{}", p.x), format!("{}", p.y)];
         incan_stdlib::strings::fstring(& __parts, & __args) }
     );
     let rect: Rectangle = Rectangle { width: 5, height: 10 };
-    println!(
+    let _ = println!(
         "{}", { let __parts : [& str; 3usize] = ["Rectangle: ", "x", ""]; let __args :
         Vec < String > = vec![format!("{}", rect.width), format!("{}", rect.height)];
         incan_stdlib::strings::fstring(& __parts, & __args) }
@@ -449,39 +449,39 @@ fn main() {
     let circle: Circle = Circle { radius: 5f64 };
     let area: f64 = circle.area();
     let circumference: f64 = circle.circumference();
-    println!(
+    let _ = println!(
         "{}", { let __parts : [& str; 3usize] = ["Circle area: ", ", circumference: ",
         ""]; let __args : Vec < String > = vec![format!("{}", area), format!("{}",
         circumference)]; incan_stdlib::strings::fstring(& __parts, & __args) }
     );
     let mut counter: Counter = Counter { count: 0 };
-    counter.increment();
-    counter.increment();
-    counter.increment();
+    let _ = counter.increment();
+    let _ = counter.increment();
+    let _ = counter.increment();
     let count: i64 = counter.get_count();
-    println!(
+    let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["Counter: ", ""]; let __args : Vec <
         String > = vec![format!("{}", count)]; incan_stdlib::strings::fstring(& __parts,
         & __args) }
     );
-    counter.decrement();
-    println!(
+    let _ = counter.decrement();
+    let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["After decrement: ", ""]; let __args :
         Vec < String > = vec![format!("{}", counter.get_count())];
         incan_stdlib::strings::fstring(& __parts, & __args) }
     );
     let items_list: Vec<i64> = vec![];
     let mut stack: Stack = Stack { items: items_list };
-    stack.push(10);
-    stack.push(20);
-    stack.push(30);
-    println!(
+    let _ = stack.push(10);
+    let _ = stack.push(20);
+    let _ = stack.push(30);
+    let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["Stack size: ", ""]; let __args : Vec <
         String > = vec![format!("{}", stack.size())]; incan_stdlib::strings::fstring(&
         __parts, & __args) }
     );
     let top: i64 = stack.pop();
-    println!(
+    let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["Popped: ", ""]; let __args : Vec <
         String > = vec![format!("{}", top)]; incan_stdlib::strings::fstring(& __parts, &
         __args) }
@@ -490,7 +490,7 @@ fn main() {
         name: "BasicCalc".to_string(),
     };
     let result: i64 = calc.add(5, 3);
-    println!(
+    let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["5 + 3 = ", ""]; let __args : Vec <
         String > = vec![format!("{}", result)]; incan_stdlib::strings::fstring(& __parts,
         & __args) }
@@ -504,5 +504,5 @@ fn main() {
         employee_id: 12345,
     };
     let info: String = emp.get_info();
-    println!("{}", info);
+    let _ = println!("{}", info);
 }

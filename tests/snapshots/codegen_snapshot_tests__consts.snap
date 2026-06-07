@@ -34,9 +34,9 @@ fn main() {
             }
         }),
     );
-    println!("{}", A);
-    println!("{}", S);
-    println!("{}", L.len());
-    println!("{}", D.len());
-    println!("{}", T);
+    let _ = println!("{}", A);
+    let _ = println!("{}", S);
+    let _ = println!("{}", L.len());
+    let _ = println!("{}", D.len());
+    let _ = println!("{}", T);
 }

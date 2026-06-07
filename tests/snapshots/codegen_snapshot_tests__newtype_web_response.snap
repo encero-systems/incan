@@ -23,5 +23,5 @@ fn main() {
             }
         }),
     );
-    println!("{}", "Newtype imports successful - no E0761 module ambiguity");
+    let _ = println!("{}", "Newtype imports successful - no E0761 module ambiguity");
 }

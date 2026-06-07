@@ -23,7 +23,7 @@ fn match_index(xs: Vec<String>, y: i64) -> i64 {
 fn helper_loop(xs: Vec<String>, ys: Vec<i64>) -> Vec<i64> {
     let mut out: Vec<i64> = vec![];
     for y in ys.iter().copied() {
-        out.push(match_index(xs.clone(), y));
+        let _ = out.push(match_index(xs.clone(), y));
     }
     return out.clone();
 }
@@ -42,6 +42,12 @@ fn main() {
             }
         }),
     );
-    helper_loop(vec!["a".to_string(), "bb".to_string(), "ccc".to_string()], vec![1, 2]);
-    helper_list(vec!["a".to_string(), "bb".to_string(), "ccc".to_string()], vec![1, 2]);
+    let _ = helper_loop(
+        vec!["a".to_string(), "bb".to_string(), "ccc".to_string()],
+        vec![1, 2],
+    );
+    let _ = helper_list(
+        vec!["a".to_string(), "bb".to_string(), "ccc".to_string()],
+        vec![1, 2],
+    );
 }

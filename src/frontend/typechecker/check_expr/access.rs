@@ -51,6 +51,16 @@ struct ValueEnumGeneratedCall<'a> {
     span: Span,
 }
 
+struct RustTraitMethodCall<'a> {
+    rust_path: &'a str,
+    method: &'a str,
+    sig: &'a RustFunctionSig,
+    args: &'a [CallArg],
+    arg_types: &'a [ResolvedType],
+    preserves_lookup_arg_shape: bool,
+    span: Span,
+}
+
 #[derive(Debug, Clone)]
 struct RustCallableAliasParam {
     rust_display: String,
@@ -88,6 +98,22 @@ impl TypeChecker {
         source_name: &str,
     ) -> Option<&'a RustFieldInfo> {
         fields.iter().find(|field| field.name == source_name)
+    }
+
+    /// Resolve a Rust field type from its display string against the owning Rust type.
+    ///
+    /// Rust field metadata carries both a structural shape and the source display. Field access should use the display
+    /// because it preserves exact numeric widths and owner-relative paths that matter when a Rust field is copied back
+    /// into another Rust boundary. The structural shape remains useful for broad semantic classification and older
+    /// metadata entries whose display cannot be resolved.
+    fn resolved_rust_field_type(&self, owner_path: &str, field: &RustFieldInfo) -> ResolvedType {
+        let display = self.rust_display_for_owner_path(field.type_display.as_str(), owner_path);
+        let resolved = self.resolved_type_from_rust_display(display.as_str());
+        if matches!(resolved, ResolvedType::Unknown) {
+            self.resolved_type_from_rust_shape(&field.type_shape)
+        } else {
+            resolved
+        }
     }
 
     /// Return the target display for a Rust type alias when the expected destination type names one.
@@ -699,10 +725,7 @@ impl TypeChecker {
 
     /// Return whether `method` consumes the receiver under RFC 088 terminal semantics.
     fn is_iterator_terminal_method(method: &str) -> bool {
-        matches!(
-            method,
-            "collect" | "count" | "reduce" | "fold" | "any" | "all" | "find" | "for_each" | "sum"
-        )
+        iterator_methods::from_str(method).is_some_and(iterator_methods::is_terminal)
     }
 
     /// Validate `.sum()` item types against the backend-supported summable item surface.
@@ -1509,7 +1532,7 @@ impl TypeChecker {
                         && let RustItemKind::Type(info) = &meta.kind
                         && let Some(rust_field) = Self::rust_field_for_source_name(&info.fields, field)
                     {
-                        return Some(self.resolved_type_from_rust_shape(&rust_field.type_shape));
+                        return Some(self.resolved_rust_field_type(path, rust_field));
                     }
                 }
                 return None;
@@ -1632,19 +1655,18 @@ impl TypeChecker {
             self.type_info.record_regular_method_arg_shape(receiver_span, method);
         }
         let Some(metadata) = self.rust_item_metadata_for_path(rust_path) else {
-            if let Some(import_use) = self.record_unique_rust_trait_import_for_unresolved_receiver_call(method, span)
+            if let Some(import_use) = self.record_unique_rust_trait_import_for_method_call(method, span)
                 && let Some(sig) = import_use.signature.as_ref()
             {
-                let callable_display = format!("rust::{rust_path}.{method}");
-                let ret = self.validate_rust_method_call(
-                    callable_display.as_str(),
+                return Some(self.validate_rust_trait_method_call(RustTraitMethodCall {
+                    rust_path,
+                    method,
                     sig,
                     args,
                     arg_types,
                     preserves_lookup_arg_shape,
                     span,
-                );
-                return Some(Self::substitute_rust_self_type(ret, rust_path));
+                }));
             }
             if let Some(ret) = self.validate_metadata_free_rust_method_call(
                 rust_path,
@@ -1664,16 +1686,28 @@ impl TypeChecker {
                     if let Some(import_use) = self.record_rust_extension_trait_import_for_call(&metadata, method, span)
                         && let Some(sig) = import_use.signature.as_ref()
                     {
-                        let callable_display = format!("rust::{rust_path}.{method}");
-                        let ret = self.validate_rust_method_call(
-                            callable_display.as_str(),
+                        return Some(self.validate_rust_trait_method_call(RustTraitMethodCall {
+                            rust_path,
+                            method,
                             sig,
                             args,
                             arg_types,
                             preserves_lookup_arg_shape,
                             span,
-                        );
-                        return Some(Self::substitute_rust_self_type(ret, rust_path));
+                        }));
+                    }
+                    if let Some(import_use) = self.record_unique_rust_trait_import_for_method_call(method, span)
+                        && let Some(sig) = import_use.signature.as_ref()
+                    {
+                        return Some(self.validate_rust_trait_method_call(RustTraitMethodCall {
+                            rust_path,
+                            method,
+                            sig,
+                            args,
+                            arg_types,
+                            preserves_lookup_arg_shape,
+                            span,
+                        }));
                     }
                     if let Some(ret) = self.validate_metadata_free_rust_method_call(
                         rust_path,
@@ -1718,6 +1752,49 @@ impl TypeChecker {
             // Function, Trait, Module, Constant: metadata is incomplete for method surfaces.
             // Stay permissive and let rustc catch genuine errors at compile time.
             _ => Some(ResolvedType::Unknown),
+        }
+    }
+
+    /// Validate a Rust trait method call and expose only source-meaningful return types.
+    ///
+    /// Imported Rust trait signatures are useful for parameter planning even when rust-inspect cannot prove the
+    /// receiver trait edge. Some generic Rust methods, however, return an unbound Rust type parameter such as `T`;
+    /// that is not an Incan type variable and must not leak into source typing as `rust::T`. Keep those call results
+    /// permissive until the Rust compiler infers the concrete type from the emitted Rust context.
+    fn validate_rust_trait_method_call(&mut self, call: RustTraitMethodCall<'_>) -> ResolvedType {
+        let callable_display = format!("rust::{}.{}", call.rust_path, call.method);
+        let ret = self.validate_rust_method_call(
+            callable_display.as_str(),
+            call.sig,
+            call.args,
+            call.arg_types,
+            call.preserves_lookup_arg_shape,
+            call.span,
+        );
+        let ret = Self::substitute_rust_self_type(ret, call.rust_path);
+        if Self::contains_unbound_rust_type_var(&ret) {
+            ResolvedType::Unknown
+        } else {
+            ret
+        }
+    }
+
+    /// Return whether a Rust return type still contains a generic placeholder the Incan checker cannot bind.
+    fn contains_unbound_rust_type_var(ty: &ResolvedType) -> bool {
+        match ty {
+            ResolvedType::TypeVar(_) => true,
+            ResolvedType::RustPath(path) => Self::rust_display_type_var_name(path.trim()).is_some(),
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => Self::contains_unbound_rust_type_var(inner),
+            ResolvedType::Generic(_, args) | ResolvedType::Tuple(args) => {
+                args.iter().any(Self::contains_unbound_rust_type_var)
+            }
+            ResolvedType::Function(params, ret) => {
+                params
+                    .iter()
+                    .any(|param| Self::contains_unbound_rust_type_var(&param.ty))
+                    || Self::contains_unbound_rust_type_var(ret)
+            }
+            _ => false,
         }
     }
 
@@ -1787,12 +1864,12 @@ impl TypeChecker {
         Some(import_use.clone())
     }
 
-    /// Record a unique imported Rust trait method when receiver metadata is unavailable.
+    /// Record a unique imported Rust trait method when receiver metadata cannot prove one.
     ///
-    /// rust-inspect can miss generated or re-export-heavy concrete types while still extracting the imported trait or
-    /// falling back to core extension-trait vocabulary. In that case the import itself is enough for Rust method
-    /// lookup; a recovered signature only adds call-site parameter shape metadata.
-    fn record_unique_rust_trait_import_for_unresolved_receiver_call(
+    /// rust-inspect can miss generated or re-export-heavy concrete types, or extract receiver metadata without a full
+    /// implemented-trait list, while still extracting the imported trait. In that case a unique imported trait is
+    /// enough for Rust method lookup; a recovered signature also preserves call-site parameter shape metadata.
+    fn record_unique_rust_trait_import_for_method_call(
         &mut self,
         method: &str,
         span: Span,
@@ -1825,6 +1902,9 @@ impl TypeChecker {
         method: &str,
     ) -> Option<Option<incan_core::interop::RustFunctionSig>> {
         if !import.methods.contains(method) {
+            return None;
+        }
+        if !type_info.metadata_completeness.has_trait_impls() {
             return None;
         }
         let trait_suffix = Self::rust_trait_path_suffix(&import.trait_path);
@@ -2801,6 +2881,9 @@ impl TypeChecker {
                         return self.resolved_function_type_from_rust_sig_for_path(&sig, false, path);
                     }
                     if let Some(params) = self.rust_variant_callable_params(path, field) {
+                        if params.is_empty() {
+                            return ResolvedType::RustPath(path.to_string());
+                        }
                         return ResolvedType::Function(params, Box::new(ResolvedType::RustPath(path.to_string())));
                     }
                     if let RustItemKind::Type(info) = &meta.kind
@@ -2808,7 +2891,7 @@ impl TypeChecker {
                     {
                         self.type_info
                             .record_rust_field_access_name(span, rust_field.name.clone());
-                        return self.resolved_type_from_rust_shape(&rust_field.type_shape);
+                        return self.resolved_rust_field_type(path, rust_field);
                     }
                     // Metadata may still be missing constants, type aliases, trait-provided items, or private fields.
                     // Stay permissive when no exact field surface is available.
@@ -3552,6 +3635,24 @@ impl TypeChecker {
                 && set_methods::from_str(method).is_some()
             {
                 return ResolvedType::Bool;
+            }
+            if collection_type_id(name.as_str()) == Some(CollectionTypeId::Option) && method == "clone" {
+                if !args.is_empty() {
+                    self.errors.push(errors::type_mismatch(
+                        "no arguments",
+                        &format!("{} argument(s)", args.len()),
+                        span,
+                    ));
+                }
+                let inner = type_args.first().cloned().unwrap_or(ResolvedType::Unknown);
+                if !self.is_copy_type(&inner)
+                    && !self.is_clone_type(&inner)
+                    && !matches!(inner, ResolvedType::RustPath(_))
+                {
+                    self.errors
+                        .push(errors::list_clone_requires_clone(&inner.to_string(), span));
+                }
+                return option_ty(inner);
             }
         }
 

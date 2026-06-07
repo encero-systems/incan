@@ -308,7 +308,10 @@ impl TypeChecker {
                                     }
                                     return result;
                                 }
-                                RustItemKind::Type(type_info) if !type_info.fields.is_empty() => {
+                                RustItemKind::Type(type_info)
+                                    if !type_info.fields.is_empty()
+                                        || (type_info.variants.is_empty() && args.is_empty()) =>
+                                {
                                     let error_count_before = self.errors.len();
                                     let result = self.check_rust_named_field_constructor_call(
                                         info.path.as_str(),
@@ -594,7 +597,8 @@ impl TypeChecker {
                         continue;
                     };
                     positional_index += 1;
-                    self.check_rust_struct_field_expr(field, expr);
+                    let arg_ty = self.check_rust_struct_field_expr(path, field, expr);
+                    self.validate_rust_boundary_value(path, field.type_display.as_str(), expr, &arg_ty, true);
                     if !provided.insert(field.name.clone()) {
                         self.errors.push(errors::duplicate_constructor_field(
                             path,
@@ -613,7 +617,8 @@ impl TypeChecker {
                         has_shape_error = true;
                         continue;
                     };
-                    self.check_rust_struct_field_expr(field, expr);
+                    let arg_ty = self.check_rust_struct_field_expr(path, field, expr);
+                    self.validate_rust_boundary_value(path, field.type_display.as_str(), expr, &arg_ty, true);
                     if !provided.insert(field.name.clone()) {
                         self.errors.push(errors::duplicate_constructor_field(
                             path,
@@ -716,8 +721,14 @@ impl TypeChecker {
     }
 
     /// Type-check a Rust struct field argument with the metadata-provided target type as context.
-    fn check_rust_struct_field_expr(&mut self, field: &RustFieldInfo, expr: &Spanned<Expr>) -> ResolvedType {
-        let expected = self.resolved_type_from_rust_shape(&field.type_shape);
+    fn check_rust_struct_field_expr(
+        &mut self,
+        owner_path: &str,
+        field: &RustFieldInfo,
+        expr: &Spanned<Expr>,
+    ) -> ResolvedType {
+        let expected = self
+            .resolved_rust_boundary_target_from_param_display_for_owner_path(field.type_display.as_str(), owner_path);
         self.check_expr_with_expected(expr, Some(&expected))
     }
 

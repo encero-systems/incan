@@ -423,7 +423,7 @@ impl Serializable for Document {
 }
 fn draw_shape<__IncanTrait0: Drawable>(shape: __IncanTrait0) {
     let output: String = shape.draw();
-    println!("{}", output);
+    let _ = println!("{}", output);
 }
 fn calculate_area<__IncanTrait0: Shape>(shape: __IncanTrait0) -> f64 {
     return shape.area();
@@ -441,7 +441,7 @@ fn main() {
         }),
     );
     let dog: Dog = Dog { name: "Buddy".to_string() };
-    println!(
+    let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["Dog name: ", ""]; let __args : Vec <
         String > = vec![format!("{}", dog.name)]; incan_stdlib::strings::fstring(&
         __parts, & __args) }
@@ -452,37 +452,37 @@ fn main() {
     };
     let rect_area: f64 = rect.area();
     let rect_perimeter: f64 = rect.perimeter();
-    println!(
+    let _ = println!(
         "{}", { let __parts : [& str; 3usize] = ["Rectangle area: ", ", perimeter: ",
         ""]; let __args : Vec < String > = vec![format!("{}", rect_area), format!("{}",
         rect_perimeter)]; incan_stdlib::strings::fstring(& __parts, & __args) }
     );
     let circle: Circle = Circle { radius: 2.5f64 };
     let circle_drawing: String = circle.draw();
-    println!("{}", circle_drawing);
+    let _ = println!("{}", circle_drawing);
     let square: Square = Square { side: 4f64 };
     let square_area: f64 = square.area();
     let square_drawing: String = square.draw();
-    println!(
+    let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["Square area: ", ""]; let __args : Vec <
         String > = vec![format!("{}", square_area)]; incan_stdlib::strings::fstring(&
         __parts, & __args) }
     );
-    println!("{}", square_drawing);
+    let _ = println!("{}", square_drawing);
     let mut carton: Carton = Carton {
         width: 2f64,
         height: 3f64,
         depth: 4f64,
     };
     let original_volume: f64 = carton.volume();
-    println!(
+    let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["Original volume: ", ""]; let __args :
         Vec < String > = vec![format!("{}", original_volume)];
         incan_stdlib::strings::fstring(& __parts, & __args) }
     );
-    carton.resize(2f64);
+    let _ = carton.resize(2f64);
     let new_volume: f64 = carton.volume();
-    println!(
+    let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["New volume: ", ""]; let __args : Vec <
         String > = vec![format!("{}", new_volume)]; incan_stdlib::strings::fstring(&
         __parts, & __args) }
@@ -493,13 +493,13 @@ fn main() {
     };
     let doc_str: String = doc.to_string();
     let doc_serial: String = doc.serialize();
-    println!("{}", doc_str);
-    println!("{}", doc_serial);
-    draw_shape(circle);
-    draw_shape(square.clone());
+    let _ = println!("{}", doc_str);
+    let _ = println!("{}", doc_serial);
+    let _ = draw_shape(circle);
+    let _ = draw_shape(square.clone());
     let area1: f64 = calculate_area(rect);
     let area2: f64 = calculate_area(square);
-    println!(
+    let _ = println!(
         "{}", { let __parts : [& str; 3usize] = ["Areas: ", ", ", ""]; let __args : Vec <
         String > = vec![format!("{}", area1), format!("{}", area2)];
         incan_stdlib::strings::fstring(& __parts, & __args) }

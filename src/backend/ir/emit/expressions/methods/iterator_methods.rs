@@ -195,7 +195,7 @@ fn next_call(iter: &TokenStream) -> TokenStream {
 fn emit_collect(receiver: &TokenStream) -> TokenStream {
     let next = next_call(&quote! { __incan_iter });
     quote! {{
-        let mut __incan_iter = (#receiver);
+        let mut __incan_iter = #receiver;
         let mut __incan_items = Vec::new();
         loop {
             match #next {
@@ -210,7 +210,7 @@ fn emit_collect(receiver: &TokenStream) -> TokenStream {
 fn emit_count(receiver: &TokenStream) -> TokenStream {
     let next = next_call(&quote! { __incan_iter });
     quote! {{
-        let mut __incan_iter = (#receiver);
+        let mut __incan_iter = #receiver;
         let mut __incan_total = 0i64;
         loop {
             match #next {
@@ -253,7 +253,7 @@ fn emit_fold(emitter: &IrEmitter<'_>, receiver: &TokenStream, args: &[TypedExpr]
 fn emit_fold_loop(receiver: &TokenStream, init: TokenStream, callback: TokenStream) -> TokenStream {
     let next = next_call(&quote! { __incan_iter });
     quote! {{
-        let mut __incan_iter = (#receiver);
+        let mut __incan_iter = #receiver;
         let mut __incan_acc = #init;
         loop {
             match #next {
@@ -268,7 +268,7 @@ fn emit_fold_loop(receiver: &TokenStream, init: TokenStream, callback: TokenStre
 fn emit_any(receiver: &TokenStream, callback: TokenStream) -> TokenStream {
     let next = next_call(&quote! { __incan_iter });
     quote! {{
-        let mut __incan_iter = (#receiver);
+        let mut __incan_iter = #receiver;
         loop {
             match #next {
                 Some(__incan_item) => {
@@ -286,7 +286,7 @@ fn emit_any(receiver: &TokenStream, callback: TokenStream) -> TokenStream {
 fn emit_all(receiver: &TokenStream, callback: TokenStream) -> TokenStream {
     let next = next_call(&quote! { __incan_iter });
     quote! {{
-        let mut __incan_iter = (#receiver);
+        let mut __incan_iter = #receiver;
         loop {
             match #next {
                 Some(__incan_item) => {
@@ -304,7 +304,7 @@ fn emit_all(receiver: &TokenStream, callback: TokenStream) -> TokenStream {
 fn emit_find(receiver: &TokenStream, callback: TokenStream) -> TokenStream {
     let next = next_call(&quote! { __incan_iter });
     quote! {{
-        let mut __incan_iter = (#receiver);
+        let mut __incan_iter = #receiver;
         loop {
             match #next {
                 Some(__incan_item) => {
@@ -322,7 +322,7 @@ fn emit_find(receiver: &TokenStream, callback: TokenStream) -> TokenStream {
 fn emit_for_each(receiver: &TokenStream, callback: TokenStream) -> TokenStream {
     let next = next_call(&quote! { __incan_iter });
     quote! {{
-        let mut __incan_iter = (#receiver);
+        let mut __incan_iter = #receiver;
         loop {
             match #next {
                 Some(__incan_item) => (#callback)(__incan_item),
@@ -383,7 +383,7 @@ fn sum_zero_for_type(ty: &IrType) -> TokenStream {
 fn emit_primitive_sum_loop(receiver: &TokenStream, sum_ty: TokenStream, zero: TokenStream) -> TokenStream {
     let next = next_call(&quote! { __incan_iter });
     quote! {{
-        let mut __incan_iter = (#receiver);
+        let mut __incan_iter = #receiver;
         let mut __incan_sum: #sum_ty = #zero;
         loop {
             match #next {
@@ -405,7 +405,7 @@ fn emit_newtype_sum_loop(
     let next = next_call(&quote! { __incan_iter });
     let reconstructed = emit_newtype_from_underlying_sum(emitter, newtype_name, quote! { __incan_sum });
     quote! {{
-        let mut __incan_iter = (#receiver);
+        let mut __incan_iter = #receiver;
         let mut __incan_sum: #sum_ty = #zero;
         loop {
             match #next {

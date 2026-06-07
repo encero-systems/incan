@@ -49,7 +49,7 @@ pub fn parse_value(flag: bool) -> __IncanUnionc4e172615a54ed2d {
 }
 pub fn normalize(value: __IncanUnionc4e172615a54ed2d) -> String {
     match value.clone() {
-        __IncanUnionc4e172615a54ed2d::V1(value) => {
+        __IncanUnionc4e172615a54ed2d::V1(_) => {
             return "number".to_string();
         }
         __IncanUnionc4e172615a54ed2d::V0(value) => {
@@ -58,7 +58,7 @@ pub fn normalize(value: __IncanUnionc4e172615a54ed2d) -> String {
     }
 }
 pub fn describe(value: __IncanUnionc4e172615a54ed2d) -> String {
-    match value {
+    let _ = match value {
         __IncanUnionc4e172615a54ed2d::V1(n) => {
             return n.to_string();
         }
@@ -77,7 +77,7 @@ pub fn label(value: Option<String>) -> String {
     return "missing".to_string();
 }
 pub fn describe_optional(value: Option<__IncanUnionc4e172615a54ed2d>) -> String {
-    match value {
+    let _ = match value {
         Some(__IncanUnionc4e172615a54ed2d::V1(n)) => {
             return n.to_string();
         }
@@ -91,12 +91,12 @@ pub fn describe_optional(value: Option<__IncanUnionc4e172615a54ed2d>) -> String 
 }
 pub fn describe_wide(value: __IncanUnion2f03b6f5e4eabba1) -> String {
     match value.clone() {
-        __IncanUnion2f03b6f5e4eabba1::V2(value) => {
+        __IncanUnion2f03b6f5e4eabba1::V2(_) => {
             return "number".to_string();
         }
         __IncanUnion2f03b6f5e4eabba1::V0(__incan_union_value_0) => {
             let value = __IncanUnionbd05f9b5647daa54::V0(__incan_union_value_0);
-            match value {
+            let _ = match value {
                 __IncanUnionbd05f9b5647daa54::V1(flag) => {
                     if flag {
                         return "true".to_string();
@@ -110,7 +110,7 @@ pub fn describe_wide(value: __IncanUnion2f03b6f5e4eabba1) -> String {
         }
         __IncanUnion2f03b6f5e4eabba1::V1(__incan_union_value_1) => {
             let value = __IncanUnionbd05f9b5647daa54::V1(__incan_union_value_1);
-            match value {
+            let _ = match value {
                 __IncanUnionbd05f9b5647daa54::V1(flag) => {
                     if flag {
                         return "true".to_string();
@@ -126,7 +126,7 @@ pub fn describe_wide(value: __IncanUnion2f03b6f5e4eabba1) -> String {
 }
 pub fn describe_chain(value: __IncanUnion2f03b6f5e4eabba1) -> String {
     match value.clone() {
-        __IncanUnion2f03b6f5e4eabba1::V2(value) => {
+        __IncanUnion2f03b6f5e4eabba1::V2(_) => {
             return "number".to_string();
         }
         __IncanUnion2f03b6f5e4eabba1::V0(__incan_union_value_0) => {
@@ -161,19 +161,19 @@ pub fn describe_chain(value: __IncanUnion2f03b6f5e4eabba1) -> String {
 }
 pub fn describe_wide_chain(value: __IncanUnion43fbd19e99c1db05) -> String {
     match value.clone() {
-        __IncanUnion43fbd19e99c1db05::V1(value) => {
+        __IncanUnion43fbd19e99c1db05::V1(_) => {
             return "bool".to_string();
         }
         __IncanUnion43fbd19e99c1db05::V0(__incan_union_value_0) => {
             let value = __IncanUnionaff9193be7941891::V0(__incan_union_value_0);
             match value.clone() {
-                __IncanUnionaff9193be7941891::V2(value) => {
+                __IncanUnionaff9193be7941891::V2(_) => {
                     return "int".to_string();
                 }
                 __IncanUnionaff9193be7941891::V0(__incan_union_value_0) => {
                     let value = __IncanUnionf030b96172dcb024::V0(__incan_union_value_0);
                     match value.clone() {
-                        __IncanUnionf030b96172dcb024::V1(value) => {
+                        __IncanUnionf030b96172dcb024::V1(_) => {
                             return "float".to_string();
                         }
                         __IncanUnionf030b96172dcb024::V0(value) => {
@@ -184,7 +184,7 @@ pub fn describe_wide_chain(value: __IncanUnion43fbd19e99c1db05) -> String {
                 __IncanUnionaff9193be7941891::V1(__incan_union_value_1) => {
                     let value = __IncanUnionf030b96172dcb024::V1(__incan_union_value_1);
                     match value {
-                        __IncanUnionf030b96172dcb024::V1(value) => {
+                        __IncanUnionf030b96172dcb024::V1(_) => {
                             return "float".to_string();
                         }
                         __IncanUnionf030b96172dcb024::V0(value) => {
@@ -197,13 +197,13 @@ pub fn describe_wide_chain(value: __IncanUnion43fbd19e99c1db05) -> String {
         __IncanUnion43fbd19e99c1db05::V2(__incan_union_value_2) => {
             let value = __IncanUnionaff9193be7941891::V1(__incan_union_value_2);
             match value {
-                __IncanUnionaff9193be7941891::V2(value) => {
+                __IncanUnionaff9193be7941891::V2(_) => {
                     return "int".to_string();
                 }
                 __IncanUnionaff9193be7941891::V0(__incan_union_value_0) => {
                     let value = __IncanUnionf030b96172dcb024::V0(__incan_union_value_0);
                     match value {
-                        __IncanUnionf030b96172dcb024::V1(value) => {
+                        __IncanUnionf030b96172dcb024::V1(_) => {
                             return "float".to_string();
                         }
                         __IncanUnionf030b96172dcb024::V0(value) => {
@@ -214,7 +214,7 @@ pub fn describe_wide_chain(value: __IncanUnion43fbd19e99c1db05) -> String {
                 __IncanUnionaff9193be7941891::V1(__incan_union_value_1) => {
                     let value = __IncanUnionf030b96172dcb024::V1(__incan_union_value_1);
                     match value {
-                        __IncanUnionf030b96172dcb024::V1(value) => {
+                        __IncanUnionf030b96172dcb024::V1(_) => {
                             return "float".to_string();
                         }
                         __IncanUnionf030b96172dcb024::V0(value) => {
@@ -227,13 +227,13 @@ pub fn describe_wide_chain(value: __IncanUnion43fbd19e99c1db05) -> String {
         __IncanUnion43fbd19e99c1db05::V3(__incan_union_value_3) => {
             let value = __IncanUnionaff9193be7941891::V2(__incan_union_value_3);
             match value {
-                __IncanUnionaff9193be7941891::V2(value) => {
+                __IncanUnionaff9193be7941891::V2(_) => {
                     return "int".to_string();
                 }
                 __IncanUnionaff9193be7941891::V0(__incan_union_value_0) => {
                     let value = __IncanUnionf030b96172dcb024::V0(__incan_union_value_0);
                     match value {
-                        __IncanUnionf030b96172dcb024::V1(value) => {
+                        __IncanUnionf030b96172dcb024::V1(_) => {
                             return "float".to_string();
                         }
                         __IncanUnionf030b96172dcb024::V0(value) => {
@@ -244,7 +244,7 @@ pub fn describe_wide_chain(value: __IncanUnion43fbd19e99c1db05) -> String {
                 __IncanUnionaff9193be7941891::V1(__incan_union_value_1) => {
                     let value = __IncanUnionf030b96172dcb024::V1(__incan_union_value_1);
                     match value {
-                        __IncanUnionf030b96172dcb024::V1(value) => {
+                        __IncanUnionf030b96172dcb024::V1(_) => {
                             return "float".to_string();
                         }
                         __IncanUnionf030b96172dcb024::V0(value) => {
@@ -255,10 +255,9 @@ pub fn describe_wide_chain(value: __IncanUnion43fbd19e99c1db05) -> String {
             }
         }
     }
-    return "unknown".to_string();
 }
 pub fn describe_wide_match(value: __IncanUnion43fbd19e99c1db05) -> String {
-    match value {
+    let _ = match value {
         __IncanUnion43fbd19e99c1db05::V1(flag) => {
             if flag {
                 return "bool:true".to_string();
@@ -278,7 +277,7 @@ pub fn describe_wide_match(value: __IncanUnion43fbd19e99c1db05) -> String {
 }
 pub fn describe_optional_narrow(value: Option<__IncanUnionc4e172615a54ed2d>) -> String {
     match value.clone() {
-        Some(__IncanUnionc4e172615a54ed2d::V1(value)) => {
+        Some(__IncanUnionc4e172615a54ed2d::V1(_)) => {
             return "number".to_string();
         }
         Some(__IncanUnionc4e172615a54ed2d::V0(__incan_option_union_value_0)) => {

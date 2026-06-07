@@ -90,8 +90,8 @@ fn main() {
             }
         }),
     );
-    println!("{}", take_first(BoxedValue { value : 1 }));
-    println!("{}", take_sorted(BoxedValue { value : 2 }).first());
-    println!("{}", BoxedValue { value : 3 } .first());
-    println!("{}", BoxedValue { value : 4 } .sorted().first());
+    let _ = println!("{}", take_first(BoxedValue { value : 1 }));
+    let _ = println!("{}", take_sorted(BoxedValue { value : 2 }).first());
+    let _ = println!("{}", BoxedValue { value : 3 } .first());
+    let _ = println!("{}", BoxedValue { value : 4 } .sorted().first());
 }

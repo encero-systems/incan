@@ -16,8 +16,8 @@ incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 /// Returns:
 ///     `Ok(f(value))` when `result` is `Ok(value)`, otherwise the original `Err(E)`.
 pub fn map<T, E, U>(result: Result<T, E>, f: fn(T) -> U) -> Result<U, E> {
-    "\n    Transform an `Ok(T)` payload.\n\n    Args:\n        result: Result to inspect.\n        f: Function called with the `Ok(T)` payload.\n\n    Returns:\n        `Ok(f(value))` when `result` is `Ok(value)`, otherwise the original `Err(E)`.\n    ";
-    match result {
+    let _ = "\n    Transform an `Ok(T)` payload.\n\n    Args:\n        result: Result to inspect.\n        f: Function called with the `Ok(T)` payload.\n\n    Returns:\n        `Ok(f(value))` when `result` is `Ok(value)`, otherwise the original `Err(E)`.\n    ";
+    let _ = match result {
         Ok(value) => {
             return Ok::<U, E>(f(value));
         }
@@ -35,8 +35,8 @@ pub fn map<T, E, U>(result: Result<T, E>, f: fn(T) -> U) -> Result<U, E> {
 /// Returns:
 ///     `Err(f(error))` when `result` is `Err(error)`, otherwise the original `Ok(T)`.
 pub fn map_err<T, E, F>(result: Result<T, E>, f: fn(E) -> F) -> Result<T, F> {
-    "\n    Transform an `Err(E)` payload.\n\n    Args:\n        result: Result to inspect.\n        f: Function called with the `Err(E)` payload.\n\n    Returns:\n        `Err(f(error))` when `result` is `Err(error)`, otherwise the original `Ok(T)`.\n    ";
-    match result {
+    let _ = "\n    Transform an `Err(E)` payload.\n\n    Args:\n        result: Result to inspect.\n        f: Function called with the `Err(E)` payload.\n\n    Returns:\n        `Err(f(error))` when `result` is `Err(error)`, otherwise the original `Ok(T)`.\n    ";
+    let _ = match result {
         Ok(value) => {
             return Ok::<T, F>(value);
         }
@@ -57,8 +57,8 @@ pub fn and_then<T, E, U>(
     result: Result<T, E>,
     f: fn(T) -> Result<U, E>,
 ) -> Result<U, E> {
-    "\n    Chain a fallible operation after an `Ok(T)` payload.\n\n    Args:\n        result: Result to inspect.\n        f: Function called with the `Ok(T)` payload. It must return a `Result[U, E]`.\n\n    Returns:\n        The `Result[U, E]` returned by `f` when `result` is `Ok(value)`, otherwise the original `Err(E)`.\n    ";
-    match result {
+    let _ = "\n    Chain a fallible operation after an `Ok(T)` payload.\n\n    Args:\n        result: Result to inspect.\n        f: Function called with the `Ok(T)` payload. It must return a `Result[U, E]`.\n\n    Returns:\n        The `Result[U, E]` returned by `f` when `result` is `Ok(value)`, otherwise the original `Err(E)`.\n    ";
+    let _ = match result {
         Ok(value) => {
             return f(value);
         }
@@ -76,8 +76,8 @@ pub fn and_then<T, E, U>(
 /// Returns:
 ///     The `Result[T, F]` returned by `f` when `result` is `Err(error)`, otherwise the original `Ok(T)`.
 pub fn or_else<T, E, F>(result: Result<T, E>, f: fn(E) -> Result<T, F>) -> Result<T, F> {
-    "\n    Recover from an `Err(E)` payload with a fallible operation.\n\n    Args:\n        result: Result to inspect.\n        f: Function called with the `Err(E)` payload. It must return a `Result[T, F]`.\n\n    Returns:\n        The `Result[T, F]` returned by `f` when `result` is `Err(error)`, otherwise the original `Ok(T)`.\n    ";
-    match result {
+    let _ = "\n    Recover from an `Err(E)` payload with a fallible operation.\n\n    Args:\n        result: Result to inspect.\n        f: Function called with the `Err(E)` payload. It must return a `Result[T, F]`.\n\n    Returns:\n        The `Result[T, F]` returned by `f` when `result` is `Err(error)`, otherwise the original `Ok(T)`.\n    ";
+    let _ = match result {
         Ok(value) => {
             return Ok::<T, F>(value);
         }
@@ -95,10 +95,10 @@ pub fn or_else<T, E, F>(result: Result<T, E>, f: fn(E) -> Result<T, F>) -> Resul
 /// Returns:
 ///     The original `Result[T, E]` after calling `f` for the `Ok(T)` branch.
 pub fn inspect<T, E>(result: Result<T, E>, f: fn(&T) -> ()) -> Result<T, E> {
-    "\n    Observe an `Ok(T)` payload while preserving the original result.\n\n    Args:\n        result: Result to inspect.\n        f: Function called with an implicit borrow of the `Ok(T)` payload.\n\n    Returns:\n        The original `Result[T, E]` after calling `f` for the `Ok(T)` branch.\n    ";
-    match result {
+    let _ = "\n    Observe an `Ok(T)` payload while preserving the original result.\n\n    Args:\n        result: Result to inspect.\n        f: Function called with an implicit borrow of the `Ok(T)` payload.\n\n    Returns:\n        The original `Result[T, E]` after calling `f` for the `Ok(T)` branch.\n    ";
+    let _ = match result {
         Ok(value) => {
-            f(&value);
+            let _ = f(&value);
             return Ok::<T, E>(value);
         }
         Err(error) => {
@@ -115,13 +115,13 @@ pub fn inspect<T, E>(result: Result<T, E>, f: fn(&T) -> ()) -> Result<T, E> {
 /// Returns:
 ///     The original `Result[T, E]` after calling `f` for the `Err(E)` branch.
 pub fn inspect_err<T, E>(result: Result<T, E>, f: fn(&E) -> ()) -> Result<T, E> {
-    "\n    Observe an `Err(E)` payload while preserving the original result.\n\n    Args:\n        result: Result to inspect.\n        f: Function called with an implicit borrow of the `Err(E)` payload.\n\n    Returns:\n        The original `Result[T, E]` after calling `f` for the `Err(E)` branch.\n    ";
-    match result {
+    let _ = "\n    Observe an `Err(E)` payload while preserving the original result.\n\n    Args:\n        result: Result to inspect.\n        f: Function called with an implicit borrow of the `Err(E)` payload.\n\n    Returns:\n        The original `Result[T, E]` after calling `f` for the `Err(E)` branch.\n    ";
+    let _ = match result {
         Ok(value) => {
             return Ok::<T, E>(value);
         }
         Err(error) => {
-            f(&error);
+            let _ = f(&error);
             return Err::<T, E>(error);
         }
     };

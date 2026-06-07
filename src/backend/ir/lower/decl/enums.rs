@@ -70,7 +70,7 @@ impl AstLowering {
                 .collect(),
             value_type,
             derives,
-            visibility: Self::map_visibility(e.visibility),
+            visibility: self.map_type_visibility(e.visibility),
             type_params: Self::lower_type_params(&e.type_params),
             derive_rust_modules,
             lint_allows: self.extract_rust_lint_allows(&e.decorators),

@@ -1091,10 +1091,16 @@ impl TypeChecker {
         if let Some(function) = &export.projected_function {
             return Some(SymbolKind::Function(self.function_info_from_manifest(function)));
         }
+        if let Some(target_path) = Self::manifest_identity_target_path(manifest, &export.name)
+            && !visited.contains(target_path)
+            && let Some(kind) = self.symbol_kind_from_manifest_path(manifest, target_path)
+        {
+            return Some(kind);
+        }
         if !visited.insert(export.target_path.clone()) {
             return None;
         }
-        if let Some(kind) = self.symbol_kind_from_api_target_path(manifest, &export.target_path) {
+        if let Some(kind) = self.symbol_kind_from_manifest_path(manifest, &export.target_path) {
             return Some(kind);
         }
         let target_name = export.target_path.last()?;
@@ -1108,6 +1114,25 @@ impl TypeChecker {
             return None;
         };
         self.symbol_kind_from_manifest_alias(manifest, target_alias, visited)
+    }
+
+    /// Return the canonical target path published by the manifest identity graph for one public name.
+    fn manifest_identity_target_path<'a>(manifest: &'a LibraryManifest, public_name: &str) -> Option<&'a [String]> {
+        manifest
+            .contract_metadata
+            .identity_graph
+            .entry_for_public_name(public_name)
+            .and_then(|entry| entry.target_path())
+    }
+
+    /// Resolve an exact manifest identity path into a semantic symbol kind before falling back to final-segment lookup.
+    fn symbol_kind_from_manifest_path(&self, manifest: &LibraryManifest, target_path: &[String]) -> Option<SymbolKind> {
+        if let Some(kind) = self.symbol_kind_from_api_target_path(manifest, target_path) {
+            return Some(kind);
+        }
+        let target_name = target_path.last()?;
+        self.find_manifest_non_alias_symbol_kind(manifest, target_name)
+            .or_else(|| self.pub_library_function_symbol(manifest, target_name))
     }
 
     /// Convert one non-alias manifest export into checker symbol metadata.
@@ -1149,11 +1174,10 @@ impl TypeChecker {
     }
 
     /// Resolve an alias target path against the checked API metadata embedded in the manifest.
-    fn symbol_kind_from_api_target_path(
-        &self,
-        manifest: &LibraryManifest,
+    fn api_declaration_for_target_path<'a>(
+        manifest: &'a LibraryManifest,
         target_path: &[String],
-    ) -> Option<SymbolKind> {
+    ) -> Option<&'a ApiDeclaration> {
         let name = target_path.last()?;
         let module_path = if target_path.first().is_some_and(|segment| segment == "crate") {
             &target_path[1..]
@@ -1163,7 +1187,7 @@ impl TypeChecker {
         let module_path = module_path.get(..module_path.len().saturating_sub(1))?;
         let api = manifest.contract_metadata.api.as_ref()?;
         let module = api.modules.iter().find(|module| module.module_path == module_path)?;
-        let declaration = module.declarations.iter().find(|declaration| match declaration {
+        module.declarations.iter().find(|declaration| match declaration {
             ApiDeclaration::Function(item) => item.name == *name,
             ApiDeclaration::Model(item) => item.name == *name,
             ApiDeclaration::Class(item) => item.name == *name,
@@ -1175,7 +1199,16 @@ impl TypeChecker {
             ApiDeclaration::Static(item) => item.name == *name,
             ApiDeclaration::Alias(item) => item.name == *name,
             ApiDeclaration::Partial(item) => item.name == *name,
-        })?;
+        })
+    }
+
+    /// Resolve an alias target path against the checked API metadata embedded in the manifest.
+    fn symbol_kind_from_api_target_path(
+        &self,
+        manifest: &LibraryManifest,
+        target_path: &[String],
+    ) -> Option<SymbolKind> {
+        let declaration = Self::api_declaration_for_target_path(manifest, target_path)?;
         self.symbol_kind_from_api_declaration(declaration)
     }
 
@@ -1553,9 +1586,15 @@ impl TypeChecker {
         span: Span,
         visited: &mut HashSet<String>,
     ) -> Option<PartialProjectionInfo> {
-        let target_name = alias.target_path.last()?;
+        let identity_target = Self::manifest_identity_target_path(manifest, &alias.name);
+        let target_path = identity_target.unwrap_or(alias.target_path.as_slice());
+        let target_name = target_path.last()?;
         if !visited.insert(target_name.clone()) {
             return None;
+        }
+        if let Some(ApiDeclaration::Partial(item)) = Self::api_declaration_for_target_path(manifest, target_path) {
+            let export = partial_export_from_api(item);
+            return Self::partial_projection_from_manifest_partial(&export, local_name, imported_type_aliases, span);
         }
         match Self::find_manifest_export(manifest, target_name)? {
             ManifestExportRef::Partial(export) => {

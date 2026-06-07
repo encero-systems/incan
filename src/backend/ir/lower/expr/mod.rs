@@ -63,7 +63,9 @@ impl AstLowering {
     /// exports that nominal type and no local declaration shadows it.
     fn public_library_for_nominal_receiver_type(&self, ty: &IrType) -> Option<String> {
         let name = match ty {
-            IrType::Struct(name) | IrType::NamedGeneric(name, _) => name.rsplit("::").next().unwrap_or(name),
+            IrType::Struct(name) | IrType::Enum(name) | IrType::NamedGeneric(name, _) => {
+                name.rsplit("::").next().unwrap_or(name)
+            }
             IrType::Ref(inner) | IrType::RefMut(inner) => {
                 return self.public_library_for_nominal_receiver_type(inner);
             }

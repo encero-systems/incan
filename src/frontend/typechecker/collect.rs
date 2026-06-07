@@ -231,6 +231,9 @@ impl TypeChecker {
                     module_path.extend_from_slice(&rest[..rest.len().saturating_sub(1)]);
                     module_path
                 };
+                if let Some(kind) = self.source_dependency_member_symbol_kind(&module_path, member) {
+                    return Some(kind);
+                }
                 if let Some(info) = self.stdlib_cache.lookup_function(&module_path, member) {
                     return Some(SymbolKind::Function(info));
                 }
@@ -247,6 +250,18 @@ impl TypeChecker {
             }
             [] => None,
         }
+    }
+
+    /// Resolve a member from a source dependency module path recorded in the dependency member cache.
+    fn source_dependency_member_symbol_kind(&self, module_path: &[String], member: &str) -> Option<SymbolKind> {
+        self.dependency_member_symbol_for_path(
+            &ImportPath {
+                parent_levels: 0,
+                is_absolute: false,
+                segments: module_path.to_vec(),
+            },
+            member,
+        )
     }
 
     /// Register a module-level partial as a projected callable symbol.
@@ -280,8 +295,8 @@ impl TypeChecker {
         self.symbols.define(Symbol {
             name: partial.name.clone(),
             kind: SymbolKind::Function(FunctionInfo {
-                params,
-                return_type,
+                params: params.clone(),
+                return_type: return_type.clone(),
                 is_async,
                 type_params,
                 type_param_bounds,
@@ -304,6 +319,10 @@ impl TypeChecker {
                 })
                 .collect(),
         });
+        self.type_info
+            .declarations
+            .function_bindings
+            .insert(partial.name.clone(), FunctionBindingInfo { params, return_type });
     }
 
     /// Resolve the callable surface that a top-level partial declaration projects from an already-resolved symbol.
