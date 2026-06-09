@@ -1060,7 +1060,9 @@ fn write_rust_inspect_cargo_config(manifest_dir: &Path, target_dir: &Path) -> Cl
 /// Detect Cargo's stale-lockfile failure so prewarm can retry with an offline lock refresh instead of silently
 /// skipping.
 fn rust_inspect_locked_prewarm_needs_lock_update(stderr: &str) -> bool {
-    stderr.contains("cannot update the lock file") && stderr.contains("because --locked was passed")
+    stderr.contains("--locked was passed")
+        && stderr.contains("lock file")
+        && (stderr.contains("cannot update") || stderr.contains("needs to be updated"))
 }
 
 #[cfg(feature = "rust_inspect")]
@@ -3382,10 +3384,17 @@ pub def main() -> int:
     #[cfg(feature = "rust_inspect")]
     #[test]
     fn rust_inspect_locked_prewarm_detects_stale_generated_lockfile() {
-        let stderr = "error: cannot update the lock file /tmp/target/incan_lock/rust_inspect/demo/Cargo.lock because --locked was passed to prevent this";
-        assert!(super::rust_inspect_locked_prewarm_needs_lock_update(stderr));
+        let cannot_update = "error: cannot update the lock file /tmp/target/incan_lock/rust_inspect/demo/Cargo.lock because --locked was passed to prevent this";
+        assert!(super::rust_inspect_locked_prewarm_needs_lock_update(cannot_update));
+
+        let needs_update = "error: the lock file /tmp/target/incan_lock/rust_inspect/demo/Cargo.lock needs to be updated but --locked was passed to prevent this";
+        assert!(super::rust_inspect_locked_prewarm_needs_lock_update(needs_update));
+
         assert!(!super::rust_inspect_locked_prewarm_needs_lock_update(
             "error: failed to select a version for `demo`"
+        ));
+        assert!(!super::rust_inspect_locked_prewarm_needs_lock_update(
+            "error: package selected but no lock file policy was involved"
         ));
     }
 
