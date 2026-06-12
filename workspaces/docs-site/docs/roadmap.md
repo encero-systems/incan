@@ -63,20 +63,20 @@ These issues define the minimum coherent 0.4 release surface:
 - [#760](https://github.com/dannys-code-corner/incan/issues/760): compact boundary parity fixture suite, focused on the import/package/vocab/test-batch failures that made 0.3 expensive to stabilize.
 - [#699](https://github.com/dannys-code-corner/incan/issues/699): unified symbol identity across import and package boundaries.
 - [#753](https://github.com/dannys-code-corner/incan/issues/753): partial presets constructing const metadata values, handled as part of callable identity and metadata parity.
-- [#707](https://github.com/dannys-code-corner/incan/issues/707) and [#723](https://github.com/dannys-code-corner/incan/issues/723): visible test/preheat progress and performance evidence, so long-running phases are explainable instead of silent.
+- [#707](https://github.com/dannys-code-corner/incan/issues/707), [#723](https://github.com/dannys-code-corner/incan/issues/723), [#697](https://github.com/dannys-code-corner/incan/issues/697), and [#769](https://github.com/dannys-code-corner/incan/issues/769): visible test/build preheat progress, generated-library preheat cache alignment, Rust metadata prewarm reuse, and cache split evidence so long-running phases are explainable instead of silent.
 - [#589](https://github.com/dannys-code-corner/incan/issues/589): stable machine-readable diagnostics output.
 - [#590](https://github.com/dannys-code-corner/incan/issues/590): diagnostic explain command and help catalog.
 - [#591](https://github.com/dannys-code-corner/incan/issues/591): build artifact reports.
 - [#567](https://github.com/dannys-code-corner/incan/issues/567): generated Rust inspection tooling and quality gates.
 - [#666](https://github.com/dannys-code-corner/incan/issues/666): RFC 102 semantic inspection umbrella, used to keep the inspection surfaces coherent.
-- [#573](https://github.com/dannys-code-corner/incan/issues/573): compiler-backed codegraph export for agent and maintainer workflows.
+- [#778](https://github.com/dannys-code-corner/incan/issues/778): RFC 106 first slice for compiler-backed codegraph JSONL export.
 - [#428](https://github.com/dannys-code-corner/incan/issues/428): canonical SDK installer and release manifest.
 - [#553](https://github.com/dannys-code-corner/incan/issues/553): zero-clone starter project flow.
 - [#551](https://github.com/dannys-code-corner/incan/issues/551): first-contact quickstart and positioning docs.
 
 #### Useful but evidence-dependent work
 
-- [#697](https://github.com/dannys-code-corner/incan/issues/697): preheating generated library dependencies into the build cache. This belongs in 0.4 if timing evidence shows it is necessary for the starter/downstream experience; otherwise it should remain a measured optimization rather than a mandatory rewrite.
+No current 0.4 milestone item remains in this bucket. Generated-library preheat alignment was promoted into the release-gating work after downstream timing evidence showed that silent cold dependency work was part of the first-contact and downstream package experience.
 
 #### Explicit 0.4 exclusions
 
@@ -85,6 +85,7 @@ The following are design constraints and future lanes, not 0.4 implementation sl
 - RFC 037 `std.web` and RFC 066 `std.http` implementation work.
 - Source-local feature metadata beyond maintaining the generated feature inventory for public 0.4 capabilities.
 - Rust caller, Rust-hosted consumption, ABI, and backend-replacement architecture.
+- RFC 106 follow-up graph layers tracked by [#573](https://github.com/dannys-code-corner/incan/issues/573), [#770](https://github.com/dannys-code-corner/incan/issues/770), [#771](https://github.com/dannys-code-corner/incan/issues/771), [#772](https://github.com/dannys-code-corner/incan/issues/772), [#773](https://github.com/dannys-code-corner/incan/issues/773), [#774](https://github.com/dannys-code-corner/incan/issues/774), [#775](https://github.com/dannys-code-corner/incan/issues/775), [#776](https://github.com/dannys-code-corner/incan/issues/776), and [#777](https://github.com/dannys-code-corner/incan/issues/777), including resolved targets, Rust graph records, MCP serving, task context packing, process-risk signals, external importers, and Architect findings.
 - Hees.ai, InQL, and Pallay product work beyond proof lanes that validate frozen 0.4 commands.
 - Broad language/runtime features that are not required by the installer, starter, diagnostics, inspection, build-report, or codegraph path.
 
