@@ -6399,13 +6399,13 @@ incan<span class="w"> </span>inspect<span class="w"> </span>rust<span class="w">
 <p>Usage:</p>
 <div class="language-text highlight"><pre><span></span><code>incan inspect codegraph [OPTIONS] &lt;PATH&gt;
 </code></pre></div>
-<p>Exports compiler-backed codegraph records for an Incan source file or directory. The 0.4 export is a deterministic JSONL stream of Incan-language files, modules, top-level declarations, imports, public exports, body-level reference and call syntax, containment relationships, source spans, provenance, degraded state, and diagnostics. It is intended for tools and agents that need Incan structure without scraping source text.</p>
+<p>Exports compiler-backed codegraph records for an Incan source file or directory. The 0.4 export is a deterministic JSONL stream of Incan-language files, modules, top-level declarations, imports, public exports, body-level reference and call syntax, conservative resolved reference and call targets, containment relationships, source spans, provenance, degraded state, and diagnostics. It is intended for tools and agents that need Incan structure without scraping source text.</p>
 <p>Options:</p>
 <ul>
 <li><code>--format jsonl</code>: Emit newline-delimited JSON records. JSONL is the only supported 0.4 format.</li>
 <li><code>--allow-errors</code>: Emit a degraded partial graph and diagnostic records when the source is broken. Without this flag, diagnostics fail the command.</li>
 </ul>
-<p><code>incan inspect codegraph</code> is tooling output, not runtime <code>std.graph</code>, not a generated-Rust ABI, and not a full reference/call graph in 0.4. The header lists the represented languages, and every fact record carries <code>language</code>, <code>provenance</code>, and <code>degraded</code> fields. The 0.4 exporter emits <code>language: "incan"</code> only; first-class Rust graph records and MCP/task-context consumers are follow-up work.</p>
+<p><code>incan inspect codegraph</code> is tooling output, not runtime <code>std.graph</code>, not a generated-Rust ABI, and not a whole-program reference/call graph in 0.4. The header lists the represented languages, and every fact record carries <code>language</code>, <code>provenance</code>, and <code>degraded</code> fields. Body facts with a compiler-proven <code>target_id</code> use checked provenance; syntax-only body facts keep syntax provenance. The 0.4 exporter emits <code>language: "incan"</code> only; first-class Rust graph records and MCP/task-context consumers are follow-up work.</p>
 <p>Examples:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>inspect<span class="w"> </span>codegraph<span class="w"> </span>src/main.incn<span class="w"> </span>--format<span class="w"> </span>jsonl
 incan<span class="w"> </span>inspect<span class="w"> </span>codegraph<span class="w"> </span>src<span class="w"> </span>--format<span class="w"> </span>jsonl<span class="w"> </span>--allow-errors
