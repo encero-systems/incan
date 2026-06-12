@@ -6210,7 +6210,7 @@
 <li><strong>Install and first run</strong>: A release manifest, checksum-verified SDK installer, Homebrew formula generation, npm and pip thin installers, and a zero-clone starter project make Incan usable without cloning the compiler repository first (#428, #553, #551).</li>
 <li><strong>Diagnostics and reports</strong>: <code>incan check</code>, JSON diagnostics, <code>incan explain</code>, build reports, and generated Rust inspection give tools stable contracts instead of scraping terminal prose (#589, #590, #591, #567).</li>
 <li><strong>Semantic inspection</strong>: <code>incan inspect codegraph</code> exports compiler-backed JSONL records for source files, modules, declarations, imports, exports, syntax-level references and calls, conservative checked target ids, diagnostics, spans, provenance, and degraded-state facts (#666, #573, #770, <a href="/dev/RFCs/102_incan_semantic_layer_inspection_surface">RFC 102</a>, <a href="/dev/RFCs/106_compiler_backed_agent_context_graph">RFC 106</a>).</li>
-<li><strong>Performance and observability</strong>: Test/build preheat phases now report visible timing, cache hits or misses, and Cargo target information so long dependency work is measurable instead of silent (#707, #723, #697).</li>
+<li><strong>Performance and observability</strong>: Test/build preheat phases now report visible timing, cache hits or misses, Rust metadata reuse, and Cargo target information so long dependency work is measurable instead of silent (#707, #723, #697, #769).</li>
 <li><strong>Boundary parity</strong>: Compact fixtures exercise provider/facade/consumer packages, dependency-owned unions, decorated aliases, partial presets, dependency vocab, formatter/test-batch paths, and generated Rust ownership before downstream packages rediscover those bugs (#760, #699, #753).</li>
 <li><strong>Release discipline</strong>: The 0.4 notes, roadmap, RFC template, and feature inventory are kept current while the work lands, instead of being reconstructed at release freeze (#223, #554, #592).</li>
 </ul>
@@ -6251,6 +6251,7 @@
 <ul>
 <li><strong>Visible test and build phases</strong>: Verbose test runs now show generated-harness planning, package/dependency preparation, preheat timing, Cargo target directories, Cargo execution timing, and cache hit/miss reasons. Ordinary output stays quieter, but long-running preheat work is no longer silent (#707, #723).</li>
 <li><strong>Generated-library preheat alignment</strong>: <code>incan build --lib</code> preheats generated-library dependencies into the same release-profile Cargo target directory as the real generated library build, so unchanged lock/profile/target inputs can reuse warmed artifacts instead of compiling into a separate preheat domain (#697).</li>
+<li><strong>Rust metadata prewarm reuse</strong>: <code>rust_inspect</code> prewarm now reports warmed, reused, and skipped metadata items, loads persisted disk-cache state before deciding to extract, and exposes cache split reasons through <code>INCAN_RUST_INSPECT_TIMING=1</code> so cold-path work can be measured without pulling heavyweight downstream dependencies into the Incan regression suite (#769).</li>
 <li><strong>Measured downstream proof lanes</strong>: InQL remains the main heavy downstream proof lane for preheat/runtime behavior, but 0.4 keeps the regression suite synthetic and compact so Incan does not need heavyweight downstream dependencies in core tests (#707, #723, #697).</li>
 </ul>
 <h3 id="boundary-parity-and-symbol-identity">Boundary parity and symbol identity<a class="headerlink" href="#boundary-parity-and-symbol-identity" title="Permanent link">&para;</a></h3>
@@ -6284,6 +6285,7 @@
 <li><a href="https://github.com/dannys-code-corner/incan/issues/707">#707</a>: visible prewarm/progress behavior for long-running build and test phases.</li>
 <li><a href="https://github.com/dannys-code-corner/incan/issues/723">#723</a>: test runner progress/performance observability.</li>
 <li><a href="https://github.com/dannys-code-corner/incan/issues/697">#697</a>: generated-library dependency preheat alignment when timing evidence justifies it.</li>
+<li><a href="https://github.com/dannys-code-corner/incan/issues/769">#769</a>: rust-inspect cold prewarm timing, cache reuse, and cache split explanation.</li>
 </ul>
 <h3 id="stage-3-stable-diagnostics-plane">Stage 3: stable diagnostics plane<a class="headerlink" href="#stage-3-stable-diagnostics-plane" title="Permanent link">&para;</a></h3>
 <ul>
