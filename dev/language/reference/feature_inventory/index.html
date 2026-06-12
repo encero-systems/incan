@@ -2393,6 +2393,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#build-and-test-preheat-observability" class="md-nav__link">
+    <span class="md-ellipsis">
+      Build and test preheat observability
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#compiler-backed-codegraph-inspection" class="md-nav__link">
     <span class="md-ellipsis">
       Compiler-backed codegraph inspection
@@ -6702,6 +6711,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#build-and-test-preheat-observability" class="md-nav__link">
+    <span class="md-ellipsis">
+      Build and test preheat observability
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#compiler-backed-codegraph-inspection" class="md-nav__link">
     <span class="md-ellipsis">
       Compiler-backed codegraph inspection
@@ -7214,7 +7232,7 @@
 <td>Tooling</td>
 <td style="text-align: right;">0.3</td>
 <td>Use <code>incan init</code>, <code>incan new</code>, <code>incan version</code>, or <code>incan env</code>.</td>
-<td><code>incan new greeter --yes</code><br><code>incan version patch</code><br><code>incan env test</code></td>
+<td><code>incan new greeter --yes</code><br><code>incan version patch</code><br><code>incan env run dev test</code></td>
 <td>Project commands create scaffolds, manage versions, and run configured environments from <code>incan.toml</code>.</td>
 <td>One-off project scaffolding scripts or manual version-file edits.</td>
 <td><a href="../project_lifecycle/">Project lifecycle</a>, <a href="../../how-to/project_lifecycle/">Project lifecycle how-to</a>, <a href="../../../release_notes/0_3/">Release 0.3</a></td>
@@ -7257,6 +7275,16 @@
 <td><code>incan build src/main.incn --report json</code><br><code>incan build --lib --report json --report-output build.json</code><br><code>incan inspect rust src/main.incn --format json</code></td>
 <td>Builds can emit versioned machine-readable reports, generated Rust can be inspected intentionally as current backend output, and generated public Rust items preserve checked source docstrings as Rust doc comments when available.</td>
 <td>Scraping terminal progress output or treating <code>--emit-rust</code> debug output as a stable artifact contract.</td>
+<td><a href="../../../tooling/reference/cli_reference/">CLI reference</a>, <a href="../../../release_notes/0_4/">Release 0.4</a></td>
+</tr>
+<tr>
+<td>Build and test preheat observability</td>
+<td>Tooling</td>
+<td style="text-align: right;">0.4</td>
+<td>Use verbose test output or <code>INCAN_RUST_INSPECT_TIMING=1</code> when build/test preheat timing needs to be inspected.</td>
+<td><code>incan test -v tests</code><br><code>INCAN_RUST_INSPECT_TIMING=1 incan build --lib</code><br><code>incan build --lib</code></td>
+<td>Build and test preheat paths report phase timing, Cargo target reuse, Rust metadata warmed/reused/skipped counts, and cache split reasons.</td>
+<td>Silent long-running preheat phases or separate probes that do not share the real build/test cache policy.</td>
 <td><a href="../../../tooling/reference/cli_reference/">CLI reference</a>, <a href="../../../release_notes/0_4/">Release 0.4</a></td>
 </tr>
 <tr>
@@ -8068,7 +8096,7 @@
 <ul>
 <li><code>incan new greeter --yes</code></li>
 <li><code>incan version patch</code></li>
-<li><code>incan env test</code></li>
+<li><code>incan env run dev test</code></li>
 </ul>
 <h3 id="sdk-installer-and-release-manifest">SDK installer and release manifest<a class="headerlink" href="#sdk-installer-and-release-manifest" title="Permanent link">&para;</a></h3>
 <ul>
@@ -8088,7 +8116,6 @@
 <li><code>brew install https://github.com/dannys-code-corner/incan/releases/latest/download/incan.rb</code></li>
 <li><code>npm install -g incan-sdk</code></li>
 <li><code>pipx install incan-sdk</code></li>
-<li><code>workspaces/release/install-incan-sdk.sh --dry-run</code></li>
 </ul>
 <h3 id="zero-clone-starter-project-flow">Zero-clone starter project flow<a class="headerlink" href="#zero-clone-starter-project-flow" title="Permanent link">&para;</a></h3>
 <ul>
@@ -8145,6 +8172,24 @@
 <li><code>incan build --lib --report json --report-output build.json</code></li>
 <li><code>incan inspect rust src/main.incn --format json</code></li>
 </ul>
+<h3 id="build-and-test-preheat-observability">Build and test preheat observability<a class="headerlink" href="#build-and-test-preheat-observability" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Id:</strong> <code>BuildTestPreheatObservability</code></li>
+<li><strong>Category:</strong> <code>Tooling</code></li>
+<li><strong>Since:</strong> <code>0.4</code></li>
+<li><strong>RFC:</strong> <code>RFC 015</code></li>
+<li><strong>Stability:</strong> <code>Stable</code></li>
+<li><strong>Activation:</strong> Use verbose test output or <code>INCAN_RUST_INSPECT_TIMING=1</code> when build/test preheat timing needs to be inspected.</li>
+<li><strong>Use instead of:</strong> Silent long-running preheat phases or separate probes that do not share the real build/test cache policy.</li>
+<li><strong>References:</strong> <a href="../../../tooling/reference/cli_reference/">CLI reference</a>, <a href="../../../release_notes/0_4/">Release 0.4</a></li>
+</ul>
+<p>Build and test preheat paths report phase timing, Cargo target reuse, Rust metadata warmed/reused/skipped counts, and cache split reasons.</p>
+<p>Canonical forms:</p>
+<ul>
+<li><code>incan test -v tests</code></li>
+<li><code>INCAN_RUST_INSPECT_TIMING=1 incan build --lib</code></li>
+<li><code>incan build --lib</code></li>
+</ul>
 <h3 id="compiler-backed-codegraph-inspection">Compiler-backed codegraph inspection<a class="headerlink" href="#compiler-backed-codegraph-inspection" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Id:</strong> <code>CodegraphInspection</code></li>
@@ -8156,7 +8201,7 @@
 <li><strong>Use instead of:</strong> Repeated grep/read loops or tool-specific source scrapers when agents and tooling need basic Incan structure.</li>
 <li><strong>References:</strong> <a href="../../../tooling/reference/codegraph_inspection/">Codegraph inspection</a>, <a href="../../../tooling/reference/cli_reference/">CLI reference</a>, <a href="../../../release_notes/0_4/">Release 0.4</a></li>
 </ul>
-<p>Incan-language source files, modules, declarations, imports, exports, body-level reference and call syntax, conservative resolved reference and call targets, containment, spans, provenance, language tags, degraded state, and diagnostics can be exported as deterministic JSONL records. First-class Rust graph records, MCP serving, task-context packing, process-risk signals, and Architect findings are later RFC 106 follow-up work.</p>
+<p>Incan-language source files, modules, declarations, imports, exports, body-level reference and call syntax, conservative resolved reference and call targets, containment, spans, provenance, language tags, degraded state, and diagnostics can be exported as deterministic JSONL records.</p>
 <p>Canonical forms:</p>
 <ul>
 <li><code>incan inspect codegraph src/main.incn --format jsonl</code></li>
