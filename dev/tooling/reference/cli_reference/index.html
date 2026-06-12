@@ -4463,6 +4463,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#semantic-inspection-surfaces" class="md-nav__link">
+    <span class="md-ellipsis">
+      Semantic inspection surfaces
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#global-options" class="md-nav__link">
     <span class="md-ellipsis">
       Global options
@@ -5981,6 +5990,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#semantic-inspection-surfaces" class="md-nav__link">
+    <span class="md-ellipsis">
+      Semantic inspection surfaces
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#global-options" class="md-nav__link">
     <span class="md-ellipsis">
       Global options
@@ -6250,6 +6268,9 @@
 <li><code>lock</code> - Generate or update <code>incan.lock</code></li>
 <li><code>tools</code> - Inspect local toolchain, editor integration state, and checked metadata</li>
 </ul>
+<h2 id="semantic-inspection-surfaces">Semantic inspection surfaces<a class="headerlink" href="#semantic-inspection-surfaces" title="Permanent link">&para;</a></h2>
+<p>Incan 0.4 exposes several machine-readable inspection commands that are meant to agree on schema version, compiler version, project identity, source-file breadcrumbs, generated artifact paths, diagnostics, and provenance where their scopes overlap. Use <code>incan check --format json</code> for the stable diagnostic plane, <code>incan build --report json</code> for successful build and artifact metadata, <code>incan inspect rust --format json</code> for current generated Rust output, and <code>incan inspect codegraph --format jsonl</code> for source-structure graph facts.</p>
+<p>These commands are intentionally not a single full semantic database yet. They are the 0.4 baseline for the broader RFC 102 semantic inspection direction: stable public JSON surfaces that tools can join without scraping terminal prose, generated Rust, or source text independently. When a fact appears in more than one surface, consumers should prefer compiler-owned identity fields, source paths, schema versions, and explicit degraded-state or diagnostic records over human output.</p>
 <h2 id="global-options">Global options<a class="headerlink" href="#global-options" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>--no-banner</code>: suppress the ASCII logo banner when a command would otherwise show it (also via <code>INCAN_NO_BANNER=1</code>).</li>

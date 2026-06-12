@@ -6026,9 +6026,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#unresolved-questions" class="md-nav__link">
+  <a href="#future-design-questions" class="md-nav__link">
     <span class="md-ellipsis">
-      Unresolved questions
+      Future design questions
     </span>
   </a>
   
@@ -6054,7 +6054,7 @@
 
 <h1 id="rfc-102-incan-semantic-layer-inspection-surface">RFC 102: Incan Semantic Layer Inspection Surface<a class="headerlink" href="#rfc-102-incan-semantic-layer-inspection-surface" title="Permanent link">&para;</a></h1>
 <ul>
-<li><strong>Status:</strong> Draft</li>
+<li><strong>Status:</strong> Planned</li>
 <li><strong>Created:</strong> 2026-05-23</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong><ul>
@@ -6079,10 +6079,11 @@
 <li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/666</li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> v0.3</li>
-<li><strong>Shipped in:</strong> —</li>
+<li><strong>Shipped in:</strong> 0.4 baseline; full RFC scope remains future work</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
 <p>This RFC defines the Incan Semantic Layer Inspection Surface: a local, versioned, machine-readable project model that joins checked source facts, project lifecycle facts, actions, capabilities, policy outcomes, provenance, artifacts, schema descriptors, AI assets, evals, and agent guidance into one inspectable contract for CLI, LSP, CI, docs tooling, registries, and agents. The goal is not to replace the subsystem RFCs that own those facts; the goal is to make their outputs converge into one semantic layer so tools do not scrape source files, generated Rust, manifests, README conventions, or unrelated command output to understand an Incan project.</p>
+<p>The 0.4 release accepts this RFC as the semantic-inspection direction and ships the first baseline surfaces: <code>incan check --format json</code>, <code>incan build --report json</code>, <code>incan inspect rust --format json</code>, and <code>incan inspect codegraph --format jsonl</code>. Those commands are deliberately focused rather than a full semantic package. They establish versioned JSON contracts, shared project/source identity expectations, explicit diagnostics, generated artifact breadcrumbs, and degraded-state graph output that later phases can join into the broader model described here.</p>
 <h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
 <p>Read this RFC as nine foundations:</p>
 <ol>
@@ -6315,7 +6316,7 @@ incan graph explain artifact:target/schema/order_summary.json
 <li><strong>Registry / package integration</strong>: should map local artifact identities and relationship edges to registry artifact graph metadata when publishing or inspecting packages.</li>
 <li><strong>Agentic tooling</strong>: may consume the semantic package for context selection and proposal generation, but must respect policy outcomes and approval boundaries.</li>
 </ul>
-<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
+<h2 id="future-design-questions">Future design questions<a class="headerlink" href="#future-design-questions" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Should the canonical command be <code>incan inspect</code>, <code>incan project inspect</code>, <code>incan graph inspect</code>, or another spelling?</li>
 <li>Should graph explanation be a subcommand of inspection, such as <code>incan inspect explain</code>, or a separate <code>incan graph explain</code> command?</li>
@@ -6326,8 +6327,6 @@ incan graph explain artifact:target/schema/order_summary.json
 <li>Should exported package artifacts embed a semantic package fragment, or should they embed only RFC 048 metadata plus artifact graph metadata until a later publishing RFC?</li>
 <li>What compatibility policy should apply when an older tool consumes a newer semantic package with unknown object or edge kinds?</li>
 </ul>
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 
