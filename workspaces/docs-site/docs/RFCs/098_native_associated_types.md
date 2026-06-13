@@ -51,6 +51,7 @@ The end-state should be simple: if a capability has an implementer-selected type
 - Define how associated types interact with supertraits and same-name associated type members.
 - Align native associated types with the Rust trait adoption model from RFC 043 without making the feature Rust-only.
 - Provide enough expressive power for streaming hash digest values, iterator item propagation, parser value types, and adapter APIs.
+- Preserve associated type declarations, bindings, projections, trait-qualified targets, and resolution provenance in checked metadata, generated documentation, LSP views, and package manifests.
 - Identify adjacent trait-system features such as higher-rank associated types, specialization, associated constants, defaults, and trait objects so they can be accepted into this RFC or deferred by explicit design decision.
 
 ## Non-Goals
@@ -183,6 +184,18 @@ Associated type bindings participate in method signature compatibility. If a tra
 Supertraits may declare associated types, and subtraits inherit those requirements. A subtrait may refer to inherited associated types through `Self.Name` when the name is unambiguous, but it must not silently redeclare an inherited associated type with the same name unless a later design explicitly permits refinement or equality constraints. Trait cycles involving associated types must use the same diagnostic model as supertrait cycles: any cycle that prevents associated type resolution must produce a diagnostic rather than causing infinite expansion.
 
 Associated types have no runtime representation by themselves. They affect type checking, method compatibility, generic substitution, diagnostics, and generated backend signatures.
+
+### Metadata and inspection contract
+
+Associated type behavior must be inspectable as checked semantic data, not only as backend output. Checked API metadata, package manifests, generated documentation, semantic inspection, and LSP surfaces must be able to expose at least:
+
+- associated type declarations owned by a trait, including source identity and supertrait provenance;
+- associated type bindings supplied by concrete adoptions, targeted bindings, Rust interop metadata, or RFC 099 trait-owned capability families;
+- projections used in public signatures and generic bounds, including the trait identity that made the projection legal;
+- ambiguity or degraded-state markers when a projection cannot be resolved in tolerant tooling modes;
+- signature-compatibility relationships that explain how a concrete method return or parameter type satisfies a trait requirement through an associated type binding.
+
+Generated documentation should show associated types as part of the public trait contract, not as hidden implementation detail. LSP hover and go-to-definition should let a reader move between a projection such as `H.Digest`, the trait-owned declaration of `Digest`, and the concrete binding when the binding is known. Diagnostics and `incan explain`-style tooling should report the same identities that metadata consumers see so there is one explanation for why a projection typechecks or fails.
 
 ## Design details
 
@@ -324,7 +337,8 @@ This section is non-normative. The contract is the language behavior above; comp
 - **Emission**: Rust emission should lower native associated types to Rust associated type items where possible and substitute concrete bindings in generated method signatures as required.
 - **Stdlib / Runtime (`incan_stdlib`)**: stdlib traits such as streaming hashers, iterators, parsers, codecs, and adapters may use associated types to remove duplicated shape-specific abstractions.
 - **Formatter**: associated type declarations, targeted bindings, and projection types must format stably.
-- **LSP / Tooling**: completions, hover, go-to-definition, and diagnostics should expose associated type members and their concrete bindings.
+- **Library manifests / checked API metadata**: public trait metadata must preserve associated type declarations, bindings, projections, trait-qualified targets, and degraded-state markers for downstream package consumers and generated documentation.
+- **LSP / Tooling**: completions, hover, go-to-definition, diagnostics, semantic inspection, and explanation commands should expose associated type members, concrete bindings, provenance, and ambiguity reasons.
 
 ## Unresolved questions
 

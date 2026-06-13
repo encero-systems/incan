@@ -63,6 +63,7 @@ This RFC therefore makes the integration surface explicit. Incan should provide 
 - Define high-level command surfaces such as `incan inspect`, `incan graph explain`, and machine-readable LSP-facing equivalents without requiring exact final flag spelling.
 - Define the relationship between RFC 048 checked metadata, RFC 074 template provenance, RFC 075 capabilities, RFC 076 policy, RFC 077 workspaces, RFC 078 actions, RFC 079 artifact graph data, and RFC 080 AI assets.
 - Define how degraded, incomplete, unsupported, stale, blocked, and redacted facts are represented.
+- Make generated behavior and compiler-selected behavior explainable, including derives, decorators, vocabulary desugarings, trait resolution, associated type projection, type-directed overload selection, ownership and clone planning, and generated artifact relationships where those facts are available.
 - Require CLI, LSP, CI, docs tooling, registry tooling, and agents to consume the same semantic facts where their needs overlap.
 - Make agent-facing inspection an explicit stable integration target while preserving receiver-owned policy and approval boundaries.
 
@@ -142,6 +143,7 @@ The semantic inspection surface must expose a versioned semantic package. The ex
 - lockfile and dependency facts when available;
 - checked source declarations from RFC 048;
 - contract-backed model facts from RFC 048;
+- generated behavior explanation facts for compiler-owned or compiler-selected behavior such as derives, decorators, vocabulary desugarings, trait resolution, associated type projection, type-directed overload selection, ownership and clone planning, and generated backend artifacts where available;
 - field metadata, reusable field provenance, and schema descriptor facts from RFC 085, RFC 086, RFC 087, and RFC 096 where available;
 - file roles, capability status, capability provenance, template provenance, and generated-file ownership from RFC 074 and RFC 075;
 - typed actions from RFC 078;
@@ -181,6 +183,7 @@ The semantic package must represent stable identities for objects that other too
 - modules and public declarations;
 - model fields and reusable field contracts;
 - schema descriptors and overlays;
+- derive applications, decorator applications, vocabulary surfaces, trait adoptions, associated type bindings, type-token overload surfaces, and other generated-behavior anchors where available;
 - source files and generated files;
 - templates and template provenance records;
 - capabilities and applied capability records;
@@ -206,9 +209,20 @@ The semantic package must represent relationships as first-class edges where pos
 - `applies-policy`: policy decision applies to an action, mutation, artifact, or source;
 - `created-by-capability`: file, action, or metadata originated from a capability;
 - `projects-from`: generated schema, docs, or adapter output projects from checked descriptors;
+- `explains`: an explanation object explains a generated behavior, selected behavior, policy decision, diagnostic, or artifact relationship;
+- `resolves-to`: a source use resolves to a declaration, overload, trait target, associated type binding, vocabulary descriptor, or generated behavior target;
+- `lowers-to`: a source behavior lowers to a generated backend artifact or runtime helper where that lowering is inspectable;
 - `guided-by`: agent guidance applies to a file role, capability, action, or project shape.
 
 Implementations may add extension edge kinds. Unknown edge kinds must remain visible in machine-readable output and must not be silently dropped by generic consumers.
+
+### Generated behavior explanations
+
+The semantic package must represent compiler-owned or compiler-selected behavior as explainable facts when those facts are available. This includes behavior that can otherwise feel hidden to users: derives and their generated protocol implementations, user-defined decorators and preserved callable identity, vocabulary block desugarings, import-scoped extension properties, trait adoption and associated type resolution, type-token overload selection, type-directed return mapping, ownership and clone planning at checked value-use boundaries, generated Rust or future backend artifacts, generated docs, schema adapter outputs, and template-generated source.
+
+An explanation fact must identify the source anchor, the selected semantic rule or provider, the generated or resolved target when there is one, the relevant checked inputs, and any degraded state. For example, a derive explanation should identify the derive name, source declaration, generated behavior surface, conflicting custom hooks if present, and generated artifact relationship when available. A trait-resolution explanation should identify the trait target, bounds or associated type bindings that made it legal, and the reason an alternative target was rejected when ambiguity exists. A value-use explanation should identify whether a value is moved, borrowed, cloned, converted, or materialized for the checked boundary when the compiler exposes that decision.
+
+Generated behavior explanations are not required to expose private backend internals. The requirement is that user-visible behavior, public metadata, diagnostics, docs, LSP hovers, package manifests, and generated artifacts can point to one checked explanation instead of forcing users or agents to reverse-engineer generated Rust or inspect compiler source. If a behavior cannot be explained because the owning subsystem has not implemented the fact yet, the semantic package should mark the fact as `unsupported` or `partial` rather than silently omitting an expected explanation.
 
 ### Degraded and partial facts
 
@@ -307,6 +321,10 @@ Adapter outputs must remain projections of checked descriptors, not source truth
 
 RFC 092 owns interactive runtime target manifests and host capability contracts. RFC 097 owns the Rust-hosted caller boundary. This RFC allows those emitted manifests, host capability facts, Rust-facing ABI/caller artifacts, and caller metadata to appear in the semantic package when available, especially for LSP, docs, CI, and registry inspection.
 
+### Relationship to trait, type-directed, and vocabulary RFCs
+
+RFC 098, RFC 099, and RFC 107 define type-system surfaces whose behavior must remain visible across package and tooling boundaries. RFC 027, RFC 040, RFC 045, and future vocabulary RFCs define scoped vocabulary surfaces with similar inspectability pressure. This RFC is the aggregation point for their inspectability contracts: associated type declarations and bindings, generic trait adoption families, type-token overloads and type-directed return mappings, alias and reexport invariants, vocabulary descriptors, extension-property resolution, and degraded-state markers should appear as semantic package facts where their owning RFCs define them.
+
 ## Alternatives considered
 
 ### Keep subsystem JSON outputs independent
@@ -355,6 +373,7 @@ Implementations should support focused queries so LSP and CI can request only th
 ## Layers affected
 
 - **Compiler semantic analysis**: must expose checked source facts, diagnostics, stable identities, and degraded states in a form that the semantic package can consume.
+- **Generated behavior explanation**: derives, decorators, vocabularies, trait resolution, associated type projection, type-directed overload selection, ownership/clone planning, and generated artifact relationships should expose user-facing explanation facts when available.
 - **Project model / lifecycle tooling**: must expose manifest, workspace, lock, capability, action, template, policy, provenance, and AI asset facts through shared identities.
 - **CLI / tooling**: must provide machine-readable inspection and graph explanation commands, plus focused views where needed.
 - **LSP / IDE tooling**: should consume semantic package facts for project views, hovers, definitions, diagnostics, run actions, generated-file status, policy status, and agent guidance discovery.

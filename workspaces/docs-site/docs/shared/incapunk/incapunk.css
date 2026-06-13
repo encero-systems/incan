@@ -1413,3 +1413,351 @@ body::after {
     font-size: 2.2rem;
   }
 }
+
+/* Landing-page module: scoped after generic docs styling to avoid override stacks. */
+.md-content__inner:has(.inc-home) {
+  padding: 1.3rem;
+}
+
+.inc-home {
+  max-width: 72rem;
+  margin: 0 auto;
+}
+
+.inc-home h1 {
+  max-width: 15ch;
+  margin: 0;
+  color: transparent;
+  font-size: 2.95rem;
+  line-height: 1.03;
+  letter-spacing: 0;
+}
+
+.inc-home h1 .headerlink {
+  display: none;
+}
+
+.inc-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 0.92fr) minmax(24rem, 1.08fr);
+  gap: 1.15rem;
+  align-items: start;
+  padding: 0.15rem 0 0.9rem;
+}
+
+.inc-hero__copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.inc-home .inc-hero__copy > p {
+  max-width: 38rem;
+  margin: 0.72rem 0 0;
+  padding: 0;
+  border: 0;
+  color: #f0e8dc;
+  font-family: var(--inc-font-body);
+  font-size: 0.98rem;
+  font-weight: 400;
+  line-height: 1.5;
+  box-shadow: none;
+  text-shadow: none;
+}
+
+.inc-home .inc-hero__copy > p::after {
+  display: none;
+}
+
+.inc-hero__actions,
+.inc-home .inc-hero__actions > p {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.inc-hero__actions {
+  margin: 1rem 0 0;
+}
+
+.inc-home .inc-hero__actions > p {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  box-shadow: none;
+}
+
+.inc-hero__actions .md-button {
+  margin: 0;
+  padding: 0.48rem 0.74rem;
+  font-size: 0.72rem;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.inc-hero__actions .inc-button--quiet {
+  color: var(--inc-cyan);
+  border-color: rgba(72, 240, 239, 0.36);
+  background:
+    linear-gradient(90deg, rgba(72, 240, 239, 0.08), rgba(255, 193, 90, 0.06)),
+    rgba(4, 8, 10, 0.56);
+}
+
+.inc-code-compare {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  min-width: 0;
+  border: 1px solid rgba(255, 193, 90, 0.28);
+  background: var(--inc-metal-rail-muted);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 240, 183, 0.05),
+    0 1.1rem 2.4rem rgba(0, 0, 0, 0.32);
+}
+
+.inc-code-pane {
+  min-width: 0;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(72, 240, 239, 0.07), transparent 24%),
+    linear-gradient(180deg, rgba(8, 10, 14, 0.96), rgba(3, 4, 7, 0.98));
+}
+
+.inc-code-label {
+  margin: 0;
+  padding: 0.48rem 0.72rem;
+  border-bottom: 1px solid rgba(255, 193, 90, 0.18);
+  color: #ffdb8d;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.inc-code-pane div.highlight {
+  margin: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.inc-code-pane div.highlight pre {
+  min-height: 11rem;
+  padding: 0.74rem;
+}
+
+.inc-code-pane div.highlight code,
+.inc-code-pane div.highlight pre code {
+  font-size: 0.68rem;
+  line-height: 1.48;
+}
+
+.inc-handoff-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  padding: 0.74rem;
+}
+
+.inc-handoff-step {
+  min-width: 0;
+  padding: 0.52rem 0.58rem;
+  border: 1px solid rgba(255, 193, 90, 0.14);
+  background:
+    linear-gradient(90deg, rgba(72, 240, 239, 0.055), rgba(255, 193, 90, 0.035), rgba(255, 92, 105, 0.035)),
+    rgba(7, 9, 12, 0.78);
+}
+
+.inc-handoff-step strong {
+  display: block;
+  color: var(--inc-gold-1);
+  font-size: 0.62rem;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.inc-handoff-step span {
+  display: block;
+  margin-top: 0.16rem;
+  color: rgba(231, 237, 242, 0.88);
+  font-size: 0.64rem;
+  line-height: 1.34;
+}
+
+.inc-handoff-step code {
+  color: #f2eadc;
+}
+
+.inc-section {
+  margin: 2.2rem 0;
+}
+
+.inc-section--tight {
+  margin: 0 0 2.1rem;
+}
+
+.inc-section--compact {
+  max-width: 52rem;
+}
+
+.inc-section-grid {
+  align-items: start;
+}
+
+.inc-section h2,
+.inc-final-cta h2 {
+  margin-top: 0;
+  font-size: 1.52rem;
+  letter-spacing: 0;
+}
+
+.inc-section h2::before,
+.inc-final-cta h2::before {
+  margin-bottom: 0.82rem;
+}
+
+.inc-section p,
+.inc-final-cta p {
+  max-width: 42rem;
+  color: rgba(231, 237, 242, 0.88);
+  font-size: 0.86rem;
+  line-height: 1.65;
+}
+
+.inc-home .inc-answer-grid,
+.inc-home .inc-proof-grid {
+  margin-top: 0;
+}
+
+.inc-home .grid.cards > ul {
+  margin: 0;
+  padding: 0;
+}
+
+.inc-home .grid.cards > ul > li,
+.inc-home .grid > .card {
+  border: 1px solid rgba(255, 193, 90, 0.2);
+  border-radius: 0;
+  background:
+    linear-gradient(90deg, rgba(72, 240, 239, 0.07), rgba(255, 193, 90, 0.045) 58%, rgba(255, 92, 105, 0.045)),
+    rgba(5, 7, 10, 0.66);
+  box-shadow: inset 0 1px 0 rgba(255, 240, 183, 0.04);
+}
+
+.inc-home .grid.cards > ul > li:hover,
+.inc-home .grid > .card:hover {
+  border-color: rgba(255, 193, 90, 0.36);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 240, 183, 0.06),
+    0 0.72rem 1.45rem rgba(0, 0, 0, 0.26);
+}
+
+.inc-home .grid.cards strong {
+  color: var(--inc-gold-1);
+}
+
+.inc-home .grid.cards p {
+  color: rgba(231, 237, 242, 0.88);
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.inc-proof-grid {
+  margin-top: 0;
+}
+
+.inc-proof-grid p {
+  font-size: 0.68rem;
+}
+
+.inc-section-grid > .admonition,
+.inc-section-grid > details,
+.inc-section--compact > .admonition {
+  margin: 0;
+}
+
+.inc-final-cta {
+  margin: 2.3rem 0 0;
+  padding: 1.15rem;
+  border: 1px solid rgba(255, 193, 90, 0.28);
+  background:
+    radial-gradient(circle at 0% 0%, rgba(72, 240, 239, 0.1), transparent 24%),
+    radial-gradient(circle at 100% 100%, rgba(255, 92, 105, 0.1), transparent 24%),
+    linear-gradient(180deg, rgba(12, 14, 18, 0.82), rgba(5, 6, 9, 0.88));
+}
+
+.inc-text-link {
+  font-weight: 800;
+}
+
+@media screen and (max-width: 1100px) {
+  .inc-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .inc-code-compare {
+    grid-template-columns: 1fr;
+  }
+
+  .inc-code-pane div.highlight pre {
+    min-height: 0;
+  }
+}
+
+@media screen and (max-width: 760px) {
+  .md-content__inner:has(.inc-home) {
+    margin-right: 0;
+    margin-left: 0;
+    padding: 0.82rem;
+  }
+
+  .inc-home h1 {
+    font-size: 2rem;
+  }
+
+  .inc-home .inc-hero__copy > p {
+    font-size: 0.86rem;
+  }
+
+  .inc-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .inc-code-label {
+    padding: 0.34rem 0.54rem;
+    font-size: 0.62rem;
+  }
+
+  .inc-code-pane div.highlight pre {
+    padding: 0.46rem 0.54rem;
+  }
+
+  .inc-code-pane div.highlight code,
+  .inc-code-pane div.highlight pre code {
+    font-size: 0.54rem;
+    line-height: 1.3;
+  }
+
+  .inc-handoff-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 0.46rem 0.54rem;
+  }
+
+  .inc-handoff-step {
+    padding: 0.34rem 0.4rem;
+  }
+
+  .inc-handoff-step strong {
+    font-size: 0.5rem;
+  }
+
+  .inc-handoff-step span {
+    font-size: 0.52rem;
+    line-height: 1.24;
+  }
+
+  .inc-hero__actions .md-button {
+    flex: 0 1 auto;
+    text-align: center;
+    white-space: nowrap;
+  }
+}
