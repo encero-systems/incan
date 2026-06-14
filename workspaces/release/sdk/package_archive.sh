@@ -29,6 +29,8 @@ target="$1"
 shift
 out_dir="."
 
+[ -n "$target" ] || fail "target must not be empty"
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --out-dir)
