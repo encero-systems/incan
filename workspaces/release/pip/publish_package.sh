@@ -4,6 +4,10 @@ set -euo pipefail
 dist_dir="${1:-dist/sdk}"
 
 if [ -z "${PYPI_API_TOKEN:-}" ]; then
+  if [[ "${GITHUB_REF:-}" == refs/tags/* ]]; then
+    echo "PYPI_API_TOKEN is required for tagged PyPI releases." >&2
+    exit 1
+  fi
   echo "PYPI_API_TOKEN is not configured; skipping PyPI publish."
   exit 0
 fi

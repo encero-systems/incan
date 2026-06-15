@@ -4,6 +4,10 @@ set -euo pipefail
 dist_dir="${1:-dist/sdk}"
 
 if [ -z "${NPM_TOKEN:-}" ]; then
+  if [[ "${GITHUB_REF:-}" == refs/tags/* ]]; then
+    echo "NPM_TOKEN is required for tagged npm releases." >&2
+    exit 1
+  fi
   echo "NPM_TOKEN is not configured; skipping npm publish."
   exit 0
 fi
