@@ -4,6 +4,7 @@ set -euo pipefail
 dist_dir="${SDK_DIST:-/private/tmp/incan-sdk-local-test}"
 generated_at="${SDK_GENERATED_AT:-2026-06-06T00:00:00Z}"
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+incan_run_bin="${SDK_INCAN_BIN:-${root}/target/release/incan}"
 
 usage() {
   cat <<'USAGE'
@@ -16,6 +17,7 @@ Environment:
   SDK_DIST          Output directory for local release assets (default: /private/tmp/incan-sdk-local-test)
   SDK_HOST_TARGET   Host target override; auto-detected when omitted
   SDK_GENERATED_AT  Deterministic manifest timestamp (default: 2026-06-06T00:00:00Z)
+  SDK_INCAN_BIN      Incan binary used to run prepare_assets.incn (default: target/release/incan)
 USAGE
 }
 
@@ -66,6 +68,10 @@ require_archive() {
   [ -f "${archive}.sha256" ] || fail "missing archive checksum: ${archive}.sha256"
 }
 
+require_incan_run_bin() {
+  [ -x "$incan_run_bin" ] || fail "missing Incan runner: ${incan_run_bin}; run make sdk-release-build first or set SDK_INCAN_BIN"
+}
+
 package_sdk() {
   [ -x "${root}/target/release/incan" ] || fail "missing target/release/incan; run make sdk-release-build first"
   [ -x "${root}/target/release/incan-lsp" ] || fail "missing target/release/incan-lsp; run make sdk-release-build first"
@@ -77,6 +83,7 @@ package_sdk() {
 
 write_assets() {
   require_archive
+  require_incan_run_bin
   printf 'Writing SDK manifest/install assets in %s\n' "$dist_dir"
   INCAN_REPO_ROOT="$root" \
     INCAN_SDK_DIST_DIR="$dist_dir" \
@@ -85,7 +92,7 @@ write_assets() {
     INCAN_NO_BANNER=1 \
     CARGO_NET_OFFLINE=true \
     INCAN_GENERATED_CARGO_TARGET_DIR="${root}/target/incan_generated_shared_target" \
-    "${root}/target/release/incan" run "${root}/workspaces/release/sdk/prepare_assets.incn"
+    "$incan_run_bin" run "${root}/workspaces/release/sdk/prepare_assets.incn"
 }
 
 smoke_direct() {
@@ -175,6 +182,7 @@ smoke_pip() {
 smoke_homebrew() {
   require_command ruby
   require_archive
+  require_incan_run_bin
   local release archive checksum target
   release="$(sdk_release)"
   archive="$(archive_path)"
@@ -192,7 +200,7 @@ smoke_homebrew() {
     INCAN_NO_BANNER=1 \
     CARGO_NET_OFFLINE=true \
     INCAN_GENERATED_CARGO_TARGET_DIR="${root}/target/incan_generated_shared_target" \
-    "${root}/target/release/incan" run "${root}/workspaces/release/sdk/prepare_assets.incn"
+    "$incan_run_bin" run "${root}/workspaces/release/sdk/prepare_assets.incn"
   ruby -c "${dist_dir}/incan.rb"
   if [ "${SDK_HOMEBREW_AUDIT:-0}" = "1" ]; then
     require_command brew

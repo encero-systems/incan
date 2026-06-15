@@ -91,6 +91,18 @@ jobs:
           set -euo pipefail
           python3 -m pip install --upgrade build hatchling
           python3 workspaces/release/pip/prepare_package.py dist/sdk
+      - name: Smoke generated SDK installers
+        shell: bash
+        env:
+          SDK_DIST: dist/sdk
+          SDK_HOST_TARGET: x86_64-unknown-linux-gnu
+          SDK_INCAN_BIN: dist/sdk-bootstrap/bin/incan
+        run: |
+          set -euo pipefail
+          bash workspaces/release/sdk/local_smoke.sh direct
+          bash workspaces/release/sdk/local_smoke.sh npm
+          bash workspaces/release/sdk/local_smoke.sh pip
+          bash workspaces/release/sdk/local_smoke.sh homebrew
       - name: Upload SDK assets to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v3
