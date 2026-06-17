@@ -654,7 +654,8 @@ impl TypeChecker {
                 self.errors.push(errors::mutation_without_mut(&assign.name, span));
             }
             if !self.types_compatible(&value_ty, &var_ty) {
-                self.errors.push(errors::type_mismatch(
+                self.errors.push(errors::assignment_type_mismatch(
+                    &assign.name,
                     &var_ty.to_string(),
                     &value_ty.to_string(),
                     assign.value.span,
@@ -713,7 +714,8 @@ impl TypeChecker {
             if !self.types_compatible(&value_ty, &ann_ty)
                 && !self.record_validated_newtype_coercion_if_possible(&value_ty, &ann_ty, assign.value.span)
             {
-                self.errors.push(errors::type_mismatch(
+                self.errors.push(errors::assignment_type_mismatch(
+                    &assign.name,
                     &ann_ty.to_string(),
                     &value_ty.to_string(),
                     assign.value.span,
@@ -757,7 +759,7 @@ impl TypeChecker {
         if let Some(expected) = self.symbols.current_return_type()
             && !self.types_compatible(&return_ty, expected)
         {
-            self.errors.push(errors::type_mismatch(
+            self.errors.push(errors::return_type_mismatch(
                 &expected.to_string(),
                 &return_ty.to_string(),
                 span,

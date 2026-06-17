@@ -303,6 +303,69 @@ pub fn type_mismatch(expected: &str, found: &str, span: Span) -> CompileError {
     error
 }
 
+/// Build a type mismatch diagnostic for a return expression.
+pub fn return_type_mismatch(expected: &str, found: &str, span: Span) -> CompileError {
+    add_type_mismatch_hints(
+        CompileError::type_error(
+            format!("Return type mismatch: expected '{}', found '{}'", expected, found),
+            span,
+        )
+        .with_note(format!(
+            "This return expression must match the function return type '{}'",
+            expected
+        )),
+        expected,
+        found,
+    )
+}
+
+/// Build a type mismatch diagnostic for assigning to a known binding.
+pub fn assignment_type_mismatch(binding: &str, expected: &str, found: &str, span: Span) -> CompileError {
+    add_type_mismatch_hints(
+        CompileError::type_error(
+            format!(
+                "Assignment to '{}' has type mismatch: expected '{}', found '{}'",
+                binding, expected, found
+            ),
+            span,
+        )
+        .with_note(format!("'{}' is declared as '{}'", binding, expected)),
+        expected,
+        found,
+    )
+}
+
+/// Build a type mismatch diagnostic for a function call argument.
+pub fn call_argument_type_mismatch(
+    callee: &str,
+    parameter: Option<&str>,
+    expected: &str,
+    found: &str,
+    span: Span,
+) -> CompileError {
+    let message = match parameter {
+        Some(parameter) => format!(
+            "Argument '{}' of '{}' has type mismatch: expected '{}', found '{}'",
+            parameter, callee, expected, found
+        ),
+        None => format!(
+            "Argument to '{}' has type mismatch: expected '{}', found '{}'",
+            callee, expected, found
+        ),
+    };
+    let note = match parameter {
+        Some(parameter) => format!(
+            "Parameter '{}' of '{}' is declared as '{}'",
+            parameter, callee, expected
+        ),
+        None => format!(
+            "This argument is checked against '{}' when calling '{}'",
+            expected, callee
+        ),
+    };
+    add_type_mismatch_hints(CompileError::type_error(message, span).with_note(note), expected, found)
+}
+
 /// Add smart hints based on the expected and found types.
 fn add_type_mismatch_hints(mut error: CompileError, expected: &str, found: &str) -> CompileError {
     // Result/Option unwrapping hints
