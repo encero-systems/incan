@@ -622,12 +622,33 @@ fn lookup_type_docstring_inner(
 }
 
 /// Parse a stdlib stub module into an AST program for metadata lookups that need source expressions.
-fn load_stdlib_program(module_path: &[String]) -> Option<ast::Program> {
-    let relative = stdlib::stdlib_stub_path(module_path)?;
+fn load_stdlib_module(module_path: &[String]) -> Result<ast::Module, CliError> {
+    let relative = stdlib::stdlib_stub_path(module_path)
+        .ok_or_else(|| CliError::ModuleNotFound {
+            path: module_path.join("::"),
+        })?;
+
     let path = find_stdlib_file(&relative)?;
-    let source = std::fs::read_to_string(path).ok()?;
-    let tokens = crate::frontend::lexer::lex(&source).ok()?;
-    crate::frontend::parser::parse(&tokens).ok()
+
+    let source = std::fs::read_to_string(path)
+        .map_err(|e| CliError::Io {
+            path: relative,
+            source: e,
+        })?;
+
+    let tokens = crate::frontend::lexer::lex(&source)
+        .map_err(|e| CliError::Lexer {
+            path: relative,
+            source: e,
+        })?;
+
+    let ast = crate::frontend::parser::parse(&tokens)
+        .map_err(|e| CliError::Parser {
+            path: relative,
+            source: e,
+        })?;
+
+    Ok(ast)
 }
 
 /// Find a top-level function declaration directly in a parsed stdlib program.
