@@ -622,33 +622,43 @@ fn lookup_type_docstring_inner(
 }
 
 /// Parse a stdlib stub module into an AST program for metadata lookups that need source expressions.
-fn load_stdlib_module(module_path: &[String]) -> Result<ast::Module, CliError> {
-    let relative = stdlib::stdlib_stub_path(module_path)
-        .ok_or_else(|| CliError::ModuleNotFound {
-            path: module_path.join("::"),
-        })?;
-
-    let path = find_stdlib_file(&relative)?;
-
-    let source = std::fs::read_to_string(path)
-        .map_err(|e| CliError::Io {
-            path: relative,
-            source: e,
-        })?;
-
-    let tokens = crate::frontend::lexer::lex(&source)
-        .map_err(|e| CliError::Lexer {
-            path: relative,
-            source: e,
-        })?;
-
-    let ast = crate::frontend::parser::parse(&tokens)
-        .map_err(|e| CliError::Parser {
-            path: relative,
-            source: e,
-        })?;
-
-    Ok(ast)
+fn load_stdlib_program(module_path: &[String]) -> Option<ast::Program> {
+    let relative = match stdlib::stdlib_stub_path(module_path) {
+        Some(path) => path,
+        None => {
+            tracing::warn!("Stdlib module not found: {}", module_path.join("::"));
+            return None;
+        }
+    };
+    let path = match find_stdlib_file(&relative) {
+        Ok(path) => path,
+        Err(e) => {
+            tracing::warn!("Failed to find stdlib file {}: {}", relative, e);
+            return None;
+        }
+    };
+    let source = match std::fs::read_to_string(&path) {
+        Ok(source) => source,
+        Err(e) => {
+            tracing::warn!("Failed to read stdlib file {}: {}", relative, e);
+            return None;
+        }
+    };
+    let tokens = match crate::frontend::lexer::lex(&source) {
+        Ok(tokens) => tokens,
+        Err(e) => {
+            tracing::warn!("Lexer error in stdlib {}: {:?}", relative, e);
+            return None;
+        }
+    };
+    let ast = match crate::frontend::parser::parse(&tokens) {
+        Ok(ast) => ast,
+        Err(e) => {
+            tracing::warn!("Parser error in stdlib {}: {:?}", relative, e);
+            return None;
+        }
+    };
+    Some(ast)
 }
 
 /// Find a top-level function declaration directly in a parsed stdlib program.
