@@ -41,7 +41,7 @@ use crate::frontend::ast::{
 use crate::frontend::contract_metadata::{
     CanonicalModelBundle, materialize_contract_models, read_model_bundles_from_json, read_project_model_bundles,
 };
-use crate::frontend::diagnostics::CompileError;
+use crate::frontend::diagnostics::{CompileError, DiagnosticPhase, phase_for_typecheck_span};
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::{SourceModuleImportResolution, resolve_program_source_imports};
 use crate::frontend::symbols::{ResolvedType, SymbolKind as FrontendSymbolKind, TypeInfo};
@@ -54,7 +54,7 @@ use crate::library_manifest::{
 #[cfg(feature = "rust_inspect")]
 use crate::lockfile::CargoFeatureSelection;
 use crate::lsp::call_site_type_args;
-use crate::lsp::diagnostics::{compile_error_to_diagnostic, position_to_offset, span_to_range};
+use crate::lsp::diagnostics::{compile_error_to_diagnostic_with_phase, position_to_offset, span_to_range};
 use crate::manifest::ProjectManifest;
 use incan_core::interop::{RustItemKind, RustModuleChildKind, RustTraitAssoc};
 use incan_core::lang::decorators;
@@ -191,13 +191,23 @@ impl IncanLanguageServer {
             Ok(ast) => {
                 // Forward non-fatal parser warnings (e.g. RFC 005 dot-notation nudges) to the LSP.
                 for warn in &ast.warnings {
-                    diagnostics.push(compile_error_to_diagnostic(warn, source, uri));
+                    diagnostics.push(compile_error_to_diagnostic_with_phase(
+                        warn,
+                        source,
+                        uri,
+                        DiagnosticPhase::Parse,
+                    ));
                 }
                 ast
             }
             Err(errors) => {
                 for error in &errors {
-                    diagnostics.push(compile_error_to_diagnostic(error, source, uri));
+                    diagnostics.push(compile_error_to_diagnostic_with_phase(
+                        error,
+                        source,
+                        uri,
+                        DiagnosticPhase::Parse,
+                    ));
                 }
                 self.client
                     .publish_diagnostics(uri.clone(), diagnostics, Some(version))
@@ -270,7 +280,12 @@ impl IncanLanguageServer {
             let metadata =
                 collect_checked_api_metadata(&ast, &checker, lsp_metadata_module_path(module_path.as_deref()));
             for diagnostic in validate_checked_api_docstrings(std::slice::from_ref(&metadata)) {
-                diagnostics.push(compile_error_to_diagnostic(&diagnostic.error, source, uri));
+                diagnostics.push(compile_error_to_diagnostic_with_phase(
+                    &diagnostic.error,
+                    source,
+                    uri,
+                    DiagnosticPhase::Typecheck,
+                ));
             }
             api_metadata_previews(&ast, &metadata)
         } else {
@@ -280,20 +295,24 @@ impl IncanLanguageServer {
 
         if let Err(errors) = check_result {
             for error in &errors {
+                let phase = phase_for_typecheck_span(&typecheck_ast, error.span);
                 diagnostics.push(compile_error_to_diagnostic_with_rust_context(
                     error,
                     source,
                     uri,
+                    phase,
                     &rust_origin_symbols,
                 ));
             }
         }
         // Always include non-fatal diagnostics (warnings/lints) in LSP output.
         for warn in checker.warnings() {
+            let phase = phase_for_typecheck_span(&typecheck_ast, warn.span);
             diagnostics.push(compile_error_to_diagnostic_with_rust_context(
                 warn,
                 source,
                 uri,
+                phase,
                 &rust_origin_symbols,
             ));
         }
@@ -440,7 +459,12 @@ impl IncanLanguageServer {
                     if let Some(u) = dep_uri.clone() {
                         let mut diags = Vec::new();
                         for e in &errors {
-                            diags.push(compile_error_to_diagnostic(e, &dep_source, &u));
+                            diags.push(compile_error_to_diagnostic_with_phase(
+                                e,
+                                &dep_source,
+                                &u,
+                                DiagnosticPhase::Parse,
+                            ));
                         }
                         let ver = dep_doc.map(|d| d.version);
                         self.client.publish_diagnostics(u.clone(), diags, ver).await;
@@ -4327,10 +4351,13 @@ fn rust_symbol_for_span(symbols: &[RustOriginSymbol], span: Span) -> Option<&Rus
     })
 }
 
+/// Convert one compiler diagnostic to LSP output while preserving the compiler phase and adding Rust-origin context
+/// when a Rust import symbol is responsible for the diagnostic span.
 fn compile_error_to_diagnostic_with_rust_context(
     error: &CompileError,
     source: &str,
     uri: &Url,
+    phase: DiagnosticPhase,
     rust_symbols: &[RustOriginSymbol],
 ) -> Diagnostic {
     let mut enriched = error.clone();
@@ -4343,7 +4370,7 @@ fn compile_error_to_diagnostic_with_rust_context(
             enriched.notes.push(note);
         }
     }
-    compile_error_to_diagnostic(&enriched, source, uri)
+    compile_error_to_diagnostic_with_phase(&enriched, source, uri, phase)
 }
 
 fn rust_item_kind_label(kind: &RustItemKind) -> &'static str {

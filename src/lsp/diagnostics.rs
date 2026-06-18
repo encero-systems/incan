@@ -98,6 +98,16 @@ fn error_kind_to_severity(kind: ErrorKind) -> DiagnosticSeverity {
 
 /// Convert a CompileError to LSP Diagnostic
 pub fn compile_error_to_diagnostic(error: &CompileError, source: &str, uri: &Url) -> Diagnostic {
+    compile_error_to_diagnostic_with_phase(error, source, uri, DiagnosticPhase::Unknown)
+}
+
+/// Convert a CompileError with known compiler phase to LSP Diagnostic.
+pub fn compile_error_to_diagnostic_with_phase(
+    error: &CompileError,
+    source: &str,
+    uri: &Url,
+    phase: DiagnosticPhase,
+) -> Diagnostic {
     let range = span_to_range(source, error.span.start, error.span.end);
     let severity = error_kind_to_severity(error.kind);
 
@@ -142,9 +152,7 @@ pub fn compile_error_to_diagnostic(error: &CompileError, source: &str, uri: &Url
     Diagnostic {
         range,
         severity: Some(severity),
-        code: Some(NumberOrString::String(
-            code_for_error(error, DiagnosticPhase::Unknown).to_string(),
-        )),
+        code: Some(NumberOrString::String(code_for_error(error, phase).to_string())),
         code_description: None,
         source: Some("incan".to_string()),
         message,
