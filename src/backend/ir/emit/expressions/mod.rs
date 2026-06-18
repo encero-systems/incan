@@ -233,8 +233,8 @@ impl<'a> IrEmitter<'a> {
                     IrListEntry::Element(item) => {
                         self.emit_list_literal_item(item, item_target_ty, target_union_qualifier)
                     }
-                    IrListEntry::Spread(_) => Err(EmitError::Unsupported(
-                        "internal error: unexpected list spread in direct-only literal emission".to_string(),
+                    IrListEntry::Spread(_) => Err(EmitError::InternalInvariant(
+                        "unexpected list spread in direct-only literal emission".to_string(),
                     )),
                 })
                 .collect::<Result<_, _>>()?;
@@ -306,8 +306,8 @@ impl<'a> IrEmitter<'a> {
                         )?;
                         Ok(quote! { (#key_tokens, #value_tokens) })
                     }
-                    IrDictEntry::Spread(_) => Err(EmitError::Unsupported(
-                        "internal error: unexpected dict spread in direct-only literal emission".to_string(),
+                    IrDictEntry::Spread(_) => Err(EmitError::InternalInvariant(
+                        "unexpected dict spread in direct-only literal emission".to_string(),
                     )),
                 })
                 .collect::<Result<_, EmitError>>()?;

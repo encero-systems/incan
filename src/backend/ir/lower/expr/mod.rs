@@ -103,7 +103,10 @@ impl AstLowering {
     }
 
     /// Return the source-defined `std.logging.Logger.<method>` signature, including default expressions.
-    fn std_logging_logger_method_signature(&mut self, method: &str) -> Option<super::super::FunctionSignature> {
+    fn std_logging_logger_method_signature(
+        &mut self,
+        method: &str,
+    ) -> Result<Option<super::super::FunctionSignature>, LoweringError> {
         self.callable_signature_for_imported_stdlib_type_method_path(
             &["std".to_string(), "logging".to_string(), "Logger".to_string()],
             method,
@@ -118,9 +121,9 @@ impl AstLowering {
         &mut self,
         span: ast::Span,
         method: &str,
-    ) -> Option<super::super::FunctionSignature> {
+    ) -> Result<Option<super::super::FunctionSignature>, LoweringError> {
         let call_site = self.callable_signature_for_call_span(span);
-        let stdlib = self.std_logging_logger_method_signature(method);
+        let stdlib = self.std_logging_logger_method_signature(method)?;
         match (call_site, stdlib) {
             (Some(mut call_site), Some(stdlib)) => {
                 for (param, stdlib_param) in call_site.params.iter_mut().zip(stdlib.params.iter()) {
@@ -128,10 +131,10 @@ impl AstLowering {
                         param.default = stdlib_param.default.clone();
                     }
                 }
-                Some(call_site)
+                Ok(Some(call_site))
             }
-            (Some(call_site), None) => Some(call_site),
-            (None, stdlib) => stdlib,
+            (Some(call_site), None) => Ok(Some(call_site)),
+            (None, stdlib) => Ok(stdlib),
         }
     }
 
@@ -666,7 +669,7 @@ impl AstLowering {
                                 "std".to_string(),
                                 "logging".to_string(),
                                 "get_logger".to_string(),
-                            ]),
+                            ])?,
                             canonical_path: Some(vec![
                                 "std".to_string(),
                                 "logging".to_string(),
@@ -1098,13 +1101,13 @@ impl AstLowering {
                         expr_ty,
                     )
                 } else {
-                    let imported_type_method_signature =
-                        match &o.node {
-                            ast::Expr::Ident(name) => self.import_aliases.get(name).cloned().and_then(|path| {
-                                self.callable_signature_for_imported_stdlib_type_method_path(&path, m)
-                            }),
-                            _ => None,
-                        };
+                    let imported_type_method_signature = match &o.node {
+                        ast::Expr::Ident(name) => match self.import_aliases.get(name).cloned() {
+                            Some(path) => self.callable_signature_for_imported_stdlib_type_method_path(&path, m)?,
+                            None => None,
+                        },
+                        _ => None,
+                    };
                     let public_receiver_library = self.public_library_for_method_receiver(&receiver);
                     let imported_pub_method_signature = public_receiver_library.as_deref().and_then(|library| {
                         self.callable_signature_for_imported_pub_type_method(library, &receiver.ty, m)
@@ -1114,7 +1117,7 @@ impl AstLowering {
                         &receiver.ty,
                         IrType::Struct(name) | IrType::NamedGeneric(name, _) if name.rsplit("::").next() == Some("Logger")
                     ) {
-                        self.std_logging_callable_signature_for_call(expr_span, m)
+                        self.std_logging_callable_signature_for_call(expr_span, m)?
                     } else {
                         None
                     };

@@ -186,6 +186,26 @@ impl AstLowering {
         }
     }
 
+    /// Lower a source-owned parameter default expression.
+    ///
+    /// Parameter defaults participate in the callable surface used by direct calls, decorated wrappers, aliases,
+    /// imports, and stdlib source rehydration. Dropping a lowering error here silently changes that callable surface,
+    /// so every source-backed default must either lower successfully or report the original lowering failure.
+    pub(in crate::backend::ir::lower) fn lower_param_default_expr(
+        &mut self,
+        default_expr: Option<&ast::Spanned<ast::Expr>>,
+    ) -> Result<Option<TypedExpr>, LoweringError> {
+        let Some(default_expr) = default_expr else {
+            return Ok(None);
+        };
+        self.lower_expr_spanned(default_expr)
+            .map(Some)
+            .map_err(|err| LoweringError {
+                message: format!("failed to lower default parameter expression: {}", err.message),
+                span: err.span,
+            })
+    }
+
     /// Select the canonical RFC 017 checked-construction hook for a newtype.
     fn select_newtype_checked_ctor(n: &ast::NewtypeDecl) -> Option<String> {
         /// Return whether an AST type is `Result[Newtype, ValidationError]`.
@@ -378,7 +398,7 @@ impl AstLowering {
         &mut self,
         callable_params: &[CallableParam],
         source_params: &[ast::Spanned<ast::Param>],
-    ) -> Vec<FunctionParam> {
+    ) -> Result<Vec<FunctionParam>, LoweringError> {
         callable_params
             .iter()
             .enumerate()
@@ -390,13 +410,11 @@ impl AstLowering {
                     .unwrap_or(idx);
                 let source_param = source_params.get(source_idx);
                 let default = if param.has_default {
-                    source_param
-                        .and_then(|source| source.node.default.as_ref())
-                        .and_then(|default_expr| self.lower_expr_spanned(default_expr).ok())
+                    self.lower_param_default_expr(source_param.and_then(|source| source.node.default.as_ref()))?
                 } else {
                     None
                 };
-                FunctionParam {
+                Ok(FunctionParam {
                     name: param.name.clone().unwrap_or_else(|| format!("__incan_arg_{idx}")),
                     ty: Self::lower_param_container_type(param.kind, self.lower_resolved_type(&param.ty)),
                     mutability: if source_param.is_some_and(|source| source.node.is_mut) {
@@ -407,7 +425,7 @@ impl AstLowering {
                     is_self: false,
                     kind: param.kind,
                     default,
-                }
+                })
             })
             .collect()
     }
@@ -1482,7 +1500,7 @@ impl AstLowering {
                     .and_then(|info| info.function_emitted_name(decl.span))
                     .unwrap_or(&f.name)
                     .to_string();
-                let source_params: Vec<FunctionParam> = function_binding
+                let source_params: Vec<FunctionParam> = match function_binding
                     .as_ref()
                     .map(|binding| self.function_params_from_source_callable_surface(&binding.params, &f.params))
                     .unwrap_or_else(|| {
@@ -1492,7 +1510,7 @@ impl AstLowering {
                                 let base_ty =
                                     self.lower_type_with_type_params(&p.node.ty.node, Some(&type_param_names));
                                 let param_ty = Self::lower_param_container_type(p.node.kind, base_ty);
-                                FunctionParam {
+                                Ok(FunctionParam {
                                     name: p.node.name.clone(),
                                     ty: param_ty,
                                     mutability: if p.node.is_mut {
@@ -1502,14 +1520,17 @@ impl AstLowering {
                                     },
                                     is_self: false,
                                     kind: p.node.kind,
-                                    default: match &p.node.default {
-                                        Some(default_expr) => self.lower_expr_spanned(default_expr).ok(),
-                                        None => None,
-                                    },
-                                }
+                                    default: self.lower_param_default_expr(p.node.default.as_ref())?,
+                                })
                             })
                             .collect()
-                    });
+                    }) {
+                    Ok(params) => params,
+                    Err(err) => {
+                        errors.push(err);
+                        continue;
+                    }
+                };
                 if let Some(binding) = self
                     .type_info
                     .as_ref()
@@ -1521,7 +1542,13 @@ impl AstLowering {
                         _ => &[],
                     };
                     let defaults =
-                        self.decorated_param_defaults_for_surface(&callable_params, original_params, &f.params);
+                        match self.decorated_param_defaults_for_surface(&callable_params, original_params, &f.params) {
+                            Ok(defaults) => defaults,
+                            Err(err) => {
+                                errors.push(err);
+                                continue;
+                            }
+                        };
                     let params = self.function_params_from_callable_surface(&callable_params, &defaults);
                     let return_type = self.lower_resolved_type(&callable_ret);
                     ir_program.function_registry.register(
@@ -1571,14 +1598,14 @@ impl AstLowering {
                     Ok(wrapper) => {
                         let type_param_names: std::collections::HashSet<&str> =
                             wrapper.type_params.iter().map(|tp| tp.name.as_str()).collect();
-                        let params: Vec<FunctionParam> = wrapper
+                        let params: Vec<FunctionParam> = match wrapper
                             .params
                             .iter()
                             .map(|p| {
                                 let base_ty =
                                     self.lower_type_with_type_params(&p.node.ty.node, Some(&type_param_names));
                                 let param_ty = Self::lower_param_container_type(p.node.kind, base_ty);
-                                FunctionParam {
+                                Ok(FunctionParam {
                                     name: p.node.name.clone(),
                                     ty: param_ty,
                                     mutability: if p.node.is_mut {
@@ -1588,14 +1615,17 @@ impl AstLowering {
                                     },
                                     is_self: false,
                                     kind: p.node.kind,
-                                    default: p
-                                        .node
-                                        .default
-                                        .as_ref()
-                                        .and_then(|default_expr| self.lower_expr_spanned(default_expr).ok()),
-                                }
+                                    default: self.lower_param_default_expr(p.node.default.as_ref())?,
+                                })
                             })
-                            .collect();
+                            .collect()
+                        {
+                            Ok(params) => params,
+                            Err(err) => {
+                                errors.push(err);
+                                continue;
+                            }
+                        };
                         let return_type =
                             self.lower_type_with_type_params(&wrapper.return_type.node, Some(&type_param_names));
                         ir_program.function_registry.register(
@@ -2118,7 +2148,7 @@ impl AstLowering {
             &callable_params,
             &original_params,
             callable_ret.as_ref(),
-        );
+        )?;
 
         Ok(vec![
             IrDecl::new(IrDeclKind::Function(original)),
@@ -2152,7 +2182,7 @@ impl AstLowering {
         type_params: Vec<IrTypeParam>,
         decorated_ty: IrType,
     ) -> Result<super::decl::IrFunction, LoweringError> {
-        let defaults = self.decorated_param_defaults_for_surface(callable_params, original_params, &f.params);
+        let defaults = self.decorated_param_defaults_for_surface(callable_params, original_params, &f.params)?;
         let params = self.function_params_from_callable_surface(callable_params, &defaults);
         let return_type = self.lower_resolved_type(callable_ret);
         let type_args = type_params
@@ -2278,8 +2308,8 @@ impl AstLowering {
         callable_params: &[CallableParam],
         original_params: &[CallableParam],
         callable_ret: &crate::frontend::symbols::ResolvedType,
-    ) -> super::decl::IrFunction {
-        let defaults = self.decorated_param_defaults_for_surface(callable_params, original_params, &f.params);
+    ) -> Result<super::decl::IrFunction, LoweringError> {
+        let defaults = self.decorated_param_defaults_for_surface(callable_params, original_params, &f.params)?;
         let params = self.function_params_from_callable_surface(callable_params, &defaults);
         let return_type = self.lower_resolved_type(callable_ret);
         let static_func = TypedExpr::new(
@@ -2306,7 +2336,7 @@ impl AstLowering {
             return_type.clone(),
         );
 
-        super::decl::IrFunction {
+        Ok(super::decl::IrFunction {
             name: wrapper_name.to_string(),
             docstring: callable_docstring(&f.body),
             params,
@@ -2319,7 +2349,7 @@ impl AstLowering {
             is_extern: false,
             rust_attributes: Vec::new(),
             lint_allows: Vec::new(),
-        }
+        })
     }
 
     /// Lower source defaults for a decorated callable wrapper when the final callable surface still maps to the
@@ -2336,7 +2366,7 @@ impl AstLowering {
         surface_params: &[CallableParam],
         original_params: &[CallableParam],
         source_params: &[ast::Spanned<ast::Param>],
-    ) -> Vec<Option<TypedExpr>> {
+    ) -> Result<Vec<Option<TypedExpr>>, LoweringError> {
         let positional_shapes_match = Self::decorated_positional_param_shapes_match(surface_params, original_params);
 
         surface_params
@@ -2357,19 +2387,19 @@ impl AstLowering {
                                 .then(|| source_params.get(source_idx))
                                 .flatten()
                         })
-                        .and_then(|source_param| source_param.node.default.clone())
+                        .and_then(|source_param| source_param.node.default.as_ref())
                 } else if positional_shapes_match {
                     original_params
                         .get(idx)
                         .is_some_and(|original_param| original_param.has_default)
                         .then(|| source_params.get(idx))
                         .flatten()
-                        .and_then(|source_param| source_param.node.default.clone())
+                        .and_then(|source_param| source_param.node.default.as_ref())
                 } else {
                     None
                 };
 
-                default_expr.and_then(|expr| self.lower_expr_spanned(&expr).ok())
+                self.lower_param_default_expr(default_expr)
             })
             .collect()
     }
@@ -2677,6 +2707,10 @@ mod tests {
         lowering.lower_program(&ast)
     }
 
+    fn spanned<T>(node: T) -> ast::Spanned<T> {
+        ast::Spanned::new(node, ast::Span::default())
+    }
+
     #[test]
     fn test_lower_simple_function() {
         let ir = must_ok(lower_source(
@@ -2692,6 +2726,65 @@ def add(a: int, b: int) -> int:
         } else {
             panic!("Expected function declaration");
         }
+    }
+
+    #[test]
+    fn lowering_reports_default_parameter_expression_failures() {
+        let raw_vocab_default = spanned(ast::Expr::VocabBlock(Box::new(ast::VocabBlockStmt {
+            keyword: "query".to_string(),
+            keyword_binding: ast::VocabKeywordBinding {
+                dependency_key: "fixture".to_string(),
+                activation_namespace: "fixture".to_string(),
+                surface_kind: incan_vocab::KeywordSurfaceKind::BlockDeclaration,
+                compound_tokens: Vec::new(),
+                placement: incan_vocab::KeywordPlacement::TopLevel,
+                clause_body_kind: None,
+            },
+            decorators: Vec::new(),
+            header_args: Vec::new(),
+            body: Vec::new(),
+            body_item_trailing_commas: Vec::new(),
+        })));
+        let program = ast::Program {
+            declarations: vec![spanned(ast::Declaration::Function(ast::FunctionDecl {
+                visibility: ast::Visibility::Private,
+                decorators: Vec::new(),
+                surface_modifiers: Vec::new(),
+                name: "uses_default".to_string(),
+                type_params: Vec::new(),
+                params: vec![spanned(ast::Param {
+                    is_mut: false,
+                    kind: ast::ParamKind::Normal,
+                    name: "value".to_string(),
+                    ty: spanned(ast::Type::Simple("int".to_string())),
+                    default: Some(raw_vocab_default),
+                })],
+                return_type: spanned(ast::Type::Unit),
+                body: Vec::new(),
+            }))],
+            source_path: None,
+            rust_module_path: None,
+            warnings: Vec::new(),
+        };
+
+        let mut lowering = AstLowering::new();
+        let errors = match lowering.lower_program(&program) {
+            Ok(_) => panic!("expected default parameter lowering to fail"),
+            Err(errors) => errors,
+        };
+        let first = errors.first().expect("expected at least one lowering error");
+        assert!(
+            first.message.contains("failed to lower default parameter expression"),
+            "unexpected lowering message: {}",
+            first.message
+        );
+        assert!(
+            first
+                .message
+                .contains("vocab expression declaration `query` reached lowering before desugaring"),
+            "unexpected lowering message: {}",
+            first.message
+        );
     }
 
     #[test]

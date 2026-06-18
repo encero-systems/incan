@@ -387,7 +387,7 @@ impl AstLowering {
             _ => Vec::new(),
         };
         let defaults =
-            self.decorated_param_defaults_for_surface(surface_params, &original_surface_params, &method.params);
+            self.decorated_param_defaults_for_surface(surface_params, &original_surface_params, &method.params)?;
         let mut wrapper_params = Vec::with_capacity(surface_params.len() + 1);
         let receiver = method.receiver.unwrap_or(ast::Receiver::Immutable);
         wrapper_params.push(FunctionParam {
@@ -1044,7 +1044,7 @@ impl AstLowering {
                     &mut hidden_counter,
                 );
                 let param_ty = Self::lower_param_container_type(p.node.kind, base_ty);
-                FunctionParam {
+                Ok(FunctionParam {
                     name: p.node.name.clone(),
                     ty: param_ty,
                     mutability: if p.node.is_mut {
@@ -1054,13 +1054,10 @@ impl AstLowering {
                     },
                     is_self: false,
                     kind: p.node.kind,
-                    default: match &p.node.default {
-                        Some(default_expr) => self.lower_expr_spanned(default_expr).ok(),
-                        None => None,
-                    },
-                }
+                    default: self.lower_param_default_expr(p.node.default.as_ref())?,
+                })
             })
-            .collect();
+            .collect::<Result<_, LoweringError>>()?;
         params.extend(other_params);
 
         let return_type = self.lower_callable_return_type(&m.return_type.node, Some(&combined_type_param_names));
@@ -1277,7 +1274,7 @@ impl AstLowering {
                 if p.node.is_mut {
                     self.mutable_vars.insert(p.node.name.clone(), true);
                 }
-                FunctionParam {
+                Ok(FunctionParam {
                     name: p.node.name.clone(),
                     ty: param_ty,
                     mutability: if p.node.is_mut {
@@ -1287,13 +1284,10 @@ impl AstLowering {
                     },
                     is_self: p.node.name == keywords::as_str(KeywordId::SelfKw),
                     kind: p.node.kind,
-                    default: match &p.node.default {
-                        Some(default_expr) => self.lower_expr_spanned(default_expr).ok(),
-                        None => None,
-                    },
-                }
+                    default: self.lower_param_default_expr(p.node.default.as_ref())?,
+                })
             })
-            .collect();
+            .collect::<Result<_, LoweringError>>()?;
         params.extend(other_params);
 
         let return_type = self.lower_callable_return_type(&m.return_type.node, Some(&combined_type_param_names));

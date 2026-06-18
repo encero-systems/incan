@@ -140,8 +140,8 @@ impl<'a> IrEmitter<'a> {
         match plan {
             ComprehensionIterationPlan::RangeFilter => {
                 let Some(filter) = filter else {
-                    return Err(EmitError::Unsupported(
-                        "internal error: range comprehension filter plan requires a filter".to_string(),
+                    return Err(EmitError::InternalInvariant(
+                        "range comprehension filter plan requires a filter".to_string(),
                     ));
                 };
                 let filter_tokens = self.emit_expr(filter)?;
@@ -154,8 +154,8 @@ impl<'a> IrEmitter<'a> {
             }),
             ComprehensionIterationPlan::FilterMapCloneBinding => {
                 let Some(filter) = filter else {
-                    return Err(EmitError::Unsupported(
-                        "internal error: filtered comprehension plan requires a filter".to_string(),
+                    return Err(EmitError::InternalInvariant(
+                        "filtered comprehension plan requires a filter".to_string(),
                     ));
                 };
                 let filter_tokens = self.emit_expr(filter)?;
@@ -176,8 +176,8 @@ impl<'a> IrEmitter<'a> {
             }
             ComprehensionIterationPlan::FilterMapCopyBinding => {
                 let Some(filter) = filter else {
-                    return Err(EmitError::Unsupported(
-                        "internal error: filtered comprehension plan requires a filter".to_string(),
+                    return Err(EmitError::InternalInvariant(
+                        "filtered comprehension plan requires a filter".to_string(),
                     ));
                 };
                 let filter_tokens = self.emit_expr(filter)?;
@@ -262,8 +262,8 @@ impl<'a> IrEmitter<'a> {
         match plan {
             ComprehensionIterationPlan::FilterMapCloneBinding => {
                 let Some(filter) = filter else {
-                    return Err(EmitError::Unsupported(
-                        "internal error: filtered dict comprehension plan requires a filter".to_string(),
+                    return Err(EmitError::InternalInvariant(
+                        "filtered dict comprehension plan requires a filter".to_string(),
                     ));
                 };
                 let filter_tokens = self.emit_expr(filter)?;
@@ -284,8 +284,8 @@ impl<'a> IrEmitter<'a> {
             }
             ComprehensionIterationPlan::FilterMapCopyBinding => {
                 let Some(filter) = filter else {
-                    return Err(EmitError::Unsupported(
-                        "internal error: filtered dict comprehension plan requires a filter".to_string(),
+                    return Err(EmitError::InternalInvariant(
+                        "filtered dict comprehension plan requires a filter".to_string(),
                     ));
                 };
                 let filter_tokens = self.emit_expr(filter)?;
