@@ -17,7 +17,7 @@ use crate::cli::prelude::ParsedModule;
 use crate::cli::{CliError, CliResult};
 use crate::dependency_resolver::ResolvedDependencies;
 use crate::dependency_resolver::{DependencyError, InlineRustImport};
-use crate::frontend::ast::{Declaration, ImportKind, Program, Span};
+use crate::frontend::ast::{ImportKind, Program, Span};
 use crate::frontend::contract_metadata::{
     CanonicalModelBundle, materialize_contract_models, read_project_model_bundles,
 };
@@ -2163,23 +2163,7 @@ pub(crate) fn typecheck_modules_with_import_graph_info(
 
 /// Classify diagnostics that are still emitted by the typechecker but originate from an import declaration span.
 fn typecheck_diagnostic_phase(module: &ParsedModule, span: Span) -> diagnostics::DiagnosticPhase {
-    if module
-        .ast
-        .declarations
-        .iter()
-        .any(|declaration| matches!(declaration.node, Declaration::Import(_)) && spans_overlap(span, declaration.span))
-    {
-        diagnostics::DiagnosticPhase::Import
-    } else {
-        diagnostics::DiagnosticPhase::Typecheck
-    }
-}
-
-/// Return whether two source spans overlap after treating zero-width spans as one-byte spans.
-fn spans_overlap(left: Span, right: Span) -> bool {
-    let left_end = left.end.max(left.start.saturating_add(1));
-    let right_end = right.end.max(right.start.saturating_add(1));
-    left.start < right_end && right.start < left_end
+    diagnostics::phase_for_typecheck_span(&module.ast, span)
 }
 
 // ============================================================================

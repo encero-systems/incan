@@ -220,7 +220,7 @@ Options:
 - `--format jsonl`: Emit newline-delimited JSON records. JSONL is the only supported 0.4 format.
 - `--allow-errors`: Emit a degraded partial graph and diagnostic records when the source is broken. Without this flag, diagnostics fail the command.
 
-`incan inspect codegraph` is tooling output, not runtime `std.graph`, not a generated-Rust ABI, and not a whole-program reference/call graph in 0.4. The header lists the represented languages, and every fact record carries `language`, `provenance`, and `degraded` fields. Body facts with a compiler-proven `target_id` use checked provenance; syntax-only body facts keep syntax provenance. The 0.4 exporter emits `language: "incan"` only; first-class Rust graph records and MCP/task-context consumers are follow-up work.
+`incan inspect codegraph` is tooling output, not runtime `std.graph`, not a generated-Rust ABI, and not a whole-program reference/call graph in 0.4. The header lists the represented languages, and every fact record carries `language`, `provenance`, and `degraded` fields. Body facts with a compiler-proven `target_id` use checked provenance; syntax-only body facts keep syntax provenance. In 0.4, `target_id` points only at declaration records emitted in the same JSONL export; public-package manifest identity remains available in library manifests, but external package declarations are not emitted as codegraph targets yet. The 0.4 exporter emits `language: "incan"` only; first-class Rust graph records and MCP/task-context consumers are follow-up work.
 
 Examples:
 
@@ -677,4 +677,4 @@ Specific behavior:
 
 Before a release, verify the docs stay aligned with the real CLI surface:
 
-- Compare `incan --help` and `incan {check,explain,build,run,fmt,test,init,lock,tools} --help` against this page.
+- Compare `incan --help` and `incan {check,explain,build,run,fmt,test,init,inspect,lock,tools} --help` against this page.

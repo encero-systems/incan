@@ -196,7 +196,7 @@ def main() -> None:
     let build_json = parse_json_stdout(&build)?;
     assert_eq!(build_json["schema_version"], check_json["schema_version"]);
     assert_eq!(build_json["project"]["name"], serde_json::json!("semantic_probe"));
-    assert_source_files_include(&build_json, &["src/main.incn", "src/helpers.incn"]);
+    assert_source_files_include(&build_json, &["src/main.incn", "src/helpers.incn"])?;
 
     let inspect = run_incan(tmp.path(), &["inspect", "rust", main_arg, "--format", "json"])?;
     assert_success(&inspect, "incan inspect rust --format json semantic inspection fixture");
@@ -215,7 +215,7 @@ def main() -> None:
         inspect_json["generated"]["crate_root"],
         build_json["generated"]["crate_root"]
     );
-    assert_source_files_include(&inspect_json, &["src/main.incn", "src/helpers.incn"]);
+    assert_source_files_include(&inspect_json, &["src/main.incn", "src/helpers.incn"])?;
 
     let codegraph = run_incan(tmp.path(), &["inspect", "codegraph", main_arg, "--format", "jsonl"])?;
     assert_success(
@@ -254,18 +254,22 @@ def main() -> None:
     Ok(())
 }
 
-fn assert_source_files_include(report: &serde_json::Value, suffixes: &[&str]) {
+fn assert_source_files_include(
+    report: &serde_json::Value,
+    suffixes: &[&str],
+) -> Result<(), Box<dyn std::error::Error>> {
     let files = report["source_files"]
         .as_array()
-        .unwrap_or_else(|| panic!("report source_files should be an array: {report}"));
+        .ok_or_else(|| format!("report source_files should be an array: {report}"))?;
     for suffix in suffixes {
-        assert!(
-            files
-                .iter()
-                .any(|file| file["path"].as_str().is_some_and(|path| path.ends_with(suffix))),
-            "expected report to include source file ending with {suffix}: {report}"
-        );
+        if !files
+            .iter()
+            .any(|file| file["path"].as_str().is_some_and(|path| path.ends_with(suffix)))
+        {
+            return Err(format!("expected report to include source file ending with {suffix}: {report}").into());
+        }
     }
+    Ok(())
 }
 
 #[test]
