@@ -2772,7 +2772,9 @@ def add(a: int, b: int) -> int:
             Ok(_) => panic!("expected default parameter lowering to fail"),
             Err(errors) => errors,
         };
-        let first = errors.first().expect("expected at least one lowering error");
+        let Some(first) = errors.first() else {
+            panic!("expected at least one lowering error");
+        };
         assert!(
             first.message.contains("failed to lower default parameter expression"),
             "unexpected lowering message: {}",
