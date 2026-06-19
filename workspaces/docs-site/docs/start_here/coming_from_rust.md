@@ -1,6 +1,35 @@
 # Coming from Rust (evaluator)
 
-This page is a routing guide for Rust-first evaluators.
+This page routes Rust-first evaluators who want to understand where Incan keeps Rust-shaped semantics and where it trades surface syntax for application-code ergonomics.
+
+## Install first
+
+If you already use Cargo and want a source-built compiler, install the release source directly from Git with the LSP feature enabled so both `incan` and `incan-lsp` are installed:
+
+```bash
+cargo install --git https://github.com/dannys-code-corner/incan.git --tag v0.4.0 --locked --features lsp --bin incan --bin incan-lsp
+incan --version
+command -v incan-lsp
+```
+
+If you want the faster binary toolchain path instead, use the release installer:
+
+```bash
+curl -fsSL https://github.com/dannys-code-corner/incan/releases/latest/download/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
+incan --version
+command -v incan-lsp
+```
+
+After installation, create a project and run the normal first-contact loop:
+
+```bash
+incan new hello --yes
+cd hello
+incan run
+incan test
+incan build --release
+```
 
 ## What you should do next
 

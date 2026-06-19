@@ -93,6 +93,7 @@ nav:
       - What Incan is for: start_here/what_incan_is_for.md
       - Coming from Python (apps): start_here/coming_from_python.md
       - Coming from Rust (evaluator): start_here/coming_from_rust.md
+      - Coming from TypeScript or JavaScript: start_here/coming_from_typescript_javascript.md
       - Pipelines & automation: start_here/pipelines_and_automation.md
       - Encero stack: start_here/encero_stack.md
       - 1.0 domain-native demo target: start_here/domain_native_demo.md

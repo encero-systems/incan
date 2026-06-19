@@ -24,6 +24,7 @@ Choose by goal:
 - [What Incan is for](what_incan_is_for.md)
 - [Coming from Python (apps)](coming_from_python.md)
 - [Coming from Rust (evaluator)](coming_from_rust.md)
+- [Coming from TypeScript or JavaScript](coming_from_typescript_javascript.md)
 - [Pipelines & automation](pipelines_and_automation.md)
 - [Encero stack](encero_stack.md)
 - [1.0 domain-native demo target](domain_native_demo.md)

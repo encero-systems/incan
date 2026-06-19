@@ -6,7 +6,7 @@ The current toolchain is designed to be easy to install, try, inspect, and diagn
 
 ## Getting started
 
-Install the latest toolchain release:
+Install the latest toolchain release before creating your first project:
 
 ```bash
 curl -fsSL https://github.com/dannys-code-corner/incan/releases/latest/download/install.sh | sh
@@ -22,6 +22,12 @@ npm install -g @incan/toolchain
 pipx install incan
 ```
 
+Rust users can also build and install the release source through Cargo:
+
+```bash
+cargo install --git https://github.com/dannys-code-corner/incan.git --tag v0.4.0 --locked --features lsp --bin incan --bin incan-lsp
+```
+
 Create a starter project, run it, test it, and produce a release build:
 
 ```bash
@@ -32,7 +38,7 @@ incan test
 incan build --release
 ```
 
-The installer links `incan` and `incan-lsp` into `~/.local/bin` by default. The Homebrew, npm, and pipx packages are thin adapters over the same toolchain archives, not separate compiler builds. See [Install and run Incan](workspaces/docs-site/docs/tooling/how-to/install_and_run.md) for supported hosts, dry-run installation, manifest pinning, and source-build fallback instructions.
+The installer links `incan` and `incan-lsp` into `~/.local/bin` by default. The Homebrew, npm, and pipx packages are thin adapters over the same toolchain archives, not separate compiler builds. Cargo installation compiles from source and is mainly for Rust users who prefer that workflow. See [Install and run Incan](workspaces/docs-site/docs/tooling/how-to/install_and_run.md) for supported hosts, dry-run installation, manifest pinning, Cargo installation, and source-build fallback instructions.
 
 If you are contributing to the compiler itself, clone this repository and use `make install` instead of the toolchain installer.
 
@@ -81,6 +87,13 @@ As AI tools generate more code, those constraints matter more. Incan gives devel
 
 - If you like the readability of Python but want stronger correctness tools and predictable performance, Incan is aimed at that workflow.
 - If you like Rust but want a smaller surface syntax for everyday application code, Incan is built to stay close to Rust semantics while reducing boilerplate.
+- If you like TypeScript or JavaScript tooling but want native binaries and Rust-backed execution for application code, Incan should feel familiar in its focus on typed APIs, editor feedback, and installable command-line tooling.
+
+## Choose your path
+
+- [Coming from Python](workspaces/docs-site/docs/start_here/coming_from_python.md): start with the pipx or direct installer path, then compare Python app patterns to typed Incan models, `Result`/`Option`, traits, tests, and Rust-backed deployment.
+- [Coming from Rust](workspaces/docs-site/docs/start_here/coming_from_rust.md): start with the Cargo or direct installer path, then inspect how Incan keeps Rust-shaped errors, interop, generated Rust output, diagnostics, and native builds visible.
+- [Coming from TypeScript or JavaScript](workspaces/docs-site/docs/start_here/coming_from_typescript_javascript.md): start with the npm or direct installer path, then compare typed app workflows, editor tooling, package scripts, diagnostics, and native artifact inspection.
 
 ## Status
 

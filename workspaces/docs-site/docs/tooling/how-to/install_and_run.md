@@ -12,7 +12,7 @@ The toolchain manifest also records the Rust backend policy for the release, inc
 
 The canonical 0.4 artifact source is the GitHub Release. The release publishes `install.sh`, `manifest.json`, checksums, and platform toolchain archives; Homebrew, npm, and pip are thin adapters over that same manifest rather than separate compiler builds.
 
-The direct installer path is:
+Use the direct installer when you want the release manifest, checksum verification, and command links without a package-manager adapter:
 
 ```bash
 curl -fsSL https://github.com/dannys-code-corner/incan/releases/latest/download/install.sh | sh
@@ -29,10 +29,10 @@ The installer reads the release manifest, selects the archive for your host targ
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 incan --version
-incan-lsp --version
+command -v incan-lsp
 ```
 
-Package-manager installs use the same toolchain archive contract:
+Package-manager installs use the same toolchain archive contract while fitting into the command manager you already use:
 
 ```bash
 brew install https://github.com/dannys-code-corner/incan/releases/latest/download/incan.rb
@@ -44,9 +44,17 @@ Use Homebrew when you want native macOS or Linux command management. Use npm whe
 
 The npm and pip packages install the toolchain into a package-local cache on first install or first command use, then delegate to the real `incan` and `incan-lsp` binaries from the verified toolchain archive. Set `INCAN_TOOLCHAIN_MANIFEST` to pin a manifest, or use the direct `install.sh --manifest <URL|PATH>` path when you need fully explicit release control.
 
+Rust users can also install from Git through Cargo, which compiles the release source instead of downloading a prebuilt toolchain archive:
+
+```bash
+cargo install --git https://github.com/dannys-code-corner/incan.git --tag v0.4.0 --locked --features lsp --bin incan --bin incan-lsp
+```
+
+Cargo installation compiles the compiler from source instead of downloading a prebuilt toolchain archive. The `lsp` feature enables the `incan-lsp` binary alongside the default `incan` CLI, so this is the right Cargo command when you want the same two commands exposed by the release installer. Prefer the direct installer, Homebrew, npm, or pipx when you want checksum-verified prebuilt release artifacts.
+
 ## Create a starter project
 
-After installation, the shortest first run is:
+After installation, the shortest first run creates a starter project and exercises run, test, and release-build paths:
 
 ```bash
 incan new hello --yes
