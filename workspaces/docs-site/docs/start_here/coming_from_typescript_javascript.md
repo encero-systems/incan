@@ -9,7 +9,7 @@ If you already use Node-based tooling, install the npm adapter. It installs comm
 ```bash
 npm install -g @incan/toolchain
 incan --version
-command -v incan-lsp
+incan-lsp --version
 ```
 
 The direct installer is the same release path without npm in the middle, which is useful for shell scripts, CI images, and environments where you want explicit control over the toolchain manifest:
@@ -18,7 +18,7 @@ The direct installer is the same release path without npm in the middle, which i
 curl -fsSL https://github.com/dannys-code-corner/incan/releases/latest/download/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
 incan --version
-command -v incan-lsp
+incan-lsp --version
 ```
 
 After installation, create a project and run the normal first-contact loop:

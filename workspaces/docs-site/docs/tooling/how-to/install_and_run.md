@@ -29,7 +29,7 @@ The installer reads the release manifest, selects the archive for your host targ
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 incan --version
-command -v incan-lsp
+incan-lsp --version
 ```
 
 Package-manager installs use the same toolchain archive contract while fitting into the command manager you already use:

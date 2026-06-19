@@ -9,7 +9,7 @@ If you already use Cargo and want a source-built compiler, install the release s
 ```bash
 cargo install --git https://github.com/dannys-code-corner/incan.git --tag v0.4.0 --locked --features lsp --bin incan --bin incan-lsp
 incan --version
-command -v incan-lsp
+incan-lsp --version
 ```
 
 If you want the faster binary toolchain path instead, use the release installer:
@@ -18,7 +18,7 @@ If you want the faster binary toolchain path instead, use the release installer:
 curl -fsSL https://github.com/dannys-code-corner/incan/releases/latest/download/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
 incan --version
-command -v incan-lsp
+incan-lsp --version
 ```
 
 After installation, create a project and run the normal first-contact loop:
