@@ -9,7 +9,7 @@
     - RFC 013 (Rust crate dependencies)
     - RFC 020 (offline/locked policy)
     - RFC 051 (`JsonValue`)
-- **Issue:** [#120](https://github.com/dannys-code-corner/incan/issues/120)
+- **Issue:** [#120](https://github.com/encero-systems/incan/issues/120)
 - **RFC PR:** —
 - **Written against:** v0.1
 - **Shipped in:** v0.2

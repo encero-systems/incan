@@ -164,5 +164,5 @@ The `120`-character line length is a target, not a strict hard limit. The format
 
 - [Incan Code Style Guide](../../language/reference/code_style.md)
 - [Language Guide](../../language/index.md)
-- [Examples](https://github.com/dannys-code-corner/incan/tree/main/examples)
+- [Examples](https://github.com/encero-systems/incan/tree/main/examples)
 - [Testing](testing.md)

@@ -3,8 +3,8 @@
 - **Status:** Implemented
 - **Created:** 2026-03-06
 - **Author(s):** Danny Meijer (@dannymeijer)
-- **Issue:** [#165](https://github.com/dannys-code-corner/incan/issues/165)
-- **RFC PR:** [#177](https://github.com/dannys-code-corner/incan/pull/177)
+- **Issue:** [#165](https://github.com/encero-systems/incan/issues/165)
+- **RFC PR:** [#177](https://github.com/encero-systems/incan/pull/177)
 - **Related**:
     - RFC 027 (incan-vocab — keyword registration API)
     - RFC 034 (`incan.pub` registry)

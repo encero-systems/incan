@@ -12,8 +12,8 @@
     - RFC 088 (iterator adapter surface)
     - RFC 099 (generic trait-targeted methods)
     - RFC 101 (`std.collections.OrdinalMap`)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/580
-- **Blocks:** https://github.com/dannys-code-corner/incan/issues/596 (v0.5 RFC 101 trait-system bridge removal)
+- **Issue:** https://github.com/encero-systems/incan/issues/580
+- **Blocks:** https://github.com/encero-systems/incan/issues/596 (v0.5 RFC 101 trait-system bridge removal)
 - **RFC PR:** —
 - **Written against:** v0.3
 - **Shipped in:** —

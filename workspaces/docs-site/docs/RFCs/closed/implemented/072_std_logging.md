@@ -14,7 +14,7 @@
     - RFC 093 (`std.telemetry` OpenTelemetry-aligned observability)
     - OpenTelemetry semantic conventions (external)
     - OpenTelemetry GenAI semantic conventions (external)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/392
+- **Issue:** https://github.com/encero-systems/incan/issues/392
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** v0.3

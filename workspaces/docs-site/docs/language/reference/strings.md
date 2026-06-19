@@ -218,5 +218,5 @@ def process_binary(data: bytes) -> bytes:
 - [Examples: Strings][examples-strings] — string method examples
 - [Examples: Bytes I/O][examples-bytes-io] — binary data examples
 
-[examples-strings]: https://github.com/dannys-code-corner/incan/blob/main/examples/simple/strings.incn
-[examples-bytes-io]: https://github.com/dannys-code-corner/incan/blob/main/examples/advanced/bytes_io.incn
+[examples-strings]: https://github.com/encero-systems/incan/blob/main/examples/simple/strings.incn
+[examples-bytes-io]: https://github.com/encero-systems/incan/blob/main/examples/advanced/bytes_io.incn

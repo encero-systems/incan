@@ -19,7 +19,7 @@
     - RFC 095 (`span` vocabulary blocks)
     - RFC 102 (semantic layer inspection surface)
     - RFC 103 (secret values and redaction-safe values)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/662
+- **Issue:** https://github.com/encero-systems/incan/issues/662
 - **RFC PR:** -
 - **Written against:** v0.3
 - **Shipped in:** —

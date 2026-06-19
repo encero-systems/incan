@@ -9,7 +9,7 @@
     - RFC 021 (field metadata & aliases)
     - RFC 023 (compilable stdlib and rust.module binding)
     - RFC 025 (multi-instantiation trait dispatch)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/148
+- **Issue:** https://github.com/encero-systems/incan/issues/148
 - **RFC PR:** —
 - **Written against:** v0.1
 - **Shipped in:** v0.3

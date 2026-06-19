@@ -120,10 +120,10 @@ Run **Incan: Doctor** from the command palette to see which `incan` and `incan-l
 
 ```bash
 # For Cursor
-ln -sf /path/to/incan-programming-language/workspaces/ide/vscode ~/.cursor/extensions/incan-language
+ln -sf /path/to/incan/workspaces/ide/vscode ~/.cursor/extensions/incan-language
 
 # For VS Code (only if you know the extension folder naming rules)
-ln -sf /path/to/incan-programming-language/workspaces/ide/vscode ~/.vscode/extensions/<name-from-package.json>
+ln -sf /path/to/incan/workspaces/ide/vscode ~/.vscode/extensions/<name-from-package.json>
 ```
 
 Make sure the symlink name matches the `name` field in `package.json`. Then restart your editor.
@@ -146,7 +146,7 @@ To enable language server features (diagnostics, hover, go-to-definition):
 ### 1. Build the LSP Server
 
 ```bash
-cd /path/to/incan-programming-language
+cd /path/to/incan
 cargo build --release --bin incan-lsp
 ```
 
@@ -154,14 +154,14 @@ cargo build --release --bin incan-lsp
 
 ```bash
 # Add to your shell profile (.bashrc, .zshrc, etc.)
-export PATH="$PATH:/path/to/incan-programming-language/target/release"
+export PATH="$PATH:/path/to/incan/target/release"
 ```
 
 Or configure the path directly in VS Code/Cursor settings:
 
 ```json
 {
-  "incan.lsp.path": "/path/to/incan-programming-language/target/release/incan-lsp"
+  "incan.lsp.path": "/path/to/incan/target/release/incan-lsp"
 }
 ```
 

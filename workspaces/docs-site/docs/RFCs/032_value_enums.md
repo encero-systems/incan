@@ -4,9 +4,9 @@
 - **Created:** 2026-03-06
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 050 (Enum Methods & Trait Adoption), RFC 033 (`ctx` Keyword)
-- **Issue:** [#166](https://github.com/dannys-code-corner/incan/issues/166)
+- **Issue:** [#166](https://github.com/encero-systems/incan/issues/166)
 - **RFC PR:**
-    - [#411](https://github.com/dannys-code-corner/incan/pull/411)
+    - [#411](https://github.com/encero-systems/incan/pull/411)
     - <!-- follow-up PR: LSP metadata and blocked-by-RFC-033 status -->
 - **Written against:** v0.2
 - **Shipped in:**
@@ -364,7 +364,7 @@ Rejected: breaks Incan's type safety philosophy. A `str` and an `Env` should not
 
 ## Related PRs
 
-- [#411](https://github.com/dannys-code-corner/incan/pull/411) — implemented the core RFC 032 value-enum compiler, backend, serialization, manifest, docs, release-note, and verification surface.
+- [#411](https://github.com/encero-systems/incan/pull/411) — implemented the core RFC 032 value-enum compiler, backend, serialization, manifest, docs, release-note, and verification surface.
 
 ## Implementation Plan
 
@@ -427,7 +427,7 @@ Rejected: breaks Incan's type safety philosophy. A `str` and an `Env` should not
 - [x] Emit `from_value()` helpers for string and integer value enums.
 - [x] Preserve `message()` as variant-name behavior.
 - [x] Preserve canonical external representation hooks for display, parsing, serialization, and deserialization surfaces that exist in the backend.
-- [ ] Wire value-enum metadata into future environment/config resolution surfaces once those hooks exist. Current `incan env` lifecycle resolution only merges manifest overlays and has no typed program-config resolver hook yet; this remains blocked on RFC 033 / [#167](https://github.com/dannys-code-corner/incan/issues/167).
+- [ ] Wire value-enum metadata into future environment/config resolution surfaces once those hooks exist. Current `incan env` lifecycle resolution only merges manifest overlays and has no typed program-config resolver hook yet; this remains blocked on RFC 033 / [#167](https://github.com/encero-systems/incan/issues/167).
 
 ### Tooling / docs / release
 

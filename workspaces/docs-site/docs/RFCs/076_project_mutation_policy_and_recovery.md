@@ -9,7 +9,7 @@
     - RFC 034 (`incan.pub` package registry)
     - RFC 074 (template rendering and boilerplate provenance)
     - RFC 075 (starter profiles and capability packs)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/404
+- **Issue:** https://github.com/encero-systems/incan/issues/404
 - **RFC PR:** —
 - **Written against:** v0.3
 - **Shipped in:** —

@@ -4,7 +4,7 @@
 - **Created:** 2025-12-01
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 013 (Rust crate dependencies)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/81
+- **Issue:** https://github.com/encero-systems/incan/issues/81
 - **RFC PR:** —
 - **Written against:** v0.1
 - **Shipped in:** —

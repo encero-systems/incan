@@ -8,7 +8,7 @@
     - RFC 030 (`std.collections`)
     - RFC 050 (enum methods and enum trait adoption)
     - RFC 051 (`JsonValue` for `std.json`)
-- **Issue:** [#86](https://github.com/dannys-code-corner/incan/issues/86)
+- **Issue:** [#86](https://github.com/encero-systems/incan/issues/86)
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** v0.3

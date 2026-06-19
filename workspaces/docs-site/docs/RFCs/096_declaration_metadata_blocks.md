@@ -12,7 +12,7 @@
     - RFC 085 (field metadata and type-shaped constraints)
     - RFC 086 (schema descriptors and adapters)
     - RFC 091 (constrained integer newtype storage carriers)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/667
+- **Issue:** https://github.com/encero-systems/incan/issues/667
 - **RFC PR:** —
 - **Written against:** v0.3
 - **Shipped in:** —

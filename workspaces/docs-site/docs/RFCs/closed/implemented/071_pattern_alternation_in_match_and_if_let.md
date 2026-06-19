@@ -7,7 +7,7 @@
     - RFC 000 (core language surface)
     - RFC 029 (union types and type narrowing)
     - RFC 049 (`if let` single-arm conditional match)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/387
+- **Issue:** https://github.com/encero-systems/incan/issues/387
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** v0.3.0-dev.38

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-default_manifest_url="https://github.com/dannys-code-corner/incan/releases/latest/download/manifest.json"
+default_manifest_url="https://github.com/encero-systems/incan/releases/latest/download/manifest.json"
 manifest_ref="${INCAN_TOOLCHAIN_MANIFEST:-$default_manifest_url}"
 incan_home="${INCAN_HOME:-$HOME/.incan}"
 bin_dir="${INCAN_BIN_DIR:-$HOME/.local/bin}"

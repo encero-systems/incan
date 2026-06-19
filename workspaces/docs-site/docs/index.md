@@ -19,7 +19,7 @@ Incan is a typed, Python-readable language for new application and data code. It
 
 <div class="inc-hero__actions" markdown="1">
 [Try Incan](tooling/tutorials/getting_started.md){ .md-button .md-button--primary }
-[View on GitHub](https://github.com/dannys-code-corner/incan){ .md-button }
+[View on GitHub](https://github.com/encero-systems/incan){ .md-button }
 [Start Here](start_here/index.md){ .md-button .inc-button--quiet }
 </div>
 
@@ -249,7 +249,7 @@ Incan is beta software. The useful next step is to run it, inspect the artifacts
 
 <div class="inc-hero__actions" markdown="1">
 [Try Incan](tooling/tutorials/getting_started.md){ .md-button .md-button--primary }
-[GitHub](https://github.com/dannys-code-corner/incan){ .md-button }
+[GitHub](https://github.com/encero-systems/incan){ .md-button }
 [Documentation](start_here/index.md){ .md-button }
 [Duckborrowing Deep Dive](contributing/explanation/duckborrowing.md){ .md-button .inc-button--quiet }
 </div>

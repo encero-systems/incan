@@ -13,8 +13,8 @@
     - RFC 091 (constrained integer newtype storage carriers)
     - RFC 098 (native associated types for traits)
     - RFC 101 (`std.collections.OrdinalMap`)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/581
-- **Blocks:** https://github.com/dannys-code-corner/incan/issues/596 (v0.5 RFC 101 trait-system bridge removal)
+- **Issue:** https://github.com/encero-systems/incan/issues/581
+- **Blocks:** https://github.com/encero-systems/incan/issues/596 (v0.5 RFC 101 trait-system bridge removal)
 - **RFC PR:** —
 - **Written against:** v0.3
 - **Shipped in:** —

@@ -475,7 +475,7 @@ fn homebrew_formula_is_rendered_from_the_toolchain_manifest() -> Result<(), Box<
     let formula = fs::read_to_string(dist.join("incan.rb"))?;
     assert!(formula.contains(r#"version "0.4.0-rc0""#));
     assert!(formula.contains(
-        r#"url "https://github.com/dannys-code-corner/incan/releases/download/v0.4.0-rc0/incan-v0.4.0-rc0-x86_64-unknown-linux-gnu.tar.gz""#
+        r#"url "https://github.com/encero-systems/incan/releases/download/v0.4.0-rc0/incan-v0.4.0-rc0-x86_64-unknown-linux-gnu.tar.gz""#
     ));
     assert!(formula.contains(&format!(r#"sha256 "{checksum}""#)));
     assert!(formula.contains(r#"bin.install "bin/incan""#));

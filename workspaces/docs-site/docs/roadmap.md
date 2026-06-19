@@ -57,22 +57,22 @@ The release is deliberately not a broad language/runtime reopening. It should ma
 
 These issues define the minimum coherent 0.4 release surface:
 
-- [#223](https://github.com/dannys-code-corner/incan/issues/223): umbrella delivery issue for the tooling, inspection, and first-contact release.
-- [#554](https://github.com/dannys-code-corner/incan/issues/554): release direction notes and scope guard.
-- [#592](https://github.com/dannys-code-corner/incan/issues/592): RFC inspectability prompts, so new designs name their metadata, diagnostic, provenance, artifact, or command surface.
-- [#760](https://github.com/dannys-code-corner/incan/issues/760): compact boundary parity fixture suite, focused on the import/package/vocab/test-batch failures that made 0.3 expensive to stabilize.
-- [#699](https://github.com/dannys-code-corner/incan/issues/699): unified symbol identity across import and package boundaries.
-- [#753](https://github.com/dannys-code-corner/incan/issues/753): partial presets constructing const metadata values, handled as part of callable identity and metadata parity.
-- [#707](https://github.com/dannys-code-corner/incan/issues/707), [#723](https://github.com/dannys-code-corner/incan/issues/723), [#697](https://github.com/dannys-code-corner/incan/issues/697), and [#769](https://github.com/dannys-code-corner/incan/issues/769): visible test/build preheat progress, generated-library preheat cache alignment, Rust metadata prewarm reuse, and cache split evidence so long-running phases are explainable instead of silent.
-- [#589](https://github.com/dannys-code-corner/incan/issues/589): stable machine-readable diagnostics output.
-- [#590](https://github.com/dannys-code-corner/incan/issues/590): diagnostic explain command and help catalog.
-- [#591](https://github.com/dannys-code-corner/incan/issues/591): build artifact reports.
-- [#567](https://github.com/dannys-code-corner/incan/issues/567): generated Rust inspection tooling and quality gates.
-- [#666](https://github.com/dannys-code-corner/incan/issues/666): RFC 102 semantic inspection umbrella, used to keep the inspection surfaces coherent.
-- [#778](https://github.com/dannys-code-corner/incan/issues/778): RFC 106 first slice for compiler-backed codegraph JSONL export.
-- [#428](https://github.com/dannys-code-corner/incan/issues/428): canonical toolchain installer and release manifest.
-- [#553](https://github.com/dannys-code-corner/incan/issues/553): zero-clone starter project flow.
-- [#551](https://github.com/dannys-code-corner/incan/issues/551): first-contact quickstart and positioning docs.
+- [#223](https://github.com/encero-systems/incan/issues/223): umbrella delivery issue for the tooling, inspection, and first-contact release.
+- [#554](https://github.com/encero-systems/incan/issues/554): release direction notes and scope guard.
+- [#592](https://github.com/encero-systems/incan/issues/592): RFC inspectability prompts, so new designs name their metadata, diagnostic, provenance, artifact, or command surface.
+- [#760](https://github.com/encero-systems/incan/issues/760): compact boundary parity fixture suite, focused on the import/package/vocab/test-batch failures that made 0.3 expensive to stabilize.
+- [#699](https://github.com/encero-systems/incan/issues/699): unified symbol identity across import and package boundaries.
+- [#753](https://github.com/encero-systems/incan/issues/753): partial presets constructing const metadata values, handled as part of callable identity and metadata parity.
+- [#707](https://github.com/encero-systems/incan/issues/707), [#723](https://github.com/encero-systems/incan/issues/723), [#697](https://github.com/encero-systems/incan/issues/697), and [#769](https://github.com/encero-systems/incan/issues/769): visible test/build preheat progress, generated-library preheat cache alignment, Rust metadata prewarm reuse, and cache split evidence so long-running phases are explainable instead of silent.
+- [#589](https://github.com/encero-systems/incan/issues/589): stable machine-readable diagnostics output.
+- [#590](https://github.com/encero-systems/incan/issues/590): diagnostic explain command and help catalog.
+- [#591](https://github.com/encero-systems/incan/issues/591): build artifact reports.
+- [#567](https://github.com/encero-systems/incan/issues/567): generated Rust inspection tooling and quality gates.
+- [#666](https://github.com/encero-systems/incan/issues/666): RFC 102 semantic inspection umbrella, used to keep the inspection surfaces coherent.
+- [#778](https://github.com/encero-systems/incan/issues/778): RFC 106 first slice for compiler-backed codegraph JSONL export.
+- [#428](https://github.com/encero-systems/incan/issues/428): canonical toolchain installer and release manifest.
+- [#553](https://github.com/encero-systems/incan/issues/553): zero-clone starter project flow.
+- [#551](https://github.com/encero-systems/incan/issues/551): first-contact quickstart and positioning docs.
 
 #### Useful but evidence-dependent work
 
@@ -85,7 +85,7 @@ The following are design constraints and future lanes, not 0.4 implementation sl
 - RFC 037 `std.web` and RFC 066 `std.http` implementation work.
 - Source-local feature metadata beyond maintaining the generated feature inventory for public 0.4 capabilities.
 - Rust caller, Rust-hosted consumption, ABI, and backend-replacement architecture.
-- RFC 106 follow-up graph layers tracked by [#573](https://github.com/dannys-code-corner/incan/issues/573), [#770](https://github.com/dannys-code-corner/incan/issues/770), [#771](https://github.com/dannys-code-corner/incan/issues/771), [#772](https://github.com/dannys-code-corner/incan/issues/772), [#773](https://github.com/dannys-code-corner/incan/issues/773), [#774](https://github.com/dannys-code-corner/incan/issues/774), [#775](https://github.com/dannys-code-corner/incan/issues/775), [#776](https://github.com/dannys-code-corner/incan/issues/776), and [#777](https://github.com/dannys-code-corner/incan/issues/777), including resolved targets, Rust graph records, MCP serving, task context packing, process-risk signals, external importers, and Architect findings.
+- RFC 106 follow-up graph layers tracked by [#573](https://github.com/encero-systems/incan/issues/573), [#770](https://github.com/encero-systems/incan/issues/770), [#771](https://github.com/encero-systems/incan/issues/771), [#772](https://github.com/encero-systems/incan/issues/772), [#773](https://github.com/encero-systems/incan/issues/773), [#774](https://github.com/encero-systems/incan/issues/774), [#775](https://github.com/encero-systems/incan/issues/775), [#776](https://github.com/encero-systems/incan/issues/776), and [#777](https://github.com/encero-systems/incan/issues/777), including resolved targets, Rust graph records, MCP serving, task context packing, process-risk signals, external importers, and Architect findings.
 - Hees.ai, InQL, and Pallay product work beyond proof lanes that validate frozen 0.4 commands.
 - Broad language/runtime features that are not required by the installer, starter, diagnostics, inspection, build-report, or codegraph path.
 
@@ -105,16 +105,16 @@ Stdlib RFC/work is allowed in this lane. Hees.ai is also allowed, but only as a 
 
 Core tracking issues:
 
-- [#634](https://github.com/dannys-code-corner/incan/issues/634): v1.0 middle-end foundation umbrella.
-- [#646](https://github.com/dannys-code-corner/incan/issues/646): current compiler behavior inventory.
-- [#647](https://github.com/dannys-code-corner/incan/issues/647): deprecate Rust-source backend as semantic path.
-- [#648](https://github.com/dannys-code-corner/incan/issues/648): stable compiler IDs and semantic facts database.
-- [#649](https://github.com/dannys-code-corner/incan/issues/649): `IncanType` semantic type model and ABI v0 hooks.
-- [#650](https://github.com/dannys-code-corner/incan/issues/650): HIR v0 and snapshot tests.
-- [#282](https://github.com/dannys-code-corner/incan/issues/282): backend orchestration migration scaffolding.
-- [#224](https://github.com/dannys-code-corner/incan/issues/224): `CompilationSession` semantic database transition.
-- [#549](https://github.com/dannys-code-corner/incan/issues/549): Hees.ai governed workbench demo.
-- [#651](https://github.com/dannys-code-corner/incan/issues/651): Hees.ai dependency inventory and guardrails.
+- [#634](https://github.com/encero-systems/incan/issues/634): v1.0 middle-end foundation umbrella.
+- [#646](https://github.com/encero-systems/incan/issues/646): current compiler behavior inventory.
+- [#647](https://github.com/encero-systems/incan/issues/647): deprecate Rust-source backend as semantic path.
+- [#648](https://github.com/encero-systems/incan/issues/648): stable compiler IDs and semantic facts database.
+- [#649](https://github.com/encero-systems/incan/issues/649): `IncanType` semantic type model and ABI v0 hooks.
+- [#650](https://github.com/encero-systems/incan/issues/650): HIR v0 and snapshot tests.
+- [#282](https://github.com/encero-systems/incan/issues/282): backend orchestration migration scaffolding.
+- [#224](https://github.com/encero-systems/incan/issues/224): `CompilationSession` semantic database transition.
+- [#549](https://github.com/encero-systems/incan/issues/549): Hees.ai governed workbench demo.
+- [#651](https://github.com/encero-systems/incan/issues/651): Hees.ai dependency inventory and guardrails.
 
 Allowed stdlib work includes `std.http`, `std.ci`, CLI framework, `std.archive`, `std.process`, `std.web` lifecycle, `std.environ`, package-level timezones, fallible reader chunk streams, and selected stdlib compilation/source-authored behavior work.
 
@@ -126,13 +126,13 @@ Only runtime/DSL RFC scope that stress-tests or supports the new backend belongs
 
 Core tracking issues:
 
-- [#652](https://github.com/dannys-code-corner/incan/issues/652): replacement backend parity cutover.
-- [#653](https://github.com/dannys-code-corner/incan/issues/653): Body IR v0 and backend-owned lowering.
-- [#654](https://github.com/dannys-code-corner/incan/issues/654): remove Rust-source backend and generated-Rust semantic handoff.
-- [#655](https://github.com/dannys-code-corner/incan/issues/655): backend compatibility report and migration notes.
-- [#225](https://github.com/dannys-code-corner/incan/issues/225): semantic facts adoption on backend cutover paths.
-- [#656](https://github.com/dannys-code-corner/incan/issues/656): Rust-facing ABI and Cargo-native Incan package direction.
-- [#752](https://github.com/dannys-code-corner/incan/issues/752): RFC 107 type-directed library APIs and compile-time type tokens.
+- [#652](https://github.com/encero-systems/incan/issues/652): replacement backend parity cutover.
+- [#653](https://github.com/encero-systems/incan/issues/653): Body IR v0 and backend-owned lowering.
+- [#654](https://github.com/encero-systems/incan/issues/654): remove Rust-source backend and generated-Rust semantic handoff.
+- [#655](https://github.com/encero-systems/incan/issues/655): backend compatibility report and migration notes.
+- [#225](https://github.com/encero-systems/incan/issues/225): semantic facts adoption on backend cutover paths.
+- [#656](https://github.com/encero-systems/incan/issues/656): Rust-facing ABI and Cargo-native Incan package direction.
+- [#752](https://github.com/encero-systems/incan/issues/752): RFC 107 type-directed library APIs and compile-time type tokens.
 - [RFC 092](RFCs/092_interactive_runtime_stdlib_contracts.md): interactive runtime stdlib contracts.
 - [RFC 093](RFCs/093_std_telemetry_opentelemetry_observability.md): `std.telemetry`.
 - [RFC 094](RFCs/094_context_managers.md): context managers.
@@ -174,15 +174,15 @@ Expected scope:
 
 Core tracking issues:
 
-- [#681](https://github.com/dannys-code-corner/incan/issues/681): RFC proposal for freestanding targets and runtime layering.
-- [#682](https://github.com/dannys-code-corner/incan/issues/682): RFC proposal for unsafe blocks and low-level operations.
-- [#683](https://github.com/dannys-code-corner/incan/issues/683): RFC proposal for representation, layout, and calling convention controls.
-- [#684](https://github.com/dannys-code-corner/incan/issues/684): stdlib/runtime layer inventory for freestanding foundations.
-- [#685](https://github.com/dannys-code-corner/incan/issues/685): freestanding target profiles and runtime requirement reports.
-- [#686](https://github.com/dannys-code-corner/incan/issues/686): no-std freestanding build mode and restricted artifact smoke test.
-- [#687](https://github.com/dannys-code-corner/incan/issues/687): unsafe low-level operation surface v0.
-- [#688](https://github.com/dannys-code-corner/incan/issues/688): layout, repr, and calling-convention metadata v0.
-- [#689](https://github.com/dannys-code-corner/incan/issues/689): panic strategy and allocator hooks for freestanding targets.
+- [#681](https://github.com/encero-systems/incan/issues/681): RFC proposal for freestanding targets and runtime layering.
+- [#682](https://github.com/encero-systems/incan/issues/682): RFC proposal for unsafe blocks and low-level operations.
+- [#683](https://github.com/encero-systems/incan/issues/683): RFC proposal for representation, layout, and calling convention controls.
+- [#684](https://github.com/encero-systems/incan/issues/684): stdlib/runtime layer inventory for freestanding foundations.
+- [#685](https://github.com/encero-systems/incan/issues/685): freestanding target profiles and runtime requirement reports.
+- [#686](https://github.com/encero-systems/incan/issues/686): no-std freestanding build mode and restricted artifact smoke test.
+- [#687](https://github.com/encero-systems/incan/issues/687): unsafe low-level operation surface v0.
+- [#688](https://github.com/encero-systems/incan/issues/688): layout, repr, and calling-convention metadata v0.
+- [#689](https://github.com/encero-systems/incan/issues/689): panic strategy and allocator hooks for freestanding targets.
 
 0.8 is successful when Incan can compile a restricted freestanding artifact and report which runtime, allocator, panic, target, and ABI capabilities it requires.
 
@@ -203,7 +203,7 @@ Expected scope:
 
 Core tracking issues:
 
-- [#690](https://github.com/dannys-code-corner/incan/issues/690): QEMU tiny kernel capability proof.
+- [#690](https://github.com/encero-systems/incan/issues/690): QEMU tiny kernel capability proof.
 
 0.9 is successful when Incan can build and boot a tiny freestanding kernel under QEMU with Incan-authored init logic and a concrete low-level capability proof.
 

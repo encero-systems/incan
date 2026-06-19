@@ -13,8 +13,8 @@
     - RFC 086 (schema descriptors and adapters)
     - RFC 098 (native associated types for traits)
     - RFC 099 (generic trait-targeted methods)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/595
-- **Follow-up:** https://github.com/dannys-code-corner/incan/issues/596 (v0.5 trait-system bridge removal)
+- **Issue:** https://github.com/encero-systems/incan/issues/595
+- **Follow-up:** https://github.com/encero-systems/incan/issues/596 (v0.5 trait-system bridge removal)
 - **RFC PR:** —
 - **Written against:** v0.3
 - **Shipped in:** v0.3

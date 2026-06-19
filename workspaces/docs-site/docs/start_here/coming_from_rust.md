@@ -7,7 +7,7 @@ This page routes Rust-first evaluators who want to understand where Incan keeps 
 If you already use Cargo and want a source-built compiler, install the release source directly from Git with the LSP feature enabled so both `incan` and `incan-lsp` are installed:
 
 ```bash
-cargo install --git https://github.com/dannys-code-corner/incan.git --tag v0.4.0 --locked --features lsp --bin incan --bin incan-lsp
+cargo install --git https://github.com/encero-systems/incan.git --tag v0.4.0 --locked --features lsp --bin incan --bin incan-lsp
 incan --version
 command -v incan-lsp
 ```
@@ -15,7 +15,7 @@ command -v incan-lsp
 If you want the faster binary toolchain path instead, use the release installer:
 
 ```bash
-curl -fsSL https://github.com/dannys-code-corner/incan/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/encero-systems/incan/releases/latest/download/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
 incan --version
 command -v incan-lsp

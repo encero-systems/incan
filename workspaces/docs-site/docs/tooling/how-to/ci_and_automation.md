@@ -73,7 +73,7 @@ Use the repository composite action to install an `incan` binary in downstream p
 
 ```yaml
 - name: Install Incan
-  uses: dannys-code-corner/incan/.github/actions/install-incan@main
+  uses: encero-systems/incan/.github/actions/install-incan@main
 
 - name: Show toolchain
   run: incan --version
@@ -85,14 +85,14 @@ The action also installs the `wasm32-wasip1` Rust target by default. Downstream 
 
 ```yaml
 - name: Install Incan
-  uses: dannys-code-corner/incan/.github/actions/install-incan@main
+  uses: encero-systems/incan/.github/actions/install-incan@main
   with:
     profile: debug
 ```
 
 ```yaml
 - name: Install Incan
-  uses: dannys-code-corner/incan/.github/actions/install-incan@main
+  uses: encero-systems/incan/.github/actions/install-incan@main
   with:
     targets: wasm32-wasip1,x86_64-unknown-linux-musl
 ```
@@ -121,7 +121,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Install Incan
-        uses: dannys-code-corner/incan/.github/actions/install-incan@main
+        uses: encero-systems/incan/.github/actions/install-incan@main
 
       - name: Show toolchain
         run: |

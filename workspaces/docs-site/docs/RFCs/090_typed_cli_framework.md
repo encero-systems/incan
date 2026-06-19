@@ -12,7 +12,7 @@
     - RFC 073 (environment matrices and toolchain constraints)
     - RFC 083 (symbol and method aliases)
     - RFC 089 (`std.environ` runtime environment access)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/87
+- **Issue:** https://github.com/encero-systems/incan/issues/87
 - **RFC PR:** —
 - **Written against:** v0.3
 - **Shipped in:** —

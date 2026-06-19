@@ -970,8 +970,8 @@ pub const FEATURES: &[FeatureDescriptor] = &[
         activation: "Use the GitHub Release installer, Homebrew formula, npm package, pipx package, or versioned toolchain manifest.",
         summary: "The toolchain install path is manifest-driven, checksum-verified, and installs `incan` plus `incan-lsp` from the same release archives across direct and package-manager channels.",
         canonical_forms: &[
-            "curl -fsSL https://github.com/dannys-code-corner/incan/releases/latest/download/install.sh | sh",
-            "brew install https://github.com/dannys-code-corner/incan/releases/latest/download/incan.rb",
+            "curl -fsSL https://github.com/encero-systems/incan/releases/latest/download/install.sh | sh",
+            "brew install https://github.com/encero-systems/incan/releases/latest/download/incan.rb",
             "npm install -g incan",
             "pipx install incan",
         ],

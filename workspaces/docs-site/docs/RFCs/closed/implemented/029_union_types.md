@@ -4,7 +4,7 @@
 - **Created:** 2026-03-06
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 028 (trait-based operator overloading)
-- **Issue:** [#163](https://github.com/dannys-code-corner/incan/issues/163)
+- **Issue:** [#163](https://github.com/encero-systems/incan/issues/163)
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** v0.3

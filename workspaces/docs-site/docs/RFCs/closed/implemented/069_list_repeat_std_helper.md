@@ -5,7 +5,7 @@
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
     - RFC 030 (std collections baseline)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/385
+- **Issue:** https://github.com/encero-systems/incan/issues/385
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** v0.3.0-dev.38

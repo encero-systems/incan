@@ -7,8 +7,8 @@
     - RFC 025 (multi-instantiation trait dispatch)
     - RFC 032 (value enums)
     - RFC 051 (`JsonValue`)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/334
-- **RFC PR:** https://github.com/dannys-code-corner/incan/pull/450
+- **Issue:** https://github.com/encero-systems/incan/issues/334
+- **RFC PR:** https://github.com/encero-systems/incan/pull/450
 - **Written against:** v0.2
 - **Shipped in:** v0.3
 

@@ -5,7 +5,7 @@
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
     - RFC 000 (core error handling and `Result` model)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/386
+- **Issue:** https://github.com/encero-systems/incan/issues/386
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** v0.3

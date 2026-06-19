@@ -13,7 +13,7 @@
     - RFC 021 (Field metadata and aliases — similar decorator pattern)
     - RFC 024 (Extensible derive protocol — how `@derive` maps to Rust proc macros today)
     - RFC 041 (First-class Rust interop — `rusttype`, metadata dispatch, coercions; **implemented**)
-- **Issue:** [#152](https://github.com/dannys-code-corner/incan/issues/152)
+- **Issue:** [#152](https://github.com/encero-systems/incan/issues/152)
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** —

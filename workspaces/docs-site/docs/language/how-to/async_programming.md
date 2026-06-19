@@ -588,7 +588,7 @@ async def worker(id: int) -> None:
 
 ### Complete Example
 
-See [examples/advanced/async_sync.incn](https://github.com/dannys-code-corner/incan/blob/main/examples/advanced/async_sync.incn) for a runnable demo of all four primitives.
+See [examples/advanced/async_sync.incn](https://github.com/encero-systems/incan/blob/main/examples/advanced/async_sync.incn) for a runnable demo of all four primitives.
 
 ## Race and Timeout Helpers
 
@@ -738,6 +738,6 @@ This pattern is important for reliability. If a channel closes unexpectedly, you
 - [Error handling](../explanation/error_handling.md) - Concepts: `Result`, `Option`, `?`, `match`
 - [Error handling recipes](../how-to/error_handling_recipes.md) - Patterns and best practices
 - [Error trait](../reference/stdlib_traits/error.md) - Stdlib trait reference
-- [Examples: Async Tasks](https://github.com/dannys-code-corner/incan/blob/main/examples/advanced/async_tasks.incn)
-- [Examples: Channels](https://github.com/dannys-code-corner/incan/blob/main/examples/advanced/async_channels.incn)
-- [Examples: Synchronization](https://github.com/dannys-code-corner/incan/blob/main/examples/advanced/async_sync.incn)
+- [Examples: Async Tasks](https://github.com/encero-systems/incan/blob/main/examples/advanced/async_tasks.incn)
+- [Examples: Channels](https://github.com/encero-systems/incan/blob/main/examples/advanced/async_channels.incn)
+- [Examples: Synchronization](https://github.com/encero-systems/incan/blob/main/examples/advanced/async_sync.incn)

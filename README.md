@@ -9,7 +9,7 @@ The current toolchain is designed to be easy to install, try, inspect, and diagn
 Install the latest toolchain release before creating your first project:
 
 ```bash
-curl -fsSL https://github.com/dannys-code-corner/incan/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/encero-systems/incan/releases/latest/download/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
 incan --version
 ```
@@ -17,7 +17,7 @@ incan --version
 You can also install through package-manager adapters that use the same release manifest and verified toolchain archives:
 
 ```bash
-brew install https://github.com/dannys-code-corner/incan/releases/latest/download/incan.rb
+brew install https://github.com/encero-systems/incan/releases/latest/download/incan.rb
 npm install -g @incan/toolchain
 pipx install incan
 ```
@@ -25,7 +25,7 @@ pipx install incan
 Rust users can also build and install the release source through Cargo:
 
 ```bash
-cargo install --git https://github.com/dannys-code-corner/incan.git --tag v0.4.0 --locked --features lsp --bin incan --bin incan-lsp
+cargo install --git https://github.com/encero-systems/incan.git --tag v0.4.0 --locked --features lsp --bin incan --bin incan-lsp
 ```
 
 Create a starter project, run it, test it, and produce a release build:

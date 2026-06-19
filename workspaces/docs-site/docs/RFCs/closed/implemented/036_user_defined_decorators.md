@@ -13,7 +13,7 @@
     - RFC 031 (Library system — enables decorator libraries to ship as `pub::` packages)
     - RFC 037 (Native web and HTTP stdlib redesign — consumer of `@app.get` / `@app.post`)
     - RFC 084 (RHS partial callable presets — future decorator factory ergonomics)
-- **Issue:** [#170](https://github.com/dannys-code-corner/incan/issues/170), [#640](https://github.com/dannys-code-corner/incan/issues/640)
+- **Issue:** [#170](https://github.com/encero-systems/incan/issues/170), [#640](https://github.com/encero-systems/incan/issues/640)
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** v0.3

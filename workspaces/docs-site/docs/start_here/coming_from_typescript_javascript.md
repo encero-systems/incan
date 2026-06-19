@@ -15,7 +15,7 @@ command -v incan-lsp
 The direct installer is the same release path without npm in the middle, which is useful for shell scripts, CI images, and environments where you want explicit control over the toolchain manifest:
 
 ```bash
-curl -fsSL https://github.com/dannys-code-corner/incan/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/encero-systems/incan/releases/latest/download/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
 incan --version
 command -v incan-lsp

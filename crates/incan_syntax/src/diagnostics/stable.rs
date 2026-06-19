@@ -125,7 +125,7 @@ const PARSER_SYNTAX: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
         "Check the source around the highlighted span.",
         "Run `incan fmt --check` after the file parses if the intended syntax is valid.",
     ],
-    docs_url: Some("https://dannys-code-corner.github.io/incan/language/reference/syntax/"),
+    docs_url: Some("https://encero-systems.github.io/incan/language/reference/syntax/"),
 };
 
 const TYPECHECK: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
@@ -144,7 +144,7 @@ const TYPECHECK: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
         "Read the message, notes, and hints in the diagnostic payload.",
         "Prefer fixing the source contract rather than adding casts or wrappers that hide the mismatch.",
     ],
-    docs_url: Some("https://dannys-code-corner.github.io/incan/language/reference/types/"),
+    docs_url: Some("https://encero-systems.github.io/incan/language/reference/types/"),
 };
 
 const IMPORT: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
@@ -164,7 +164,7 @@ const IMPORT: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
         "Check the import path and public exports.",
         "For `pub::` imports, build the dependency library and verify `incan.toml` dependencies.",
     ],
-    docs_url: Some("https://dannys-code-corner.github.io/incan/language/reference/modules/"),
+    docs_url: Some("https://encero-systems.github.io/incan/language/reference/modules/"),
 };
 
 const TOOLING: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
@@ -184,7 +184,7 @@ const TOOLING: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
         "Verify the command path and filesystem permissions.",
         "Run `incan tools doctor` for local toolchain problems.",
     ],
-    docs_url: Some("https://dannys-code-corner.github.io/incan/tooling/reference/cli_reference/"),
+    docs_url: Some("https://encero-systems.github.io/incan/tooling/reference/cli_reference/"),
 };
 
 const UNKNOWN: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
@@ -203,7 +203,7 @@ const UNKNOWN: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
         "Check the code printed by `incan check --format json`.",
         "Upgrade the compiler if the code comes from newer documentation.",
     ],
-    docs_url: Some("https://dannys-code-corner.github.io/incan/tooling/reference/cli_reference/"),
+    docs_url: Some("https://encero-systems.github.io/incan/tooling/reference/cli_reference/"),
 };
 
 const CATALOG: &[DiagnosticCatalogEntry] = &[PARSER_SYNTAX, TYPECHECK, IMPORT, TOOLING, UNKNOWN];

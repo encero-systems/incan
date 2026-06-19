@@ -12,7 +12,7 @@
     - RFC 076 (project mutation policy and recovery)
     - RFC 078 (tool execution and typed workflow actions)
     - RFC 079 (`incan.pub` artifact graph)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/405
+- **Issue:** https://github.com/encero-systems/incan/issues/405
 - **RFC PR:** —
 - **Written against:** v0.3
 - **Shipped in:** —

@@ -14,7 +14,7 @@ incan --version
 The direct installer is the same toolchain release path and is useful in shell scripts, CI images, and environments where you do not want another package manager involved:
 
 ```bash
-curl -fsSL https://github.com/dannys-code-corner/incan/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/encero-systems/incan/releases/latest/download/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
 incan --version
 ```

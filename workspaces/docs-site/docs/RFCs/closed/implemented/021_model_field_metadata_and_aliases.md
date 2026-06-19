@@ -6,7 +6,7 @@
 - **Related:**
     - RFC 005 (Rust interop)
     - RFC 017 (constrained types)
-- **Issue:** [#94](https://github.com/dannys-code-corner/incan/issues/94)
+- **Issue:** [#94](https://github.com/encero-systems/incan/issues/94)
 - **RFC PR:** —
 - **Written against:** v0.1
 - **Shipped in:** v0.1

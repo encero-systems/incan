@@ -84,7 +84,7 @@ def collect_assets(dist_dir: str, release: str) -> Result[list[HostAsset], str]:
             HostAsset(
                 target=target,
                 archive_name=archive_name,
-                archive_url=f"https://github.com/dannys-code-corner/incan/releases/download/{release}/{archive_name}",
+                archive_url=f"https://github.com/encero-systems/incan/releases/download/{release}/{archive_name}",
                 archive_sha256=checksum,
             ),
         )
@@ -115,7 +115,7 @@ def manifest_json(version: str, release: str, generated_at: str, assets: list[Ho
         {"schema_version": JsonValue.int(1), "toolchain_version": JsonValue.str(version), "release": JsonValue.str(release), "channel": JsonValue.str(
             "stable",
         ), "generated_at": JsonValue.str(generated_at), "manifest_url": JsonValue.str(
-            f"https://github.com/dannys-code-corner/incan/releases/download/{release}/manifest.json",
+            f"https://github.com/encero-systems/incan/releases/download/{release}/manifest.json",
         ), "rust_toolchain": JsonValue.object(
             {"channel": JsonValue.str("stable"), "min_rust": JsonValue.str("1.92"), "targets": JsonValue.array(
                 [JsonValue.str("wasm32-wasip1")],
@@ -166,7 +166,7 @@ def render_formula(version: str, assets: list[HostAsset]) -> Result[str, str]:
     linux_x86 = host_block(assets, "x86_64-unknown-linux-gnu", "      ")?
     formula_version = ruby_string(version)
     return Ok(
-        "# typed: false\n" + "# frozen_string_literal: true\n" + "\n" + "class Incan < Formula\n" + "  desc \"Statically typed language that compiles to native Rust\"\n" + "  homepage \"https://github.com/dannys-code-corner/incan\"\n" + f"  version \"{formula_version}\"\n" + "\n" + "  on_macos do\n" + "    if Hardware::CPU.arm?\n" + mac_arm + "\n" + "    else\n" + mac_intel + "\n" + "    end\n" + "  end\n" + "\n" + "  on_linux do\n" + linux_x86 + "\n" + "  end\n" + "\n" + "  def install\n" + "    bin.install \"bin/incan\"\n" + "    bin.install \"bin/incan-lsp\"\n" + "  end\n" + "\n" + "  test do\n" + "    assert_match version.to_s, shell_output(\"#{bin}/incan --version\")\n" + "  end\n" + "end\n",
+        "# typed: false\n" + "# frozen_string_literal: true\n" + "\n" + "class Incan < Formula\n" + "  desc \"Statically typed language that compiles to native Rust\"\n" + "  homepage \"https://github.com/encero-systems/incan\"\n" + f"  version \"{formula_version}\"\n" + "\n" + "  on_macos do\n" + "    if Hardware::CPU.arm?\n" + mac_arm + "\n" + "    else\n" + mac_intel + "\n" + "    end\n" + "  end\n" + "\n" + "  on_linux do\n" + linux_x86 + "\n" + "  end\n" + "\n" + "  def install\n" + "    bin.install \"bin/incan\"\n" + "    bin.install \"bin/incan-lsp\"\n" + "  end\n" + "\n" + "  test do\n" + "    assert_match version.to_s, shell_output(\"#{bin}/incan --version\")\n" + "  end\n" + "end\n",
     )
 
 

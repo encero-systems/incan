@@ -24,8 +24,8 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/dannys-code-corner/incan"
-Repository = "https://github.com/dannys-code-corner/incan"
+Homepage = "https://github.com/encero-systems/incan"
+Repository = "https://github.com/encero-systems/incan"
 
 [project.scripts]
 incan = "incan_toolchain.cli:incan"

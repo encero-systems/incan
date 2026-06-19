@@ -7,7 +7,7 @@ This tutorial is the shortest public path from an installed toolchain to running
 Install the toolchain, then make sure the command is on `PATH`:
 
 ```bash
-curl -fsSL https://github.com/dannys-code-corner/incan/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/encero-systems/incan/releases/latest/download/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
 incan --version
 ```

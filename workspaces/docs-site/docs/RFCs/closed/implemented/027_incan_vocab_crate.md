@@ -3,10 +3,10 @@
 - **Status:** Implemented
 - **Created:** 2026-03-06
 - **Author(s):** Danny Meijer (@dannymeijer)
-- **Issue:** [#161](https://github.com/dannys-code-corner/incan/issues/161)
+- **Issue:** [#161](https://github.com/encero-systems/incan/issues/161)
 - **RFC PR:**
-    - Phases 1-3: [#176](https://github.com/dannys-code-corner/incan/pull/176)
-    - Phases 4-9: [#178](https://github.com/dannys-code-corner/incan/pull/177)
+    - Phases 1-3: [#176](https://github.com/encero-systems/incan/pull/176)
+    - Phases 4-9: [#178](https://github.com/encero-systems/incan/pull/177)
 - **Related**:
     - RFC 022 (stdlib namespacing)
     - RFC 023 (compilable stdlib and Rust module binding)

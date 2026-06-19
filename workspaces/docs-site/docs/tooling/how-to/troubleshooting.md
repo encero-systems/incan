@@ -15,7 +15,7 @@ incan --version
 If you installed with a custom bin directory, use that path instead:
 
 ```bash
-curl -fsSL https://github.com/dannys-code-corner/incan/releases/latest/download/install.sh | INCAN_BIN_DIR="$HOME/bin" sh
+curl -fsSL https://github.com/encero-systems/incan/releases/latest/download/install.sh | INCAN_BIN_DIR="$HOME/bin" sh
 export PATH="$HOME/bin:$PATH"
 ```
 
@@ -101,4 +101,4 @@ xcode-select --install
 
 ## Still stuck?
 
-If you’re still stuck, please [open an issue](https://github.com/dannys-code-corner/incan/issues) and include your OS, architecture, exact commands, and full error output.
+If you’re still stuck, please [open an issue](https://github.com/encero-systems/incan/issues) and include your OS, architecture, exact commands, and full error output.

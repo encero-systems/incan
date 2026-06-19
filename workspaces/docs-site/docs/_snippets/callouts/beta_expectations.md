@@ -9,4 +9,4 @@ What this means for you:
     - discoverability gap (docs should link better), or
     - product gap (feature not implemented yet).
 
-Keep an eye on the [GitHub Releases](https://github.com/dannys-code-corner/incan/releases) for new releases and changes.
+Keep an eye on the [GitHub Releases](https://github.com/encero-systems/incan/releases) for new releases and changes.

@@ -1,7 +1,7 @@
 site_name: Incan Documentation
 site_description: Documentation for the Incan programming language
-repo_name: dannys-code-corner/incan
-repo_url: https://github.com/dannys-code-corner/incan
+repo_name: encero-systems/incan
+repo_url: https://github.com/encero-systems/incan
 edit_uri: edit/main/workspaces/docs-site/docs/
 
 docs_dir: docs

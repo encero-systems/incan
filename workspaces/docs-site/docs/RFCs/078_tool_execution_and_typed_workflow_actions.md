@@ -12,7 +12,7 @@
     - RFC 077 (workspace and multi-package projects)
     - RFC 079 (`incan.pub` artifact graph)
     - RFC 080 (AI assets and agent metadata)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/406
+- **Issue:** https://github.com/encero-systems/incan/issues/406
 - **RFC PR:** —
 - **Written against:** v0.3
 - **Shipped in:** —

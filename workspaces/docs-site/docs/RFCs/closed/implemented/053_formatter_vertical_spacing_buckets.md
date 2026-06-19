@@ -4,8 +4,8 @@
 - **Created:** 2026-04-08
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 027 (incan vocab crate)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/336
-- **RFC PR:** https://github.com/dannys-code-corner/incan/pull/393
+- **Issue:** https://github.com/encero-systems/incan/issues/336
+- **RFC PR:** https://github.com/encero-systems/incan/pull/393
 - **Written against:** v0.2
 - **Shipped in:** v0.3
 

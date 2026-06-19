@@ -9,7 +9,7 @@
     - RFC 058 (`std.datetime`)
     - RFC 085 (field metadata and type-shaped constraints)
     - RFC 088 (iterator adapter surface)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/537
+- **Issue:** https://github.com/encero-systems/incan/issues/537
 - **RFC PR:** —
 - **Written against:** v0.3
 - **Shipped in:** —

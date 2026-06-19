@@ -13,7 +13,7 @@
     - RFC 043 (Rust trait implementation from Incan)
     - RFC 079 (`incan.pub` artifact graph)
     - RFC 092 (interactive runtime stdlib contracts)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/569
+- **Issue:** https://github.com/encero-systems/incan/issues/569
 - **RFC PR:** —
 - **Written against:** v0.3
 - **Shipped in:** —

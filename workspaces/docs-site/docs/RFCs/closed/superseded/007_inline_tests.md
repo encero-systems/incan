@@ -8,7 +8,7 @@
     - RFC 018 (language primitives for testing)
     - RFC 019 (test runner, CLI, and ecosystem)
 - **Issue:** —
-- **RFC PR:** [#54](https://github.com/dannys-code-corner/incan/pull/54)
+- **RFC PR:** [#54](https://github.com/encero-systems/incan/pull/54)
 - **Written against:** v0.1
 - **Shipped in:** —
 

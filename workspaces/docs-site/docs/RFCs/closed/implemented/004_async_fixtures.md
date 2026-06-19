@@ -4,7 +4,7 @@
 - **Created:** 2025-12-10
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 018 (testing), RFC 019 (runner testing)
-- **Issue:** [#78](https://github.com/dannys-code-corner/incan/issues/78)
+- **Issue:** [#78](https://github.com/encero-systems/incan/issues/78)
 - **RFC PR:** —
 - **Written against:** v0.1
 - **Shipped in:** v0.3.0-dev.31

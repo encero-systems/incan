@@ -10,7 +10,7 @@
     - RFC 024 (Extensible derive protocol)
     - RFC 005 (Rust interop)
     - RFC 023 (Compilable stdlib & Rust module binding)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/200
+- **Issue:** https://github.com/encero-systems/incan/issues/200
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** v0.3

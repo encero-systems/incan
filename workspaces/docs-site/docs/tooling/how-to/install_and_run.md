@@ -15,13 +15,13 @@ The canonical 0.4 artifact source is the GitHub Release. The release publishes `
 Use the direct installer when you want the release manifest, checksum verification, and command links without a package-manager adapter:
 
 ```bash
-curl -fsSL https://github.com/dannys-code-corner/incan/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/encero-systems/incan/releases/latest/download/install.sh | sh
 ```
 
 For a dry run that resolves the manifest and target without writing files:
 
 ```bash
-curl -fsSL https://github.com/dannys-code-corner/incan/releases/latest/download/install.sh | sh -s -- --dry-run
+curl -fsSL https://github.com/encero-systems/incan/releases/latest/download/install.sh | sh -s -- --dry-run
 ```
 
 The installer reads the release manifest, selects the archive for your host target, verifies the archive checksum, installs into `INCAN_HOME` (default `~/.incan`), and links `incan` plus `incan-lsp` into `INCAN_BIN_DIR` (default `~/.local/bin`). Make sure the bin directory is on `PATH`.
@@ -35,7 +35,7 @@ command -v incan-lsp
 Package-manager installs use the same toolchain archive contract while fitting into the command manager you already use:
 
 ```bash
-brew install https://github.com/dannys-code-corner/incan/releases/latest/download/incan.rb
+brew install https://github.com/encero-systems/incan/releases/latest/download/incan.rb
 npm install -g @incan/toolchain
 pipx install incan
 ```
@@ -47,7 +47,7 @@ The npm and pip packages install the toolchain into a package-local cache on fir
 Rust users can also install from Git through Cargo, which compiles the release source instead of downloading a prebuilt toolchain archive:
 
 ```bash
-cargo install --git https://github.com/dannys-code-corner/incan.git --tag v0.4.0 --locked --features lsp --bin incan --bin incan-lsp
+cargo install --git https://github.com/encero-systems/incan.git --tag v0.4.0 --locked --features lsp --bin incan --bin incan-lsp
 ```
 
 Cargo installation compiles the compiler from source instead of downloading a prebuilt toolchain archive. The `lsp` feature enables the `incan-lsp` binary alongside the default `incan` CLI, so this is the right Cargo command when you want the same two commands exposed by the release installer. Prefer the direct installer, Homebrew, npm, or pipx when you want checksum-verified prebuilt release artifacts.
@@ -71,7 +71,7 @@ incan build --release
 If you are working on Incan itself, build from the repository instead:
 
 ```bash
-git clone https://github.com/dannys-code-corner/incan.git
+git clone https://github.com/encero-systems/incan.git
 cd incan
 make install
 incan run examples/simple/hello.incn

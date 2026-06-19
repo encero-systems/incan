@@ -9,7 +9,7 @@
     - RFC 055 (`std.fs` path-centric filesystem APIs)
     - RFC 063 (`std.process` process spawning and command execution)
     - RFC 066 (`std.http` HTTP client surface)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/85
+- **Issue:** https://github.com/encero-systems/incan/issues/85
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** —

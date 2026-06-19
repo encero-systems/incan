@@ -10,8 +10,8 @@
     - RFC 054 (explicit call-site generic arguments)
     - RFC 083 (symbol and method aliases)
     - RFC 098 (native associated types)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/752
-- **RFC PR:** https://github.com/dannys-code-corner/incan/pull/751
+- **Issue:** https://github.com/encero-systems/incan/issues/752
+- **RFC PR:** https://github.com/encero-systems/incan/pull/751
 - **Written against:** v0.3
 - **Shipped in:** —
 

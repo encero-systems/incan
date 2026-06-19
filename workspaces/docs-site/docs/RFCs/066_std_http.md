@@ -12,7 +12,7 @@
     - RFC 063 (`std.process` process spawning and command execution)
     - RFC 078 (tool execution and typed workflow actions)
     - RFC 103 (`std.secrets` secret strings and bytes)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/84
+- **Issue:** https://github.com/encero-systems/incan/issues/84
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** —

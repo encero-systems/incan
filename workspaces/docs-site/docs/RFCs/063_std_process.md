@@ -11,7 +11,7 @@
     - RFC 055 (`std.fs` path-centric filesystem APIs)
     - RFC 056 (`std.io` in-memory byte streams and binary parsing helpers)
     - RFC 058 (`std.datetime` durations and time handling)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/341
+- **Issue:** https://github.com/encero-systems/incan/issues/341
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** —

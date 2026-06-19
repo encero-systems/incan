@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/dannys-code-corner/incan/releases/latest/download/toolchain-manifest.schema.v1.json",
+  "$id": "https://github.com/encero-systems/incan/releases/latest/download/toolchain-manifest.schema.v1.json",
   "title": "Incan toolchain release manifest",
   "type": "object",
   "additionalProperties": false,
