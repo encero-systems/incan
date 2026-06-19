@@ -631,9 +631,9 @@ fn load_stdlib_program(module_path: &[String]) -> Option<ast::Program> {
         }
     };
     let path = match find_stdlib_file(&relative) {
-        Ok(path) => path,
-        Err(e) => {
-            tracing::warn!("Failed to find stdlib file {}: {}", relative, e);
+        Some(path) => path,
+        None => {
+            tracing::warn!("Failed to find stdlib file: {}", relative);
             return None;
         }
     };
