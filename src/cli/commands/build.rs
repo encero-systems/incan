@@ -50,10 +50,14 @@ use super::vocab_extraction::{PendingDesugarerArtifact, collect_library_vocab_me
 use crate::cli::prelude::ParsedModule;
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect::{InspectError, Inspector, InspectorConfig};
+use sha2::{Digest as _, Sha256};
 
 // ============================================================================
 // Project Preparation (shared between build and run)
 // ============================================================================
+
+const INLINE_COMMAND_PROJECT_PREFIX: &str = "incan_inline_command";
+const INLINE_COMMAND_OUTPUT_PARENT: &str = "target/incan/inline";
 
 /// A prepared Incan project ready to be built or run.
 ///
@@ -72,6 +76,19 @@ struct PreparedProject {
     rust_extern_contexts: Vec<RustExternDeclContext>,
     /// Machine-readable build report data collected before Cargo is invoked.
     report: BuildReportDraft,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct PrepareProjectOptions<'a> {
+    output_dir: Option<&'a str>,
+    project_name_override: Option<&'a str>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct InlineCommandProject {
+    source_path: PathBuf,
+    project_name: String,
+    output_dir: String,
 }
 
 /// A prepared library project after Incan validation and Rust source generation, before Cargo build.
@@ -237,6 +254,48 @@ fn print_build_progress(report_options: &BuildReportOptions, message: impl AsRef
         eprintln!("{}", message.as_ref());
     } else {
         println!("{}", message.as_ref());
+    }
+}
+
+/// Return the stable cache key used for one wrapped inline command source from one working directory.
+fn inline_command_cache_key(cwd: &Path, wrapped_source: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(cwd.to_string_lossy().as_bytes());
+    hasher.update(b"\0");
+    hasher.update(wrapped_source.as_bytes());
+    let digest = hasher.finalize();
+    hex::encode(&digest[..8])
+}
+
+/// Return the stable generated project identity used for one `incan run -c` source.
+fn inline_command_project_for_cwd(cwd: &Path, wrapped_source: &str) -> InlineCommandProject {
+    let digest = inline_command_cache_key(cwd, wrapped_source);
+    let project_name = format!("{INLINE_COMMAND_PROJECT_PREFIX}_{digest}");
+    let source_path = env::temp_dir().join(&project_name).join("main.incn");
+    let output_dir = format!("{INLINE_COMMAND_OUTPUT_PARENT}/{project_name}");
+    InlineCommandProject {
+        source_path,
+        project_name,
+        output_dir,
+    }
+}
+
+/// Resolve the current invocation's stable inline-command generated project identity.
+fn inline_command_project(wrapped_source: &str) -> CliResult<InlineCommandProject> {
+    let cwd = env::current_dir().map_err(|err| {
+        CliError::failure(format!(
+            "failed to determine current directory for inline command cache: {err}"
+        ))
+    })?;
+    Ok(inline_command_project_for_cwd(&cwd, wrapped_source))
+}
+
+/// Preserve the legacy `run -c` behavior by adding a no-op `main` only when the snippet did not define one.
+fn wrap_inline_command_source(source: &str) -> String {
+    if source.contains("def main") {
+        source.to_string()
+    } else {
+        format!("{source}\n\ndef main() -> Unit:\n  pass\n")
     }
 }
 
@@ -638,6 +697,28 @@ fn prepare_project(
     cargo_no_default_features: bool,
     cargo_all_features: bool,
 ) -> CliResult<PreparedProject> {
+    prepare_project_with_options(
+        file_path,
+        PrepareProjectOptions {
+            output_dir,
+            project_name_override: None,
+        },
+        cargo_policy,
+        cargo_features,
+        cargo_no_default_features,
+        cargo_all_features,
+    )
+}
+
+/// Prepare an executable project with optional internal identity overrides for callers that need bounded cache names.
+fn prepare_project_with_options(
+    file_path: &str,
+    options: PrepareProjectOptions<'_>,
+    cargo_policy: &CargoPolicy,
+    cargo_features: Vec<String>,
+    cargo_no_default_features: bool,
+    cargo_all_features: bool,
+) -> CliResult<PreparedProject> {
     let normalized_file_path = if Path::new(file_path).is_absolute() {
         PathBuf::from(file_path)
     } else {
@@ -681,17 +762,23 @@ fn prepare_project(
     )?;
 
     // Derive project name (manifest overrides filename)
-    let project_name = manifest
-        .as_ref()
-        .and_then(|m| m.project.as_ref().and_then(|p| p.name.clone()))
+    let project_name = options
+        .project_name_override
+        .map(ToString::to_string)
         .unwrap_or_else(|| {
-            path.file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("incan_project")
-                .to_string()
+            manifest
+                .as_ref()
+                .and_then(|m| m.project.as_ref().and_then(|p| p.name.clone()))
+                .unwrap_or_else(|| {
+                    path.file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("incan_project")
+                        .to_string()
+                })
         });
 
-    let out_dir = output_dir
+    let out_dir = options
+        .output_dir
         .map(|s| s.to_string())
         .unwrap_or_else(|| format!("target/incan/{}", project_name));
 
@@ -1424,7 +1511,7 @@ pub fn run_file(
     cargo_all_features: bool,
     release: bool,
 ) -> CliResult<ExitCode> {
-    let mut prepared = prepare_project(
+    let prepared = prepare_project(
         file_path,
         None,
         &cargo_policy,
@@ -1432,6 +1519,59 @@ pub fn run_file(
         cargo_no_default_features,
         cargo_all_features,
     )?;
+    run_prepared_project(prepared, release)
+}
+
+/// Build and run inline Incan source from `incan run -c`.
+pub fn run_inline_source(
+    source: &str,
+    cargo_policy: CargoPolicy,
+    cargo_features: Vec<String>,
+    cargo_no_default_features: bool,
+    cargo_all_features: bool,
+    release: bool,
+) -> CliResult<ExitCode> {
+    let wrapped_source = wrap_inline_command_source(source);
+    let inline_project = inline_command_project(&wrapped_source)?;
+    let source_path = inline_project.source_path;
+    let source_parent = source_path.parent().ok_or_else(|| {
+        CliError::failure(format!(
+            "failed to determine temporary inline command directory for {}",
+            source_path.display()
+        ))
+    })?;
+    fs::create_dir_all(source_parent).map_err(|err| {
+        CliError::failure(format!(
+            "Error creating temporary inline command directory {}: {err}",
+            source_parent.display()
+        ))
+    })?;
+    fs::write(&source_path, wrapped_source).map_err(|err| {
+        CliError::failure(format!(
+            "Error writing temporary inline command file {}: {err}",
+            source_path.display()
+        ))
+    })?;
+
+    let source_arg = source_path.to_string_lossy().to_string();
+    let result = prepare_project_with_options(
+        &source_arg,
+        PrepareProjectOptions {
+            output_dir: Some(inline_project.output_dir.as_str()),
+            project_name_override: Some(inline_project.project_name.as_str()),
+        },
+        &cargo_policy,
+        cargo_features,
+        cargo_no_default_features,
+        cargo_all_features,
+    )
+    .and_then(|prepared| run_prepared_project(prepared, release));
+    let _ = fs::remove_file(&source_path);
+    result
+}
+
+/// Run a prepared generated project with the same stdout, stderr and exit-code handling used by every `incan run` path.
+fn run_prepared_project(mut prepared: PreparedProject, release: bool) -> CliResult<ExitCode> {
     prepared.generator.set_run_profile(if release {
         RunProfile::Release
     } else {
@@ -1498,6 +1638,82 @@ mod tests {
         };
         assert!(rendered.contains("Rust backing item"));
         assert!(rendered.contains("incan_stdlib::testing::fail"));
+    }
+
+    #[test]
+    fn inline_command_project_is_stable_for_same_source_and_working_directory() {
+        let cwd = Path::new("/tmp/incan-inline-cache/project");
+        let source = wrap_inline_command_source("println(\"ok\")");
+        let first = inline_command_project_for_cwd(cwd, &source);
+        let second = inline_command_project_for_cwd(cwd, &source);
+
+        assert_eq!(first, second);
+        assert_eq!(
+            first.source_path.file_name().and_then(|name| name.to_str()),
+            Some("main.incn")
+        );
+        let rendered = first.source_path.to_string_lossy();
+        assert!(
+            rendered.contains("incan_inline_command_"),
+            "inline command temp source should use the stable inline-command prefix: {rendered}"
+        );
+        assert!(
+            !rendered.contains("incan_cmd_"),
+            "inline command temp source must not use timestamped incan_cmd names: {rendered}"
+        );
+        assert!(first.project_name.starts_with("incan_inline_command_"));
+        assert!(
+            first
+                .output_dir
+                .starts_with("target/incan/inline/incan_inline_command_")
+        );
+    }
+
+    #[test]
+    fn inline_command_project_is_partitioned_by_working_directory() {
+        let source = wrap_inline_command_source("println(\"ok\")");
+        let first = inline_command_project_for_cwd(Path::new("/tmp/incan-inline-cache/one"), &source);
+        let second = inline_command_project_for_cwd(Path::new("/tmp/incan-inline-cache/two"), &source);
+
+        assert_ne!(
+            first, second,
+            "different working directories should not race on one inline command temp source"
+        );
+    }
+
+    #[test]
+    fn inline_command_project_is_partitioned_by_source_content() {
+        let cwd = Path::new("/tmp/incan-inline-cache/project");
+        let first = inline_command_project_for_cwd(cwd, &wrap_inline_command_source("println(\"one\")"));
+        let second = inline_command_project_for_cwd(cwd, &wrap_inline_command_source("println(\"two\")"));
+
+        assert_ne!(
+            first, second,
+            "different inline snippets in the same working directory must not race on one generated cargo target"
+        );
+    }
+
+    #[test]
+    fn inline_command_uses_bounded_generated_project_prefixes() {
+        assert_eq!(INLINE_COMMAND_PROJECT_PREFIX, "incan_inline_command");
+        assert_eq!(INLINE_COMMAND_OUTPUT_PARENT, "target/incan/inline");
+    }
+
+    #[test]
+    fn inline_command_source_wrapper_preserves_existing_main() {
+        let source = "def main() -> None:\n    println(\"ok\")\n";
+
+        assert_eq!(wrap_inline_command_source(source), source);
+    }
+
+    #[test]
+    fn inline_command_source_wrapper_adds_stub_main_for_expression_snippets() {
+        let wrapped = wrap_inline_command_source("println(\"ok\")");
+
+        assert!(
+            wrapped.contains("def main() -> Unit:\n  pass"),
+            "inline snippets without a main should preserve existing run -c stub behavior: {wrapped}"
+        );
     }
 
     #[test]

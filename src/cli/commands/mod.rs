@@ -30,7 +30,7 @@ pub mod tools;
 pub(crate) mod vocab_extraction;
 
 // Re-export public API so callers can use `commands::build_file()` etc.
-pub use build::{build_file, build_library, inspect_rust, run_file};
+pub use build::{build_file, build_library, inspect_rust, run_file, run_inline_source};
 pub use codegraph::{CodegraphInspectionFormat, inspect_codegraph};
 pub use common::{collect_modules, read_source};
 pub use debug::{check_file, emit_rust, lex_file, parse_file};
