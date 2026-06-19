@@ -31,6 +31,7 @@ async fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// Handle standalone CLI flags before falling back to the stdio LSP server.
 fn handle_cli_args(args: &[OsString]) -> Option<ExitCode> {
     match args {
         [] => None,
