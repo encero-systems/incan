@@ -41,7 +41,6 @@ pub mod test_runner;
 
 use std::env;
 use std::fmt;
-use std::fs;
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 use std::process;
@@ -1020,38 +1019,17 @@ fn resolve_run_entry_file(file: Option<PathBuf>) -> CliResult<PathBuf> {
 fn execute_run(input: RunInput, opts: RunOptions) -> CliResult<ExitCode> {
     // ---- Context: inline source execution (`incan run -c ...`) ----
     if let Some(code) = input.code {
-        // Run inline code
         if code.is_empty() {
             return Err(CliError::failure("Error: -c/--command requires source code string"));
         }
-        // If the snippet already declares a main, leave as-is; otherwise, append a stub main.
-        let wrapped = if code.contains("def main") {
-            code
-        } else {
-            format!("{code}\n\ndef main() -> Unit:\n  pass\n")
-        };
-        // Write code to a temporary file and run it.
-        let tmp_path = env::temp_dir().join(format!(
-            "incan_cmd_{}_{}.incn",
-            process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis())
-                .unwrap_or(0)
-        ));
-        fs::write(&tmp_path, wrapped)
-            .map_err(|e| CliError::failure(format!("Error writing temporary command file: {}", e)))?;
-
-        let result = commands::run_file(
-            &tmp_path.to_string_lossy(),
+        commands::run_inline_source(
+            &code,
             opts.cargo_policy.clone(),
             opts.cargo_features.clone(),
             opts.cargo_no_default_features,
             opts.cargo_all_features,
             opts.release,
-        );
-        let _ = fs::remove_file(&tmp_path);
-        result
+        )
     // ---- Context: file execution (`incan run path/to/file.incn`) ----
     } else {
         let file = resolve_run_entry_file(input.file)?;
