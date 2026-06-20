@@ -9,8 +9,8 @@
     {
       "path": "crates/incan_core/src/interop/extension_traits.rs",
       "category": "metadata-free Rust extension-trait fallback inventory",
-      "expected_count": 8,
-      "expected_fingerprint": "0x86a8087fbbe1db3b"
+      "expected_count": 10,
+      "expected_fingerprint": "0xcdd95d0c0a97022c"
     },
     {
       "path": "crates/incan_core/src/interop/metadata.rs",
@@ -21,14 +21,14 @@
     {
       "path": "crates/rust_inspect/src/cache.rs",
       "category": "rust-inspect cache migration and generated Rust syntax metadata compatibility",
-      "expected_count": 11,
-      "expected_fingerprint": "0x6b6a57b5d48d379f"
+      "expected_count": 26,
+      "expected_fingerprint": "0x80c41a2e4dc23da1"
     },
     {
       "path": "crates/rust_inspect/src/cache_tests.rs",
       "category": "rust-inspect generated enum metadata regression assertions",
-      "expected_count": 2,
-      "expected_fingerprint": "0x207c0f7ecc97dd0b"
+      "expected_count": 14,
+      "expected_fingerprint": "0x2136b9af70108159"
     },
     {
       "path": "crates/rust_inspect/src/cache_timing.rs",
@@ -237,8 +237,8 @@
     {
       "path": "src/cli/commands/common.rs",
       "category": "project materialization, dependency, and rust-inspect prewarm compatibility",
-      "expected_count": 6,
-      "expected_fingerprint": "0x50734692a52de5d3"
+      "expected_count": 7,
+      "expected_fingerprint": "0xcaeb999c51153406"
     },
     {
       "path": "src/dependency_resolver.rs",

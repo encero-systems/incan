@@ -22,13 +22,14 @@ use crate::frontend::contract_metadata::{
     CanonicalModelBundle, materialize_contract_models, read_project_model_bundles,
 };
 use crate::frontend::library_manifest_index::{
-    LibraryManifestFailureKind, LibraryManifestIndex, LibraryManifestIndexEntry,
+    LibraryArtifactMetadata, LibraryManifestFailureKind, LibraryManifestIndex, LibraryManifestIndexEntry,
 };
 use crate::frontend::module::{
     SourceModuleImportResolution, canonicalize_source_module_segments, resolve_program_source_imports,
 };
 use crate::frontend::typechecker::TypeCheckInfo;
 use crate::frontend::{ast_walk, diagnostics, lexer, parser, typechecker, vocab_desugar_pass};
+use crate::library_manifest::LibraryManifest;
 use crate::lockfile::CargoFeatureSelection;
 use crate::manifest::{DependencySource, DependencySpec};
 use crate::manifest::{
@@ -44,11 +45,14 @@ use incan_core::lang::{
 #[cfg(feature = "rust_inspect")]
 use sha2::{Digest, Sha256};
 
+use super::vocab_extraction::collect_library_vocab_metadata_for_parser;
+
 /// Maximum source file size (100 MB)
 ///
 /// Files larger than this are rejected to prevent out-of-memory conditions during compilation.
 const MAX_SOURCE_SIZE: u64 = 100 * 1024 * 1024;
 static PREPARED_LIBRARY_DEPENDENCIES: LazyLock<Mutex<HashSet<PathBuf>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
+pub(crate) const INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV: &str = "INCAN_INTERNAL_LIBRARY_ARTIFACT_ONLY";
 
 /// One compiler diagnostic with enough source context for either human or machine-readable rendering.
 #[derive(Debug, Clone)]
@@ -282,6 +286,16 @@ pub(crate) struct CompilationSession {
 impl CompilationSession {
     /// Discover project-level compilation context for an entry source path.
     pub(crate) fn discover(entry_path: &Path) -> CliResult<Self> {
+        Self::discover_with_dependency_mode(entry_path, DependencyManifestMode::FullArtifacts)
+    }
+
+    /// Discover project-level parsing context without preparing full dependency artifacts.
+    pub(crate) fn discover_for_collection(entry_path: &Path) -> CliResult<Self> {
+        Self::discover_with_dependency_mode(entry_path, DependencyManifestMode::ParserOnly)
+    }
+
+    /// Discover project context with either full dependency artifacts or parser-only dependency metadata.
+    fn discover_with_dependency_mode(entry_path: &Path, dependency_mode: DependencyManifestMode) -> CliResult<Self> {
         let inferred_project_root = resolve_project_root(entry_path);
         let manifest =
             ProjectManifest::discover(&inferred_project_root).map_err(|error| CliError::failure(error.to_string()))?;
@@ -290,16 +304,20 @@ impl CompilationSession {
             .map(|manifest| manifest.project_root().to_path_buf())
             .unwrap_or(inferred_project_root);
         let source_root = resolve_source_root(&project_root, manifest.as_ref());
-        if let Some(manifest) = manifest.as_ref() {
+        if let Some(manifest) = manifest.as_ref()
+            && dependency_mode == DependencyManifestMode::FullArtifacts
+        {
             prepare_missing_library_dependency_artifacts(manifest)?;
         }
-        let library_manifest_index = manifest
-            .as_ref()
-            .and_then(|manifest| {
-                (!manifest.library_dependencies().is_empty())
-                    .then(|| LibraryManifestIndex::from_project_manifest(manifest))
-            })
-            .unwrap_or_default();
+        let library_manifest_index = match (manifest.as_ref(), dependency_mode) {
+            (Some(manifest), DependencyManifestMode::FullArtifacts) if !manifest.library_dependencies().is_empty() => {
+                LibraryManifestIndex::from_project_manifest(manifest)
+            }
+            (Some(manifest), DependencyManifestMode::ParserOnly) if !manifest.library_dependencies().is_empty() => {
+                parser_only_library_manifest_index(manifest)?
+            }
+            _ => LibraryManifestIndex::default(),
+        };
         let library_imported_vocab = library_manifest_index.library_imported_vocab();
         let library_imported_dsl_surfaces = library_manifest_index.library_imported_dsl_surfaces();
         let contract_model_bundles = manifest
@@ -370,6 +388,94 @@ impl CompilationSession {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DependencyManifestMode {
+    FullArtifacts,
+    ParserOnly,
+}
+
+/// Build a parser-only dependency manifest index for formatting and other collection-only entrypoints.
+///
+/// This deliberately does not write `.incnlib` artifacts. A source-derived parser manifest contains vocab
+/// registrations and soft-keyword activations only, because collection parsing needs syntax context but not generated
+/// Rust artifacts, checked exports, Rust ABI metadata, or a packaged desugarer.
+fn parser_only_library_manifest_index(manifest: &ProjectManifest) -> CliResult<LibraryManifestIndex> {
+    let existing_index = LibraryManifestIndex::from_project_manifest(manifest);
+    let mut entries = HashMap::new();
+
+    for (dependency_key, dependency) in manifest.library_dependencies() {
+        match existing_index.get(dependency_key) {
+            Some(LibraryManifestIndexEntry::Loaded { .. }) => {
+                let Some(entry) = existing_index.get(dependency_key) else {
+                    continue;
+                };
+                entries.insert(dependency_key.clone(), entry.clone());
+            }
+            Some(LibraryManifestIndexEntry::Failed(failure))
+                if failure.kind == LibraryManifestFailureKind::ArtifactMissing
+                    && dependency.path.join(MANIFEST_FILENAME).is_file() =>
+            {
+                entries.insert(
+                    dependency_key.clone(),
+                    parser_only_library_manifest_entry(dependency_key, &dependency.path)?,
+                );
+            }
+            Some(entry) => {
+                entries.insert(dependency_key.clone(), entry.clone());
+            }
+            None => {}
+        }
+    }
+
+    Ok(LibraryManifestIndex::from_entries(entries))
+}
+
+/// Derive the parser-visible portion of one source dependency's library manifest without writing package artifacts.
+fn parser_only_library_manifest_entry(
+    dependency_key: &str,
+    dependency_root: &Path,
+) -> CliResult<LibraryManifestIndexEntry> {
+    let dependency_root = fs::canonicalize(dependency_root).unwrap_or_else(|_| dependency_root.to_path_buf());
+    let manifest_path = dependency_root.join(MANIFEST_FILENAME);
+    let manifest_content = fs::read_to_string(&manifest_path)
+        .map_err(|error| CliError::failure(format!("failed to read {}: {error}", manifest_path.display())))?;
+    let dependency_manifest = ProjectManifest::from_str(&manifest_content, &manifest_path)
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    let project_root = dependency_manifest.project_root().to_path_buf();
+    let project_name = dependency_manifest
+        .project
+        .as_ref()
+        .and_then(|project| project.name.clone())
+        .or_else(|| {
+            project_root
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| dependency_key.to_string());
+    let project_version = dependency_manifest
+        .project
+        .as_ref()
+        .and_then(|project| project.version.clone())
+        .unwrap_or_else(|| "0.1.0".to_string());
+    let mut manifest = LibraryManifest::new(project_name.clone(), project_version);
+
+    if let Some(vocab_extraction) = collect_library_vocab_metadata_for_parser(&dependency_manifest, &project_root)? {
+        manifest.vocab = Some(vocab_extraction.payload);
+        manifest.soft_keywords.activations = vocab_extraction.compatibility_activations;
+    }
+
+    let metadata = LibraryArtifactMetadata::from_crate_root(
+        dependency_key.to_string(),
+        project_name,
+        dependency_root.join("target").join("lib"),
+    );
+    Ok(LibraryManifestIndexEntry::Loaded {
+        manifest: Box::new(manifest),
+        metadata,
+    })
+}
+
 /// Ensure clean check/format/test entrypoints see the same public dependency manifests as warmed worktrees.
 fn prepare_missing_library_dependency_artifacts(manifest: &ProjectManifest) -> CliResult<()> {
     if manifest.library_dependencies().is_empty() {
@@ -396,7 +502,7 @@ fn prepare_missing_library_dependency_artifacts(manifest: &ProjectManifest) -> C
     Ok(())
 }
 
-/// Build one missing `pub::` dependency artifact through the existing library-mode compiler path.
+/// Prepare one missing `pub::` dependency artifact through the existing library-mode compiler path.
 fn prepare_library_dependency_artifact(dependency_key: &str, dependency_root: &Path) -> CliResult<()> {
     let canonical_root = fs::canonicalize(dependency_root).unwrap_or_else(|_| dependency_root.to_path_buf());
     {
@@ -414,12 +520,13 @@ fn prepare_library_dependency_artifact(dependency_key: &str, dependency_root: &P
     );
     let current_exe = env::current_exe()
         .map_err(|error| CliError::failure(format!("failed to resolve current incan executable: {error}")))?;
-    let output = Command::new(current_exe)
+    let status = Command::new(current_exe)
         .args(["build", "--lib"])
         .current_dir(dependency_root)
         .env_remove(INTERNAL_MANIFEST_OVERRIDE_ENV)
         .env_remove(INTERNAL_PROJECT_ROOT_OVERRIDE_ENV)
-        .output()
+        .env(INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, "1")
+        .status()
         .map_err(|error| {
             CliError::failure(format!(
                 "failed to run `incan build --lib` for pub::{dependency_key} dependency at {}: {error}",
@@ -427,14 +534,10 @@ fn prepare_library_dependency_artifact(dependency_key: &str, dependency_root: &P
             ))
         })?;
 
-    if !output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
+    if !status.success() {
         return Err(CliError::failure(format!(
-            "failed to prepare pub::{dependency_key} dependency artifact at {}\nstdout:\n{}\nstderr:\n{}",
-            dependency_root.display(),
-            stdout.trim_end(),
-            stderr.trim_end()
+            "failed to prepare pub::{dependency_key} dependency artifact at {}",
+            dependency_root.display()
         )));
     }
 
@@ -1287,15 +1390,31 @@ pub(crate) fn collect_rust_inspect_query_paths(modules: &[ParsedModule]) -> Vec<
 #[cfg(feature = "rust_inspect")]
 fn parse_rust_inspect_prewarm_env(raw: Option<&str>) -> bool {
     let Some(raw) = raw else {
-        return true;
+        return false;
     };
-    !matches!(raw.trim(), "0" | "false" | "FALSE" | "off" | "OFF" | "no" | "NO")
+    matches!(raw.trim(), "1" | "true" | "TRUE" | "on" | "ON" | "yes" | "YES")
 }
 
 /// Return whether Rust inspection prewarming is enabled.
 #[cfg(feature = "rust_inspect")]
 fn rust_inspect_prewarm_enabled() -> bool {
     parse_rust_inspect_prewarm_env(std::env::var("INCAN_RUST_INSPECT_PREWARM").ok().as_deref())
+}
+
+/// Return whether rust-inspect should eagerly run Cargo to materialize every generated build-script `OUT_DIR`.
+#[cfg(feature = "rust_inspect")]
+fn parse_rust_inspect_eager_out_dirs_prewarm_env(raw: Option<&str>) -> bool {
+    raw.is_some_and(|raw| matches!(raw.trim(), "1" | "true" | "TRUE" | "on" | "ON" | "yes" | "YES"))
+}
+
+/// Return whether rust-inspect should eagerly run Cargo to materialize every generated build-script `OUT_DIR`.
+#[cfg(feature = "rust_inspect")]
+fn rust_inspect_eager_out_dirs_prewarm_enabled() -> bool {
+    parse_rust_inspect_eager_out_dirs_prewarm_env(
+        std::env::var("INCAN_RUST_INSPECT_EAGER_OUT_DIRS_PREWARM")
+            .ok()
+            .as_deref(),
+    )
 }
 
 /// Surface rust-inspect preparation progress from explicit CLI prewarm phases.
@@ -1306,19 +1425,26 @@ fn print_rust_inspect_prewarm_progress(message: String) {
     }
 }
 
-/// Eagerly load rust-inspect metadata before typechecking/codegen hot paths.
+/// Prepare rust-inspect metadata access before typechecking/codegen hot paths.
 ///
-/// Prewarm defaults to enabled because lazy rust-analyzer extraction can dominate warm CLI runs.
-/// Set `INCAN_RUST_INSPECT_PREWARM=0` to disable it for troubleshooting.
+/// Metadata extraction now defaults to lazy lookup because eager rust-analyzer extraction across every imported Rust
+/// path can dominate cold downstream builds before the real generated Rust build starts. The Cargo target configuration
+/// is still prepared up front so lazy build-script `OUT_DIR` routes share the generated-project target directory. Set
+/// `INCAN_RUST_INSPECT_PREWARM=1` to opt into eager metadata prewarm, and set
+/// `INCAN_RUST_INSPECT_EAGER_OUT_DIRS_PREWARM=1` only when debugging a suspected out-dir cache regression.
 #[cfg(feature = "rust_inspect")]
 pub(crate) fn prewarm_rust_inspect_workspace(manifest_dir: &Path, query_paths: &[String]) -> CliResult<()> {
-    if !rust_inspect_prewarm_enabled() {
-        return Ok(());
-    }
     if query_paths.is_empty() {
         return Ok(());
     }
-    prewarm_rust_inspect_out_dirs(manifest_dir, query_paths)?;
+    let target_dir = rust_inspect_shared_target_dir(manifest_dir);
+    write_rust_inspect_cargo_config(manifest_dir, &target_dir)?;
+    if !rust_inspect_prewarm_enabled() {
+        return Ok(());
+    }
+    if rust_inspect_eager_out_dirs_prewarm_enabled() {
+        prewarm_rust_inspect_out_dirs(manifest_dir, query_paths)?;
+    }
     let inspector = Inspector::new(InspectorConfig::new(manifest_dir.to_path_buf()));
     inspector
         .prewarm(query_paths.iter().cloned(), &print_rust_inspect_prewarm_progress)
@@ -2377,17 +2503,32 @@ mod tests {
 
     #[cfg(feature = "rust_inspect")]
     #[test]
-    fn rust_inspect_prewarm_env_defaults_to_enabled() {
-        assert!(parse_rust_inspect_prewarm_env(None));
-        assert!(parse_rust_inspect_prewarm_env(Some("")));
+    fn rust_inspect_prewarm_env_defaults_to_disabled() {
+        assert!(!parse_rust_inspect_prewarm_env(None));
+        assert!(!parse_rust_inspect_prewarm_env(Some("")));
         assert!(parse_rust_inspect_prewarm_env(Some("1")));
         assert!(parse_rust_inspect_prewarm_env(Some("true")));
         assert!(parse_rust_inspect_prewarm_env(Some("on")));
-        assert!(parse_rust_inspect_prewarm_env(Some("unexpected")));
+        assert!(parse_rust_inspect_prewarm_env(Some("YES")));
         assert!(!parse_rust_inspect_prewarm_env(Some("0")));
         assert!(!parse_rust_inspect_prewarm_env(Some("false")));
         assert!(!parse_rust_inspect_prewarm_env(Some(" OFF ")));
         assert!(!parse_rust_inspect_prewarm_env(Some("no")));
+        assert!(!parse_rust_inspect_prewarm_env(Some("unexpected")));
+    }
+
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn rust_inspect_eager_out_dir_prewarm_env_defaults_to_disabled() {
+        assert!(!parse_rust_inspect_eager_out_dirs_prewarm_env(None));
+        assert!(!parse_rust_inspect_eager_out_dirs_prewarm_env(Some("")));
+        assert!(parse_rust_inspect_eager_out_dirs_prewarm_env(Some("1")));
+        assert!(parse_rust_inspect_eager_out_dirs_prewarm_env(Some("true")));
+        assert!(parse_rust_inspect_eager_out_dirs_prewarm_env(Some("ON")));
+        assert!(parse_rust_inspect_eager_out_dirs_prewarm_env(Some("yes")));
+        assert!(!parse_rust_inspect_eager_out_dirs_prewarm_env(Some("0")));
+        assert!(!parse_rust_inspect_eager_out_dirs_prewarm_env(Some("false")));
+        assert!(!parse_rust_inspect_eager_out_dirs_prewarm_env(Some("unexpected")));
     }
 
     #[cfg(feature = "rust_inspect")]

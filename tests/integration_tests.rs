@@ -10572,6 +10572,7 @@ mod rfc031_pub_import_integration_tests {
     fn run_fmt_check(target: &Path) -> Result<std::process::Output, Box<dyn std::error::Error>> {
         Ok(super::incan_command()
             .args(["fmt", "--check", target.to_string_lossy().as_ref()])
+            .env("CARGO_NET_OFFLINE", "true")
             .output()?)
     }
 
@@ -10598,6 +10599,15 @@ mod rfc031_pub_import_integration_tests {
             .args(["build", "--lib"])
             .current_dir(project_root)
             .env("CARGO_NET_OFFLINE", "true")
+            .output()?)
+    }
+
+    fn run_build_lib_artifact_only(project_root: &Path) -> Result<std::process::Output, Box<dyn std::error::Error>> {
+        Ok(super::incan_command()
+            .args(["build", "--lib"])
+            .current_dir(project_root)
+            .env("CARGO_NET_OFFLINE", "true")
+            .env("INCAN_INTERNAL_LIBRARY_ARTIFACT_ONLY", "1")
             .output()?)
     }
 
@@ -10973,6 +10983,100 @@ def test_external_vocab_assert_keyword() -> None:
             "expected dependency vocab to activate for incan test.\nstdout:\n{}\nstderr:\n{}",
             String::from_utf8_lossy(&test_output.stdout),
             String::from_utf8_lossy(&test_output.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn fmt_dependency_collection_does_not_prepare_persistent_library_artifact() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let tmp = tempfile::tempdir()?;
+        let producer_root = tmp.path().join("widgets_provider");
+        std::fs::create_dir_all(producer_root.join("src"))?;
+        std::fs::write(
+            producer_root.join("incan.toml"),
+            "[project]\nname = \"widgets_core\"\nversion = \"0.1.0\"\n\n[vocab]\ncrate = \"vocab_companion\"\n",
+        )?;
+        write_vocab_companion_crate_with_assert_keyword(&producer_root, "vocab_companion", "widgets_vocab_companion")?;
+        std::fs::write(
+            producer_root.join("src/lib.incn"),
+            r#"pub model Marker:
+    value: int
+"#,
+        )?;
+
+        let consumer_root = tmp.path().join("consumer");
+        std::fs::create_dir_all(consumer_root.join("src"))?;
+        std::fs::write(
+            consumer_root.join("incan.toml"),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nwidgets = { path = \"../widgets_provider\" }\n",
+        )?;
+        std::fs::write(
+            consumer_root.join("src/main.incn"),
+            r#"import pub::widgets
+
+
+def main() -> None:
+    assert true
+"#,
+        )?;
+
+        let output = run_fmt_check(&consumer_root.join("src"))?;
+        assert!(
+            output.status.success(),
+            "expected fmt --check to parse with source-backed dependency context without failing.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            !producer_root.join("target/lib/widgets_core.incnlib").exists(),
+            "fmt dependency collection should not create a persistent provider .incnlib manifest"
+        );
+        let combined_output = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            !combined_output.contains("Preparing missing pub::widgets dependency artifact"),
+            "fmt dependency collection should not invoke persistent artifact preparation, got: {combined_output}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn build_lib_artifact_only_writes_manifest_without_nested_cargo_build() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path().join("widgets_provider");
+        std::fs::create_dir_all(project_root.join("src"))?;
+        std::fs::write(
+            project_root.join("incan.toml"),
+            "[project]\nname = \"widgets_core\"\nversion = \"0.1.0\"\n",
+        )?;
+        std::fs::write(
+            project_root.join("src/lib.incn"),
+            r#"pub model Marker:
+    value: int
+
+pub def marker(value: int) -> Marker:
+    return Marker(value=value)
+"#,
+        )?;
+
+        let output = run_build_lib_artifact_only(&project_root)?;
+        assert!(
+            output.status.success(),
+            "expected artifact-only build --lib to succeed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            project_root.join("target/lib/widgets_core.incnlib").exists(),
+            "artifact-only build should still write the provider library manifest"
+        );
+        assert!(
+            !project_root.join("target/lib/target").exists(),
+            "artifact-only build should not run generated Cargo build or create a nested target directory"
         );
         Ok(())
     }
@@ -14005,7 +14109,7 @@ def test_dependency_vocab_query_block() -> None:
     }
 
     #[test]
-    fn fmt_prepares_clean_source_dependency_vocab_before_parsing_issue756() -> Result<(), Box<dyn std::error::Error>> {
+    fn fmt_activates_clean_source_dependency_vocab_before_parsing_issue756() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let producer_root = tmp.path().join("deps").join("querykit");
         std::fs::create_dir_all(producer_root.join("src"))?;
@@ -14078,8 +14182,17 @@ def main() -> None:
             String::from_utf8_lossy(&fmt_output.stderr)
         );
         assert!(
-            artifact_root.join("querykit.incnlib").is_file(),
-            "expected clean dependency artifact to be prepared for parser vocab activation"
+            !artifact_root.join("querykit.incnlib").exists(),
+            "fmt should activate parser vocab from source without preparing a persistent dependency artifact"
+        );
+        let combined_output = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&fmt_output.stdout),
+            String::from_utf8_lossy(&fmt_output.stderr)
+        );
+        assert!(
+            !combined_output.contains("Preparing missing pub::querykit dependency artifact"),
+            "fmt source vocab activation should not invoke persistent artifact preparation, got: {combined_output}"
         );
 
         Ok(())

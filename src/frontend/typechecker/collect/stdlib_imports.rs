@@ -299,7 +299,7 @@ impl TypeChecker {
         self.define_rust_import_binding(name, info, span);
     }
 
-    /// Collect `from rust::... import ...` items and attach blocking metadata for non-primitive items.
+    /// Collect `from rust::... import ...` items and attach any already-prepared metadata.
     fn collect_rust_from_imports(&mut self, crate_name: &str, path: &[Ident], items: &[ImportItem], span: Span) {
         if self.reject_unsupported_rust_core_alloc(crate_name, span) {
             return;
@@ -313,39 +313,10 @@ impl TypeChecker {
                 crate_name: crate_name.to_string(),
                 path: canonical_path.clone(),
                 binding: RustImportBindingKind::FromImport,
-                metadata: if Self::rust_from_import_requires_blocking_metadata(&item.name) {
-                    self.rust_item_metadata_for_path_blocking(&canonical_path)
-                } else {
-                    self.rust_item_metadata_for_path(&canonical_path)
-                },
+                metadata: self.rust_item_metadata_for_path(&canonical_path),
             };
             self.define_rust_import_binding(name, info, span);
         }
-    }
-
-    /// Return `true` when Rust from-import metadata lookup should use the blocking path.
-    fn rust_from_import_requires_blocking_metadata(item_name: &str) -> bool {
-        let item_name = item_name.trim_start_matches("r#");
-        !matches!(
-            item_name,
-            "bool"
-                | "char"
-                | "str"
-                | "f32"
-                | "f64"
-                | "i8"
-                | "i16"
-                | "i32"
-                | "i64"
-                | "i128"
-                | "isize"
-                | "u8"
-                | "u16"
-                | "u32"
-                | "u64"
-                | "u128"
-                | "usize"
-        )
     }
 
     /// Return an import item's local binding name after applying `as alias`.

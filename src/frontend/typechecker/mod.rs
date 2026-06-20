@@ -64,6 +64,7 @@ pub use type_info::{
 #[cfg(test)]
 mod tests;
 
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 #[cfg(feature = "rust_inspect")]
 use std::path::PathBuf;
@@ -136,6 +137,16 @@ pub(crate) enum YieldContext {
     Fixture,
     /// `yield value` produces one item of the active generator's element type.
     Generator { element_ty: ResolvedType },
+}
+
+struct TypeCompatibilityDepthGuard<'a> {
+    depth: &'a Cell<usize>,
+}
+
+impl Drop for TypeCompatibilityDepthGuard<'_> {
+    fn drop(&mut self) {
+        self.depth.set(self.depth.get().saturating_sub(1));
+    }
 }
 
 pub struct TypeChecker {
@@ -305,6 +316,12 @@ pub struct TypeChecker {
     /// Ensures supertrait names are not mistaken for free type parameters when the supertrait is declared later in the
     /// same module.
     pub(crate) pending_trait_supertraits: Vec<(String, Vec<Spanned<TraitBound>>)>,
+    /// Current recursive compatibility-check depth.
+    ///
+    /// Recursive source aliases and Rust facade identities can route compatibility back through the same structural
+    /// surfaces. Keep that from becoming a process-level stack overflow; the guard returns `false` once a cycle is
+    /// deep enough that the checker cannot prove compatibility.
+    type_compatibility_depth: Cell<usize>,
     /// Feature-gated cache for rust-inspect semantic metadata extraction (RFC 041).
     #[cfg(feature = "rust_inspect")]
     pub(crate) rust_inspect_cache: RustMetadataCache,
@@ -372,6 +389,7 @@ impl TypeChecker {
             surface_context: SurfaceContext::default(),
             supertrait_closure: HashMap::new(),
             pending_trait_supertraits: Vec::new(),
+            type_compatibility_depth: Cell::new(0),
             #[cfg(feature = "rust_inspect")]
             rust_inspect_cache: RustMetadataCache::new(),
             #[cfg(feature = "rust_inspect")]
@@ -479,11 +497,17 @@ impl TypeChecker {
             return Some(metadata);
         }
         let dir = self.rust_inspect_manifest_dir.as_ref()?;
-        match self.rust_inspect_cache.get_cached(dir, lookup_path) {
+        if let Ok(Some(hit)) = self.rust_inspect_cache.get_cached(dir, lookup_path) {
+            return Some((*hit.metadata).clone());
+        }
+        if !Self::rust_identity_metadata_base_should_probe(lookup_path) {
+            return None;
+        }
+        match self.rust_inspect_cache.get_cached_or_extract_fast(dir, lookup_path) {
             Ok(Some(hit)) => Some((*hit.metadata).clone()),
             Err(err) => {
                 tracing::debug!(
-                    "rust-inspect cache lookup failed for `{}` (query `{}`): {err}",
+                    "rust-inspect fast metadata lookup failed for `{}` (query `{}`): {err}",
                     canonical_path,
                     lookup_path
                 );
@@ -498,10 +522,27 @@ impl TypeChecker {
     pub(crate) fn rust_item_metadata_for_path_blocking(&self, canonical_path: &str) -> Option<RustItemMetadata> {
         let canonical_path = Self::normalize_rust_namespace_path(canonical_path);
         let lookup_path = Self::rust_metadata_lookup_path(canonical_path)?;
+        if !Self::rust_identity_metadata_base_should_probe(lookup_path) {
+            return None;
+        }
         if let Some(metadata) = self.library_manifests.rust_abi_item(lookup_path) {
             return Some(metadata);
         }
         let dir = self.rust_inspect_manifest_dir.as_ref()?;
+        match self.rust_inspect_cache.get_cached(dir, lookup_path) {
+            Ok(Some(hit)) => return Some((*hit.metadata).clone()),
+            Ok(None) => {}
+            Err(err) => {
+                tracing::debug!(
+                    "rust-inspect cache lookup failed for `{}` (query `{}`): {err}",
+                    canonical_path,
+                    lookup_path
+                );
+            }
+        }
+        if !Self::rust_identity_metadata_base_should_probe(lookup_path) {
+            return None;
+        }
         // stdlib interop paths are conventionally stable and intentionally stay cache-only.
         if lookup_path.starts_with("incan_stdlib::") {
             return self.rust_item_metadata_for_path(lookup_path);
@@ -4383,12 +4424,26 @@ impl TypeChecker {
         Some(conventions::NEWTYPE_FROM_UNDERLYING_METHOD.to_string())
     }
 
+    /// Return whether `actual` can be used where `expected` is required, with a recursion cap for pathological unions.
+    pub(crate) fn types_compatible(&self, actual: &ResolvedType, expected: &ResolvedType) -> bool {
+        const MAX_TYPE_COMPATIBILITY_DEPTH: usize = 512;
+        if self.type_compatibility_depth.get() >= MAX_TYPE_COMPATIBILITY_DEPTH {
+            return false;
+        }
+        self.type_compatibility_depth
+            .set(self.type_compatibility_depth.get() + 1);
+        let _guard = TypeCompatibilityDepthGuard {
+            depth: &self.type_compatibility_depth,
+        };
+        self.types_compatible_unchecked(actual, expected)
+    }
+
     /// Check if two types are compatible for assignment or comparison.
     ///
     /// Returns `true` if `actual` can be used where `expected` is required. Handles `Unknown` (error recovery), type
     /// variables (generics), and recursive checks for generics, functions, and tuples.
     #[allow(clippy::only_used_in_recursion)]
-    pub(crate) fn types_compatible(&self, actual: &ResolvedType, expected: &ResolvedType) -> bool {
+    fn types_compatible_unchecked(&self, actual: &ResolvedType, expected: &ResolvedType) -> bool {
         let has_generic_params = |name: &str| -> bool {
             match self.lookup_semantic_type_info(name) {
                 Some(TypeInfo::Model(model)) => !model.type_params.is_empty(),

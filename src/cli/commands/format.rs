@@ -95,7 +95,7 @@ pub fn format_files(path: &str, check_mode: bool, diff_mode: bool) -> CliResult<
 
 /// Format one file through the same project-aware parsing context used by check and test collection.
 fn format_file_source(file_path: &Path, source: &str) -> CliResult<String> {
-    let session = CompilationSession::discover(file_path)?;
+    let session = CompilationSession::discover_for_collection(file_path)?;
     let ast = session
         .parse_source_for_collection(file_path, source)
         .map_err(|errs| CliError::failure(format_parse_errors(file_path, source, &errs)))?;

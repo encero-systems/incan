@@ -216,6 +216,9 @@ pub enum Command {
         /// Enable all Cargo features
         #[arg(long = "cargo-all-features")]
         cargo_all_features: bool,
+        /// Shared Cargo target directory for generated Rust projects
+        #[arg(long = "generated-cargo-target-dir", value_name = "PATH")]
+        generated_cargo_target_dir: Option<PathBuf>,
         /// Explicitly request the release build profile. This is the default for `incan build` and exists for
         /// first-contact command symmetry.
         #[arg(long)]
@@ -697,6 +700,7 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             cargo_features,
             cargo_no_default_features,
             cargo_all_features,
+            generated_cargo_target_dir,
             release: _,
             report,
             report_output,
@@ -719,28 +723,19 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 cargo_args,
                 cargo_passthrough,
             );
+            let build_options = commands::build::BuildCommandOptions {
+                cargo_policy,
+                cargo_features,
+                cargo_no_default_features,
+                cargo_all_features,
+                generated_cargo_target_dir,
+            };
             if lib_mode {
                 let file_arg = file.as_ref().map(|p| p.to_string_lossy().to_string());
-                commands::build_library(
-                    file_arg.as_deref(),
-                    out.as_ref(),
-                    cargo_policy,
-                    cargo_features,
-                    cargo_no_default_features,
-                    cargo_all_features,
-                    report_options,
-                )
+                commands::build_library(file_arg.as_deref(), out.as_ref(), build_options, report_options)
             } else {
                 let file = resolve_build_entry_file(file)?;
-                commands::build_file(
-                    &file.to_string_lossy(),
-                    out.as_ref(),
-                    cargo_policy,
-                    cargo_features,
-                    cargo_no_default_features,
-                    cargo_all_features,
-                    report_options,
-                )
+                commands::build_file(&file.to_string_lossy(), out.as_ref(), build_options, report_options)
             }
         }
         Some(Command::Check { path, format }) => commands::check_path(&path, format),
@@ -1196,6 +1191,29 @@ mod tests {
         assert!(!no_locked);
         assert!(!no_frozen);
         assert_eq!(cargo_args, vec!["--timings", "--color=always"]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_cli_parse_build_generated_cargo_target_dir() -> Result<(), clap::Error> {
+        let cli = parse_cli([
+            "incan",
+            "build",
+            "--lib",
+            "--generated-cargo-target-dir",
+            "target/generated-shared",
+        ])?;
+        let Some(Command::Build {
+            generated_cargo_target_dir,
+            ..
+        }) = cli.command
+        else {
+            return Err(expected_command("build"));
+        };
+        assert_eq!(
+            generated_cargo_target_dir,
+            Some(PathBuf::from("target/generated-shared"))
+        );
         Ok(())
     }
 
