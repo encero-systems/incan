@@ -321,7 +321,11 @@ impl TypeChecker {
                             self.check_call_args(args);
                             return ResolvedType::Unknown;
                         }
-                        if let Some(meta) = &info.metadata {
+                        let metadata = info
+                            .metadata
+                            .clone()
+                            .or_else(|| self.rust_item_metadata_for_path_blocking(info.path.as_str()));
+                        if let Some(meta) = metadata.as_ref() {
                             match &meta.kind {
                                 RustItemKind::Function(sig) => {
                                     let error_count_before = self.errors.len();

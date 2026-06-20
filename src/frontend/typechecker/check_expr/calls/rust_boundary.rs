@@ -27,28 +27,28 @@ struct RustCallArgBinding<'a> {
 }
 
 impl TypeChecker {
-    /// Eagerly cache metadata for Rust path types returned by inspected Rust calls.
+    /// Reuse already-prepared metadata for Rust path types returned by inspected Rust calls.
     ///
-    /// CLI prewarm covers explicit `from rust::... import Item` paths, but chained registry APIs often return helper
-    /// types that users never import directly. Caching those returned receiver types while the originating Rust
-    /// signature is known lets the next method call validate against its real signature instead of falling back to
-    /// permissive unknown-method lowering.
+    /// Chained registry APIs often return helper types that users never import directly. When metadata for those types
+    /// is already available, reusing it lets the next method call validate against its real signature. This must stay
+    /// cache-only: forcing fresh rust-analyzer extraction for every opaque return handle turns ordinary downstream
+    /// builds into dependency metadata crawls.
     fn prewarm_rust_return_type_metadata(&self, ty: &ResolvedType) {
         self.prewarm_rust_type_identity_metadata(ty);
     }
 
-    /// Eagerly cache Rust identity metadata for nominal paths nested inside Rust display types.
+    /// Reuse Rust identity metadata for nominal paths nested inside Rust display types.
     ///
     /// rust-inspect can report public signatures such as `Arc<crate::Type>` while another API returns the same type
     /// through its defining module, for example `Arc<crate::private::Type>`. The outer generic wrapper is not the
-    /// semantic identity; the nested Rust path is. Prewarming those nested paths lets compatibility use cache-only
-    /// definition metadata instead of treating the two displays as unrelated nominal types.
+    /// semantic identity; the nested Rust path is. Reading prepared metadata for those nested paths lets compatibility
+    /// use known definition aliases without doing hidden extraction from this hot path.
     fn prewarm_rust_type_identity_metadata(&self, ty: &ResolvedType) {
         match ty {
             ResolvedType::RustPath(path) => {
                 let (base, args) = self.rust_path_base_and_args(path);
-                if base.contains("::") {
-                    let _ = self.rust_item_metadata_for_path_blocking(base.as_str());
+                if Self::rust_identity_metadata_base_should_probe(base.as_str()) {
+                    let _ = self.rust_item_metadata_for_path(base.as_str());
                 }
                 for arg in args {
                     self.prewarm_rust_type_identity_metadata(&arg);
@@ -75,6 +75,44 @@ impl TypeChecker {
             }
             _ => {}
         }
+    }
+
+    /// Return whether cache-only identity prewarm should ask rust-inspect for this Rust display base.
+    ///
+    /// This prewarm exists only to reuse already-known nominal metadata for returned opaque handles. Standard generic
+    /// wrappers such as `Box<T>` and `Arc<T>` are not the semantic identity, and rust-analyzer sometimes renders them
+    /// relative to a dependency module (`datafusion_expr::expr::Box`). Probing those wrapper bases as dependency items
+    /// turns a cheap compatibility hint into a full workspace extraction. Skip the wrapper and keep recursing into its
+    /// type arguments, where the actual nominal identity lives.
+    pub(in crate::frontend::typechecker) fn rust_identity_metadata_base_should_probe(base: &str) -> bool {
+        let normalized = Self::normalize_rust_namespace_path(base.trim());
+        if !normalized.contains("::") {
+            return false;
+        }
+        let leaf = normalized.rsplit("::").next().unwrap_or(normalized);
+        !Self::is_rust_identity_wrapper_type_name(leaf)
+    }
+
+    /// Rust wrapper/container type names that do not carry the identity metadata this prewarm is looking for.
+    fn is_rust_identity_wrapper_type_name(name: &str) -> bool {
+        matches!(
+            name,
+            "Arc"
+                | "Box"
+                | "BTreeMap"
+                | "BTreeSet"
+                | "Cow"
+                | "HashMap"
+                | "HashSet"
+                | "Option"
+                | "PhantomData"
+                | "Pin"
+                | "Rc"
+                | "Result"
+                | "Self"
+                | "String"
+                | "Vec"
+        )
     }
 
     /// Resolve an inspected Rust return display and cache any returned Rust receiver metadata.
@@ -628,6 +666,12 @@ impl TypeChecker {
         preserves_lookup_arg_shape: bool,
         span: Span,
     ) -> ResolvedType {
+        if sig.is_async {
+            self.type_info
+                .rust
+                .async_call_realizations
+                .insert((span.start, span.end));
+        }
         if sig.is_async && !self.is_in_await_operand(span) {
             self.errors
                 .push(errors::async_call_without_await(callable_display, span));
@@ -691,13 +735,19 @@ impl TypeChecker {
     }
 
     /// Validate a direct Rust function call (`rust::path::item(...)`) and record boundary coercions.
-    pub(in crate::frontend::typechecker::check_expr::calls) fn validate_rust_function_call(
+    pub(in crate::frontend::typechecker::check_expr) fn validate_rust_function_call(
         &mut self,
         path: &str,
         sig: &RustFunctionSig,
         args: &[CallArg],
         span: Span,
     ) -> ResolvedType {
+        if sig.is_async {
+            self.type_info
+                .rust
+                .async_call_realizations
+                .insert((span.start, span.end));
+        }
         if sig.is_async && !self.is_in_await_operand(span) {
             self.errors.push(errors::async_call_without_await(path, span));
         }
@@ -752,6 +802,26 @@ mod validate_rust_function_call_tests {
                 variants: Vec::new(),
             }),
         }
+    }
+
+    #[test]
+    fn rust_identity_prewarm_skips_owner_relative_standard_wrappers() {
+        assert!(
+            !TypeChecker::rust_identity_metadata_base_should_probe("datafusion_expr::expr::Box"),
+            "owner-relative Box displays are generic wrappers, not dependency metadata items"
+        );
+        assert!(
+            !TypeChecker::rust_identity_metadata_base_should_probe("datafusion_expr::expr::Arc"),
+            "owner-relative Arc displays are generic wrappers, not dependency metadata items"
+        );
+        assert!(
+            !TypeChecker::rust_identity_metadata_base_should_probe("std::option::Option"),
+            "std wrapper displays should not trigger identity metadata prewarm"
+        );
+        assert!(
+            TypeChecker::rust_identity_metadata_base_should_probe("datafusion_expr::expr::WindowFunction"),
+            "nominal dependency item displays should still reuse cache-only identity metadata"
+        );
     }
 
     #[test]

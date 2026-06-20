@@ -14,12 +14,13 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use incan_core::interop::{
-    RustFieldInfo, RustItemKind, RustItemMetadata, RustTypeInfo, RustTypeMetadataCompleteness, RustTypeShape,
-    RustTypeShapePathFallback, RustVariantInfo, RustVisibility, parse_rust_type_shape_text, split_top_level_rust_args,
+    RustFieldInfo, RustFunctionSig, RustItemKind, RustItemMetadata, RustMethodSig, RustParam, RustTraitAssoc,
+    RustTraitInfo, RustTypeInfo, RustTypeMetadataCompleteness, RustTypeShape, RustTypeShapePathFallback,
+    RustVariantInfo, RustVisibility, parse_rust_type_shape_text, split_top_level_rust_args,
 };
 use incan_core::lang::types::collections::{self, CollectionTypeId};
 use ra_ap_syntax::{
-    AstNode, Edition, SourceFile, SyntaxKind, T,
+    AstNode, Edition, SourceFile,
     ast::{self, HasModuleItem, HasName, HasVisibility},
 };
 use serde::{Deserialize, Serialize};
@@ -53,6 +54,11 @@ struct CacheInner {
     dependency_manifest_dirs: HashMap<(PathBuf, String), Option<PathBuf>>,
     root_crate_names: HashMap<PathBuf, Vec<String>>,
     crate_reexport_aliases: HashMap<PathBuf, HashMap<String, String>>,
+    root_dependency_reexport_paths: HashMap<PathBuf, HashMap<String, String>>,
+    generated_include_owners: HashMap<PathBuf, HashMap<String, Vec<Vec<String>>>>,
+    source_public_reexport_paths: HashMap<PathBuf, HashMap<String, String>>,
+    source_inherent_method_indexes: HashMap<PathBuf, HashMap<String, Vec<RustMethodSig>>>,
+    fast_failed_items: HashSet<(PathBuf, String)>,
     failed_items: HashMap<(PathBuf, String), NegativeLookup>,
     disk_cache_state: HashMap<PathBuf, DiskCacheState>,
 }
@@ -118,7 +124,7 @@ struct DiskCacheEnvelope {
 }
 
 // Bump when extracted metadata semantics change in a way that makes previously persisted items unsafe to reuse.
-const DISK_CACHE_FORMAT: u32 = 10;
+const DISK_CACHE_FORMAT: u32 = 15;
 const DISK_CACHE_FILE: &str = ".incan_rust_inspect_cache.json";
 // Backward-compatibility read path for caches written before the crate/module rename.
 const LEGACY_DISK_CACHE_FILE: &str = ".incan_rust_metadata_cache.json";
@@ -309,11 +315,7 @@ fn ensure_disk_cache_loaded(inner: &mut CacheInner, root: &Path) -> Result<DiskC
 
 /// Build the current workspace-local disk cache snapshot.
 fn disk_cache_envelope(inner: &CacheInner, root: &Path) -> Result<DiskCacheEnvelope, RustMetadataError> {
-    let fingerprint = inner
-        .disk_cache_state
-        .get(root)
-        .and_then(|state| state.workspace_fingerprint.clone())
-        .unwrap_or(workspace_fingerprint(root)?);
+    let fingerprint = workspace_fingerprint(root)?;
     let mut items = HashMap::new();
     let mut misses = HashMap::new();
     for ((item_root, canonical_path), cached) in &inner.items {
@@ -560,6 +562,38 @@ fn manifest_dependency_crate_names(manifest: &toml::Value, table: &str, names: &
     }
 }
 
+/// Collect normalized direct dependency crate names from a Cargo manifest dependency table.
+fn manifest_dependency_crate_entries(manifest: &toml::Value, table: &str, names: &mut Vec<String>) {
+    let Some(deps) = manifest.get(table).and_then(toml::Value::as_table) else {
+        return;
+    };
+    for (key, value) in deps {
+        let name = value
+            .as_table()
+            .and_then(|table| table.get("package"))
+            .and_then(toml::Value::as_str)
+            .unwrap_or(key);
+        names.push(normalized_crate_cache_key(name));
+    }
+}
+
+/// Return normalized direct dependency crate names for a generated root workspace.
+fn load_root_dependency_crate_names(root: &Path) -> Vec<String> {
+    let Ok(payload) = fs::read_to_string(root.join("Cargo.toml")) else {
+        return Vec::new();
+    };
+    let Ok(manifest) = toml::from_str::<toml::Value>(payload.as_str()) else {
+        return Vec::new();
+    };
+    let mut names = Vec::new();
+    for table in ["dependencies", "dev-dependencies", "build-dependencies"] {
+        manifest_dependency_crate_entries(&manifest, table, &mut names);
+    }
+    names.sort();
+    names.dedup();
+    names
+}
+
 /// Load normalized dependency crate names from the crate whose generated `OUT_DIR` Rust is being parsed.
 ///
 /// The generated-source fallback uses this to distinguish local relative paths from external dependency paths while it
@@ -648,13 +682,7 @@ fn crate_reexport_alias_from_use_tree(tree: &ast::UseTree) -> Option<(String, St
 
 /// Return whether a use item is exactly public at crate level, excluding restricted visibility such as `pub(crate)`.
 fn use_item_is_plain_public(use_item: &ast::Use) -> bool {
-    let mut significant = use_item
-        .syntax()
-        .descendants_with_tokens()
-        .filter_map(|element| element.into_token())
-        .filter(|token| !matches!(token.kind(), SyntaxKind::COMMENT | SyntaxKind::WHITESPACE));
-    matches!(significant.next().map(|token| token.kind()), Some(T![pub]))
-        && matches!(significant.next().map(|token| token.kind()), Some(T![use]))
+    ast_visibility_is_public(use_item.visibility())
 }
 
 /// Load root-level public crate re-export aliases from a dependency crate's library source.
@@ -688,6 +716,77 @@ fn load_crate_reexport_aliases(root: &Path) -> HashMap<String, String> {
     aliases
 }
 
+/// Collect root-facing module paths for public module-glob crate reexports such as
+/// `pub mod logical_expr { pub use datafusion_expr::*; }`.
+fn collect_crate_module_glob_reexport_paths(
+    items: impl Iterator<Item = ast::Item>,
+    crate_name: &str,
+    module_path: &[String],
+    paths: &mut HashMap<String, String>,
+) {
+    for item in items {
+        match item {
+            ast::Item::Module(module) => {
+                if !ast_visibility_is_public(module.visibility()) {
+                    continue;
+                }
+                let Some(name) = module.name() else {
+                    continue;
+                };
+                let mut nested_module_path = module_path.to_vec();
+                nested_module_path.push(generated_source_name(name.to_string().as_str()));
+                if let Some(item_list) = module.item_list() {
+                    collect_crate_module_glob_reexport_paths(item_list.items(), crate_name, &nested_module_path, paths);
+                }
+            }
+            ast::Item::Use(use_item) => {
+                if !use_item_is_plain_public(&use_item) {
+                    continue;
+                }
+                let Some(tree) = use_item.use_tree() else {
+                    continue;
+                };
+                let mut targets = Vec::new();
+                collect_source_use_targets(&tree, &[], &mut targets);
+                for target in targets {
+                    let SourceUseTarget::Glob { target } = target else {
+                        continue;
+                    };
+                    if target.len() != 1 || module_path.is_empty() {
+                        continue;
+                    }
+                    let target_crate = normalized_crate_cache_key(target[0].as_str());
+                    paths.entry(target_crate).or_insert_with(|| {
+                        let mut public_path = Vec::with_capacity(1 + module_path.len());
+                        public_path.push(crate_name.to_string());
+                        public_path.extend(module_path.iter().cloned());
+                        public_path.join("::")
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Load public root-facing module paths for crate-wide glob reexports from one dependency root.
+fn load_crate_module_glob_reexport_paths(root: &Path, crate_name: &str) -> HashMap<String, String> {
+    let Ok(payload) = fs::read_to_string(root.join("Cargo.toml")) else {
+        return HashMap::new();
+    };
+    let Ok(manifest) = toml::from_str::<toml::Value>(payload.as_str()) else {
+        return HashMap::new();
+    };
+    let source_path = manifest_lib_source_path(root, &manifest);
+    let Ok(source) = fs::read_to_string(source_path) else {
+        return HashMap::new();
+    };
+    let parsed = SourceFile::parse(source.as_str(), Edition::CURRENT).tree();
+    let mut paths = HashMap::new();
+    collect_crate_module_glob_reexport_paths(parsed.items(), crate_name, &[], &mut paths);
+    paths
+}
+
 /// Return the canonical target path for a dependency-owned item addressed through a public crate re-export.
 fn dependency_reexport_alias_candidate(
     inner: &mut CacheInner,
@@ -710,6 +809,58 @@ fn dependency_reexport_alias_candidate(
         None
     } else {
         Some(candidate)
+    }
+}
+
+/// Build preferred root-facing paths for external crates re-exported by direct root dependencies.
+///
+/// This preserves source identity for Rust APIs that spell an internal dependency path, such as a function in
+/// `datafusion_expr` taking `arrow::datatypes::DataType`, while Incan source imports the same type through
+/// `datafusion::arrow::datatypes::DataType`.
+fn load_root_dependency_reexport_paths(
+    inner: &mut CacheInner,
+    root: &Path,
+    registry_src_roots: Option<&[PathBuf]>,
+) -> HashMap<String, String> {
+    let direct_deps = load_root_dependency_crate_names(root);
+    let mut paths = HashMap::new();
+    for dep_name in direct_deps {
+        let Some(dep_root) = resolve_dependency_manifest_dir(inner, root, dep_name.as_str(), registry_src_roots)
+            .and_then(|dep_root| non_root_dependency_manifest_dir(root, dep_root))
+        else {
+            continue;
+        };
+        let aliases = inner
+            .crate_reexport_aliases
+            .entry(dep_root.clone())
+            .or_insert_with_key(|dep_root| load_crate_reexport_aliases(dep_root));
+        for (alias, target) in aliases {
+            paths
+                .entry(target.clone())
+                .or_insert_with(|| format!("{dep_name}::{alias}"));
+        }
+        for (target, public_path) in load_crate_module_glob_reexport_paths(&dep_root, dep_name.as_str()) {
+            paths.entry(target).or_insert(public_path);
+        }
+    }
+    paths
+}
+
+/// Return the preferred root-facing path prefix for an external source crate when one exists.
+fn root_dependency_reexport_path<'a>(aliases: &'a HashMap<String, String>, first_segment: &str) -> Option<&'a str> {
+    aliases.get(first_segment).map(String::as_str)
+}
+
+/// Rewrite a fully-qualified external Rust path through the preferred root-facing reexport prefix when available.
+fn preferred_external_rust_path_display(path: &str, preferred_external_paths: &HashMap<String, String>) -> String {
+    let (first, rest) = path.split_once("::").unwrap_or((path, ""));
+    let Some(prefix) = root_dependency_reexport_path(preferred_external_paths, first) else {
+        return path.to_string();
+    };
+    if rest.is_empty() {
+        prefix.to_string()
+    } else {
+        format!("{prefix}::{rest}")
     }
 }
 
@@ -815,8 +966,10 @@ fn generated_include_file_names(text: &str) -> Vec<String> {
 /// Record generated `OUT_DIR` file owners from one module-item list.
 fn collect_generated_include_owners<'a>(
     mut items: impl Iterator<Item = ast::Item> + 'a,
+    source_path: &Path,
     module_path: &[String],
     owners: &mut HashMap<String, Vec<Vec<String>>>,
+    visited: &mut HashSet<PathBuf>,
 ) {
     for item in items.by_ref() {
         match item {
@@ -832,16 +985,57 @@ fn collect_generated_include_owners<'a>(
                 let mut nested_path = module_path.to_vec();
                 nested_path.push(generated_source_name(name.to_string().as_str()));
                 let Some(item_list) = module.item_list() else {
+                    for module_source in external_module_source_candidates(source_path, name.to_string().as_str()) {
+                        collect_generated_include_owners_from_source(&module_source, &nested_path, owners, visited);
+                    }
                     continue;
                 };
                 for file_name in generated_include_file_names(item_list.syntax().text().to_string().as_str()) {
                     owners.entry(file_name).or_default().push(nested_path.clone());
                 }
-                collect_generated_include_owners(item_list.items(), &nested_path, owners);
+                collect_generated_include_owners(item_list.items(), source_path, &nested_path, owners, visited);
             }
             _ => {}
         }
     }
+}
+
+/// Return source files Rust would normally try for an out-of-line child module declaration.
+fn external_module_source_candidates(parent_source_path: &Path, module_name: &str) -> Vec<PathBuf> {
+    let Some(parent_dir) = parent_source_path.parent() else {
+        return Vec::new();
+    };
+    let parent_stem = parent_source_path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or_default();
+    let module_base = if matches!(parent_stem, "lib" | "main" | "mod") {
+        parent_dir.to_path_buf()
+    } else {
+        parent_dir.join(parent_stem)
+    };
+    vec![
+        module_base.join(format!("{module_name}.rs")),
+        module_base.join(module_name).join("mod.rs"),
+    ]
+}
+
+/// Parse one dependency source file and collect generated include owners from inline and out-of-line modules.
+fn collect_generated_include_owners_from_source(
+    source_path: &Path,
+    module_path: &[String],
+    owners: &mut HashMap<String, Vec<Vec<String>>>,
+    visited: &mut HashSet<PathBuf>,
+) {
+    let source_path = fs::canonicalize(source_path).unwrap_or_else(|_| source_path.to_path_buf());
+    if !visited.insert(source_path.clone()) {
+        return;
+    }
+    let Ok(source) = fs::read_to_string(&source_path) else {
+        return;
+    };
+    let parsed = SourceFile::parse(source.as_str(), Edition::CURRENT).tree();
+    collect_generated_include_owners(parsed.items(), &source_path, module_path, owners, visited);
 }
 
 /// Load generated-file owner modules from the dependency crate source that includes build-script output.
@@ -852,16 +1046,30 @@ fn load_generated_include_owners(dep_root: &Path) -> HashMap<String, Vec<Vec<Str
     let Ok(manifest) = toml::from_str::<toml::Value>(payload.as_str()) else {
         return HashMap::new();
     };
-    let Ok(source) = fs::read_to_string(manifest_lib_source_path(dep_root, &manifest)) else {
-        return HashMap::new();
-    };
-    let parsed = SourceFile::parse(source.as_str(), Edition::CURRENT).tree();
     let mut owners = HashMap::new();
-    collect_generated_include_owners(parsed.items(), &[], &mut owners);
+    let mut visited = HashSet::new();
+    collect_generated_include_owners_from_source(
+        &manifest_lib_source_path(dep_root, &manifest),
+        &[],
+        &mut owners,
+        &mut visited,
+    );
     for paths in owners.values_mut() {
         paths.sort();
         paths.dedup();
     }
+    owners
+}
+
+/// Return generated include owners once per dependency source root so repeated generated metadata lookups do not
+/// re-walk the same dependency source files.
+fn generated_include_owners_for(inner: &mut CacheInner, dep_root: &Path) -> HashMap<String, Vec<Vec<String>>> {
+    let key = dep_root.to_path_buf();
+    if let Some(owners) = inner.generated_include_owners.get(&key) {
+        return owners.clone();
+    }
+    let owners = load_generated_include_owners(dep_root);
+    inner.generated_include_owners.insert(key, owners.clone());
     owners
 }
 
@@ -878,6 +1086,24 @@ fn generated_item_suffix_for_owner<'a>(item_segments: &'a [&'a str], owner_path:
         .zip(item_segments)
         .all(|(owner, segment)| owner.trim_start_matches("r#") == segment.trim_start_matches("r#"));
     matches_owner.then_some(&item_segments[owner_path.len()..])
+}
+
+/// Return whether known `OUT_DIR` include ownership can satisfy this dependency item path.
+fn generated_include_owners_match_path(
+    include_owners: &HashMap<String, Vec<Vec<String>>>,
+    canonical_path: &str,
+) -> bool {
+    let item_segments = canonical_path
+        .split("::")
+        .filter(|segment| !segment.is_empty())
+        .skip(1)
+        .collect::<Vec<_>>();
+    !item_segments.is_empty()
+        && include_owners.values().any(|owners| {
+            owners
+                .iter()
+                .any(|owner| generated_item_suffix_for_owner(&item_segments, owner).is_some())
+        })
 }
 
 /// Return whether rust-analyzer parsed a plain public visibility marker, excluding private and restricted public forms.
@@ -1055,6 +1281,1883 @@ fn generated_type_shape(text: &str) -> RustTypeShape {
     parse_rust_type_shape_text(text, |_| None, RustTypeShapePathFallback::RustPath)
 }
 
+/// One public `use` target discovered in dependency source.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SourceUseTarget {
+    Direct { local_name: String, target: Vec<String> },
+    Glob { target: Vec<String> },
+}
+
+/// Return stable syntax text with Rust formatting noise removed enough for type-display comparisons.
+fn compact_source_type_text(text: &str) -> String {
+    text.trim().replace(['\n', '\r', '\t', ' '], "")
+}
+
+/// Collect public re-export targets from one dependency source `use` tree.
+fn collect_source_use_targets(tree: &ast::UseTree, prefix: &[String], targets: &mut Vec<SourceUseTarget>) {
+    let mut path = prefix.to_vec();
+    if let Some(item_path) = tree.path() {
+        path.extend(
+            rust_path_segments(&item_path)
+                .into_iter()
+                .map(|segment| generated_source_name(segment.as_str())),
+        );
+    }
+
+    if let Some(list) = tree.use_tree_list() {
+        for child in list.use_trees() {
+            collect_source_use_targets(&child, &path, targets);
+        }
+        return;
+    }
+    if tree.star_token().is_some() {
+        if !path.is_empty() {
+            targets.push(SourceUseTarget::Glob { target: path });
+        }
+        return;
+    }
+    if path.is_empty() {
+        return;
+    }
+    let local_name = tree
+        .rename()
+        .and_then(|rename| rename.name())
+        .map(|name| generated_source_name(name.to_string().as_str()))
+        .or_else(|| path.last().cloned());
+    if let Some(local_name) = local_name {
+        targets.push(SourceUseTarget::Direct {
+            local_name,
+            target: path,
+        });
+    }
+}
+
+/// Normalize a source-relative `use` target into dependency source item segments.
+fn source_target_segments(
+    module_path: &[String],
+    target: &[String],
+    external_crates: &HashSet<String>,
+) -> Option<Vec<String>> {
+    let (head, tail) = target.split_first()?;
+    match head.as_str() {
+        "crate" => Some(tail.to_vec()),
+        "self" => {
+            let mut out = module_path.to_vec();
+            out.extend_from_slice(tail);
+            Some(out)
+        }
+        "super" => {
+            let mut out = module_path.to_vec();
+            out.pop();
+            out.extend_from_slice(tail);
+            Some(out)
+        }
+        "std" | "core" | "alloc" | "prost" => Some(target.to_vec()),
+        _ if external_crates.contains(head) => Some(target.to_vec()),
+        _ => {
+            let mut out = module_path.to_vec();
+            out.extend_from_slice(target);
+            Some(out)
+        }
+    }
+}
+
+/// Collect imports visible from one source file for source-level type normalization.
+fn source_file_import_aliases(
+    source: &SourceFile,
+    crate_name: &str,
+    module_path: &[String],
+    external_crates: &HashSet<String>,
+    preferred_external_paths: &HashMap<String, String>,
+) -> HashMap<String, String> {
+    source_items_import_aliases(
+        source.items(),
+        crate_name,
+        module_path,
+        external_crates,
+        preferred_external_paths,
+        &HashMap::new(),
+    )
+}
+
+/// Collect imports visible from one source item list, extending aliases inherited from enclosing modules.
+fn source_items_import_aliases<'a>(
+    items: impl Iterator<Item = ast::Item> + Clone + 'a,
+    crate_name: &str,
+    module_path: &[String],
+    external_crates: &HashSet<String>,
+    preferred_external_paths: &HashMap<String, String>,
+    parent_aliases: &HashMap<String, String>,
+) -> HashMap<String, String> {
+    let mut aliases = parent_aliases.clone();
+    for item in items {
+        let ast::Item::Use(use_item) = item else {
+            continue;
+        };
+        let Some(tree) = use_item.use_tree() else {
+            continue;
+        };
+        let mut targets = Vec::new();
+        collect_source_use_targets(&tree, &[], &mut targets);
+        for target in targets {
+            let SourceUseTarget::Direct { local_name, target } = target else {
+                continue;
+            };
+            let Some(head) = target.first() else {
+                continue;
+            };
+            if root_dependency_reexport_path(preferred_external_paths, head).is_some() {
+                aliases.insert(local_name, target.join("::"));
+                continue;
+            }
+            let Some(target_segments) = source_target_segments(module_path, &target, external_crates) else {
+                continue;
+            };
+            let Some(display_path) = source_item_display_path(crate_name, &target_segments, external_crates) else {
+                continue;
+            };
+            aliases.insert(local_name, display_path);
+        }
+    }
+    aliases
+}
+
+/// Resolve a syntax-only Rust type path using local imports and source module ownership.
+fn source_type_path_display(
+    path: &str,
+    crate_name: &str,
+    module_path: &[String],
+    external_crates: &HashSet<String>,
+    aliases: &HashMap<String, String>,
+    preferred_external_paths: &HashMap<String, String>,
+    source_public_reexports: &HashMap<String, String>,
+) -> String {
+    let compact = path.trim().trim_start_matches("::").replace(' ', "");
+    if compact.is_empty() {
+        return compact;
+    }
+    if let Some(base) = generated_known_collection_base(compact.as_str()) {
+        return base.to_string();
+    }
+    match compact.as_str() {
+        "Self" => return "Self".to_string(),
+        "bool" | "f32" | "f64" | "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64"
+        | "u128" | "usize" | "str" | "String" | "()" | "[u8]" => return compact,
+        "alloc::string::String" | "std::string::String" => return "String".to_string(),
+        _ => {}
+    }
+
+    let mut segments = compact
+        .split("::")
+        .filter(|segment| !segment.is_empty())
+        .map(generated_source_name)
+        .collect::<Vec<_>>();
+    if segments.is_empty() {
+        return compact;
+    }
+
+    if let Some(alias) = aliases.get(&segments[0]) {
+        let mut alias_segments = alias
+            .split("::")
+            .filter(|segment| !segment.is_empty())
+            .map(generated_source_name)
+            .collect::<Vec<_>>();
+        alias_segments.extend(segments.into_iter().skip(1));
+        segments = alias_segments;
+    }
+    let mut owner = module_path.to_vec();
+    while segments.first().is_some_and(|segment| segment == "super") {
+        segments.remove(0);
+        owner.pop();
+    }
+    if segments.first().is_some_and(|segment| segment == "self") {
+        segments.remove(0);
+    }
+    if segments.first().is_some_and(|segment| segment == "crate") {
+        segments[0] = crate_name.to_string();
+    }
+    let mut preferred_external_applied = false;
+    if let Some(prefix) = root_dependency_reexport_path(preferred_external_paths, segments[0].as_str()) {
+        let mut prefix_segments = prefix
+            .split("::")
+            .filter(|segment| !segment.is_empty())
+            .map(generated_source_name)
+            .collect::<Vec<_>>();
+        prefix_segments.extend(segments.into_iter().skip(1));
+        segments = prefix_segments;
+        preferred_external_applied = true;
+    }
+    let candidate_path = segments.join("::");
+    if let Some(canonical_path) = source_public_reexports.get(candidate_path.as_str()) {
+        return canonical_path.clone();
+    }
+
+    if matches!(
+        segments.first().map(String::as_str),
+        Some("core" | "std" | "alloc" | "prost")
+    ) {
+        return segments.join("::");
+    }
+    if segments
+        .first()
+        .is_some_and(|segment| segment == crate_name || external_crates.contains(segment))
+        || preferred_external_applied
+    {
+        return segments.join("::");
+    }
+    if segments.len() == 1 && segments[0].len() == 1 && segments[0].chars().all(|ch| ch.is_ascii_uppercase()) {
+        return segments.remove(0);
+    }
+
+    let mut out = Vec::with_capacity(1 + owner.len() + segments.len());
+    out.push(crate_name.to_string());
+    out.extend(owner);
+    out.extend(segments);
+    out.join("::")
+}
+
+/// Normalize dependency source type syntax without loading rust-analyzer.
+fn source_type_display(
+    text: &str,
+    crate_name: &str,
+    module_path: &[String],
+    external_crates: &HashSet<String>,
+    aliases: &HashMap<String, String>,
+    preferred_external_paths: &HashMap<String, String>,
+    source_public_reexports: &HashMap<String, String>,
+) -> String {
+    let original = text.trim();
+    if original.starts_with("impl ") {
+        return compact_source_type_text(original);
+    }
+    if let Some(rest) = original.strip_prefix("dyn ") {
+        return format!(
+            "dyn{}",
+            source_type_display(
+                rest,
+                crate_name,
+                module_path,
+                external_crates,
+                aliases,
+                preferred_external_paths,
+                source_public_reexports,
+            )
+        );
+    }
+    if let Some(after_amp) = original.strip_prefix('&') {
+        let after_lifetime = strip_source_lifetime_prefix(after_amp);
+        if let Some(after_mut) = strip_source_mut_prefix(after_lifetime) {
+            return format!(
+                "&mut {}",
+                source_type_display(
+                    after_mut,
+                    crate_name,
+                    module_path,
+                    external_crates,
+                    aliases,
+                    preferred_external_paths,
+                    source_public_reexports,
+                )
+            );
+        }
+        return format!(
+            "&{}",
+            source_type_display(
+                after_lifetime,
+                crate_name,
+                module_path,
+                external_crates,
+                aliases,
+                preferred_external_paths,
+                source_public_reexports,
+            )
+        );
+    }
+    if let Some(start) = original.find('<')
+        && original.ends_with('>')
+    {
+        let base = source_type_path_display(
+            &original[..start],
+            crate_name,
+            module_path,
+            external_crates,
+            aliases,
+            preferred_external_paths,
+            source_public_reexports,
+        );
+        let inner = &original[start + 1..original.len() - 1];
+        let args = split_top_level_rust_args(inner)
+            .into_iter()
+            .map(|arg| {
+                source_type_display(
+                    arg,
+                    crate_name,
+                    module_path,
+                    external_crates,
+                    aliases,
+                    preferred_external_paths,
+                    source_public_reexports,
+                )
+            })
+            .collect::<Vec<_>>();
+        return format!("{base}<{}>", args.join(", "));
+    }
+    let text = compact_source_type_text(text);
+    if let Some(rest) = text.strip_prefix("dyn")
+        && !rest.is_empty()
+        && (rest.contains("::") || rest.chars().next().is_some_and(|ch| ch.is_ascii_uppercase()))
+    {
+        return format!(
+            "dyn{}",
+            source_type_display(
+                rest,
+                crate_name,
+                module_path,
+                external_crates,
+                aliases,
+                preferred_external_paths,
+                source_public_reexports,
+            )
+        );
+    }
+    if text.starts_with('(') && text.ends_with(')') {
+        let inner = &text[1..text.len() - 1];
+        if inner.is_empty() {
+            return "()".to_string();
+        }
+        let items = split_top_level_rust_args(inner)
+            .into_iter()
+            .map(|arg| {
+                source_type_display(
+                    arg,
+                    crate_name,
+                    module_path,
+                    external_crates,
+                    aliases,
+                    preferred_external_paths,
+                    source_public_reexports,
+                )
+            })
+            .collect::<Vec<_>>();
+        return format!("({})", items.join(", "));
+    }
+    if let Some(start) = text.find('<')
+        && text.ends_with('>')
+    {
+        let base = source_type_path_display(
+            &text[..start],
+            crate_name,
+            module_path,
+            external_crates,
+            aliases,
+            preferred_external_paths,
+            source_public_reexports,
+        );
+        let inner = &text[start + 1..text.len() - 1];
+        let args = split_top_level_rust_args(inner)
+            .into_iter()
+            .map(|arg| {
+                source_type_display(
+                    arg,
+                    crate_name,
+                    module_path,
+                    external_crates,
+                    aliases,
+                    preferred_external_paths,
+                    source_public_reexports,
+                )
+            })
+            .collect::<Vec<_>>();
+        return format!("{base}<{}>", args.join(", "));
+    }
+    source_type_path_display(
+        text.as_str(),
+        crate_name,
+        module_path,
+        external_crates,
+        aliases,
+        preferred_external_paths,
+        source_public_reexports,
+    )
+}
+
+/// Remove a Rust lifetime marker that appears immediately after a borrow marker.
+fn strip_source_lifetime_prefix(text: &str) -> &str {
+    let text = text.trim_start();
+    let Some(rest) = text.strip_prefix('\'') else {
+        return text;
+    };
+    let end = rest
+        .char_indices()
+        .find_map(|(idx, ch)| (!rust_ident_char(ch)).then_some(idx))
+        .unwrap_or(rest.len());
+    rest[end..].trim_start()
+}
+
+/// Remove a Rust `mut` marker that appears immediately after a borrow marker and optional lifetime.
+fn strip_source_mut_prefix(text: &str) -> Option<&str> {
+    let rest = text.trim_start().strip_prefix("mut")?;
+    rest.chars()
+        .next()
+        .is_none_or(char::is_whitespace)
+        .then(|| rest.trim_start())
+}
+
+/// Return whether a character can be part of a Rust identifier token.
+fn rust_ident_char(ch: char) -> bool {
+    ch == '_' || ch.is_ascii_alphanumeric()
+}
+
+/// Return whether a dependency-source identifier should stay as a callable trait bound marker.
+fn rust_callable_bound_marker(ident: &str) -> bool {
+    matches!(
+        ident,
+        "Fn" | "FnMut" | "FnOnce" | "Send" | "Sync" | "Sized" | "Copy" | "Clone" | "Debug"
+    )
+}
+
+/// Normalize one identifier token inside a source alias target while preserving valid Rust `dyn Fn` syntax.
+fn source_alias_target_ident_display(
+    ident: &str,
+    crate_name: &str,
+    module_path: &[String],
+    aliases: &HashMap<String, String>,
+    preferred_external_paths: &HashMap<String, String>,
+    source_public_reexports: &HashMap<String, String>,
+) -> Option<String> {
+    if rust_callable_bound_marker(ident) {
+        return None;
+    }
+    if let Some(alias) = aliases.get(ident) {
+        let display = alias
+            .strip_prefix("crate::")
+            .map_or_else(|| alias.clone(), |rest| format!("{crate_name}::{rest}"));
+        let (first, rest) = display.split_once("::").unwrap_or((display.as_str(), ""));
+        if let Some(prefix) = root_dependency_reexport_path(preferred_external_paths, first) {
+            return Some(if rest.is_empty() {
+                prefix.to_string()
+            } else {
+                format!("{prefix}::{rest}")
+            });
+        }
+        return Some(
+            source_public_reexports
+                .get(display.as_str())
+                .cloned()
+                .unwrap_or(display),
+        );
+    }
+    if ident.chars().next().is_some_and(|ch| ch.is_ascii_uppercase()) {
+        let mut out = vec![crate_name.to_string()];
+        out.extend(module_path.iter().cloned());
+        out.push(ident.to_string());
+        return Some(out.join("::"));
+    }
+    None
+}
+
+/// Normalize a Rust type-alias RHS from dependency source without parsing away callable trait-object syntax.
+fn source_alias_target_display(
+    text: &str,
+    crate_name: &str,
+    module_path: &[String],
+    aliases: &HashMap<String, String>,
+    preferred_external_paths: &HashMap<String, String>,
+    source_public_reexports: &HashMap<String, String>,
+) -> String {
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut out = String::with_capacity(text.len());
+    let chars = text.chars().collect::<Vec<_>>();
+    let mut idx = 0usize;
+    while idx < chars.len() {
+        let ch = chars[idx];
+        if !rust_ident_char(ch) || ch.is_ascii_digit() {
+            out.push(ch);
+            idx += 1;
+            continue;
+        }
+
+        let start = idx;
+        idx += 1;
+        while idx < chars.len() && rust_ident_char(chars[idx]) {
+            idx += 1;
+        }
+        let ident = chars[start..idx].iter().collect::<String>();
+        let preceded_by_path = start >= 2 && chars[start - 2] == ':' && chars[start - 1] == ':';
+        let followed_by_path = idx + 1 < chars.len() && chars[idx] == ':' && chars[idx + 1] == ':';
+        if preceded_by_path || followed_by_path {
+            out.push_str(ident.as_str());
+            continue;
+        }
+
+        if let Some(display) = source_alias_target_ident_display(
+            ident.as_str(),
+            crate_name,
+            module_path,
+            aliases,
+            preferred_external_paths,
+            source_public_reexports,
+        ) {
+            out.push_str(display.as_str());
+        } else {
+            out.push_str(ident.as_str());
+        }
+    }
+    out
+}
+
+/// Build function metadata directly from dependency source syntax.
+fn source_function_metadata(
+    function: ast::Fn,
+    canonical_path: &str,
+    ctx: &SourceMetadataContext<'_>,
+) -> Option<RustItemMetadata> {
+    if !ast_visibility_is_public(function.visibility()) {
+        return None;
+    }
+    let name = generated_source_name(function.name()?.to_string().as_str());
+    let definition = ctx.definition_path(name.as_str());
+    let params = function
+        .param_list()
+        .map(|param_list| {
+            param_list
+                .params()
+                .filter_map(|param| {
+                    let ty = param.ty()?;
+                    let name = param
+                        .pat()
+                        .map(|pat| pat.syntax().text().to_string().trim().to_string());
+                    Some(RustParam {
+                        name,
+                        type_display: ctx.type_display(ty.syntax().text().to_string().as_str()),
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let return_type = function
+        .ret_type()
+        .and_then(|ret| ret.ty())
+        .map(|ty| ctx.type_display(ty.syntax().text().to_string().as_str()))
+        .unwrap_or_else(|| "()".to_string());
+    Some(RustItemMetadata {
+        canonical_path: canonical_path.to_string(),
+        definition_path: Some(definition),
+        visibility: RustVisibility::Public,
+        kind: RustItemKind::Function(RustFunctionSig {
+            params,
+            return_type,
+            is_async: function.async_token().is_some(),
+            is_unsafe: function.unsafe_token().is_some(),
+        }),
+    })
+}
+
+/// Build a Rust function signature directly from dependency source syntax.
+fn source_function_signature(
+    function: &ast::Fn,
+    ctx: &SourceMetadataContext<'_>,
+    receiver_type: Option<&str>,
+) -> RustFunctionSig {
+    let params = function
+        .param_list()
+        .map(|param_list| {
+            let self_param = param_list.self_param().map(|param| RustParam {
+                name: Some("self".to_string()),
+                type_display: source_self_param_type_display(&param, receiver_type),
+            });
+            self_param
+                .into_iter()
+                .chain(param_list.params().filter_map(|param| {
+                    let ty = param.ty()?;
+                    let name = param
+                        .pat()
+                        .map(|pat| pat.syntax().text().to_string().trim().to_string());
+                    Some(RustParam {
+                        name,
+                        type_display: ctx.type_display(ty.syntax().text().to_string().as_str()),
+                    })
+                }))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let return_type = function
+        .ret_type()
+        .and_then(|ret| ret.ty())
+        .map(|ty| ctx.type_display(ty.syntax().text().to_string().as_str()))
+        .unwrap_or_else(|| "()".to_string());
+    RustFunctionSig {
+        params,
+        return_type,
+        is_async: function.async_token().is_some(),
+        is_unsafe: function.unsafe_token().is_some(),
+    }
+}
+
+/// Return the metadata display type for a Rust source `self` parameter.
+///
+/// Trait declarations keep the source spelling (`&self`, `self`), while inherent methods use the owning type so the
+/// fast source route matches rust-analyzer method metadata closely enough for Incan call planning.
+fn source_self_param_type_display(param: &ast::SelfParam, receiver_type: Option<&str>) -> String {
+    let text = param.syntax().text().to_string();
+    let compact = compact_source_type_text(text.as_str());
+    let Some(receiver_type) = receiver_type else {
+        return text.trim().to_string();
+    };
+    if compact.starts_with("&mut") {
+        format!("&mut {receiver_type}")
+    } else if compact.starts_with('&') {
+        format!("&{receiver_type}")
+    } else {
+        receiver_type.to_string()
+    }
+}
+
+/// Collect Rust source files under one dependency source root in a stable order.
+fn source_rs_files(source_root: &Path) -> Vec<PathBuf> {
+    /// Visit one directory while collecting Rust source files for a dependency source index.
+    fn visit(dir: &Path, files: &mut Vec<PathBuf>) {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                visit(&path, files);
+            } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+                files.push(path);
+            }
+        }
+    }
+    let mut files = Vec::new();
+    visit(&source_root.join("src"), &mut files);
+    files.sort();
+    files
+}
+
+/// Infer the Rust module path represented by a source file under `src/`.
+fn source_file_module_path(source_root: &Path, source_path: &Path) -> Vec<String> {
+    let src_root = source_root.join("src");
+    let Ok(relative) = source_path.strip_prefix(&src_root) else {
+        return Vec::new();
+    };
+    let mut segments = relative
+        .components()
+        .filter_map(|component| component.as_os_str().to_str())
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    let Some(last) = segments.pop() else {
+        return Vec::new();
+    };
+    match last.as_str() {
+        "lib.rs" | "main.rs" | "mod.rs" => {}
+        file => {
+            let stem = Path::new(file)
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .unwrap_or(file);
+            segments.push(stem.to_string());
+        }
+    }
+    segments
+        .into_iter()
+        .map(|segment| generated_source_name(segment.as_str()))
+        .collect()
+}
+
+/// Return the stable display path for a source-owned type.
+fn source_owned_type_display(crate_name: &str, module_path: &[String], item_name: &str) -> String {
+    let mut target_path = vec![crate_name.to_string()];
+    target_path.extend(module_path.iter().cloned());
+    target_path.push(item_name.to_string());
+    target_path.join("::")
+}
+
+/// One parsed dependency source file used while building source-level metadata indexes.
+struct SourceIndexFile {
+    parsed: SourceFile,
+    module_path: Vec<String>,
+    aliases: HashMap<String, String>,
+}
+
+/// Normalization context used while deriving Rust metadata from dependency source syntax.
+struct SourceMetadataContext<'a> {
+    crate_name: &'a str,
+    module_path: &'a [String],
+    external_crates: &'a HashSet<String>,
+    aliases: &'a HashMap<String, String>,
+    preferred_external_paths: &'a HashMap<String, String>,
+    source_public_reexports: &'a HashMap<String, String>,
+}
+
+impl SourceMetadataContext<'_> {
+    /// Return the canonical source-owned metadata definition path for an item declared in the current module.
+    fn definition_path(&self, item_name: &str) -> String {
+        source_owned_type_display(self.crate_name, self.module_path, item_name)
+    }
+
+    /// Normalize source Rust type syntax using current imports and public reexports.
+    fn type_display(&self, text: &str) -> String {
+        source_type_display(
+            text,
+            self.crate_name,
+            self.module_path,
+            self.external_crates,
+            self.aliases,
+            self.preferred_external_paths,
+            self.source_public_reexports,
+        )
+    }
+
+    /// Normalize type-alias RHS syntax while preserving callable trait objects.
+    fn alias_target_display(&self, text: &str) -> String {
+        source_alias_target_display(
+            text,
+            self.crate_name,
+            self.module_path,
+            self.aliases,
+            self.preferred_external_paths,
+            self.source_public_reexports,
+        )
+    }
+}
+
+/// Convert dependency-source item segments into the display path used by Rust metadata.
+fn source_item_display_path(
+    crate_name: &str,
+    segments: &[String],
+    external_crates: &HashSet<String>,
+) -> Option<String> {
+    let (first, tail) = segments.split_first()?;
+    if matches!(first.as_str(), "std" | "core" | "alloc" | "prost") || external_crates.contains(first) {
+        return Some(segments.join("::"));
+    }
+    let mut path = vec![crate_name.to_string()];
+    if first == crate_name {
+        path.extend(tail.iter().cloned());
+    } else {
+        path.extend(segments.iter().cloned());
+    }
+    Some(path.join("::"))
+}
+
+/// Follow public source-reexport aliases to their final target while guarding against cycles.
+fn canonical_source_public_reexport_path(path: &str, public_reexports: &HashMap<String, String>) -> String {
+    let mut current = path.to_string();
+    let mut seen = HashSet::new();
+    while let Some(next) = public_reexports.get(current.as_str()) {
+        if next == &current || !seen.insert(current.clone()) {
+            break;
+        }
+        current = next.clone();
+    }
+    current
+}
+
+/// Collect same-crate public reexport paths from parsed dependency source.
+fn collect_source_public_reexport_paths(
+    crate_name: &str,
+    external_crates: &HashSet<String>,
+    preferred_external_paths: &HashMap<String, String>,
+    files: &[SourceIndexFile],
+) -> HashMap<String, String> {
+    let mut public_reexports = HashMap::new();
+    for file in files {
+        if file.module_path.is_empty() {
+            continue;
+        }
+        for item in file.parsed.items() {
+            let ast::Item::Use(use_item) = item else {
+                continue;
+            };
+            if !use_item_is_plain_public(&use_item) {
+                continue;
+            }
+            let Some(tree) = use_item.use_tree() else {
+                continue;
+            };
+            let mut targets = Vec::new();
+            collect_source_use_targets(&tree, &[], &mut targets);
+            for target in targets {
+                let SourceUseTarget::Direct { local_name, target } = target else {
+                    continue;
+                };
+                let Some(target_segments) = source_reexport_target_segments(
+                    &file.module_path,
+                    &target,
+                    external_crates,
+                    &file.aliases,
+                    crate_name,
+                ) else {
+                    continue;
+                };
+                let Some(mut target_path) = source_item_display_path(crate_name, &target_segments, external_crates)
+                else {
+                    continue;
+                };
+                target_path = preferred_external_rust_path_display(target_path.as_str(), preferred_external_paths);
+                let public_path = source_owned_type_display(crate_name, &file.module_path, local_name.as_str());
+                if public_path != target_path {
+                    public_reexports.insert(public_path, target_path);
+                }
+            }
+        }
+    }
+    let keys = public_reexports.keys().cloned().collect::<Vec<_>>();
+    for key in keys {
+        let canonical = canonical_source_public_reexport_path(key.as_str(), &public_reexports);
+        if canonical != key {
+            public_reexports.insert(key, canonical);
+        }
+    }
+    public_reexports
+}
+
+/// Build dependency-source metadata indexes without loading rust-analyzer.
+fn build_source_metadata_indexes(
+    source_root: &Path,
+    crate_name: &str,
+    external_crates: &HashSet<String>,
+    preferred_external_paths: &HashMap<String, String>,
+) -> (HashMap<String, String>, HashMap<String, Vec<RustMethodSig>>) {
+    let files = source_rs_files(source_root)
+        .into_iter()
+        .filter_map(|source_path| {
+            let source = fs::read_to_string(&source_path).ok()?;
+            let parsed = SourceFile::parse(source.as_str(), Edition::CURRENT).tree();
+            let module_path = source_file_module_path(source_root, &source_path);
+            let aliases = source_file_import_aliases(
+                &parsed,
+                crate_name,
+                &module_path,
+                external_crates,
+                preferred_external_paths,
+            );
+            Some(SourceIndexFile {
+                parsed,
+                module_path,
+                aliases,
+            })
+        })
+        .collect::<Vec<_>>();
+    let public_reexports =
+        collect_source_public_reexport_paths(crate_name, external_crates, preferred_external_paths, files.as_slice());
+    let mut methods_by_type: HashMap<String, Vec<RustMethodSig>> = HashMap::new();
+    let mut seen = HashSet::new();
+    for file in &files {
+        let ctx = SourceMetadataContext {
+            crate_name,
+            module_path: &file.module_path,
+            external_crates,
+            aliases: &file.aliases,
+            preferred_external_paths,
+            source_public_reexports: &public_reexports,
+        };
+        for item in file.parsed.items() {
+            let ast::Item::Impl(impl_item) = item else {
+                continue;
+            };
+            let Some(self_ty) = impl_item.self_ty() else {
+                continue;
+            };
+            let receiver_type = ctx.type_display(self_ty.syntax().text().to_string().as_str());
+            let Some(assoc_items) = impl_item.assoc_item_list() else {
+                continue;
+            };
+            for assoc in assoc_items.assoc_items() {
+                let ast::AssocItem::Fn(function) = assoc else {
+                    continue;
+                };
+                if !ast_visibility_is_public(function.visibility()) {
+                    continue;
+                }
+                let Some(name) = function.name() else {
+                    continue;
+                };
+                let name = generated_source_name(name.to_string().as_str());
+                if !seen.insert((receiver_type.clone(), name.clone())) {
+                    continue;
+                }
+                methods_by_type
+                    .entry(receiver_type.clone())
+                    .or_default()
+                    .push(RustMethodSig {
+                        name,
+                        signature: source_function_signature(&function, &ctx, Some(receiver_type.as_str())),
+                    });
+            }
+        }
+    }
+    for methods in methods_by_type.values_mut() {
+        methods.sort_by(|left, right| left.name.cmp(&right.name));
+    }
+    (public_reexports, methods_by_type)
+}
+
+/// Ensure source-level metadata indexes are built together so dependency source files are not walked once per index.
+fn ensure_source_metadata_indexes(
+    inner: &mut CacheInner,
+    source_root: &Path,
+    crate_name: &str,
+    external_crates: &HashSet<String>,
+    preferred_external_paths: &HashMap<String, String>,
+) -> PathBuf {
+    let source_root = fs::canonicalize(source_root).unwrap_or_else(|_| source_root.to_path_buf());
+    if !inner.source_public_reexport_paths.contains_key(&source_root)
+        || !inner.source_inherent_method_indexes.contains_key(&source_root)
+    {
+        let (public_reexports, methods) =
+            build_source_metadata_indexes(&source_root, crate_name, external_crates, preferred_external_paths);
+        inner
+            .source_public_reexport_paths
+            .insert(source_root.clone(), public_reexports);
+        inner
+            .source_inherent_method_indexes
+            .insert(source_root.clone(), methods);
+    }
+    source_root
+}
+
+/// Collect same-crate public source reexports for one dependency root.
+fn source_public_reexports_for(
+    inner: &mut CacheInner,
+    source_root: &Path,
+    crate_name: &str,
+    external_crates: &HashSet<String>,
+    preferred_external_paths: &HashMap<String, String>,
+) -> HashMap<String, String> {
+    let source_root = ensure_source_metadata_indexes(
+        inner,
+        source_root,
+        crate_name,
+        external_crates,
+        preferred_external_paths,
+    );
+    inner
+        .source_public_reexport_paths
+        .get(&source_root)
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// Collect public inherent methods for one source type without loading rust-analyzer.
+fn source_inherent_methods_for_type(
+    inner: &mut CacheInner,
+    source_root: &Path,
+    crate_name: &str,
+    target_display: &str,
+    external_crates: &HashSet<String>,
+    preferred_external_paths: &HashMap<String, String>,
+) -> Vec<RustMethodSig> {
+    let source_root = ensure_source_metadata_indexes(
+        inner,
+        source_root,
+        crate_name,
+        external_crates,
+        preferred_external_paths,
+    );
+    inner
+        .source_inherent_method_indexes
+        .get(&source_root)
+        .and_then(|methods| methods.get(target_display).cloned())
+        .unwrap_or_default()
+}
+
+/// Build trait metadata directly from dependency source syntax.
+fn source_trait_metadata(
+    trait_item: ast::Trait,
+    canonical_path: &str,
+    ctx: &SourceMetadataContext<'_>,
+) -> Option<RustItemMetadata> {
+    if !ast_visibility_is_public(trait_item.visibility()) {
+        return None;
+    }
+    let name = generated_source_name(trait_item.name()?.to_string().as_str());
+    let definition = ctx.definition_path(name.as_str());
+    let mut items = Vec::new();
+    if let Some(assoc_items) = trait_item.assoc_item_list() {
+        for item in assoc_items.assoc_items() {
+            match item {
+                ast::AssocItem::Fn(function) => {
+                    let Some(name) = function.name() else {
+                        continue;
+                    };
+                    items.push(RustTraitAssoc::Function {
+                        name: generated_source_name(name.to_string().as_str()),
+                        signature: source_function_signature(&function, ctx, None),
+                    });
+                }
+                ast::AssocItem::TypeAlias(alias) => {
+                    let Some(name) = alias.name() else {
+                        continue;
+                    };
+                    items.push(RustTraitAssoc::TypeAlias {
+                        name: generated_source_name(name.to_string().as_str()),
+                    });
+                }
+                ast::AssocItem::Const(const_item) => {
+                    let Some(name) = const_item.name() else {
+                        continue;
+                    };
+                    let type_display = const_item
+                        .ty()
+                        .map(|ty| ctx.type_display(ty.syntax().text().to_string().as_str()))
+                        .unwrap_or_else(|| "()".to_string());
+                    items.push(RustTraitAssoc::Constant {
+                        name: generated_source_name(name.to_string().as_str()),
+                        type_display,
+                    });
+                }
+                ast::AssocItem::MacroCall(_) => {}
+            }
+        }
+    }
+    Some(RustItemMetadata {
+        canonical_path: canonical_path.to_string(),
+        definition_path: Some(definition),
+        visibility: RustVisibility::Public,
+        kind: RustItemKind::Trait(RustTraitInfo { items }),
+    })
+}
+
+/// Build type-alias metadata directly from dependency source syntax.
+fn source_type_alias_metadata(
+    alias: ast::TypeAlias,
+    canonical_path: &str,
+    ctx: &SourceMetadataContext<'_>,
+) -> Option<RustItemMetadata> {
+    if !ast_visibility_is_public(alias.visibility()) {
+        return None;
+    }
+    let name = generated_source_name(alias.name()?.to_string().as_str());
+    let definition = ctx.definition_path(name.as_str());
+    let alias_target = alias
+        .ty()
+        .map(|ty| ctx.alias_target_display(ty.syntax().text().to_string().as_str()));
+    Some(RustItemMetadata {
+        canonical_path: canonical_path.to_string(),
+        definition_path: Some(definition),
+        visibility: RustVisibility::Public,
+        kind: RustItemKind::Type(RustTypeInfo {
+            alias_target,
+            metadata_completeness: RustTypeMetadataCompleteness::FieldsAndVariantsOnly,
+            methods: Vec::new(),
+            implemented_traits: Vec::new(),
+            fields: Vec::new(),
+            variants: Vec::new(),
+        }),
+    })
+}
+
+/// Build source record-field metadata for a public Rust struct.
+fn source_field_info(field: ast::RecordField, ctx: &SourceMetadataContext<'_>) -> Option<RustFieldInfo> {
+    if !ast_visibility_is_public(field.visibility()) {
+        return None;
+    }
+    let name = generated_source_name(field.name()?.to_string().as_str());
+    let type_display = ctx.type_display(field.ty()?.syntax().text().to_string().as_str());
+    let type_shape = generated_type_shape(type_display.as_str());
+    Some(RustFieldInfo {
+        name,
+        type_display,
+        type_shape,
+    })
+}
+
+/// Build public source struct metadata without loading rust-analyzer.
+fn source_struct_metadata(
+    struct_item: ast::Struct,
+    canonical_path: &str,
+    inner: &mut CacheInner,
+    source_root: &Path,
+    ctx: &SourceMetadataContext<'_>,
+) -> Option<RustItemMetadata> {
+    if !ast_visibility_is_public(struct_item.visibility()) {
+        return None;
+    }
+    let name = generated_source_name(struct_item.name()?.to_string().as_str());
+    let definition = ctx.definition_path(name.as_str());
+    let target_display = source_owned_type_display(ctx.crate_name, ctx.module_path, name.as_str());
+    let methods = source_inherent_methods_for_type(
+        inner,
+        source_root,
+        ctx.crate_name,
+        target_display.as_str(),
+        ctx.external_crates,
+        ctx.preferred_external_paths,
+    );
+    let fields = match struct_item.field_list() {
+        Some(ast::FieldList::RecordFieldList(list)) => list
+            .fields()
+            .filter_map(|field| source_field_info(field, ctx))
+            .collect(),
+        _ => Vec::new(),
+    };
+    Some(RustItemMetadata {
+        canonical_path: canonical_path.to_string(),
+        definition_path: Some(definition),
+        visibility: RustVisibility::Public,
+        kind: RustItemKind::Type(RustTypeInfo {
+            alias_target: None,
+            metadata_completeness: RustTypeMetadataCompleteness::FieldsAndVariantsOnly,
+            methods,
+            implemented_traits: Vec::new(),
+            fields,
+            variants: Vec::new(),
+        }),
+    })
+}
+
+/// Extract payload shapes from a source enum variant.
+fn source_variant_payload_shapes(variant: ast::Variant, ctx: &SourceMetadataContext<'_>) -> Vec<RustTypeShape> {
+    let Some(field_list) = variant.field_list() else {
+        return Vec::new();
+    };
+    match field_list {
+        ast::FieldList::TupleFieldList(fields) => fields
+            .fields()
+            .filter_map(|field| field.ty())
+            .map(|ty| {
+                let display = ctx.type_display(ty.syntax().text().to_string().as_str());
+                generated_type_shape(display.as_str())
+            })
+            .collect(),
+        ast::FieldList::RecordFieldList(fields) => fields
+            .fields()
+            .filter_map(|field| {
+                let ty = field.ty()?;
+                let display = ctx.type_display(ty.syntax().text().to_string().as_str());
+                Some(generated_type_shape(display.as_str()))
+            })
+            .collect(),
+    }
+}
+
+/// Build public source enum metadata without loading rust-analyzer.
+fn source_enum_metadata(
+    enum_item: ast::Enum,
+    canonical_path: &str,
+    inner: &mut CacheInner,
+    source_root: &Path,
+    ctx: &SourceMetadataContext<'_>,
+) -> Option<RustItemMetadata> {
+    if !ast_visibility_is_public(enum_item.visibility()) {
+        return None;
+    }
+    let name = generated_source_name(enum_item.name()?.to_string().as_str());
+    let definition = ctx.definition_path(name.as_str());
+    let target_display = source_owned_type_display(ctx.crate_name, ctx.module_path, name.as_str());
+    let methods = source_inherent_methods_for_type(
+        inner,
+        source_root,
+        ctx.crate_name,
+        target_display.as_str(),
+        ctx.external_crates,
+        ctx.preferred_external_paths,
+    );
+    let mut variants = enum_item
+        .variant_list()?
+        .variants()
+        .filter_map(|variant| {
+            let name = variant.name()?.to_string();
+            Some(RustVariantInfo {
+                name,
+                fields: source_variant_payload_shapes(variant, ctx),
+            })
+        })
+        .collect::<Vec<_>>();
+    variants.sort_by(|left, right| left.name.cmp(&right.name));
+    Some(RustItemMetadata {
+        canonical_path: canonical_path.to_string(),
+        definition_path: Some(definition),
+        visibility: RustVisibility::Public,
+        kind: RustItemKind::Type(RustTypeInfo {
+            alias_target: None,
+            metadata_completeness: RustTypeMetadataCompleteness::FieldsAndVariantsOnly,
+            methods,
+            implemented_traits: Vec::new(),
+            fields: Vec::new(),
+            variants,
+        }),
+    })
+}
+
+/// Return the matching parenthesized macro tuple for `item_name`, such as `(round, "doc", args,)`.
+fn source_macro_tuple_for_item(text: &str, item_name: &str) -> Option<String> {
+    let needle = format!("({item_name},");
+    let start = text.find(needle.as_str())?;
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut end = None;
+    for (offset, ch) in text[start..].char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '(' => depth = depth.saturating_add(1),
+            ')' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    end = Some(start + offset + ch.len_utf8());
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    end.map(|end| text[start..end].to_string())
+}
+
+/// Split a macro tuple at top-level commas while ignoring commas inside strings and nested delimiters.
+fn split_source_macro_tuple_items(tuple: &str) -> Vec<String> {
+    let inner = tuple.trim().trim_start_matches('(').trim_end_matches(')');
+    let mut parts = Vec::new();
+    let mut start = 0usize;
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (idx, ch) in inner.char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '(' | '[' | '{' => depth = depth.saturating_add(1),
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                parts.push(inner[start..idx].trim().to_string());
+                start = idx + ch.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    if start < inner.len() {
+        let tail = inner[start..].trim();
+        if !tail.is_empty() {
+            parts.push(tail.to_string());
+        }
+    }
+    parts
+}
+
+/// Build metadata for source functions emitted by macro families that expose ordinary public function wrappers.
+fn source_macro_function_metadata(
+    macro_call: ast::MacroCall,
+    item_name: &str,
+    canonical_path: &str,
+    crate_name: &str,
+    module_path: &[String],
+    preferred_external_paths: &HashMap<String, String>,
+) -> Option<RustItemMetadata> {
+    let text = macro_call.syntax().text().to_string();
+    if !text.contains("export_functions!") {
+        return None;
+    }
+    let tuple = source_macro_tuple_for_item(text.as_str(), item_name)?;
+    let parts = split_source_macro_tuple_items(tuple.as_str());
+    let args = parts
+        .get(2..)
+        .unwrap_or_default()
+        .iter()
+        .flat_map(|part| part.split_whitespace())
+        .filter(|token| *token != "@config")
+        .map(|token| token.trim_matches(','))
+        .filter(|token| !token.is_empty())
+        .collect::<Vec<_>>();
+    let expr_display = preferred_external_rust_path_display("datafusion_expr::Expr", preferred_external_paths);
+    let params = if args.len() == 1 && tuple.trim_end().ends_with(",)") {
+        vec![RustParam {
+            name: Some(args[0].to_string()),
+            type_display: format!("Vec<{expr_display}>"),
+        }]
+    } else {
+        args.into_iter()
+            .map(|arg| RustParam {
+                name: Some(arg.to_string()),
+                type_display: expr_display.clone(),
+            })
+            .collect()
+    };
+    let mut definition = vec![crate_name.to_string()];
+    definition.extend(module_path.iter().cloned());
+    definition.push(item_name.to_string());
+    Some(RustItemMetadata {
+        canonical_path: canonical_path.to_string(),
+        definition_path: Some(definition.join("::")),
+        visibility: RustVisibility::Public,
+        kind: RustItemKind::Function(RustFunctionSig {
+            params,
+            return_type: expr_display,
+            is_async: false,
+            is_unsafe: false,
+        }),
+    })
+}
+
+/// Find the source path for a crate-root module segment.
+fn dependency_module_source_path(source_path: &Path, module_name: &str) -> Option<PathBuf> {
+    external_module_source_candidates(source_path, module_name)
+        .into_iter()
+        .find(|path| path.exists())
+}
+
+/// Expand the leading alias in a public source re-export target before resolving the target path.
+///
+/// Rust crates commonly write `use crate::backend; pub use backend::module::*;` to keep public re-exports readable.
+/// The private import does not make `backend` public by itself, but it is still part of resolving the public `use`
+/// target. Applying it here keeps the cheap source route aligned with Rust name resolution without exposing private
+/// imports as independent public items.
+fn source_reexport_target_with_alias(
+    target: &[String],
+    aliases: &HashMap<String, String>,
+    crate_name: &str,
+) -> Vec<String> {
+    let Some((head, tail)) = target.split_first() else {
+        return Vec::new();
+    };
+    let Some(alias) = aliases.get(head) else {
+        return target.to_vec();
+    };
+    let mut segments = alias
+        .split("::")
+        .filter(|segment| !segment.is_empty())
+        .map(generated_source_name)
+        .collect::<Vec<_>>();
+    if segments.first().is_some_and(|segment| segment == crate_name) {
+        segments[0] = "crate".to_string();
+    }
+    segments.extend(tail.iter().cloned());
+    segments
+}
+
+/// Normalize a source public re-export target into dependency source item segments.
+fn source_reexport_target_segments(
+    module_path: &[String],
+    target: &[String],
+    external_crates: &HashSet<String>,
+    aliases: &HashMap<String, String>,
+    crate_name: &str,
+) -> Option<Vec<String>> {
+    let target = source_reexport_target_with_alias(target, aliases, crate_name);
+    source_target_segments(module_path, &target, external_crates)
+}
+
+/// Normalize a source public glob re-export into dependency source item segments.
+fn source_item_segments_for_reexport_target(
+    module_path: &[String],
+    target: &[String],
+    external_crates: &HashSet<String>,
+    aliases: &HashMap<String, String>,
+    crate_name: &str,
+    item_name: &str,
+) -> Option<Vec<String>> {
+    let mut segments = source_reexport_target_segments(module_path, target, external_crates, aliases, crate_name)?;
+    segments.push(item_name.to_string());
+    Some(segments)
+}
+
+/// Return the crate-root source file for a dependency source root.
+fn dependency_root_source_path(source_root: &Path) -> Option<PathBuf> {
+    let payload = fs::read_to_string(source_root.join("Cargo.toml")).ok()?;
+    let manifest = toml::from_str::<toml::Value>(payload.as_str()).ok()?;
+    Some(manifest_lib_source_path(source_root, &manifest))
+}
+
+/// Follow a dependency-source public re-export target, switching to another dependency source root when the target
+/// starts with an external crate. This keeps facade crates such as `arrow` and `datafusion` on the cheap source route
+/// instead of falling through to a rust-analyzer dependency workspace load.
+#[allow(clippy::too_many_arguments)]
+fn dependency_source_metadata_from_reexport_target(
+    inner: &mut CacheInner,
+    root: &Path,
+    source_root: &Path,
+    source_path: &Path,
+    crate_name: &str,
+    _module_path: &[String],
+    target_segments: &[String],
+    canonical_path: &str,
+    external_crates: &HashSet<String>,
+    preferred_external_paths: &HashMap<String, String>,
+    registry_src_roots: Option<&[PathBuf]>,
+    visited: &mut HashSet<(PathBuf, String)>,
+) -> Option<RustItemMetadata> {
+    let (target_crate, target_tail) = target_segments.split_first()?;
+    if external_crates.contains(target_crate)
+        && let Some(target_root) = resolve_dependency_manifest_dir(inner, root, target_crate, registry_src_roots)
+            .and_then(|dep_root| non_root_dependency_manifest_dir(root, dep_root))
+    {
+        let payload = fs::read_to_string(target_root.join("Cargo.toml")).ok()?;
+        let manifest = toml::from_str::<toml::Value>(payload.as_str()).ok()?;
+        let target_source_path = manifest_lib_source_path(&target_root, &manifest);
+        let target_external_crates = load_dependency_crate_names(&target_root);
+        return dependency_source_metadata_from_source(
+            &target_source_path,
+            &target_root,
+            root,
+            inner,
+            registry_src_roots,
+            target_crate,
+            &[],
+            target_tail,
+            canonical_path,
+            &target_external_crates,
+            preferred_external_paths,
+            visited,
+        );
+    }
+
+    let root_source_path = dependency_root_source_path(source_root).unwrap_or_else(|| source_path.to_path_buf());
+    dependency_source_metadata_from_source(
+        &root_source_path,
+        source_root,
+        root,
+        inner,
+        registry_src_roots,
+        crate_name,
+        &[],
+        target_segments,
+        canonical_path,
+        external_crates,
+        preferred_external_paths,
+        visited,
+    )
+}
+
+/// Walk dependency source files and public re-exports looking for one public function or type alias.
+#[allow(clippy::too_many_arguments)]
+fn dependency_source_metadata_from_source(
+    source_path: &Path,
+    source_root: &Path,
+    root: &Path,
+    inner: &mut CacheInner,
+    registry_src_roots: Option<&[PathBuf]>,
+    crate_name: &str,
+    module_path: &[String],
+    item_segments: &[String],
+    canonical_path: &str,
+    external_crates: &HashSet<String>,
+    preferred_external_paths: &HashMap<String, String>,
+    visited: &mut HashSet<(PathBuf, String)>,
+) -> Option<RustItemMetadata> {
+    if item_segments.is_empty() {
+        return None;
+    }
+    let source_path = fs::canonicalize(source_path).unwrap_or_else(|_| source_path.to_path_buf());
+    let visit_key = (source_path.clone(), item_segments.join("::"));
+    if !visited.insert(visit_key) {
+        return None;
+    }
+    let source = fs::read_to_string(&source_path).ok()?;
+    let parsed = SourceFile::parse(source.as_str(), Edition::CURRENT).tree();
+    let aliases = source_file_import_aliases(
+        &parsed,
+        crate_name,
+        module_path,
+        external_crates,
+        preferred_external_paths,
+    );
+
+    if item_segments.len() > 1 {
+        let module_name = &item_segments[0];
+        for item in parsed.items() {
+            let ast::Item::Module(module) = item else {
+                continue;
+            };
+            let name = generated_source_name(module.name()?.to_string().as_str());
+            if name != *module_name {
+                continue;
+            }
+            let mut nested_module_path = module_path.to_vec();
+            nested_module_path.push(name);
+            if let Some(item_list) = module.item_list() {
+                if let Some(meta) = dependency_source_metadata_in_items(
+                    item_list.items(),
+                    &source_path,
+                    source_root,
+                    root,
+                    inner,
+                    registry_src_roots,
+                    crate_name,
+                    &nested_module_path,
+                    &item_segments[1..],
+                    canonical_path,
+                    external_crates,
+                    preferred_external_paths,
+                    visited,
+                    &aliases,
+                ) {
+                    return Some(meta);
+                }
+            } else if let Some(module_source) = dependency_module_source_path(&source_path, module_name)
+                && let Some(meta) = dependency_source_metadata_from_source(
+                    &module_source,
+                    source_root,
+                    root,
+                    inner,
+                    registry_src_roots,
+                    crate_name,
+                    &nested_module_path,
+                    &item_segments[1..],
+                    canonical_path,
+                    external_crates,
+                    preferred_external_paths,
+                    visited,
+                )
+            {
+                return Some(meta);
+            }
+        }
+    }
+
+    dependency_source_metadata_in_items(
+        parsed.items(),
+        &source_path,
+        source_root,
+        root,
+        inner,
+        registry_src_roots,
+        crate_name,
+        module_path,
+        item_segments,
+        canonical_path,
+        external_crates,
+        preferred_external_paths,
+        visited,
+        &aliases,
+    )
+}
+
+/// Walk one source item list for direct item definitions and public re-exports.
+#[allow(clippy::too_many_arguments)]
+fn dependency_source_metadata_in_items<'a>(
+    mut items: impl Iterator<Item = ast::Item> + Clone + 'a,
+    source_path: &Path,
+    source_root: &Path,
+    root: &Path,
+    inner: &mut CacheInner,
+    registry_src_roots: Option<&[PathBuf]>,
+    crate_name: &str,
+    module_path: &[String],
+    item_segments: &[String],
+    canonical_path: &str,
+    external_crates: &HashSet<String>,
+    preferred_external_paths: &HashMap<String, String>,
+    visited: &mut HashSet<(PathBuf, String)>,
+    parent_aliases: &HashMap<String, String>,
+) -> Option<RustItemMetadata> {
+    let aliases = source_items_import_aliases(
+        items.clone(),
+        crate_name,
+        module_path,
+        external_crates,
+        preferred_external_paths,
+        parent_aliases,
+    );
+    let source_public_reexports = source_public_reexports_for(
+        inner,
+        source_root,
+        crate_name,
+        external_crates,
+        preferred_external_paths,
+    );
+    let ctx = SourceMetadataContext {
+        crate_name,
+        module_path,
+        external_crates,
+        aliases: &aliases,
+        preferred_external_paths,
+        source_public_reexports: &source_public_reexports,
+    };
+    if item_segments.len() == 1 {
+        let item_name = &item_segments[0];
+        for item in items.clone() {
+            match item {
+                ast::Item::Fn(function) => {
+                    let name = generated_source_name(function.name()?.to_string().as_str());
+                    if name == *item_name {
+                        return source_function_metadata(function, canonical_path, &ctx);
+                    }
+                }
+                ast::Item::TypeAlias(alias) => {
+                    let name = generated_source_name(alias.name()?.to_string().as_str());
+                    if name == *item_name {
+                        return source_type_alias_metadata(alias, canonical_path, &ctx);
+                    }
+                }
+                ast::Item::Trait(trait_item) => {
+                    let name = generated_source_name(trait_item.name()?.to_string().as_str());
+                    if name == *item_name {
+                        return source_trait_metadata(trait_item, canonical_path, &ctx);
+                    }
+                }
+                ast::Item::Struct(struct_item) => {
+                    let name = generated_source_name(struct_item.name()?.to_string().as_str());
+                    if name == *item_name {
+                        return source_struct_metadata(struct_item, canonical_path, inner, source_root, &ctx);
+                    }
+                }
+                ast::Item::Enum(enum_item) => {
+                    let name = generated_source_name(enum_item.name()?.to_string().as_str());
+                    if name == *item_name {
+                        return source_enum_metadata(enum_item, canonical_path, inner, source_root, &ctx);
+                    }
+                }
+                ast::Item::MacroCall(macro_call) => {
+                    if let Some(meta) = source_macro_function_metadata(
+                        macro_call,
+                        item_name,
+                        canonical_path,
+                        crate_name,
+                        module_path,
+                        preferred_external_paths,
+                    ) {
+                        return Some(meta);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let mut use_targets = Vec::new();
+        for item in items.by_ref() {
+            let ast::Item::Use(use_item) = item else {
+                continue;
+            };
+            if !use_item_is_plain_public(&use_item) {
+                continue;
+            }
+            let Some(tree) = use_item.use_tree() else {
+                continue;
+            };
+            collect_source_use_targets(&tree, &[], &mut use_targets);
+        }
+        for target in use_targets {
+            match target {
+                SourceUseTarget::Direct { local_name, target } if local_name == *item_name => {
+                    let Some(target_segments) =
+                        source_reexport_target_segments(module_path, &target, external_crates, &aliases, crate_name)
+                    else {
+                        continue;
+                    };
+                    if let Some(meta) = dependency_source_metadata_from_reexport_target(
+                        inner,
+                        root,
+                        source_root,
+                        source_path,
+                        crate_name,
+                        module_path,
+                        &target_segments,
+                        canonical_path,
+                        external_crates,
+                        preferred_external_paths,
+                        registry_src_roots,
+                        visited,
+                    ) {
+                        return Some(meta);
+                    }
+                }
+                SourceUseTarget::Glob { target } => {
+                    let Some(target_segments) = source_item_segments_for_reexport_target(
+                        module_path,
+                        &target,
+                        external_crates,
+                        &aliases,
+                        crate_name,
+                        item_name,
+                    ) else {
+                        continue;
+                    };
+                    if let Some(meta) = dependency_source_metadata_from_reexport_target(
+                        inner,
+                        root,
+                        source_root,
+                        source_path,
+                        crate_name,
+                        module_path,
+                        &target_segments,
+                        canonical_path,
+                        external_crates,
+                        preferred_external_paths,
+                        registry_src_roots,
+                        visited,
+                    ) {
+                        return Some(meta);
+                    }
+                }
+                _ => {}
+            }
+        }
+        return None;
+    }
+
+    let module_name = &item_segments[0];
+    for item in items.clone() {
+        let ast::Item::Module(module) = item else {
+            continue;
+        };
+        let name = generated_source_name(module.name()?.to_string().as_str());
+        if name != *module_name {
+            continue;
+        }
+        let mut nested_module_path = module_path.to_vec();
+        nested_module_path.push(name);
+        if let Some(item_list) = module.item_list() {
+            return dependency_source_metadata_in_items(
+                item_list.items(),
+                source_path,
+                source_root,
+                root,
+                inner,
+                registry_src_roots,
+                crate_name,
+                &nested_module_path,
+                &item_segments[1..],
+                canonical_path,
+                external_crates,
+                preferred_external_paths,
+                visited,
+                &aliases,
+            );
+        }
+        let module_source = dependency_module_source_path(source_path, module_name)?;
+        return dependency_source_metadata_from_source(
+            &module_source,
+            source_root,
+            root,
+            inner,
+            registry_src_roots,
+            crate_name,
+            &nested_module_path,
+            &item_segments[1..],
+            canonical_path,
+            external_crates,
+            preferred_external_paths,
+            visited,
+        );
+    }
+    let mut use_targets = Vec::new();
+    for item in items {
+        let ast::Item::Use(use_item) = item else {
+            continue;
+        };
+        if !use_item_is_plain_public(&use_item) {
+            continue;
+        }
+        let Some(tree) = use_item.use_tree() else {
+            continue;
+        };
+        collect_source_use_targets(&tree, &[], &mut use_targets);
+    }
+    for target in use_targets {
+        match target {
+            SourceUseTarget::Direct { local_name, target } if local_name == *module_name => {
+                let Some(mut target_segments) =
+                    source_reexport_target_segments(module_path, &target, external_crates, &aliases, crate_name)
+                else {
+                    continue;
+                };
+                target_segments.extend_from_slice(&item_segments[1..]);
+                if let Some(meta) = dependency_source_metadata_from_reexport_target(
+                    inner,
+                    root,
+                    source_root,
+                    source_path,
+                    crate_name,
+                    module_path,
+                    &target_segments,
+                    canonical_path,
+                    external_crates,
+                    preferred_external_paths,
+                    registry_src_roots,
+                    visited,
+                ) {
+                    return Some(meta);
+                }
+            }
+            SourceUseTarget::Glob { target } => {
+                let Some(mut target_segments) =
+                    source_reexport_target_segments(module_path, &target, external_crates, &aliases, crate_name)
+                else {
+                    continue;
+                };
+                target_segments.extend_from_slice(item_segments);
+                if let Some(meta) = dependency_source_metadata_from_reexport_target(
+                    inner,
+                    root,
+                    source_root,
+                    source_path,
+                    crate_name,
+                    module_path,
+                    &target_segments,
+                    canonical_path,
+                    external_crates,
+                    preferred_external_paths,
+                    registry_src_roots,
+                    visited,
+                ) {
+                    return Some(meta);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Resolve public source-level function and type-alias metadata from a dependency crate without loading rust-analyzer.
+fn dependency_source_metadata(
+    inner: &mut CacheInner,
+    root: &Path,
+    dep_root: &Path,
+    canonical_path: &str,
+    registry_src_roots: Option<&[PathBuf]>,
+    preferred_external_paths: &HashMap<String, String>,
+) -> Option<RustItemMetadata> {
+    let mut segments = canonical_path
+        .split("::")
+        .filter(|segment| !segment.is_empty())
+        .map(generated_source_name);
+    let crate_name = segments.next()?;
+    let item_segments = segments.collect::<Vec<_>>();
+    if item_segments.is_empty() {
+        return None;
+    }
+    let payload = fs::read_to_string(dep_root.join("Cargo.toml")).ok()?;
+    let manifest = toml::from_str::<toml::Value>(payload.as_str()).ok()?;
+    let source_path = manifest_lib_source_path(dep_root, &manifest);
+    let external_crates = load_dependency_crate_names(dep_root);
+    dependency_source_metadata_from_source(
+        &source_path,
+        dep_root,
+        root,
+        inner,
+        registry_src_roots,
+        &crate_name,
+        &[],
+        &item_segments,
+        canonical_path,
+        &external_crates,
+        preferred_external_paths,
+        &mut HashSet::new(),
+    )
+}
+
 /// Build metadata for a public generated Rust struct discovered in build-script output.
 fn generated_struct_metadata(
     struct_item: ast::Struct,
@@ -1213,7 +3316,12 @@ fn generated_type_info_from_source(
 
 /// Resolve dependency-owned metadata directly from generated build-script Rust when rust-inspect cannot resolve the
 /// item through the dependency crate's normal HIR workspace.
-fn generated_out_dir_metadata(root: &Path, dep_root: &Path, canonical_path: &str) -> Option<RustItemMetadata> {
+fn generated_out_dir_metadata(
+    root: &Path,
+    dep_root: &Path,
+    canonical_path: &str,
+    include_owners: &HashMap<String, Vec<Vec<String>>>,
+) -> Option<RustItemMetadata> {
     let mut segments = canonical_path.split("::").filter(|segment| !segment.is_empty());
     let crate_name = segments.next()?;
     let item_segments = segments.collect::<Vec<_>>();
@@ -1221,7 +3329,6 @@ fn generated_out_dir_metadata(root: &Path, dep_root: &Path, canonical_path: &str
         return None;
     }
     let external_crates = load_dependency_crate_names(dep_root);
-    let include_owners = load_generated_include_owners(dep_root);
     for generated_file in generated_out_dir_candidates(root, dep_root, crate_name) {
         let Ok(source) = fs::read_to_string(&generated_file) else {
             continue;
@@ -1266,6 +3373,17 @@ fn root_workspace_declares_crate(inner: &mut CacheInner, root: &Path, crate_name
     names
         .iter()
         .any(|name| name == normalized_crate_cache_key(crate_name).as_str())
+}
+
+/// Cargo metadata includes the root package in its package list; dependency fast paths must not treat it as an external
+/// dependency or root-package lookups bypass the primary workspace and disk-cache behavior.
+fn non_root_dependency_manifest_dir(root: &Path, dep_root: PathBuf) -> Option<PathBuf> {
+    let canonical_dep = fs::canonicalize(&dep_root).unwrap_or(dep_root);
+    if canonical_dep == root {
+        None
+    } else {
+        Some(canonical_dep)
+    }
 }
 
 /// Typed rust-inspect workspace route used for one extraction attempt.
@@ -1349,6 +3467,12 @@ impl WorkspaceExtractionRoute {
             }
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExtractionPolicy {
+    FastOnly,
+    Full,
 }
 
 /// Return whether an extraction error is a route miss that can fall through to the next route.
@@ -1467,26 +3591,12 @@ fn extract_in_workspace_set(
     registry_src_roots: Option<&[PathBuf]>,
     progress: &(dyn Fn(String) + Sync),
     timing_enabled: bool,
+    policy: ExtractionPolicy,
 ) -> Result<RustItemMetadata, RustMetadataError> {
-    let mut deferred_load_error = None;
-
-    match extract_from_workspace_route(
-        inner,
-        root,
-        canonical_path,
-        WorkspaceExtractionRoute::Primary,
-        progress,
-        timing_enabled,
-    ) {
-        Ok(meta) => return Ok(meta),
-        Err(err) if metadata_extraction_missed(&err) => {}
-        Err(err) if workspace_load_failed(&err) => deferred_load_error = Some(err),
-        Err(err) => return Err(err),
-    }
-
     let crate_name = crate_name_for_path(canonical_path);
     let dep_resolve_started = Instant::now();
-    let dep_root = resolve_dependency_manifest_dir(inner, root, crate_name, registry_src_roots);
+    let dep_root = resolve_dependency_manifest_dir(inner, root, crate_name, registry_src_roots)
+        .and_then(|dep_root| non_root_dependency_manifest_dir(root, dep_root));
     log_timing_stage(
         timing_enabled,
         root,
@@ -1505,6 +3615,7 @@ fn extract_in_workspace_set(
                 registry_src_roots,
                 progress,
                 timing_enabled,
+                policy,
             ) {
                 Ok(meta) => {
                     log_timing_stage(
@@ -1538,6 +3649,88 @@ fn extract_in_workspace_set(
                 Err(err) => return Err(err),
             }
         }
+        if !inner.root_dependency_reexport_paths.contains_key(root) {
+            let paths = load_root_dependency_reexport_paths(inner, root, registry_src_roots);
+            inner.root_dependency_reexport_paths.insert(root.to_path_buf(), paths);
+        }
+        let preferred_external_paths = inner
+            .root_dependency_reexport_paths
+            .get(root)
+            .cloned()
+            .unwrap_or_default();
+        let include_owners = generated_include_owners_for(inner, &dep_root);
+        if generated_include_owners_match_path(&include_owners, canonical_path) {
+            let generated_started = Instant::now();
+            if let Some(meta) = generated_out_dir_metadata(root, &dep_root, canonical_path, &include_owners) {
+                log_timing_stage(
+                    timing_enabled,
+                    root,
+                    canonical_path,
+                    "extract.dependency.generated_out_dir",
+                    generated_started.elapsed(),
+                    "status=hit owner_hint=true",
+                );
+                return Ok(meta);
+            }
+            log_timing_stage(
+                timing_enabled,
+                root,
+                canonical_path,
+                "extract.dependency.generated_out_dir",
+                generated_started.elapsed(),
+                "status=miss owner_hint=true",
+            );
+        }
+        let source_started = Instant::now();
+        if let Some(meta) = dependency_source_metadata(
+            inner,
+            root,
+            &dep_root,
+            canonical_path,
+            registry_src_roots,
+            &preferred_external_paths,
+        ) {
+            log_timing_stage(
+                timing_enabled,
+                root,
+                canonical_path,
+                "extract.dependency.source",
+                source_started.elapsed(),
+                "status=hit",
+            );
+            return Ok(meta);
+        }
+        log_timing_stage(
+            timing_enabled,
+            root,
+            canonical_path,
+            "extract.dependency.source",
+            source_started.elapsed(),
+            "status=miss",
+        );
+        let generated_started = Instant::now();
+        if let Some(meta) = generated_out_dir_metadata(root, &dep_root, canonical_path, &include_owners) {
+            log_timing_stage(
+                timing_enabled,
+                root,
+                canonical_path,
+                "extract.dependency.generated_out_dir",
+                generated_started.elapsed(),
+                "status=hit",
+            );
+            return Ok(meta);
+        }
+        log_timing_stage(
+            timing_enabled,
+            root,
+            canonical_path,
+            "extract.dependency.generated_out_dir",
+            generated_started.elapsed(),
+            "status=miss",
+        );
+        if policy == ExtractionPolicy::FastOnly {
+            return Err(RustMetadataError::PathNotResolved(canonical_path.to_string()));
+        }
         match extract_from_workspace_route(
             inner,
             root,
@@ -1563,13 +3756,69 @@ fn extract_in_workspace_set(
                 {
                     return Ok(meta);
                 }
-                if let Some(meta) = generated_out_dir_metadata(root, &dep_root, canonical_path) {
-                    return Ok(meta);
-                }
                 return Err(err);
             }
             Err(err) => return Err(err),
         }
+    }
+
+    let mut deferred_load_error = None;
+
+    if root_workspace_declares_crate(inner, root, crate_name) {
+        if !inner.root_dependency_reexport_paths.contains_key(root) {
+            let paths = load_root_dependency_reexport_paths(inner, root, registry_src_roots);
+            inner.root_dependency_reexport_paths.insert(root.to_path_buf(), paths);
+        }
+        let preferred_external_paths = inner
+            .root_dependency_reexport_paths
+            .get(root)
+            .cloned()
+            .unwrap_or_default();
+        let source_started = Instant::now();
+        if let Some(meta) = dependency_source_metadata(
+            inner,
+            root,
+            root,
+            canonical_path,
+            registry_src_roots,
+            &preferred_external_paths,
+        ) {
+            log_timing_stage(
+                timing_enabled,
+                root,
+                canonical_path,
+                "extract.root.source",
+                source_started.elapsed(),
+                "status=hit",
+            );
+            return Ok(meta);
+        }
+        log_timing_stage(
+            timing_enabled,
+            root,
+            canonical_path,
+            "extract.root.source",
+            source_started.elapsed(),
+            "status=miss",
+        );
+    }
+
+    if policy == ExtractionPolicy::FastOnly {
+        return Err(RustMetadataError::PathNotResolved(canonical_path.to_string()));
+    }
+
+    match extract_from_workspace_route(
+        inner,
+        root,
+        canonical_path,
+        WorkspaceExtractionRoute::Primary,
+        progress,
+        timing_enabled,
+    ) {
+        Ok(meta) => return Ok(meta),
+        Err(err) if metadata_extraction_missed(&err) => {}
+        Err(err) if workspace_load_failed(&err) => deferred_load_error = Some(err),
+        Err(err) => return Err(err),
     }
 
     if !root_workspace_declares_crate(inner, root, crate_name) {
@@ -1735,6 +3984,7 @@ impl RustMetadataCache {
                 registry_src_roots,
                 progress,
                 timing_enabled,
+                ExtractionPolicy::Full,
             ) {
                 Ok(found) => {
                     meta = Some(found);
@@ -1911,6 +4161,93 @@ impl RustMetadataCache {
         Ok(None)
     }
 
+    /// Return metadata from cache or cheap source/generated routes only.
+    ///
+    /// This is intended for hot compiler compatibility checks that can benefit from dependency source identity, but
+    /// must never load a rust-analyzer workspace as a side effect. Fast misses are remembered in memory only; a later
+    /// explicit full extraction may still resolve the same path.
+    pub fn get_cached_or_extract_fast(
+        &self,
+        manifest_dir: &Path,
+        canonical_path: &str,
+    ) -> Result<Option<CacheLookupHit>, RustMetadataError> {
+        let root = manifest_dir.canonicalize()?;
+        let timing_enabled = rust_inspect_timing_enabled();
+        let key_item = (root.clone(), canonical_path.to_owned());
+        let mut inner = self.inner.lock().map_err(|e| RustMetadataError::LoadWorkspace {
+            path: root.clone(),
+            message: format!("metadata cache lock poisoned: {e}"),
+        })?;
+        ensure_disk_cache_loaded(&mut inner, &root)?;
+
+        if let Some(hit) = inner.items.get(&key_item) {
+            return Ok(Some(CacheLookupHit {
+                metadata: Arc::clone(hit),
+                alias_used: false,
+            }));
+        }
+        if let Some(hit) = cached_definition_alias(&inner, &root, canonical_path) {
+            let arc = insert_aliased_item(&mut inner, &root, canonical_path, &hit);
+            return Ok(Some(CacheLookupHit {
+                metadata: arc,
+                alias_used: true,
+            }));
+        }
+        if inner.fast_failed_items.contains(&key_item) {
+            return Ok(None);
+        }
+
+        for candidate in canonical_path_candidates(canonical_path) {
+            let candidate_key = (root.clone(), candidate.clone());
+            if let Some(hit) = inner.items.get(&candidate_key).cloned() {
+                let arc = insert_aliased_item(&mut inner, &root, canonical_path, &hit);
+                return Ok(Some(CacheLookupHit {
+                    metadata: arc,
+                    alias_used: true,
+                }));
+            }
+            if inner.fast_failed_items.contains(&candidate_key) {
+                continue;
+            }
+            match extract_in_workspace_set(
+                &mut inner,
+                &root,
+                candidate.as_str(),
+                None,
+                &|_| (),
+                timing_enabled,
+                ExtractionPolicy::FastOnly,
+            ) {
+                Ok(mut meta) => {
+                    inner.fast_failed_items.remove(&candidate_key);
+                    inner.fast_failed_items.remove(&key_item);
+                    meta.canonical_path = canonical_path.to_owned();
+                    let arc = Arc::new(meta);
+                    insert_cached_item(&mut inner, &root, Arc::clone(&arc));
+                    if let Err(err) = persist_item_to_disk_cache(&inner, &root) {
+                        tracing::warn!(
+                            root = %root.display(),
+                            query = %canonical_path,
+                            error = %err,
+                            "failed to persist rust-inspect disk cache after fast source/generated hit"
+                        );
+                    }
+                    return Ok(Some(CacheLookupHit {
+                        metadata: arc,
+                        alias_used: candidate != canonical_path,
+                    }));
+                }
+                Err(err) if metadata_extraction_missed(&err) => {
+                    inner.fast_failed_items.insert(candidate_key);
+                }
+                Err(err) => return Err(err),
+            }
+        }
+
+        inner.fast_failed_items.insert(key_item);
+        Ok(None)
+    }
+
     /// Drop all in-memory and disk-cache bookkeeping for one manifest root.
     ///
     /// Use this after filesystem or dependency changes so the next lookup rebuilds fresh alias indexes.
@@ -1936,6 +4273,9 @@ impl RustMetadataCache {
         inner
             .crate_reexport_aliases
             .retain(|workspace_root, _| workspace_root != &root);
+        inner
+            .fast_failed_items
+            .retain(|(workspace_root, _)| workspace_root != &root);
         inner
             .failed_items
             .retain(|(workspace_root, _), _| workspace_root != &root);

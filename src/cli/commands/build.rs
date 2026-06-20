@@ -35,8 +35,8 @@ use super::build_report::{
     generated_project_report, incan_dependencies_report, interop_report, rust_inspection_report,
 };
 use super::common::{
-    CargoPolicy, ProjectRequirements, build_source_map, cargo_command_flags, collect_modules,
-    collect_project_requirements, collect_rust_dependency_uses, enforce_project_toolchain_constraint,
+    CargoPolicy, INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, ProjectRequirements, build_source_map, cargo_command_flags,
+    collect_modules, collect_project_requirements, collect_rust_dependency_uses, enforce_project_toolchain_constraint,
     format_dependency_error, imported_module_deps_for_with_index, merge_project_requirement_dependencies,
     module_key_index, resolve_project_root, typecheck_modules_with_import_graph, validate_output_dir,
 };
@@ -1344,6 +1344,24 @@ fn prepare_library_project(
     })
 }
 
+/// Write the `.incnlib` manifest and build-report artifact paths for a prepared library project.
+fn write_library_manifest_artifacts(prepared: &mut PreparedLibraryProject) -> CliResult<()> {
+    prepared
+        .library_manifest
+        .write_to_path(&prepared.manifest_path)
+        .map_err(|err| CliError::failure(format!("failed to write {}: {err}", prepared.manifest_path.display())))?;
+
+    prepared
+        .report
+        .artifacts
+        .push(artifact_report("incan_library_manifest", &prepared.manifest_path));
+    prepared.report.artifacts.push(artifact_report(
+        "generated_cargo_manifest",
+        &prepared.generator.cargo_manifest_path(),
+    ));
+    Ok(())
+}
+
 /// Validate RFC 031 library-mode preconditions.
 pub fn build_library(
     file_path: Option<&str>,
@@ -1362,6 +1380,21 @@ pub fn build_library(
         cargo_no_default_features,
         cargo_all_features,
     )?;
+    let artifact_only = env::var_os(INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV).is_some();
+
+    if artifact_only {
+        write_library_manifest_artifacts(&mut prepared)?;
+        print_build_progress(&report_options, "✓ Library dependency artifact prepared!");
+        print_build_progress(
+            &report_options,
+            format!("Generated manifest: {}", prepared.manifest_path.display()),
+        );
+        let report = prepared
+            .report
+            .finish(BTreeMap::from([("total".to_string(), elapsed_ms(total_start))]));
+        emit_build_report(&report, &report_options)?;
+        return Ok(ExitCode::SUCCESS);
+    }
 
     if prepared.should_preheat_library_dependencies
         && let Some(lock_payload) = prepared.lock_payload.as_deref()
@@ -1403,10 +1436,7 @@ pub fn build_library(
         }
     };
 
-    prepared
-        .library_manifest
-        .write_to_path(&prepared.manifest_path)
-        .map_err(|err| CliError::failure(format!("failed to write {}: {err}", prepared.manifest_path.display())))?;
+    write_library_manifest_artifacts(&mut prepared)?;
 
     print_build_progress(&report_options, "✓ Library build successful!");
     print_build_progress(
@@ -1418,14 +1448,6 @@ pub fn build_library(
         format!("Generated manifest: {}", prepared.manifest_path.display()),
     );
 
-    prepared
-        .report
-        .artifacts
-        .push(artifact_report("incan_library_manifest", &prepared.manifest_path));
-    prepared.report.artifacts.push(artifact_report(
-        "generated_cargo_manifest",
-        &prepared.generator.cargo_manifest_path(),
-    ));
     let report = prepared.report.finish(BTreeMap::from([
         ("cargo_build".to_string(), cargo_build_ms),
         ("total".to_string(), elapsed_ms(total_start)),

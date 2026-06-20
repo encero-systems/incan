@@ -57,6 +57,8 @@ pub fn fallback_rust_trait_methods(path: &str) -> &'static [&'static str] {
             "output_size",
             "digest",
         ],
+        "blake2::digest::Update" | "sha3::digest::Update" => &["update", "chain"],
+        "sha3::digest::ExtendableOutputReset" => &["finalize_xof_reset"],
         "blake2::digest::XofReader" | "sha3::digest::XofReader" => &["read"],
         "std::os::unix::fs::MetadataExt" => &[
             "dev", "ino", "mode", "nlink", "uid", "gid", "rdev", "size", "atime", "mtime", "ctime", "blksize", "blocks",

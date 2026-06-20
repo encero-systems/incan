@@ -25,9 +25,33 @@ pub(crate) struct PendingDesugarerArtifact {
     pub(crate) source_path: PathBuf,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VocabExtractionMode {
+    PackageArtifacts,
+    ParserOnly,
+}
+
+/// Collect full vocab companion metadata for packaging a library artifact.
 pub(crate) fn collect_library_vocab_metadata(
     manifest: &ProjectManifest,
     project_root: &Path,
+) -> CliResult<Option<LibraryVocabExtraction>> {
+    collect_library_vocab_metadata_with_mode(manifest, project_root, VocabExtractionMode::PackageArtifacts)
+}
+
+/// Collect parser-only vocab metadata for source collection without preparing persistent library artifacts.
+pub(crate) fn collect_library_vocab_metadata_for_parser(
+    manifest: &ProjectManifest,
+    project_root: &Path,
+) -> CliResult<Option<LibraryVocabExtraction>> {
+    collect_library_vocab_metadata_with_mode(manifest, project_root, VocabExtractionMode::ParserOnly)
+}
+
+/// Collect vocab companion metadata using either full package artifacts or parser-only source metadata.
+fn collect_library_vocab_metadata_with_mode(
+    manifest: &ProjectManifest,
+    project_root: &Path,
+    mode: VocabExtractionMode,
 ) -> CliResult<Option<LibraryVocabExtraction>> {
     let Some(vocab) = manifest.vocab() else {
         return Ok(None);
@@ -49,14 +73,20 @@ pub(crate) fn collect_library_vocab_metadata(
 
     let metadata = extract_vocab_metadata_from_library_entrypoint(&companion_crate_root, &package_name)?;
     ensure_supported_vocab_metadata_version(&metadata, &companion_crate_root)?;
-    if let Some(desugarer) = metadata.desugarer.as_ref() {
+    if mode == VocabExtractionMode::PackageArtifacts
+        && let Some(desugarer) = metadata.desugarer.as_ref()
+    {
         ensure_companion_supports_cdylib(&cargo_manifest_path)?;
         ensure_rust_target_installed(&desugarer.target)?;
         run_cargo_build_for_target(&cargo_manifest_path, &desugarer.target, &desugarer.profile)?;
     }
     let compatibility_activations = project_soft_keyword_activations(&metadata.keyword_registrations);
-    let pending_desugarer_artifact =
-        build_pending_desugarer_artifact(&companion_crate_root, &package_name, metadata.desugarer.as_ref())?;
+    let pending_desugarer_artifact = match mode {
+        VocabExtractionMode::PackageArtifacts => {
+            build_pending_desugarer_artifact(&companion_crate_root, &package_name, metadata.desugarer.as_ref())?
+        }
+        VocabExtractionMode::ParserOnly => None,
+    };
 
     Ok(Some(LibraryVocabExtraction {
         payload: VocabExports {

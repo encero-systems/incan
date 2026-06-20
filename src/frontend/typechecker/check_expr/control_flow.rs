@@ -54,6 +54,14 @@ impl TypeChecker {
 
     /// Return whether this expression is a direct async call in an `await` operand.
     fn expr_is_async_call_realization(&mut self, expr: &Spanned<Expr>) -> bool {
+        if self
+            .type_info
+            .rust
+            .async_call_realizations
+            .contains(&(expr.span.start, expr.span.end))
+        {
+            return true;
+        }
         match &expr.node {
             Expr::Call(callee, _, _) => self.call_expr_is_async(callee),
             Expr::MethodCall(base, method, _, _) => self.method_call_expr_is_async(base, method),
