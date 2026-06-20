@@ -56,11 +56,48 @@ struct CacheInner {
     crate_reexport_aliases: HashMap<PathBuf, HashMap<String, String>>,
     root_dependency_reexport_paths: HashMap<PathBuf, HashMap<String, String>>,
     generated_include_owners: HashMap<PathBuf, HashMap<String, Vec<Vec<String>>>>,
-    source_public_reexport_paths: HashMap<PathBuf, HashMap<String, String>>,
-    source_inherent_method_indexes: HashMap<PathBuf, HashMap<String, Vec<RustMethodSig>>>,
+    source_public_reexport_paths: HashMap<SourceMetadataIndexKey, HashMap<String, String>>,
+    source_inherent_method_indexes: HashMap<SourceMetadataIndexKey, HashMap<String, Vec<RustMethodSig>>>,
     fast_failed_items: HashSet<(PathBuf, String)>,
     failed_items: HashMap<(PathBuf, String), NegativeLookup>,
     disk_cache_state: HashMap<PathBuf, DiskCacheState>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct SourceMetadataIndexKey {
+    source_root: PathBuf,
+    crate_name: String,
+    external_crates: Vec<String>,
+    preferred_external_paths: Vec<(String, String)>,
+}
+
+impl SourceMetadataIndexKey {
+    /// Build the cache key for source-derived metadata indexes.
+    ///
+    /// The source root alone is insufficient because source type displays are normalized through the consuming root's
+    /// public dependency reexport map. Two generated roots can legitimately view the same dependency source through
+    /// different public facade paths.
+    fn new(
+        source_root: &Path,
+        crate_name: &str,
+        external_crates: &HashSet<String>,
+        preferred_external_paths: &HashMap<String, String>,
+    ) -> Self {
+        let source_root = fs::canonicalize(source_root).unwrap_or_else(|_| source_root.to_path_buf());
+        let mut external_crates = external_crates.iter().cloned().collect::<Vec<_>>();
+        external_crates.sort();
+        let mut preferred_external_paths = preferred_external_paths
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect::<Vec<_>>();
+        preferred_external_paths.sort();
+        Self {
+            source_root,
+            crate_name: crate_name.to_string(),
+            external_crates,
+            preferred_external_paths,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -2201,21 +2238,17 @@ fn ensure_source_metadata_indexes(
     crate_name: &str,
     external_crates: &HashSet<String>,
     preferred_external_paths: &HashMap<String, String>,
-) -> PathBuf {
-    let source_root = fs::canonicalize(source_root).unwrap_or_else(|_| source_root.to_path_buf());
-    if !inner.source_public_reexport_paths.contains_key(&source_root)
-        || !inner.source_inherent_method_indexes.contains_key(&source_root)
+) -> SourceMetadataIndexKey {
+    let key = SourceMetadataIndexKey::new(source_root, crate_name, external_crates, preferred_external_paths);
+    if !inner.source_public_reexport_paths.contains_key(&key)
+        || !inner.source_inherent_method_indexes.contains_key(&key)
     {
         let (public_reexports, methods) =
-            build_source_metadata_indexes(&source_root, crate_name, external_crates, preferred_external_paths);
-        inner
-            .source_public_reexport_paths
-            .insert(source_root.clone(), public_reexports);
-        inner
-            .source_inherent_method_indexes
-            .insert(source_root.clone(), methods);
+            build_source_metadata_indexes(&key.source_root, crate_name, external_crates, preferred_external_paths);
+        inner.source_public_reexport_paths.insert(key.clone(), public_reexports);
+        inner.source_inherent_method_indexes.insert(key.clone(), methods);
     }
-    source_root
+    key
 }
 
 /// Collect same-crate public source reexports for one dependency root.
@@ -2226,7 +2259,7 @@ fn source_public_reexports_for(
     external_crates: &HashSet<String>,
     preferred_external_paths: &HashMap<String, String>,
 ) -> HashMap<String, String> {
-    let source_root = ensure_source_metadata_indexes(
+    let key = ensure_source_metadata_indexes(
         inner,
         source_root,
         crate_name,
@@ -2235,7 +2268,7 @@ fn source_public_reexports_for(
     );
     inner
         .source_public_reexport_paths
-        .get(&source_root)
+        .get(&key)
         .cloned()
         .unwrap_or_default()
 }
@@ -2249,7 +2282,7 @@ fn source_inherent_methods_for_type(
     external_crates: &HashSet<String>,
     preferred_external_paths: &HashMap<String, String>,
 ) -> Vec<RustMethodSig> {
-    let source_root = ensure_source_metadata_indexes(
+    let key = ensure_source_metadata_indexes(
         inner,
         source_root,
         crate_name,
@@ -2258,7 +2291,7 @@ fn source_inherent_methods_for_type(
     );
     inner
         .source_inherent_method_indexes
-        .get(&source_root)
+        .get(&key)
         .and_then(|methods| methods.get(target_display).cloned())
         .unwrap_or_default()
 }

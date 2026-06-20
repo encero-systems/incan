@@ -908,6 +908,84 @@ impl NestedFrame {
     Ok(())
 }
 
+/// Source metadata indexes are shared inside one cache instance, but path normalization depends on the consuming root.
+#[test]
+fn dependency_source_metadata_index_is_keyed_by_root_facing_reexports() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let root_a = tmp.path().join("root-a");
+    let root_b = tmp.path().join("root-b");
+    let dep = tmp.path().join("source-dep");
+    let facade_a = tmp.path().join("facade-a");
+    let facade_b = tmp.path().join("facade-b");
+    let external = tmp.path().join("external-type");
+    for root in [&root_a, &root_b, &dep, &facade_a, &facade_b, &external] {
+        fs::create_dir_all(root.join("src"))?;
+    }
+    fs::write(
+        root_a.join("Cargo.toml"),
+        "[package]\nname = \"root_a\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nsource-dep = { path = \"../source-dep\" }\nfacade-a = { path = \"../facade-a\" }\n",
+    )?;
+    fs::write(root_a.join("src").join("lib.rs"), "pub fn keep() {}\n")?;
+    fs::write(
+        root_b.join("Cargo.toml"),
+        "[package]\nname = \"root_b\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nsource-dep = { path = \"../source-dep\" }\nfacade-b = { path = \"../facade-b\" }\n",
+    )?;
+    fs::write(root_b.join("src").join("lib.rs"), "pub fn keep() {}\n")?;
+    fs::write(
+        facade_a.join("Cargo.toml"),
+        "[package]\nname = \"facade-a\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\nname = \"facade_a\"\n\n[dependencies]\nexternal-type = { path = \"../external-type\" }\n",
+    )?;
+    fs::write(
+        facade_a.join("src").join("lib.rs"),
+        "pub mod types { pub use external_type::*; }\n",
+    )?;
+    fs::write(
+        facade_b.join("Cargo.toml"),
+        "[package]\nname = \"facade-b\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\nname = \"facade_b\"\n\n[dependencies]\nexternal-type = { path = \"../external-type\" }\n",
+    )?;
+    fs::write(
+        facade_b.join("src").join("lib.rs"),
+        "pub mod model { pub use external_type::*; }\n",
+    )?;
+    fs::write(
+        external.join("Cargo.toml"),
+        "[package]\nname = \"external-type\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\nname = \"external_type\"\n",
+    )?;
+    fs::write(external.join("src").join("lib.rs"), "pub struct External;\n")?;
+    fs::write(
+        dep.join("Cargo.toml"),
+        "[package]\nname = \"source-dep\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\nname = \"source_dep\"\n\n[dependencies]\nexternal-type = { path = \"../external-type\" }\n",
+    )?;
+    fs::write(
+        dep.join("src").join("lib.rs"),
+        "use external_type::External;\n\npub fn make() -> External { todo!() }\n",
+    )?;
+
+    let cache = RustMetadataCache::new();
+    let root_a_function = cache.get_or_extract(&root_a, "source_dep::make", &|_| ())?;
+    let RustItemKind::Function(root_a_sig) = &root_a_function.kind else {
+        return Err("expected root A source function metadata".into());
+    };
+    assert_eq!(root_a_sig.return_type, "facade_a::types::External");
+
+    let root_b_function = cache.get_or_extract(&root_b, "source_dep::make", &|_| ())?;
+    let RustItemKind::Function(root_b_sig) = &root_b_function.kind else {
+        return Err("expected root B source function metadata".into());
+    };
+    assert_eq!(root_b_sig.return_type, "facade_b::model::External");
+
+    let inner = cache
+        .inner
+        .lock()
+        .map_err(|_| std::io::Error::other("poisoned cache"))?;
+    assert_eq!(
+        inner.source_public_reexport_paths.len(),
+        2,
+        "the same dependency source root should have one source index per root-facing reexport view"
+    );
+    Ok(())
+}
+
 /// Public source re-export targets should resolve aliases from their declaring file without treating private imports
 /// as public items by themselves.
 #[test]
