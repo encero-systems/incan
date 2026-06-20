@@ -11,8 +11,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::cli::{CliError, CliResult};
 use crate::library_manifest::{SoftKeywordActivation, VocabDesugarerArtifact, VocabExports};
 use crate::manifest::ProjectManifest;
+use crate::version::INCAN_VERSION;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use wasmtime::{Config, Engine, ExternType, Module, ValType};
+
+const VOCAB_COMPANION_CACHE_FORMAT: u32 = 1;
+const VOCAB_COMPANION_CACHE_DIR_ENV: &str = "INCAN_VOCAB_COMPANION_CACHE_DIR";
+const VOCAB_COMPANION_CACHE_FILE: &str = "metadata.json";
 
 pub(crate) struct LibraryVocabExtraction {
     pub(crate) payload: VocabExports,
@@ -20,6 +26,7 @@ pub(crate) struct LibraryVocabExtraction {
     pub(crate) pending_desugarer_artifact: Option<PendingDesugarerArtifact>,
 }
 
+#[derive(Debug, Clone)]
 pub(crate) struct PendingDesugarerArtifact {
     pub(crate) metadata: VocabDesugarerArtifact,
     pub(crate) source_path: PathBuf,
@@ -31,12 +38,47 @@ enum VocabExtractionMode {
     ParserOnly,
 }
 
+#[derive(Debug, Clone)]
+struct VocabCompanionCacheContext {
+    fingerprint: String,
+    cache_dir: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+struct CachedVocabCompanion {
+    metadata: incan_vocab::VocabMetadata,
+    pending_desugarer_artifact: Option<PendingDesugarerArtifact>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct VocabCompanionCacheEnvelope {
+    cache_format: u32,
+    compiler_version: String,
+    vocab_metadata_version: u32,
+    fingerprint: String,
+    metadata: incan_vocab::VocabMetadata,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    desugarer_artifact: Option<CachedDesugarerArtifact>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CachedDesugarerArtifact {
+    metadata: VocabDesugarerArtifact,
+    file_name: String,
+}
+
 /// Collect full vocab companion metadata for packaging a library artifact.
 pub(crate) fn collect_library_vocab_metadata(
     manifest: &ProjectManifest,
     project_root: &Path,
+    generated_cargo_target_dir: Option<&Path>,
 ) -> CliResult<Option<LibraryVocabExtraction>> {
-    collect_library_vocab_metadata_with_mode(manifest, project_root, VocabExtractionMode::PackageArtifacts)
+    collect_library_vocab_metadata_with_mode(
+        manifest,
+        project_root,
+        generated_cargo_target_dir,
+        VocabExtractionMode::PackageArtifacts,
+    )
 }
 
 /// Collect parser-only vocab metadata for source collection without preparing persistent library artifacts.
@@ -44,13 +86,14 @@ pub(crate) fn collect_library_vocab_metadata_for_parser(
     manifest: &ProjectManifest,
     project_root: &Path,
 ) -> CliResult<Option<LibraryVocabExtraction>> {
-    collect_library_vocab_metadata_with_mode(manifest, project_root, VocabExtractionMode::ParserOnly)
+    collect_library_vocab_metadata_with_mode(manifest, project_root, None, VocabExtractionMode::ParserOnly)
 }
 
 /// Collect vocab companion metadata using either full package artifacts or parser-only source metadata.
 fn collect_library_vocab_metadata_with_mode(
     manifest: &ProjectManifest,
     project_root: &Path,
+    generated_cargo_target_dir: Option<&Path>,
     mode: VocabExtractionMode,
 ) -> CliResult<Option<LibraryVocabExtraction>> {
     let Some(vocab) = manifest.vocab() else {
@@ -70,21 +113,48 @@ fn collect_library_vocab_metadata_with_mode(
     validate_companion_crate_root(&companion_crate_root)?;
     let cargo_manifest_path = companion_crate_root.join("Cargo.toml");
     let package_name = read_companion_package_name(&cargo_manifest_path)?;
+    let cache_context = vocab_companion_cache_context(
+        project_root,
+        &companion_crate_root,
+        &package_name,
+        generated_cargo_target_dir,
+    )?;
+    let cached = read_cached_vocab_companion(&cache_context)?;
+    let cache_hit = cached.is_some();
+    let cached_had_desugarer_artifact = cached
+        .as_ref()
+        .and_then(|cached| cached.pending_desugarer_artifact.as_ref())
+        .is_some();
 
-    let metadata = extract_vocab_metadata_from_library_entrypoint(&companion_crate_root, &package_name)?;
+    let metadata = if let Some(cached) = cached.as_ref() {
+        cached.metadata.clone()
+    } else {
+        extract_vocab_metadata_from_library_entrypoint(&companion_crate_root, &package_name)?
+    };
     ensure_supported_vocab_metadata_version(&metadata, &companion_crate_root)?;
+    let mut pending_desugarer_artifact = cached
+        .as_ref()
+        .and_then(|cached| cached.pending_desugarer_artifact.clone());
     if mode == VocabExtractionMode::PackageArtifacts
         && let Some(desugarer) = metadata.desugarer.as_ref()
+        && pending_desugarer_artifact.is_none()
     {
         ensure_companion_supports_cdylib(&cargo_manifest_path)?;
         ensure_rust_target_installed(&desugarer.target)?;
         run_cargo_build_for_target(&cargo_manifest_path, &desugarer.target, &desugarer.profile)?;
+        pending_desugarer_artifact =
+            build_pending_desugarer_artifact(&companion_crate_root, &package_name, metadata.desugarer.as_ref())?;
+    }
+    if !cache_hit
+        || (mode == VocabExtractionMode::PackageArtifacts
+            && pending_desugarer_artifact.is_some()
+            && !cached_had_desugarer_artifact)
+    {
+        write_cached_vocab_companion(&cache_context, &metadata, pending_desugarer_artifact.as_ref())?;
     }
     let compatibility_activations = project_soft_keyword_activations(&metadata.keyword_registrations);
     let pending_desugarer_artifact = match mode {
-        VocabExtractionMode::PackageArtifacts => {
-            build_pending_desugarer_artifact(&companion_crate_root, &package_name, metadata.desugarer.as_ref())?
-        }
+        VocabExtractionMode::PackageArtifacts => pending_desugarer_artifact,
         VocabExtractionMode::ParserOnly => None,
     };
 
@@ -102,6 +172,254 @@ fn collect_library_vocab_metadata_with_mode(
         compatibility_activations,
         pending_desugarer_artifact,
     }))
+}
+
+/// Build the cache identity and directory for one vocab companion crate.
+fn vocab_companion_cache_context(
+    project_root: &Path,
+    companion_crate_root: &Path,
+    package_name: &str,
+    generated_cargo_target_dir: Option<&Path>,
+) -> CliResult<VocabCompanionCacheContext> {
+    let fingerprint = vocab_companion_fingerprint(companion_crate_root, package_name)?;
+    let cache_base = vocab_companion_cache_base(project_root, generated_cargo_target_dir);
+    Ok(VocabCompanionCacheContext {
+        cache_dir: cache_base.join(&fingerprint),
+        fingerprint,
+    })
+}
+
+/// Return the root directory that stores vocab companion cache entries for this invocation.
+fn vocab_companion_cache_base(project_root: &Path, generated_cargo_target_dir: Option<&Path>) -> PathBuf {
+    if let Some(raw) = env::var_os(VOCAB_COMPANION_CACHE_DIR_ENV).filter(|raw| !raw.is_empty()) {
+        return resolve_cache_path(project_root, Path::new(&raw));
+    }
+
+    if let Some(target_dir) = generated_cargo_target_dir {
+        return resolve_cache_path(project_root, target_dir).join("incan-vocab-cache");
+    }
+
+    project_root.join("target").join(".incan-vocab-cache")
+}
+
+/// Resolve a user-provided cache path using the current directory, falling back to the project root if needed.
+fn resolve_cache_path(project_root: &Path, path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        return path.to_path_buf();
+    }
+
+    env::current_dir()
+        .unwrap_or_else(|_| project_root.to_path_buf())
+        .join(path)
+}
+
+/// Compute a stable content fingerprint for the companion inputs that affect extracted metadata or artifacts.
+fn vocab_companion_fingerprint(companion_crate_root: &Path, package_name: &str) -> CliResult<String> {
+    let mut hasher = Sha256::new();
+    hasher.update(b"incan-vocab-companion-cache\0");
+    hasher.update(VOCAB_COMPANION_CACHE_FORMAT.to_le_bytes());
+    hasher.update(INCAN_VERSION.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(incan_vocab::VOCAB_METADATA_VERSION.to_le_bytes());
+    hasher.update(package_name.as_bytes());
+    hasher.update(b"\0");
+
+    for file in vocab_companion_fingerprint_files(companion_crate_root)? {
+        let relative_path = normalized_relative_path(companion_crate_root, &file);
+        let bytes = fs::read(&file).map_err(|err| {
+            CliError::failure(format!(
+                "failed to read vocab companion cache input {}: {err}",
+                file.display()
+            ))
+        })?;
+        hasher.update(relative_path.as_bytes());
+        hasher.update(b"\0");
+        hasher.update((bytes.len() as u64).to_le_bytes());
+        hasher.update(b"\0");
+        hasher.update(&bytes);
+        hasher.update(b"\0");
+    }
+
+    Ok(hex::encode(hasher.finalize()))
+}
+
+/// Collect companion files that participate in the cache fingerprint.
+fn vocab_companion_fingerprint_files(companion_crate_root: &Path) -> CliResult<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    collect_vocab_companion_fingerprint_files(companion_crate_root, &mut files)?;
+    files.sort();
+    Ok(files)
+}
+
+/// Recursively append fingerprint input files while skipping Cargo output and VCS directories.
+fn collect_vocab_companion_fingerprint_files(dir: &Path, files: &mut Vec<PathBuf>) -> CliResult<()> {
+    let mut entries = fs::read_dir(dir)
+        .map_err(|err| {
+            CliError::failure(format!(
+                "failed to read vocab companion directory {}: {err}",
+                dir.display()
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| {
+            CliError::failure(format!(
+                "failed to read vocab companion directory {}: {err}",
+                dir.display()
+            ))
+        })?;
+    entries.sort_by_key(std::fs::DirEntry::path);
+
+    for entry in entries {
+        let path = entry.path();
+        let file_name = entry.file_name();
+        if path.is_dir() {
+            if matches!(file_name.to_str(), Some("target" | ".git")) {
+                continue;
+            }
+            collect_vocab_companion_fingerprint_files(&path, files)?;
+        } else if path.is_file() {
+            files.push(path);
+        }
+    }
+
+    Ok(())
+}
+
+/// Convert a fingerprint input path to a platform-independent relative path label.
+fn normalized_relative_path(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// Read a valid vocab companion cache entry, returning `None` when the cache is absent, stale, or corrupt.
+fn read_cached_vocab_companion(context: &VocabCompanionCacheContext) -> CliResult<Option<CachedVocabCompanion>> {
+    let cache_file = context.cache_dir.join(VOCAB_COMPANION_CACHE_FILE);
+    let bytes = match fs::read(&cache_file) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Ok(None),
+    };
+    let envelope = match serde_json::from_slice::<VocabCompanionCacheEnvelope>(&bytes) {
+        Ok(envelope) => envelope,
+        Err(_) => return Ok(None),
+    };
+    if envelope.cache_format != VOCAB_COMPANION_CACHE_FORMAT
+        || envelope.compiler_version != INCAN_VERSION
+        || envelope.vocab_metadata_version != incan_vocab::VOCAB_METADATA_VERSION
+        || envelope.fingerprint != context.fingerprint
+    {
+        return Ok(None);
+    }
+    let pending_desugarer_artifact = match envelope.desugarer_artifact {
+        Some(cached) => cached_pending_desugarer_artifact(context, cached)?,
+        None => None,
+    };
+
+    Ok(Some(CachedVocabCompanion {
+        metadata: envelope.metadata,
+        pending_desugarer_artifact,
+    }))
+}
+
+/// Rehydrate a cached desugarer artifact when its stored bytes still match the recorded digest.
+fn cached_pending_desugarer_artifact(
+    context: &VocabCompanionCacheContext,
+    cached: CachedDesugarerArtifact,
+) -> CliResult<Option<PendingDesugarerArtifact>> {
+    let source_path = context.cache_dir.join("desugarers").join(&cached.file_name);
+    let bytes = match fs::read(&source_path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Ok(None),
+    };
+    let sha256 = hex::encode(Sha256::digest(&bytes));
+    if sha256 != cached.metadata.sha256 {
+        return Ok(None);
+    }
+    Ok(Some(PendingDesugarerArtifact {
+        metadata: cached.metadata,
+        source_path,
+    }))
+}
+
+/// Persist extracted companion metadata and any packaged desugarer artifact under the fingerprinted cache directory.
+fn write_cached_vocab_companion(
+    context: &VocabCompanionCacheContext,
+    metadata: &incan_vocab::VocabMetadata,
+    pending_desugarer_artifact: Option<&PendingDesugarerArtifact>,
+) -> CliResult<()> {
+    fs::create_dir_all(&context.cache_dir).map_err(|err| {
+        CliError::failure(format!(
+            "failed to create vocab companion cache directory {}: {err}",
+            context.cache_dir.display()
+        ))
+    })?;
+    let desugarer_artifact = pending_desugarer_artifact
+        .map(|artifact| cache_desugarer_artifact(context, artifact))
+        .transpose()?;
+    let envelope = VocabCompanionCacheEnvelope {
+        cache_format: VOCAB_COMPANION_CACHE_FORMAT,
+        compiler_version: INCAN_VERSION.to_string(),
+        vocab_metadata_version: incan_vocab::VOCAB_METADATA_VERSION,
+        fingerprint: context.fingerprint.clone(),
+        metadata: metadata.clone(),
+        desugarer_artifact,
+    };
+    let payload = serde_json::to_vec_pretty(&envelope)
+        .map_err(|err| CliError::failure(format!("failed to encode vocab companion cache metadata: {err}")))?;
+    let cache_file = context.cache_dir.join(VOCAB_COMPANION_CACHE_FILE);
+    fs::write(&cache_file, payload).map_err(|err| {
+        CliError::failure(format!(
+            "failed to write vocab companion cache {}: {err}",
+            cache_file.display()
+        ))
+    })
+}
+
+/// Copy a validated desugarer artifact into the cache and return its cache-local metadata.
+fn cache_desugarer_artifact(
+    context: &VocabCompanionCacheContext,
+    artifact: &PendingDesugarerArtifact,
+) -> CliResult<CachedDesugarerArtifact> {
+    let file_name = artifact_cache_file_name(&artifact.metadata)?;
+    let destination_dir = context.cache_dir.join("desugarers");
+    fs::create_dir_all(&destination_dir).map_err(|err| {
+        CliError::failure(format!(
+            "failed to create vocab desugarer cache directory {}: {err}",
+            destination_dir.display()
+        ))
+    })?;
+    let destination = destination_dir.join(&file_name);
+    fs::copy(&artifact.source_path, &destination).map_err(|err| {
+        CliError::failure(format!(
+            "failed to cache vocab desugarer artifact {} -> {}: {err}",
+            artifact.source_path.display(),
+            destination.display()
+        ))
+    })?;
+
+    Ok(CachedDesugarerArtifact {
+        metadata: artifact.metadata.clone(),
+        file_name,
+    })
+}
+
+/// Derive the cache-local artifact filename from the packaged desugarer metadata.
+fn artifact_cache_file_name(metadata: &VocabDesugarerArtifact) -> CliResult<String> {
+    Path::new(&metadata.relative_path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_string)
+        .ok_or_else(|| {
+            CliError::failure(format!(
+                "invalid vocab desugarer relative path for cache: {}",
+                metadata.relative_path
+            ))
+        })
 }
 
 fn resolve_companion_crate_root(project_root: &Path, declared_crate_path: &str) -> PathBuf {
@@ -768,7 +1086,7 @@ mod tests {
         )?;
         let manifest = ProjectManifest::from_str(&fs::read_to_string(&manifest_path)?, &manifest_path)?;
 
-        let err = collect_library_vocab_metadata(&manifest, &project_root)
+        let err = collect_library_vocab_metadata(&manifest, &project_root, None)
             .err()
             .ok_or("expected vocab metadata extraction to fail without library_vocab entrypoint")?;
         let message = err.to_string();
@@ -790,7 +1108,7 @@ mod tests {
         )?;
         let manifest = ProjectManifest::from_str(&fs::read_to_string(&manifest_path)?, &manifest_path)?;
 
-        let extraction = collect_library_vocab_metadata(&manifest, &project_root)?
+        let extraction = collect_library_vocab_metadata(&manifest, &project_root, None)?
             .ok_or("expected vocab metadata extraction to return payload")?;
         assert_eq!(extraction.payload.crate_path, "vocab_companion");
         assert_eq!(extraction.payload.package_name, "widgets_vocab_companion");
@@ -802,6 +1120,58 @@ mod tests {
                 keyword: "await".to_string(),
             }]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn vocab_companion_fingerprint_changes_when_source_changes() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let crate_root = write_vocab_companion_crate(temp.path(), "vocab_companion", "widgets_vocab_companion")?;
+        let first = vocab_companion_fingerprint(&crate_root, "widgets_vocab_companion")?;
+        fs::write(
+            crate_root.join("src/lib.rs"),
+            "pub fn library_vocab() -> incan_vocab::VocabRegistration {\n    incan_vocab::VocabRegistration::new()\n}\n",
+        )?;
+        let second = vocab_companion_fingerprint(&crate_root, "widgets_vocab_companion")?;
+        assert_ne!(first, second);
+        Ok(())
+    }
+
+    #[test]
+    fn collect_library_vocab_metadata_uses_generated_target_cache_base() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let project_root = temp.path().join("project");
+        let generated_target = temp.path().join("generated-target");
+        fs::create_dir_all(&project_root)?;
+        let crate_root = write_vocab_companion_crate(&project_root, "vocab_companion", "widgets_vocab_companion")?;
+
+        let manifest_path = project_root.join("incan.toml");
+        fs::write(
+            &manifest_path,
+            "[project]\nname = \"widgets\"\nversion = \"0.1.0\"\n\n[vocab]\ncrate = \"vocab_companion\"\n",
+        )?;
+        let manifest = ProjectManifest::from_str(&fs::read_to_string(&manifest_path)?, &manifest_path)?;
+        let extraction = collect_library_vocab_metadata(&manifest, &project_root, Some(&generated_target))?
+            .ok_or("expected vocab metadata extraction to return payload")?;
+        assert_eq!(extraction.payload.package_name, "widgets_vocab_companion");
+
+        let fingerprint = vocab_companion_fingerprint(&crate_root, "widgets_vocab_companion")?;
+        let cache_context = vocab_companion_cache_context(
+            &project_root,
+            &crate_root,
+            "widgets_vocab_companion",
+            Some(&generated_target),
+        )?;
+        assert_eq!(
+            cache_context.cache_dir,
+            generated_target.join("incan-vocab-cache").join(fingerprint)
+        );
+        assert!(
+            cache_context.cache_dir.join(VOCAB_COMPANION_CACHE_FILE).is_file(),
+            "expected vocab companion cache metadata to be written"
+        );
+        let cached = read_cached_vocab_companion(&cache_context)?.ok_or("expected readable vocab companion cache")?;
+        assert_eq!(cached.metadata.keyword_registrations.len(), 1);
         Ok(())
     }
 

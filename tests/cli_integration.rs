@@ -525,12 +525,17 @@ version = "0.1.0"
 "#,
     )?;
     let report_path = tmp.path().join("target").join("build-report.json");
+    let generated_target_dir = tmp.path().join("target").join("generated-cargo-target");
     let output = run_incan(
         tmp.path(),
         &[
             "build",
             "--lib",
             "--offline",
+            "--generated-cargo-target-dir",
+            generated_target_dir
+                .to_str()
+                .ok_or("generated target path was not valid UTF-8")?,
             "--report",
             "json",
             "--report-output",
@@ -550,6 +555,10 @@ version = "0.1.0"
         report["entrypoint"].as_str().map(|path| path.ends_with("src/lib.incn")),
         Some(true)
     );
+    assert_eq!(
+        report["generated"]["cargo_target_dir"],
+        serde_json::json!(generated_target_dir.to_string_lossy().to_string())
+    );
     assert!(report["source_files"].as_array().is_some_and(|files| {
         files
             .iter()
@@ -567,6 +576,15 @@ version = "0.1.0"
                 && artifact["exists"] == serde_json::json!(true)
         })
     }));
+    assert!(report["timings_ms"]["library_load_sources"].as_u64().is_some());
+    assert!(
+        report["timings_ms"]["library_collect_vocab_metadata"]
+            .as_u64()
+            .is_some()
+    );
+    assert!(report["timings_ms"]["library_prepare_total"].as_u64().is_some());
+    assert!(report["timings_ms"]["cargo_build"].as_u64().is_some());
+    assert!(report["timings_ms"]["total"].as_u64().is_some());
 
     Ok(())
 }
