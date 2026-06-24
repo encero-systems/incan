@@ -1042,7 +1042,7 @@ impl<'a> IrEmitter<'a> {
                 );
                 let arg_tokens =
                     self.emit_method_call_args(method, receiver, args, callable_signature, use_site, result_target_ty)?;
-                return Ok(quote! { #type_path::#m #method_turbofish (#(#arg_tokens),*) });
+                return Ok(quote! { #type_path::#method_turbofish::#m (#(#arg_tokens),*) });
             }
         }
 
