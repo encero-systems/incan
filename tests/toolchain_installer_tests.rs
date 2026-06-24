@@ -368,7 +368,7 @@ fn package_prepare_scripts_stage_versions_and_shared_installer() -> Result<(), B
             .exists()
     );
 
-    fs::write(dist.join("toolchain-version.txt"), "0.4.0-rc0\n")?;
+    fs::write(dist.join("toolchain-version.txt"), "0.4.0-rc1\n")?;
     let pip_output = Command::new("python3")
         .arg(pip_prepare_package_script())
         .arg(&dist)
@@ -380,10 +380,10 @@ fn package_prepare_scripts_stage_versions_and_shared_installer() -> Result<(), B
         String::from_utf8_lossy(&pip_output.stdout),
         String::from_utf8_lossy(&pip_output.stderr)
     );
-    assert!(fs::read_to_string(dist.join("_pip-package/pyproject.toml"))?.contains(r#"version = "0.4.0rc0""#));
+    assert!(fs::read_to_string(dist.join("_pip-package/pyproject.toml"))?.contains(r#"version = "0.4.0rc1""#));
     assert!(
         fs::read_to_string(dist.join("_pip-package/src/incan_toolchain/__init__.py"))?
-            .contains(r#"__version__ = "0.4.0rc0""#)
+            .contains(r#"__version__ = "0.4.0rc1""#)
     );
     Ok(())
 }
@@ -469,13 +469,13 @@ fn homebrew_formula_is_rendered_from_the_toolchain_manifest() -> Result<(), Box<
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let checksum = fs::read_to_string(dist.join("incan-v0.4.0-rc0-x86_64-unknown-linux-gnu.tar.gz.sha256"))?
+    let checksum = fs::read_to_string(dist.join("incan-v0.4.0-rc1-x86_64-unknown-linux-gnu.tar.gz.sha256"))?
         .trim()
         .to_string();
     let formula = fs::read_to_string(dist.join("incan.rb"))?;
-    assert!(formula.contains(r#"version "0.4.0-rc0""#));
+    assert!(formula.contains(r#"version "0.4.0-rc1""#));
     assert!(formula.contains(
-        r#"url "https://github.com/encero-systems/incan/releases/download/v0.4.0-rc0/incan-v0.4.0-rc0-x86_64-unknown-linux-gnu.tar.gz""#
+        r#"url "https://github.com/encero-systems/incan/releases/download/v0.4.0-rc1/incan-v0.4.0-rc1-x86_64-unknown-linux-gnu.tar.gz""#
     ));
     assert!(formula.contains(&format!(r#"sha256 "{checksum}""#)));
     assert!(formula.contains(r#"bin.install "bin/incan""#));
