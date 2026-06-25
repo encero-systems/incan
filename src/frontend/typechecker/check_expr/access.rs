@@ -1810,6 +1810,21 @@ impl TypeChecker {
                     // Stay permissive when no unambiguous imported trait or trait method signature can be selected.
                     return Some(ResolvedType::Unknown);
                 };
+<<<<<<< HEAD
+=======
+                if !type_args.is_empty() {
+                    let method_has_generic = sig
+                        .params
+                        .iter()
+                        .any(|param| param.type_display.contains('T') || param.type_display.contains("impl"));
+                    let types_has_generic = self.is_type_generic(rust_path)?;
+                    if !method_has_generic && !types_has_generic {
+                        self.errors
+                            .push(errors::explicit_call_site_type_args_not_supported(span));
+                        return Some(ResolvedType::Unknown);
+                    }
+                }
+>>>>>>> 0d406c74 (style: apply cargo fmt to access.rs)
                 if Self::rust_signature_has_receiver(&sig)
                     && sig.params[1..].iter().any(|param| {
                         let normalized = param.type_display.replace(' ', "");
@@ -3410,7 +3425,13 @@ impl TypeChecker {
             if let Some(ret) = Self::known_rust_path_method_return(path.as_str(), method) {
                 return ret;
             }
+<<<<<<< HEAD
             let Some(ret) = self.resolve_rust_path_method_call(&path, method, args, &arg_types, base.span, span) else {
+=======
+            let Some(ret) =
+                self.resolve_rust_path_method_call(&path, method, type_args, args, &arg_types, base.span, span)
+            else {
+>>>>>>> 0d406c74 (style: apply cargo fmt to access.rs)
                 // Metadata backend disabled/unavailable: preserve permissive RFC 005 behavior.
                 return ResolvedType::Unknown;
             };
@@ -3893,10 +3914,18 @@ impl TypeChecker {
                         return ret;
                     }
                     if newtype.is_rusttype
+<<<<<<< HEAD
                         && let Some(path) = self.rust_path_for_newtype_info(type_name, &newtype)
                         && let Some(ret) = self.resolve_rust_path_method_call(
                             path.as_str(),
                             resolved_method,
+=======
+                        && let ResolvedType::RustPath(path) = &newtype.underlying
+                        && let Some(ret) = self.resolve_rust_path_method_call(
+                            path,
+                            resolved_method,
+                            type_args,
+>>>>>>> 0d406c74 (style: apply cargo fmt to access.rs)
                             args,
                             &arg_types,
                             base.span,
