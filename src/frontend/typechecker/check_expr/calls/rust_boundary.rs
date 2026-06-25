@@ -1,6 +1,7 @@
 //! Rust boundary matching, Rust call validation, and coercion metadata recording.
 
 use super::TypeChecker;
+use crate::frontend::ast::Type;
 use crate::frontend::ast::{CallArg, Expr, ParamKind, Span, Spanned};
 use crate::frontend::diagnostics::errors;
 use crate::frontend::symbols::{CallableParam, ResolvedType, TypeInfo};
@@ -661,6 +662,7 @@ impl TypeChecker {
         &mut self,
         callable_display: &str,
         sig: &RustFunctionSig,
+        type_args: &[Spanned<Type>],
         args: &[CallArg],
         arg_types: &[ResolvedType],
         preserves_lookup_arg_shape: bool,
