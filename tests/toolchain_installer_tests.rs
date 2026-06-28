@@ -311,7 +311,10 @@ fn toolchain_release_assets_are_prepared_by_central_manifest_script() -> Result<
     );
     assert!(dist.join("install.sh").exists());
     assert!(dist.join("toolchain-manifest.schema.v1.json").exists());
-    assert!(fs::read_to_string(dist.join("incan.rb"))?.contains(r#"bin.install "bin/incan""#));
+    let formula = fs::read_to_string(dist.join("incan.rb"))?;
+    assert!(formula.contains("def staged_binary(name)"));
+    assert!(formula.contains("bin.install incan_bin"));
+    assert!(formula.contains("bin.install incan_lsp_bin"));
     Ok(())
 }
 
