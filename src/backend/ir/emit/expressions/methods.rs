@@ -1024,6 +1024,7 @@ impl<'a> IrEmitter<'a> {
                         let emitted: Vec<TokenStream> = type_args.iter().map(|ty| self.emit_type(ty)).collect();
                         quote! { #type_ident :: <#(#emitted),*> }
                     }
+                    _ if !type_args.is_empty() => quote! { #type_ident #method_turbofish },
                     _ => quote! { #type_ident },
                 };
                 let m = Self::rust_ident(method);
@@ -1042,7 +1043,7 @@ impl<'a> IrEmitter<'a> {
                 );
                 let arg_tokens =
                     self.emit_method_call_args(method, receiver, args, callable_signature, use_site, result_target_ty)?;
-                return Ok(quote! { #type_path::#method_turbofish::#m (#(#arg_tokens),*) });
+                return Ok(quote! { #type_path::#m (#(#arg_tokens),*) });
             }
         }
 
