@@ -621,11 +621,11 @@ fn homebrew_formula_is_rendered_from_the_toolchain_manifest() -> Result<(), Box<
         r#"url "https://github.com/encero-systems/incan/releases/download/v0.4.0-rc2/incan-v0.4.0-rc2-x86_64-unknown-linux-gnu.tar.gz""#
     ));
     assert!(formula.contains(&format!(r#"sha256 "{checksum}""#)));
-    assert!(formula.contains(r#"Pathname.glob(buildpath/"**/bin/incan").first"#));
-    assert!(formula.contains(r#"Pathname.glob(buildpath/"**/bin/incan-lsp").first"#));
+    assert!(formula.contains(r##"Dir["#{buildpath}/**/bin/incan"].first"##));
+    assert!(formula.contains(r##"Dir["#{buildpath}/**/bin/incan-lsp"].first"##));
     assert!(formula.contains(r#"odie "could not find incan binary in archive" if incan_bin.nil?"#));
-    assert!(formula.contains("bin.install incan_bin"));
-    assert!(formula.contains("bin.install incan_lsp_bin"));
+    assert!(formula.contains("bin.install Pathname.new(incan_bin)"));
+    assert!(formula.contains("bin.install Pathname.new(incan_lsp_bin)"));
     Ok(())
 }
 
