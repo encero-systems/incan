@@ -26,6 +26,7 @@ If you’re new, start with:
 
 ## Reference (look up)
 
+- [Contributors](contributors.md) — community acknowledgements for external contributions
 - [Layering rules](explanation/layering.md) — dependency boundaries and guardrails
 - [Generated Rust stdlib coverage](reference/generated_rust_stdlib_coverage.md) — generated-Rust coverage inventory for stdlib modules
 
