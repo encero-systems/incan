@@ -611,18 +611,21 @@ fn homebrew_formula_is_rendered_from_the_toolchain_manifest() -> Result<(), Box<
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let checksum = fs::read_to_string(dist.join("incan-v0.4.0-rc1-x86_64-unknown-linux-gnu.tar.gz.sha256"))?
+    let checksum = fs::read_to_string(dist.join("incan-v0.4.0-rc2-x86_64-unknown-linux-gnu.tar.gz.sha256"))?
         .trim()
         .to_string();
     let formula = fs::read_to_string(dist.join("incan.rb"))?;
-    assert!(formula.contains(r#"version "0.4.0-rc1""#));
+    assert!(formula.contains(r#"version "0.4.0-rc2""#));
     assert!(formula.contains("Homebrew installs only the prebuilt Incan commands"));
     assert!(formula.contains(
-        r#"url "https://github.com/encero-systems/incan/releases/download/v0.4.0-rc1/incan-v0.4.0-rc1-x86_64-unknown-linux-gnu.tar.gz""#
+        r#"url "https://github.com/encero-systems/incan/releases/download/v0.4.0-rc2/incan-v0.4.0-rc2-x86_64-unknown-linux-gnu.tar.gz""#
     ));
     assert!(formula.contains(&format!(r#"sha256 "{checksum}""#)));
-    assert!(formula.contains(r#"bin.install "bin/incan""#));
-    assert!(formula.contains(r#"bin.install "bin/incan-lsp""#));
+    assert!(formula.contains(r#"Pathname.glob(buildpath/"**/bin/incan").first"#));
+    assert!(formula.contains(r#"Pathname.glob(buildpath/"**/bin/incan-lsp").first"#));
+    assert!(formula.contains(r#"odie "could not find incan binary in archive" if incan_bin.nil?"#));
+    assert!(formula.contains("bin.install incan_bin"));
+    assert!(formula.contains("bin.install incan_lsp_bin"));
     Ok(())
 }
 
