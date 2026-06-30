@@ -269,6 +269,7 @@ nav:
       - Incan ecosystem north star: whitepapers/incan_ecosystem_north_star.md
   - Contributing:
       - Start here: contributing/index.md
+      - Contributors: contributing/contributors.md
       - Tutorials:
           - Incan Contributor Book (Advanced):
               - Overview: contributing/tutorials/book/index.md

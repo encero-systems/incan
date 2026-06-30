@@ -24,6 +24,7 @@ fn main() {
     );
     let _id = Uuid::new_v4().to_string();
     let __m = HashMap::new();
+    let __typed = HashMap::<String, i64>::new();
     let __start = Instant::now();
     let _ = println!("{}", _id);
 }
