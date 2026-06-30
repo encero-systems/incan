@@ -20,6 +20,6 @@ fn main() {
             }
         }),
     );
-    let _d = Duration::from_secs_f32(1.5f64);
+    let _d = Duration::from_secs_f32(1.5);
     let _ = println!("{}", _d.as_secs_f32());
 }

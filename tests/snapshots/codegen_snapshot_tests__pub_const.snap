@@ -7,8 +7,8 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-pub const PI: f64 = 3.14f64;
-const E: f64 = 2.71f64;
+pub const PI: f64 = 3.14;
+const E: f64 = 2.71;
 fn main() {
     std::panic::set_hook(
         std::boxed::Box::new(|panic_info| {

@@ -492,7 +492,7 @@ fn create_coordinate(lat: f64, lon: f64) -> Coordinate {
 fn distance_from_origin(coord: Coordinate) -> f64 {
     let lat_sq: f64 = coord.latitude * coord.latitude;
     let lon_sq: f64 = coord.longitude * coord.longitude;
-    return lat_sq + lon_sq.powf(0.5f64);
+    return lat_sq + lon_sq.powf(0.5);
 }
 fn main() {
     std::panic::set_hook(
@@ -519,7 +519,7 @@ fn main() {
     let product: Product = Product {
         id: 123,
         name: "Laptop".to_string(),
-        price: 999.99f64,
+        price: 999.99,
     };
     let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["Product ID: ", ""]; let __args : Vec <
@@ -561,7 +561,7 @@ fn main() {
         String > = vec![format!("{}", student.name)]; incan_stdlib::strings::fstring(&
         __parts, & __args) }
     );
-    let coord: Coordinate = create_coordinate(3f64, 4f64);
+    let coord: Coordinate = create_coordinate(3.0, 4.0);
     let dist: f64 = distance_from_origin(coord);
     let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["Distance: ", ""]; let __args : Vec <

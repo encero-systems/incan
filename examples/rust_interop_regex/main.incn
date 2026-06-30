@@ -1,6 +1,6 @@
 from rust::regex @ "1" import Regex
 
-def contains_number(input: str) -> bool:
-  pattern = Regex.new("\\d+")
-  return pattern.is_match(input)
 
+def contains_number(input: str) -> bool:
+    pattern = Regex.new("\\d+").unwrap()
+    return pattern.is_match(input)

@@ -23,7 +23,7 @@ resolver = "2"
 ra_ap_proc_macro_api = { path = "crates/third_party/ra_ap_proc_macro_api" }
 
 [workspace.package]
-version = "0.4.0-rc2"
+version = "0.4.0-rc3"
 description = "The Incan programming language compiler"
 edition = "2024"
 rust-version = "1.92"
@@ -106,8 +106,8 @@ hex = "0.4.3"
 semver = "1.0.27"
 rust_inspect = { path = "crates/rust_inspect", optional = true }
 # WASM runtime for desugarer packaging
-wasmtime = { version = "44.0.1", default-features = false, features = ["cranelift", "runtime", "std"] }
-wasmtime-wasi = { version = "44.0.1", default-features = false, features = ["p1"] }
+wasmtime = { version = "45.0.3", default-features = false, features = ["cranelift", "runtime", "std"] }
+wasmtime-wasi = { version = "45.0.3", default-features = false, features = ["p1"] }
 
 [dev-dependencies]
 # Runtime crate used by std.io generated-project offline smoke tests.

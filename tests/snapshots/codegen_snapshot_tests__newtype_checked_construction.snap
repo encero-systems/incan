@@ -45,7 +45,7 @@ fn main() {
         }),
     );
     let uid = UserId(42);
-    let ratio = Ratio(0.5f64);
+    let ratio = Ratio(0.5);
     let attempts = match Attempts::from_underlying(5) {
         Ok(__incan_newtype_value) => __incan_newtype_value,
         Err(__incan_validation_error) => {

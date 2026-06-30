@@ -146,10 +146,10 @@ impl incan_stdlib::reflection::HasTypeFieldMetadata for Circle {
 }
 impl Circle {
     pub fn area(&self) -> f64 {
-        return 3.14159f64 * self.radius * self.radius;
+        return 3.14159 * self.radius * self.radius;
     }
     pub fn circumference(&self) -> f64 {
-        return 2f64 * 3.14159f64 * self.radius;
+        return 2.0 * 3.14159 * self.radius;
     }
 }
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
@@ -446,7 +446,7 @@ fn main() {
         Vec < String > = vec![format!("{}", rect.width), format!("{}", rect.height)];
         incan_stdlib::strings::fstring(& __parts, & __args) }
     );
-    let circle: Circle = Circle { radius: 5f64 };
+    let circle: Circle = Circle { radius: 5.0 };
     let area: f64 = circle.area();
     let circumference: f64 = circle.circumference();
     let _ = println!(

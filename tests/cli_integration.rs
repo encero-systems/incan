@@ -350,6 +350,96 @@ fn check_json_reports_typechecker_diagnostics() -> Result<(), Box<dyn std::error
     Ok(())
 }
 
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn rust_std_result_interop_supports_try_operator_issue801() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let src_dir = tmp.path().join("src");
+    fs::create_dir_all(&src_dir)?;
+    fs::write(
+        tmp.path().join("incan.toml"),
+        r#"[project]
+name = "result_interop_probe"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+"#,
+    )?;
+    let source_path = src_dir.join("main.incn");
+    fs::write(
+        &source_path,
+        r#"from rust::std::fs import metadata
+from rust::std::io import Error as IoError
+from rust::std::path import Path as RustPath
+
+pub def file_len(path: str) -> Result[int, IoError]:
+    meta = metadata(RustPath.new(path))?
+    return Ok(int(meta.len()))
+
+def main() -> None:
+    result = file_len("incan.toml")
+    print("checked")
+"#,
+    )?;
+    let source_arg = source_path.to_str().ok_or("source path was not valid UTF-8")?;
+
+    let check = run_incan(tmp.path(), &["check", source_arg, "--format", "json"])?;
+    assert_success(&check, "incan check should type std::fs::metadata as Result");
+    let check_json = parse_json_stdout(&check)?;
+    assert_eq!(check_json["ok"], serde_json::json!(true));
+
+    let build = run_incan(tmp.path(), &["build", source_arg, "--offline"])?;
+    assert_success(
+        &build,
+        "incan build should emit Rust for std::fs::metadata try operator",
+    );
+
+    Ok(())
+}
+
+#[test]
+fn contextual_f32_float_literals_emit_inferable_rust_issue802() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let src_dir = tmp.path().join("src");
+    fs::create_dir_all(&src_dir)?;
+    fs::write(
+        tmp.path().join("incan.toml"),
+        r#"[project]
+name = "f32_literal_probe"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+"#,
+    )?;
+    let source_path = src_dir.join("main.incn");
+    fs::write(
+        &source_path,
+        r#"def accepts_f32(value: f32) -> None:
+    print("ok")
+
+def main() -> None:
+    zero: f32 = 0.0
+    accepts_f32(1.5)
+"#,
+    )?;
+    let source_arg = source_path.to_str().ok_or("source path was not valid UTF-8")?;
+
+    let build = run_incan(tmp.path(), &["build", source_arg, "--offline"])?;
+    assert_success(
+        &build,
+        "incan build should let Rust infer contextual f32 float literals",
+    );
+    let generated = fs::read_to_string(tmp.path().join("target/incan/f32_literal_probe/src/main.rs"))?;
+    assert!(
+        !generated.contains("0f64") && !generated.contains("1.5f64"),
+        "contextual float literals should not be hard-suffixed as f64:\n{generated}"
+    );
+
+    Ok(())
+}
+
 #[test]
 fn check_json_reports_tooling_diagnostics() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;

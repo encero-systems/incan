@@ -135,6 +135,118 @@ pub(crate) struct LockResolutionRequest<'a> {
     pub rust_inspect_query_paths: &'a [String],
 }
 
+#[cfg(feature = "rust_inspect")]
+pub(crate) struct RustInspectTypecheckRequest<'a> {
+    pub project_root: &'a Path,
+    pub project_name: &'a str,
+    pub manifest: Option<&'a ProjectManifest>,
+    pub modules: &'a [ParsedModule],
+    pub library_manifest_index: &'a LibraryManifestIndex,
+    pub cargo_features: &'a CargoFeatureSelection,
+    pub cargo_policy: &'a CargoPolicy,
+    pub rust_edition: Option<String>,
+}
+
+#[cfg(feature = "rust_inspect")]
+pub(crate) struct RustInspectWorkspaceRequest<'a> {
+    pub project_root: &'a Path,
+    pub project_name: &'a str,
+    pub rust_edition: Option<String>,
+    pub resolved: &'a ResolvedDependencies,
+    pub project_requirements: &'a ProjectRequirements,
+    pub lock_payload: Option<String>,
+    pub rust_inspect_query_paths: &'a [String],
+    pub prepare_when_empty: bool,
+}
+
+/// Prepare and prewarm the generated Rust workspace used for rust-inspect metadata queries.
+#[cfg(feature = "rust_inspect")]
+pub(crate) fn prepare_rust_inspect_workspace(request: RustInspectWorkspaceRequest<'_>) -> CliResult<Option<PathBuf>> {
+    let RustInspectWorkspaceRequest {
+        project_root,
+        project_name,
+        rust_edition,
+        resolved,
+        project_requirements,
+        lock_payload,
+        rust_inspect_query_paths,
+        prepare_when_empty,
+    } = request;
+    if rust_inspect_query_paths.is_empty() && !prepare_when_empty {
+        return Ok(None);
+    }
+
+    let rust_inspect_manifest_dir = ensure_rust_inspect_workspace(
+        project_root,
+        project_name,
+        rust_edition,
+        resolved,
+        project_requirements,
+        lock_payload,
+    )?;
+    prewarm_rust_inspect_workspace(&rust_inspect_manifest_dir, rust_inspect_query_paths)?;
+    Ok(Some(rust_inspect_manifest_dir))
+}
+
+/// Prepare the rust-inspect workspace needed before metadata-backed typechecking.
+#[cfg(feature = "rust_inspect")]
+pub(crate) fn prepare_rust_inspect_typecheck_workspace(
+    request: RustInspectTypecheckRequest<'_>,
+) -> CliResult<Option<PathBuf>> {
+    let RustInspectTypecheckRequest {
+        project_root,
+        project_name,
+        manifest,
+        modules,
+        library_manifest_index,
+        cargo_features,
+        cargo_policy,
+        rust_edition,
+    } = request;
+    let metadata_query_paths = collect_rust_inspect_query_paths(modules);
+    if metadata_query_paths.is_empty() {
+        return Ok(None);
+    }
+
+    let project_requirements = collect_project_requirements(modules, library_manifest_index)?;
+    let inline_imports = modules
+        .iter()
+        .flat_map(|module| collect_rust_dependency_uses(module, false))
+        .collect::<Vec<_>>();
+    let mut resolved = match resolve_reachable_dependencies(manifest, &inline_imports, true, cargo_features) {
+        Ok(resolved) => resolved,
+        Err(errors) => {
+            let mut msg = String::new();
+            let sources = build_source_map(modules);
+            for err in errors {
+                msg.push_str(&format_dependency_error(&err, &sources));
+            }
+            return Err(CliError::failure(msg.trim_end()));
+        }
+    };
+    merge_project_requirement_dependencies(&mut resolved, &project_requirements)?;
+    let lock_payload = resolve_lock_payload(LockResolutionRequest {
+        project_root,
+        project_name,
+        manifest,
+        resolved: &resolved,
+        project_requirements: &project_requirements,
+        cargo_features,
+        cargo_policy,
+        rust_inspect_query_paths: &metadata_query_paths,
+    })?;
+    prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {
+        project_root,
+        project_name,
+        rust_edition,
+        resolved: &resolved,
+        project_requirements: &project_requirements,
+        lock_payload,
+        rust_inspect_query_paths: &metadata_query_paths,
+        prepare_when_empty: false,
+    })
+}
+
 /// Resolve the embedded Cargo lock payload that generated Cargo projects should reuse.
 ///
 /// Manifest-less single-file builds have no project lockfile, so they return no payload. Project

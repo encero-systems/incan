@@ -9,7 +9,7 @@ expression: rust_code
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 fn test_explicit_types() {
     let _x: i64 = 42;
-    let _y: f64 = 3.14f64;
+    let _y: f64 = 3.14;
     let _z: String = "hello".to_string();
     let _flag: bool = true;
 }

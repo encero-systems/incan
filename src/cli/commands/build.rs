@@ -35,18 +35,20 @@ use super::build_report::{
     artifact_report, cargo_report, dependencies_report, emit_build_report, emit_rust_inspection_report,
     generated_project_report, incan_dependencies_report, interop_report, rust_inspection_report,
 };
+#[cfg(feature = "rust_inspect")]
+use super::common::collect_rust_inspect_query_paths;
 use super::common::{
     CargoPolicy, INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, ProjectRequirements, build_source_map, cargo_command_flags,
     collect_modules, collect_project_requirements, collect_rust_dependency_uses, enforce_project_toolchain_constraint,
     format_dependency_error, imported_module_deps_for_with_index, merge_project_requirement_dependencies,
     module_key_index, resolve_project_root, typecheck_modules_with_import_graph, validate_output_dir,
 };
-#[cfg(feature = "rust_inspect")]
-use super::common::{collect_rust_inspect_query_paths, ensure_rust_inspect_workspace, prewarm_rust_inspect_workspace};
 use super::lock::{
     GeneratedLibraryDependencyPreheatRequest, LockResolutionRequest, resolve_lock_payload,
     run_generated_library_dependency_preheat,
 };
+#[cfg(feature = "rust_inspect")]
+use super::lock::{RustInspectWorkspaceRequest, prepare_rust_inspect_workspace};
 use super::vocab_extraction::{PendingDesugarerArtifact, collect_library_vocab_metadata};
 use crate::cli::prelude::ParsedModule;
 #[cfg(feature = "rust_inspect")]
@@ -781,15 +783,6 @@ fn prepare_project_with_options(
         .unwrap_or_default();
     let project_requirements = collect_project_requirements(&modules, &library_manifest_index)?;
 
-    // Type check all modules (dependencies + stdlib first), so diagnostics are associated with the correct file.
-    typecheck_modules_with_import_graph(
-        &modules,
-        manifest.as_ref(),
-        &library_manifest_index,
-        #[cfg(feature = "rust_inspect")]
-        None,
-    )?;
-
     // Derive project name (manifest overrides filename)
     let project_name = options
         .project_name_override
@@ -880,20 +873,36 @@ fn prepare_project_with_options(
         rust_inspect_query_paths: &metadata_query_paths,
     })?;
     #[cfg(feature = "rust_inspect")]
-    {
-        let rust_inspect_manifest_dir = ensure_rust_inspect_workspace(
-            &project_root,
-            project_name.as_str(),
-            manifest
+    let rust_inspect_manifest_dir = {
+        let rust_inspect_manifest_dir = prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {
+            project_root: &project_root,
+            project_name: project_name.as_str(),
+            rust_edition: manifest
                 .as_ref()
                 .and_then(|m| m.build.as_ref().and_then(|b| b.rust_edition.clone())),
-            &resolved,
-            &project_requirements,
-            lock_payload.clone(),
-        )?;
-        prewarm_rust_inspect_workspace(&rust_inspect_manifest_dir, &metadata_query_paths)?;
-        codegen.set_rust_inspect_manifest_dir(rust_inspect_manifest_dir);
-    }
+            resolved: &resolved,
+            project_requirements: &project_requirements,
+            lock_payload: lock_payload.clone(),
+            rust_inspect_query_paths: &metadata_query_paths,
+            prepare_when_empty: true,
+        })?
+        .ok_or_else(|| CliError::failure("rust-inspect workspace preparation did not return a manifest directory"))?;
+        codegen.set_rust_inspect_manifest_dir(rust_inspect_manifest_dir.clone());
+        Some(rust_inspect_manifest_dir)
+    };
+
+    // Type check all modules (dependencies + stdlib first), so diagnostics are associated with the correct file.
+    //
+    // This must run after rust-inspect preparation. Direct Rust calls expose their callable signatures through the
+    // prepared metadata workspace; checking before that step degrades those calls to `Unknown` and breaks source-level
+    // constructs such as `?` on Rust `Result<T, E>` returns.
+    typecheck_modules_with_import_graph(
+        &modules,
+        manifest.as_ref(),
+        &library_manifest_index,
+        #[cfg(feature = "rust_inspect")]
+        rust_inspect_manifest_dir.as_deref(),
+    )?;
     generator.set_cargo_lock_payload(lock_payload);
 
     let cargo_flags = cargo_command_flags(cargo_policy, &cargo_features);
@@ -1149,15 +1158,17 @@ fn prepare_library_project(
     #[cfg(feature = "rust_inspect")]
     let rust_inspect_manifest_dir = {
         let rust_inspect_start = Instant::now();
-        let rust_inspect_manifest_dir = ensure_rust_inspect_workspace(
-            &project_root,
-            project_name.as_str(),
-            manifest.build.as_ref().and_then(|build| build.rust_edition.clone()),
-            &resolved,
-            &project_requirements,
-            lock_payload_for_typecheck.clone(),
-        )?;
-        prewarm_rust_inspect_workspace(&rust_inspect_manifest_dir, &metadata_query_paths)?;
+        let rust_inspect_manifest_dir = prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {
+            project_root: &project_root,
+            project_name: project_name.as_str(),
+            rust_edition: manifest.build.as_ref().and_then(|build| build.rust_edition.clone()),
+            resolved: &resolved,
+            project_requirements: &project_requirements,
+            lock_payload: lock_payload_for_typecheck.clone(),
+            rust_inspect_query_paths: &metadata_query_paths,
+            prepare_when_empty: true,
+        })?
+        .ok_or_else(|| CliError::failure("rust-inspect workspace preparation did not return a manifest directory"))?;
         record_timing(&mut timings_ms, "library_rust_inspect_prewarm", rust_inspect_start);
         rust_inspect_manifest_dir
     };

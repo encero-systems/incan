@@ -1026,7 +1026,7 @@ impl<'a> IrEmitter<'a> {
                 .replace('_', "")
                 .parse::<TokenStream>()
                 .map_err(|err| EmitError::SynParse(format!("invalid integer literal `{repr}`: {err}"))),
-            IrExprKind::Float(n) => Ok(quote! { #n }),
+            IrExprKind::Float(n) => Ok(Literal::f64_unsuffixed(*n).to_token_stream()),
             IrExprKind::Decimal(repr) => Ok(quote! { incan_stdlib::num::Decimal128::from_literal(#repr) }),
             IrExprKind::String(s) => {
                 if matches!(expr.ty, IrType::FrozenStr) {

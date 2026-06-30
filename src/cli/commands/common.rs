@@ -2533,12 +2533,13 @@ mod tests {
 
     #[cfg(feature = "rust_inspect")]
     #[test]
-    fn rust_inspect_query_paths_include_explicit_non_stdlib_rust_types() -> Result<(), Box<dyn std::error::Error>> {
+    fn rust_inspect_query_paths_include_explicit_rust_item_imports() -> Result<(), Box<dyn std::error::Error>> {
         let module = parsed_module_for_test(
             r#"
 from rust::datafusion::execution::context import SessionContext
 from rust::datafusion::prelude import CsvReadOptions, read_csv
 from rust::incan_stdlib::async::runtime import block_on
+from rust::std::fs import metadata
 from rust::std::primitive import i64 as RustI64
 "#,
         )?;
@@ -2551,6 +2552,7 @@ from rust::std::primitive import i64 as RustI64
                 "datafusion::execution::context::SessionContext".to_string(),
                 "datafusion::prelude::CsvReadOptions".to_string(),
                 "datafusion::prelude::read_csv".to_string(),
+                "std::fs::metadata".to_string(),
             ]
         );
         Ok(())

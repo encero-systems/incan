@@ -8,7 +8,7 @@ use crate::frontend::diagnostics::{CompileError, errors};
 use crate::frontend::resolved_type_subst::substitute_resolved_type;
 use crate::frontend::symbols::{FieldInfo, FunctionInfo, FunctionOverloadInfo, ResolvedType, SymbolKind, TypeInfo};
 use crate::frontend::typechecker::IdentKind;
-use incan_core::interop::{RustFieldInfo, RustItemKind, RustTypeInfo};
+use incan_core::interop::{RustFieldInfo, RustItemKind, RustTypeInfo, metadata_free_function_signature};
 use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::keywords::{self, KeywordId};
 use incan_core::lang::stdlib;
@@ -388,6 +388,24 @@ impl TypeChecker {
                                     return ResolvedType::Unknown;
                                 }
                             }
+                        } else if let Some(sig) = metadata_free_function_signature(info.path.as_str()) {
+                            let error_count_before = self.errors.len();
+                            let result = self.validate_rust_function_call(info.path.as_str(), &sig, args, span);
+                            if self.errors.len() == error_count_before {
+                                self.record_expr_type(
+                                    callee.span,
+                                    self.resolved_function_type_from_rust_sig_for_owner_path(
+                                        &sig,
+                                        false,
+                                        info.path.as_str(),
+                                    ),
+                                );
+                                self.type_info
+                                    .expressions
+                                    .ident_kinds
+                                    .insert((callee.span.start, callee.span.end), IdentKind::RustImport);
+                            }
+                            return result;
                         } else if rust_path_last_segment_looks_like_type(info.path.as_str()) {
                             return self.check_metadata_free_rust_named_field_constructor_call(
                                 info.path.as_str(),

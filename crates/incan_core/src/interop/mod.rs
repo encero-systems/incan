@@ -13,12 +13,13 @@ pub use capabilities::{RUST_CAPABILITY_BOUNDS, is_rust_capability_bound};
 pub use coercions::{CoercionPolicy, admitted_builtin_coercion};
 pub use extension_traits::fallback_rust_trait_methods;
 pub use metadata::{
-    METADATA_FREE_METHOD_BORROW_RULES, METADATA_FREE_METHOD_SIGNATURE_RULES, MetadataFreeArgClass,
+    METADATA_FREE_FUNCTION_SIGNATURE_RULES, METADATA_FREE_METHOD_BORROW_RULES, METADATA_FREE_METHOD_SIGNATURE_RULES,
+    MetadataFreeArgClass, MetadataFreeFunctionParamRule, MetadataFreeFunctionSignatureRule,
     MetadataFreeMethodArgBorrowPolicy, MetadataFreeMethodBorrowRule, MetadataFreeMethodParamRule,
     MetadataFreeMethodSignatureRule, MetadataFreeReceiverClass, RustCollectionFamily, RustFieldInfo, RustFunctionSig,
     RustImplementedTrait, RustItemKind, RustItemMetadata, RustMethodSig, RustModuleChild, RustModuleChildKind,
     RustModuleInfo, RustParam, RustTraitAssoc, RustTraitInfo, RustTypeInfo, RustTypeMetadataCompleteness,
-    RustTypeShape, RustTypeShapePathFallback, RustVariantInfo, RustVisibility, metadata_free_method_signature,
-    parse_rust_type_shape_text, render_rust_type_shape, render_rust_type_shape_path, split_top_level_rust_args,
-    strip_rust_borrow_lifetimes,
+    RustTypeShape, RustTypeShapePathFallback, RustVariantInfo, RustVisibility, metadata_free_function_signature,
+    metadata_free_method_signature, parse_rust_type_shape_text, render_rust_type_shape, render_rust_type_shape_path,
+    split_top_level_rust_args, strip_rust_borrow_lifetimes,
 };

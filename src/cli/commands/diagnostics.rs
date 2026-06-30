@@ -12,11 +12,17 @@ use serde::Serialize;
 use crate::cli::{CliError, CliResult, ExitCode};
 use crate::frontend::diagnostics::{self, DIAGNOSTIC_SCHEMA_VERSION, StableDiagnostic};
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
+#[cfg(feature = "rust_inspect")]
+use crate::lockfile::CargoFeatureSelection;
 use crate::manifest::ProjectManifest;
 
+#[cfg(feature = "rust_inspect")]
+use super::common::CargoPolicy;
 use super::common::{
     CliDiagnosticFailure, collect_modules_detailed, resolve_project_root, typecheck_modules_with_import_graph_detailed,
 };
+#[cfg(feature = "rust_inspect")]
+use super::lock::{RustInspectTypecheckRequest, prepare_rust_inspect_typecheck_workspace};
 
 /// Output format for stable diagnostics commands.
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,13 +69,41 @@ pub fn check_path(path: &Path, format: DiagnosticOutputFormat) -> CliResult<Exit
         .as_ref()
         .map(LibraryManifestIndex::from_project_manifest)
         .unwrap_or_default();
+    #[cfg(feature = "rust_inspect")]
+    let project_name = manifest
+        .as_ref()
+        .and_then(|manifest| manifest.project.as_ref().and_then(|project| project.name.clone()))
+        .or_else(|| {
+            normalized_path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .map(ToString::to_string)
+        })
+        .unwrap_or_else(|| "incan_check".to_string());
+    #[cfg(feature = "rust_inspect")]
+    let cargo_features = CargoFeatureSelection::default().normalized();
+    #[cfg(feature = "rust_inspect")]
+    let cargo_policy = CargoPolicy::default();
+    #[cfg(feature = "rust_inspect")]
+    let rust_inspect_manifest_dir = prepare_rust_inspect_typecheck_workspace(RustInspectTypecheckRequest {
+        project_root: &project_root,
+        project_name: project_name.as_str(),
+        manifest: manifest.as_ref(),
+        modules: &modules,
+        library_manifest_index: &library_manifest_index,
+        cargo_features: &cargo_features,
+        cargo_policy: &cargo_policy,
+        rust_edition: manifest
+            .as_ref()
+            .and_then(|manifest| manifest.build.as_ref().and_then(|build| build.rust_edition.clone())),
+    })?;
 
     match typecheck_modules_with_import_graph_detailed(
         &modules,
         manifest.as_ref(),
         &library_manifest_index,
         #[cfg(feature = "rust_inspect")]
-        None,
+        rust_inspect_manifest_dir.as_deref(),
     ) {
         Ok(()) => render_check_success(format),
         Err(failure) => render_check_failure(failure, format),

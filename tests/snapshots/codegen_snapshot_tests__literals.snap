@@ -11,9 +11,9 @@ fn test_literals() {
     let _x: i64 = 42;
     let _y: i64 = -10;
     let _big: i64 = 1000000;
-    let _pi: f64 = 3.14f64;
-    let _neg: f64 = -2.5f64;
-    let _sci: f64 = 15000000000f64;
+    let _pi: f64 = 3.14;
+    let _neg: f64 = -2.5;
+    let _sci: f64 = 15000000000.0;
     let _greeting: String = "hello".to_string();
     let _multiline: String = "hello\nworld".to_string();
     let _quote: String = "single".to_string();
