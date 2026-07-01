@@ -170,6 +170,7 @@ fn path_dependency(path: &Path, features: &[String]) -> toml::Value {
     toml::Value::Table(table)
 }
 
+/// Return the path to a bundled support crate in an installed toolchain layout, if this binary is running from one.
 fn installed_toolchain_crate_path(crate_name: &str) -> Option<PathBuf> {
     let exe_path = std::env::current_exe().ok()?;
     let canonical_exe_path = fs::canonicalize(&exe_path).ok();
@@ -201,6 +202,7 @@ fn installed_toolchain_crate_path(crate_name: &str) -> Option<PathBuf> {
     None
 }
 
+/// Resolve a toolchain-owned support crate for generated Cargo manifests.
 fn toolchain_crate_path(crate_name: &str) -> PathBuf {
     installed_toolchain_crate_path(crate_name).unwrap_or_else(|| {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
