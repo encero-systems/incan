@@ -186,7 +186,7 @@ fn write_manifest(root: &Path, archive: &Path, checksum: &str) -> Result<PathBuf
   "channel": "dev",
   "rust_toolchain": {{
     "channel": "stable",
-    "min_rust": "1.92",
+    "min_rust": "1.93",
     "targets": ["wasm32-wasip1"],
     "policy": "fixture"
   }},

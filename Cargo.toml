@@ -26,7 +26,7 @@ ra_ap_proc_macro_api = { path = "crates/third_party/ra_ap_proc_macro_api" }
 version = "0.4.0-rc3"
 description = "The Incan programming language compiler"
 edition = "2024"
-rust-version = "1.92"
+rust-version = "1.93"
 license = "Apache-2.0"
 authors = ["Danny Meijer <dannys.code.corner@gmail.com>"]
 repository = "https://github.com/encero-systems/incan"
