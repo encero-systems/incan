@@ -1435,6 +1435,9 @@ body::after {
   font-size: clamp(3.15rem, 5.8vw, 5.3rem);
   line-height: 0.94;
   letter-spacing: 0;
+  text-shadow:
+    0 0.22rem 0.65rem rgba(0, 0, 0, 0.68),
+    0 0 1.7rem rgba(0, 0, 0, 0.58);
 }
 
 .inc-home h1 span {
@@ -1450,10 +1453,11 @@ body::after {
   background-clip: text;
 }
 
-.inc-home h1 span:last-child {
-  background: linear-gradient(180deg, #ffffff 0%, #f5efe5 54%, #cfd9df 100%);
+.inc-home h1 span:nth-of-type(2) {
+  background: linear-gradient(180deg, #fff9e6 0%, #f5efe5 48%, #dcecef 78%, #aecbd2 100%);
   -webkit-background-clip: text;
   background-clip: text;
+  filter: drop-shadow(0 0.12rem 0.42rem rgba(0, 0, 0, 0.72));
 }
 
 .inc-home h1 .headerlink {
@@ -1498,7 +1502,7 @@ body::after {
 
 .inc-hero__mark {
   display: block;
-  width: min(8.3rem, 44vw);
+  width: min(10.9rem, 52vw);
   height: auto;
   margin: 0;
   filter:
@@ -2394,7 +2398,7 @@ body::after {
   }
 
   .inc-hero__mark {
-    width: min(7rem, 38vw);
+    width: min(8.8rem, 48vw);
   }
 
   .inc-hero__flow {
