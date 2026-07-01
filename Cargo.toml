@@ -112,6 +112,8 @@ wasmtime-wasi = { version = "45.0.3", default-features = false, features = ["p1"
 [dev-dependencies]
 # Runtime crate used by std.io generated-project offline smoke tests.
 byteorder = "1"
+# Runtime crate used by std.uuid generated-project offline smoke tests.
+rand = "0.8"
 # Runtime crates used by std.compression generated-project offline smoke tests.
 flate2 = "1"
 zstd = "0.13"

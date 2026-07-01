@@ -6450,6 +6450,11 @@ async def main() -> None:
 
     #[test]
     fn test_run_std_uuid_surface() -> Result<(), Box<dyn std::error::Error>> {
+        // Anchor `std.uuid`'s generated-project runtime dependency in the root test build so offline CI shards do not
+        // depend on cache order.
+        let mut rng = rand::thread_rng();
+        let _ = rand::Rng::gen_range(&mut rng, 0..1);
+
         let output = incan_command()
             .args(["run", "tests/fixtures/valid/std_uuid_surface.incn"])
             .env("CARGO_NET_OFFLINE", "true")
