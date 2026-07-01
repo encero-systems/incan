@@ -1,7 +1,6 @@
 # Contributors
 
-Incan is built by Encero Systems and improved by community contributions. Thank you to everyone who reports issues,
-tests release candidates, proposes fixes, and sharpens the project through review.
+Incan is built by Encero Systems and improved by community contributions. Thank you to everyone who reports issues, tests release candidates, proposes fixes, and sharpens the project through review.
 
 ## Community Contributions
 

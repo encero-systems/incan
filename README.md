@@ -9,7 +9,7 @@ The current toolchain is designed to be easy to install, try, inspect, and diagn
 Install the latest toolchain release before creating your first project:
 
 ```bash
-curl -fsSL https://github.com/encero-systems/incan/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/encero-systems/incan/releases/latest/download/install.sh | bash
 export PATH="$HOME/.local/bin:$PATH"
 incan --version
 ```
@@ -17,7 +17,8 @@ incan --version
 You can also install through package-manager adapters that use the same release manifest and verified toolchain archives:
 
 ```bash
-brew install https://github.com/encero-systems/incan/releases/latest/download/incan.rb
+brew tap encero-systems/tap
+brew install incan
 npm install -g @incan/toolchain
 pipx install incan
 ```

@@ -15,7 +15,7 @@ incan --version
 If you installed with a custom bin directory, use that path instead:
 
 ```bash
-curl -fsSL https://github.com/encero-systems/incan/releases/latest/download/install.sh | INCAN_BIN_DIR="$HOME/bin" sh
+curl -fsSL https://github.com/encero-systems/incan/releases/latest/download/install.sh | INCAN_BIN_DIR="$HOME/bin" bash
 export PATH="$HOME/bin:$PATH"
 ```
 

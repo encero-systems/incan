@@ -7,12 +7,17 @@ This tutorial is the shortest public path from an installed toolchain to running
 Install the toolchain, then make sure the command is on `PATH`. The direct installer provisions stable Rust through `rustup` when needed and installs the `wasm32-wasip1` target used by package vocab companions:
 
 ```bash
-curl -fsSL https://github.com/encero-systems/incan/releases/latest/download/install.sh | sh
+--8<-- "_snippets/commands/direct_install.sh"
 export PATH="$HOME/.local/bin:$PATH"
 incan --version
 ```
 
-You can also install through Homebrew, npm, or pipx; those package-manager channels use the same GitHub Release manifest and verified toolchain archives as the shell installer. npm and pipx route through the shared installer and can provision Rust automatically. Homebrew installs the prebuilt command binaries and expects Rust to be managed separately.
+You can also install through Homebrew, npm, or pipx; those package-manager channels use the same GitHub Release manifest and verified toolchain archives as the shell installer. npm and pipx route through the shared installer and can provision Rust automatically. Homebrew installs the prebuilt command binaries from the Encero tap and expects Rust to be managed separately.
+
+```bash
+brew tap encero-systems/tap
+brew install incan
+```
 
 Native Windows and Linux arm64 are not supported by the initial toolchain installer. Use WSL2 or a source build for those hosts for now.
 

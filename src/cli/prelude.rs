@@ -86,17 +86,31 @@ pub fn find_stdlib_dir() -> Option<PathBuf> {
     }
 
     // Also honor INCAN_STDLIB_DIR used by stdlib stub resolution.
-    if let Ok(stdlib_root) = env::var("INCAN_STDLIB_DIR") {
-        let root = PathBuf::from(stdlib_root);
-        if root.exists() && root.is_dir() {
-            let nested = root.join("stdlib");
-            if nested.exists() && nested.is_dir() {
-                return Some(nested);
-            }
-            return Some(root);
-        }
+    if let Ok(stdlib_root) = env::var("INCAN_STDLIB_DIR")
+        && let Some(path) = stdlib_dir_from_root(PathBuf::from(stdlib_root))
+    {
+        return Some(path);
     }
 
+    // Also honor INCAN_STDLIB_PATH used by installed-layout stdlib source lookups.
+    if let Ok(stdlib_root) = env::var("INCAN_STDLIB_PATH")
+        && let Some(path) = stdlib_dir_from_root(PathBuf::from(stdlib_root))
+    {
+        return Some(path);
+    }
+
+    None
+}
+
+/// Resolve a stdlib directory from either a toolchain root containing `stdlib/` or the stdlib directory itself.
+fn stdlib_dir_from_root(root: PathBuf) -> Option<PathBuf> {
+    if root.exists() && root.is_dir() {
+        let nested = root.join("stdlib");
+        if nested.exists() && nested.is_dir() {
+            return Some(nested);
+        }
+        return Some(root);
+    }
     None
 }
 
@@ -196,4 +210,34 @@ pub fn load_prelude() -> Result<Vec<ParsedModule>, PreludeError> {
     }
 
     Ok(prelude_modules)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::stdlib_dir_from_root;
+
+    #[test]
+    fn stdlib_dir_from_root_accepts_toolchain_root() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let toolchain_root = tmp.path().join("toolchain");
+        let stdlib_dir = toolchain_root.join("stdlib");
+        std::fs::create_dir_all(&stdlib_dir)?;
+
+        let found = stdlib_dir_from_root(toolchain_root).ok_or("expected nested stdlib directory")?;
+
+        assert!(found.ends_with("stdlib"));
+        Ok(())
+    }
+
+    #[test]
+    fn stdlib_dir_from_root_accepts_direct_stdlib_directory() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let stdlib_dir = tmp.path().join("stdlib");
+        std::fs::create_dir_all(&stdlib_dir)?;
+
+        let found = stdlib_dir_from_root(stdlib_dir).ok_or("expected direct stdlib directory")?;
+
+        assert!(found.ends_with("stdlib"));
+        Ok(())
+    }
 }
