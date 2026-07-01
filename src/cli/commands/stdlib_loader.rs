@@ -183,9 +183,10 @@ fn load_stdlib_module(path: &[String]) -> CliResult<StdlibModule> {
 /// Searches in the following locations (in order):
 /// 1. `$INCAN_STDLIB_DIR/<path>` (explicit override, runtime env var)
 /// 2. Workspace crate (compile-time): `$CARGO_MANIFEST_DIR/crates/incan_stdlib/<path>`
-/// 3. CWD crate-relative: `crates/incan_stdlib/<path>`
-/// 4. CWD relative: `<path>`
-/// 5. Installed stdlib (runtime env var): `$INCAN_STDLIB_PATH/<path>`
+/// 3. paths relative to the current executable, including installed toolchain layouts
+/// 4. CWD crate-relative: `crates/incan_stdlib/<path>`
+/// 5. CWD relative: `<path>`
+/// 6. Installed stdlib (runtime env var): `$INCAN_STDLIB_PATH/<path>`
 ///
 /// Returns an error if the file cannot be found in any location.
 fn find_stdlib_file(relative_path: &str) -> CliResult<PathBuf> {
@@ -206,7 +207,30 @@ fn find_stdlib_file(relative_path: &str) -> CliResult<PathBuf> {
         return Ok(workspace_path);
     }
 
-    // 3-4. Relative to current working directory
+    // 3. Relative to executable location, covering installed toolchains and local target builds.
+    if let Ok(exe_path) = std::env::current_exe()
+        && let Some(exe_dir) = exe_path.parent()
+    {
+        for base in [
+            Some(exe_dir),
+            exe_dir.parent(),
+            exe_dir.parent().and_then(|p| p.parent()),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let crate_local = base.join("crates/incan_stdlib").join(relative_path);
+            if crate_local.exists() {
+                return Ok(crate_local);
+            }
+            let local = base.join(relative_path);
+            if local.exists() {
+                return Ok(local);
+            }
+        }
+    }
+
+    // 4-5. Relative to current working directory
     if let Ok(cwd) = std::env::current_dir() {
         let crate_local = cwd.join("crates/incan_stdlib").join(relative_path);
         if crate_local.exists() {
@@ -218,7 +242,7 @@ fn find_stdlib_file(relative_path: &str) -> CliResult<PathBuf> {
         }
     }
 
-    // 5. Installed stdlib path (runtime, for production installs)
+    // 6. Installed stdlib path (runtime, for production installs)
     if let Ok(stdlib_root) = std::env::var("INCAN_STDLIB_PATH") {
         let installed_path = PathBuf::from(stdlib_root).join(relative_path);
         if installed_path.exists() {

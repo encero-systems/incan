@@ -115,7 +115,7 @@ copy_or_download() {
   case "$ref" in
     http://*|https://*)
       require_command curl
-      curl -fsSL "$ref" -o "$out"
+      curl -fL --progress-bar "$ref" -o "$out"
       ;;
     file://*)
       cp "${ref#file://}" "$out"
@@ -371,9 +371,11 @@ archive_file="${archive_override:-${tmp_dir}/toolchain.tar.gz}"
 if [ -n "$archive_override" ]; then
   [ -f "$archive_override" ] || fail "archive override does not exist: $archive_override"
 else
+  printf 'Downloading toolchain archive...\n'
   copy_or_download "$archive_url" "$archive_file"
 fi
 
+printf 'Verifying toolchain archive checksum...\n'
 actual_sha256="$(sha256_file "$archive_file")"
 [ "$actual_sha256" = "$archive_sha256" ] || fail "checksum mismatch for ${archive_file}: expected ${archive_sha256}, got ${actual_sha256}"
 
@@ -383,6 +385,7 @@ if [ -e "$toolchain_dir" ]; then
 fi
 extract_dir="${tmp_dir}/toolchain"
 mkdir -p "$extract_dir"
+printf 'Extracting toolchain archive...\n'
 tar -xzf "$archive_file" -C "$extract_dir"
 
 while IFS= read -r command_name; do
@@ -394,6 +397,12 @@ while IFS= read -r command_name; do
 done <<COMMANDS
 $(json_commands "$manifest_file")
 COMMANDS
+
+[ -f "${extract_dir}/stdlib/testing.incn" ] || fail "archive did not contain stdlib/testing.incn"
+for support_crate in incan_core incan_derive incan_stdlib incan_web_macros; do
+  [ -f "${extract_dir}/crates/${support_crate}/Cargo.toml" ] || fail "archive did not contain crates/${support_crate}/Cargo.toml"
+done
+[ -f "${extract_dir}/crates/Cargo.toml" ] || fail "archive did not contain crates/Cargo.toml"
 
 mkdir -p "$(dirname "$toolchain_dir")" "$bin_dir"
 mv "$extract_dir" "$toolchain_dir"

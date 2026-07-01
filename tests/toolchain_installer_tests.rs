@@ -97,6 +97,20 @@ fn write_fixture_archive(root: &Path) -> Result<(PathBuf, String), Box<dyn std::
         bin.join("incan-lsp"),
         "#!/usr/bin/env sh\nprintf 'incan-lsp fixture\\n'\n",
     )?;
+    let stdlib = payload.join("stdlib");
+    fs::create_dir_all(&stdlib)?;
+    fs::write(stdlib.join("testing.incn"), "# fixture std.testing source\n")?;
+    let crates = payload.join("crates");
+    fs::create_dir_all(&crates)?;
+    fs::write(crates.join("Cargo.toml"), "[workspace]\nmembers = []\n")?;
+    for support_crate in ["incan_core", "incan_derive", "incan_stdlib", "incan_web_macros"] {
+        let crate_dir = crates.join(support_crate);
+        fs::create_dir_all(&crate_dir)?;
+        fs::write(
+            crate_dir.join("Cargo.toml"),
+            format!("[package]\nname = \"{support_crate}\"\n"),
+        )?;
+    }
 
     let archive = root.join("incan-v0.4.0-test-x86_64-unknown-linux-gnu.tar.gz");
     let status = Command::new("tar")
@@ -236,6 +250,13 @@ fn write_manifest(root: &Path, archive: &Path, checksum: &str) -> Result<PathBuf
 fn assert_toolchain_install(incan_home: &Path, bin_dir: &Path) {
     assert!(incan_home.join("toolchains/0.4.0-test/bin/incan").exists());
     assert!(incan_home.join("toolchains/0.4.0-test/bin/incan-lsp").exists());
+    assert!(incan_home.join("toolchains/0.4.0-test/stdlib/testing.incn").exists());
+    assert!(incan_home.join("toolchains/0.4.0-test/crates/Cargo.toml").exists());
+    assert!(
+        incan_home
+            .join("toolchains/0.4.0-test/crates/incan_stdlib/Cargo.toml")
+            .exists()
+    );
     assert!(incan_home.join("current").exists());
     assert!(bin_dir.join("incan").exists());
     assert!(bin_dir.join("incan-lsp").exists());
@@ -266,6 +287,13 @@ fn toolchain_archive_packager_writes_archive_checksum_and_release_metadata() -> 
     let listing = String::from_utf8_lossy(&listing.stdout);
     assert!(listing.contains("bin/incan"));
     assert!(listing.contains("bin/incan-lsp"));
+    assert!(listing.contains("stdlib/testing.incn"));
+    assert!(listing.contains("stdlib/prelude.incn"));
+    assert!(listing.contains("crates/Cargo.toml"));
+    assert!(listing.contains("crates/incan_core/Cargo.toml"));
+    assert!(listing.contains("crates/incan_derive/Cargo.toml"));
+    assert!(listing.contains("crates/incan_stdlib/Cargo.toml"));
+    assert!(listing.contains("crates/incan_web_macros/Cargo.toml"));
     Ok(())
 }
 
@@ -313,8 +341,10 @@ fn toolchain_release_assets_are_prepared_by_central_manifest_script() -> Result<
     assert!(dist.join("toolchain-manifest.schema.v1.json").exists());
     let formula = fs::read_to_string(dist.join("incan.rb"))?;
     assert!(formula.contains("def staged_binary(name)"));
-    assert!(formula.contains("bin.install incan_bin"));
-    assert!(formula.contains("bin.install incan_lsp_bin"));
+    assert!(formula.contains("could not find stdlib/testing.incn in archive"));
+    assert!(formula.contains("libexec.install Dir[\"*\"]"));
+    assert!(formula.contains("bin.write_exec_script libexec/\"bin/incan\""));
+    assert!(formula.contains("bin.write_exec_script libexec/\"bin/incan-lsp\""));
     Ok(())
 }
 
@@ -614,14 +644,14 @@ fn homebrew_formula_is_rendered_from_the_toolchain_manifest() -> Result<(), Box<
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let checksum = fs::read_to_string(dist.join("incan-v0.4.0-rc3-x86_64-unknown-linux-gnu.tar.gz.sha256"))?
+    let checksum = fs::read_to_string(dist.join("incan-v0.4.0-rc4-x86_64-unknown-linux-gnu.tar.gz.sha256"))?
         .trim()
         .to_string();
     let formula = fs::read_to_string(dist.join("incan.rb"))?;
-    assert!(formula.contains(r#"version "0.4.0-rc3""#));
-    assert!(formula.contains("Homebrew installs only the prebuilt Incan commands"));
+    assert!(formula.contains(r#"version "0.4.0-rc4""#));
+    assert!(formula.contains("Homebrew installs the prebuilt Incan commands and bundled stdlib sources"));
     assert!(formula.contains(
-        r#"url "https://github.com/encero-systems/incan/releases/download/v0.4.0-rc3/incan-v0.4.0-rc3-x86_64-unknown-linux-gnu.tar.gz""#
+        r#"url "https://github.com/encero-systems/incan/releases/download/v0.4.0-rc4/incan-v0.4.0-rc4-x86_64-unknown-linux-gnu.tar.gz""#
     ));
     assert!(formula.contains(&format!(r#"sha256 "{checksum}""#)));
     assert!(formula.contains("def staged_files"));
@@ -633,11 +663,16 @@ fn homebrew_formula_is_rendered_from_the_toolchain_manifest() -> Result<(), Box<
     assert!(formula.contains("def staged_file_sample"));
     assert!(formula.contains("incan_bin = staged_binary(\"incan\")"));
     assert!(formula.contains("incan_lsp_bin = staged_binary(\"incan-lsp\")"));
+    assert!(formula.contains("stdlib_dir = Pathname.new(\"stdlib\")"));
     assert!(formula.contains(
         r#"odie "could not find incan binary in archive; staged files: #{staged_file_sample}" if incan_bin.nil?"#
     ));
-    assert!(formula.contains("bin.install incan_bin"));
-    assert!(formula.contains("bin.install incan_lsp_bin"));
+    assert!(formula.contains(
+        r#"odie "could not find stdlib/testing.incn in archive; staged files: #{staged_file_sample}" unless (stdlib_dir/"testing.incn").exist?"#
+    ));
+    assert!(formula.contains("libexec.install Dir[\"*\"]"));
+    assert!(formula.contains("bin.write_exec_script libexec/\"bin/incan\""));
+    assert!(formula.contains("bin.write_exec_script libexec/\"bin/incan-lsp\""));
     Ok(())
 }
 

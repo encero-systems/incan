@@ -10,8 +10,8 @@
 //! - Complex deps as subsections: `[dependencies.tokio]` with version, features, etc.
 //! - Both forms are semantically equivalent and understood by cargo.
 
-use std::io;
 use std::path::{Path, PathBuf};
+use std::{fs, io};
 
 use serde::Serialize;
 
@@ -170,6 +170,45 @@ fn path_dependency(path: &Path, features: &[String]) -> toml::Value {
     toml::Value::Table(table)
 }
 
+fn installed_toolchain_crate_path(crate_name: &str) -> Option<PathBuf> {
+    let exe_path = std::env::current_exe().ok()?;
+    let canonical_exe_path = fs::canonicalize(&exe_path).ok();
+
+    let mut exe_paths = vec![exe_path];
+    if let Some(canonical) = canonical_exe_path {
+        exe_paths.push(canonical);
+    }
+
+    for exe_path in exe_paths {
+        let Some(exe_dir) = exe_path.parent() else {
+            continue;
+        };
+        for base in [
+            Some(exe_dir),
+            exe_dir.parent(),
+            exe_dir.parent().and_then(|p| p.parent()),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let candidate = base.join("crates").join(crate_name);
+            if candidate.join("Cargo.toml").exists() {
+                return Some(candidate);
+            }
+        }
+    }
+
+    None
+}
+
+fn toolchain_crate_path(crate_name: &str) -> PathBuf {
+    installed_toolchain_crate_path(crate_name).unwrap_or_else(|| {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("crates")
+            .join(crate_name)
+    })
+}
+
 // ============================================================================
 // ProjectGenerator impl — Cargo.toml generation
 // ============================================================================
@@ -183,10 +222,9 @@ impl ProjectGenerator {
         let edition = self.rust_edition.as_deref().unwrap_or("2021").to_string();
         let package_name = self.package_name.as_deref().unwrap_or(&self.name).to_string();
 
-        // ---- Resolve workspace-rooted paths for internal crates ----
-        let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let stdlib_path = workspace_root.join("crates/incan_stdlib");
-        let derive_path = workspace_root.join("crates/incan_derive");
+        // ---- Resolve toolchain-owned support crates for generated Rust projects ----
+        let stdlib_path = toolchain_crate_path("incan_stdlib");
+        let derive_path = toolchain_crate_path("incan_derive");
 
         // ---- Build dependencies table ----
         let mut deps = toml::Table::new();

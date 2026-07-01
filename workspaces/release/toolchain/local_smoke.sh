@@ -110,6 +110,16 @@ smoke_direct() {
     --incan-home "${dist_dir}/install-home" \
     --bin-dir "${dist_dir}/install-bin"
   "${dist_dir}/install-bin/incan" --version
+  rm -rf "${dist_dir}/starter-smoke"
+  mkdir -p "${dist_dir}/starter-smoke"
+  (
+    cd "${dist_dir}/starter-smoke"
+    "${dist_dir}/install-bin/incan" new hello --yes
+    cd hello
+    "${dist_dir}/install-bin/incan" run
+    "${dist_dir}/install-bin/incan" test
+    "${dist_dir}/install-bin/incan" build --release
+  )
 }
 
 smoke_npm() {
