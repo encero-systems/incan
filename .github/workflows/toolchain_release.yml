@@ -41,7 +41,7 @@ jobs:
           INCAN_BIN: target/${{ matrix.target }}/release/incan
           INCAN_LSP_BIN: target/${{ matrix.target }}/release/incan-lsp
         run: workspaces/release/toolchain/package_archive.sh "${TARGET}"
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7.0.1
         with:
           name: incan-toolchain-${{ matrix.target }}
           path: |
@@ -59,7 +59,7 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@v8.0.1
         with:
           pattern: incan-toolchain-*
           path: dist/toolchain
@@ -129,7 +129,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release edit "${GITHUB_REF_NAME}" --draft=false --prerelease --latest=false
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7.0.1
         with:
           name: incan-toolchain-manifest
           path: |
@@ -151,7 +151,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@v8.0.1
         with:
           name: incan-toolchain-manifest
           path: dist/toolchain
@@ -178,7 +178,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@v8.0.1
         with:
           name: incan-toolchain-manifest
           path: dist/toolchain
