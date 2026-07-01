@@ -207,26 +207,15 @@ fn find_stdlib_file(relative_path: &str) -> CliResult<PathBuf> {
         return Ok(workspace_path);
     }
 
-    // 3. Relative to executable location, covering installed toolchains and local target builds.
-    if let Ok(exe_path) = std::env::current_exe()
-        && let Some(exe_dir) = exe_path.parent()
-    {
-        for base in [
-            Some(exe_dir),
-            exe_dir.parent(),
-            exe_dir.parent().and_then(|p| p.parent()),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            let crate_local = base.join("crates/incan_stdlib").join(relative_path);
-            if crate_local.exists() {
-                return Ok(crate_local);
-            }
-            let local = base.join(relative_path);
-            if local.exists() {
-                return Ok(local);
-            }
+    // 3. Relative to executable location, covering installed toolchains, symlinked launchers, and local target builds.
+    for base in crate::toolchain_layout::current_executable_search_bases() {
+        let crate_local = base.join("crates/incan_stdlib").join(relative_path);
+        if crate_local.exists() {
+            return Ok(crate_local);
+        }
+        let local = base.join(relative_path);
+        if local.exists() {
+            return Ok(local);
         }
     }
 

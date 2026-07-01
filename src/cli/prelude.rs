@@ -67,35 +67,12 @@ pub fn find_stdlib_dir() -> Option<PathBuf> {
         }
     }
 
-    // Try relative to executable location
-    if let Ok(exe_path) = env::current_exe()
-        && let Some(exe_dir) = exe_path.parent()
-    {
-        // Check exe_dir/{crates/incan_stdlib/stdlib,stdlib}.
+    // Try relative to executable location, including canonical symlink targets.
+    for exe_dir in crate::toolchain_layout::current_executable_search_bases() {
         for rel in ["crates/incan_stdlib/stdlib", "stdlib"] {
             let stdlib = exe_dir.join(rel);
             if stdlib.exists() && stdlib.is_dir() {
                 return Some(stdlib);
-            }
-        }
-
-        // Check exe_dir/../{crates/incan_stdlib/stdlib,stdlib} (for target/debug or target/release).
-        if let Some(parent) = exe_dir.parent() {
-            for rel in ["crates/incan_stdlib/stdlib", "stdlib"] {
-                let stdlib = parent.join(rel);
-                if stdlib.exists() && stdlib.is_dir() {
-                    return Some(stdlib);
-                }
-            }
-
-            // Check exe_dir/../../{crates/incan_stdlib/stdlib,stdlib} (for target/debug -> project root).
-            if let Some(grandparent) = parent.parent() {
-                for rel in ["crates/incan_stdlib/stdlib", "stdlib"] {
-                    let stdlib = grandparent.join(rel);
-                    if stdlib.exists() && stdlib.is_dir() {
-                        return Some(stdlib);
-                    }
-                }
             }
         }
     }

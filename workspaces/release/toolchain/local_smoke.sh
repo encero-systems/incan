@@ -110,6 +110,8 @@ smoke_direct() {
     --incan-home "${dist_dir}/install-home" \
     --bin-dir "${dist_dir}/install-bin"
   "${dist_dir}/install-bin/incan" --version
+  # Exercise the user-facing symlink path, not the real toolchain binary path. Some hosts report the symlink path from
+  # current_exe(), so stdlib/support-crate lookup must resolve the canonical target before walking toolchain ancestors.
   rm -rf "${dist_dir}/starter-smoke"
   mkdir -p "${dist_dir}/starter-smoke"
   (

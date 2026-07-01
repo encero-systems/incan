@@ -500,26 +500,15 @@ fn find_stdlib_file(relative: &str) -> Option<PathBuf> {
         return Some(workspace_local);
     }
 
-    // 4. Relative to executable location (works for some installed/bundled layouts).
-    if let Ok(exe_path) = std::env::current_exe()
-        && let Some(exe_dir) = exe_path.parent()
-    {
-        for base in [
-            Some(exe_dir),
-            exe_dir.parent(),
-            exe_dir.parent().and_then(|p| p.parent()),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            let candidate_crate_local = base.join("crates/incan_stdlib").join(relative);
-            if candidate_crate_local.exists() {
-                return Some(candidate_crate_local);
-            }
-            let candidate_local = base.join(relative);
-            if candidate_local.exists() {
-                return Some(candidate_local);
-            }
+    // 4. Relative to executable location, including installed symlink launchers.
+    for base in crate::toolchain_layout::current_executable_search_bases() {
+        let candidate_crate_local = base.join("crates/incan_stdlib").join(relative);
+        if candidate_crate_local.exists() {
+            return Some(candidate_crate_local);
+        }
+        let candidate_local = base.join(relative);
+        if candidate_local.exists() {
+            return Some(candidate_local);
         }
     }
 
