@@ -1,0 +1,31 @@
+# Incan documentation for language models and agents
+
+Incan is a typed, Python-readable language and compiler toolchain for new application and data code. It aims for native artifacts, static contracts, inspectable compiler facts, and explicit Rust ecosystem boundaries. It is not a Python compatibility runtime, not a faster Python interpreter, and not a Rust replacement.
+
+Start here:
+- What Incan is for: /start_here/what_incan_is_for/
+- Getting started: /tooling/tutorials/getting_started/
+- Incan vs Python: /comparisons/python/
+- Incan and Python compatibility: /comparisons/python_compatibility/
+- Incan vs Rust: /comparisons/rust/
+- Roadmap: /roadmap/
+
+Reference:
+- Language reference: /language/reference/language/
+- Feature inventory: /language/reference/feature_inventory/
+- CLI reference: /tooling/reference/cli_reference/
+- Codegraph inspection: /tooling/reference/codegraph_inspection/
+- Agent and tooling documentation surfaces: /tooling/reference/agent_docs_surfaces/
+- 1.0 public contracts: /start_here/public_contracts/
+
+Machine-readable command surfaces:
+- incan check --format json
+- incan explain --format json
+- incan build --report json
+- incan inspect rust --format json
+- incan inspect codegraph --format jsonl
+- incan tools metadata api --format json
+- incan tools metadata model --format json
+
+Important caveat:
+Generated Rust is inspectable current backend output, not the durable public compatibility boundary. Prefer Incan source, manifests, checked metadata, semantic facts, package metadata, documented CLI report schemas, and explicit interop contracts.
