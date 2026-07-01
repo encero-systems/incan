@@ -15,13 +15,13 @@ The canonical 0.4 artifact source is the GitHub Release. The release publishes `
 Use the direct installer when you want the release manifest, checksum verification, and command links without a package-manager adapter:
 
 ```bash
-curl -fsSL https://github.com/encero-systems/incan/releases/latest/download/install.sh | bash
+--8<-- "_snippets/commands/direct_install.sh"
 ```
 
 For a dry run that resolves the manifest and target without writing files:
 
 ```bash
-curl -fsSL https://github.com/encero-systems/incan/releases/latest/download/install.sh | bash -s -- --dry-run
+--8<-- "_snippets/commands/direct_install_dry_run.sh"
 ```
 
 The installer reads the release manifest, selects the archive for your host target, provisions the Rust backend unless you pass `--skip-rust`, verifies the archive checksum, installs into `INCAN_HOME` (default `~/.incan`), and links `incan` plus `incan-lsp` into `INCAN_BIN_DIR` (default `~/.local/bin`). Make sure the bin directory is on `PATH`.

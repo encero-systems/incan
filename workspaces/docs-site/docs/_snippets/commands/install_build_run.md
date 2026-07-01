@@ -1,7 +1,7 @@
 === "Recommended: toolchain install"
 
     ```bash
-    curl -fsSL https://github.com/encero-systems/incan/releases/latest/download/install.sh | bash
+    --8<-- "_snippets/commands/direct_install.sh"
     export PATH="$HOME/.local/bin:$PATH"
     incan --version
     ```
