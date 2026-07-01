@@ -15,13 +15,13 @@ The canonical 0.4 artifact source is the GitHub Release. The release publishes `
 Use the direct installer when you want the release manifest, checksum verification, and command links without a package-manager adapter:
 
 ```bash
-curl -fsSL https://github.com/encero-systems/incan/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/encero-systems/incan/releases/latest/download/install.sh | bash
 ```
 
 For a dry run that resolves the manifest and target without writing files:
 
 ```bash
-curl -fsSL https://github.com/encero-systems/incan/releases/latest/download/install.sh | sh -s -- --dry-run
+curl -fsSL https://github.com/encero-systems/incan/releases/latest/download/install.sh | bash -s -- --dry-run
 ```
 
 The installer reads the release manifest, selects the archive for your host target, provisions the Rust backend unless you pass `--skip-rust`, verifies the archive checksum, installs into `INCAN_HOME` (default `~/.incan`), and links `incan` plus `incan-lsp` into `INCAN_BIN_DIR` (default `~/.local/bin`). Make sure the bin directory is on `PATH`.
@@ -35,12 +35,13 @@ incan-lsp --version
 Package-manager installs use the same toolchain archive contract while fitting into the command manager you already use:
 
 ```bash
-brew install https://github.com/encero-systems/incan/releases/latest/download/incan.rb
+brew tap encero-systems/tap
+brew install incan
 npm install -g @incan/toolchain
 pipx install incan
 ```
 
-Use Homebrew when you want native macOS or Linux command management and already have Rust managed separately. Use npm when you want the toolchain command shims available through Node-based tooling, editors, or CI images. Use `pipx` for Python-oriented environments; plain `pip install --user incan` also works, but `pipx` keeps the command package isolated from project environments.
+Use Homebrew when you want native macOS or Linux command management and already have Rust managed separately. The generated release formula is published through the Encero tap, while the release asset remains the source used to update that formula. Use npm when you want the toolchain command shims available through Node-based tooling, editors, or CI images. Use `pipx` for Python-oriented environments; plain `pip install --user incan` also works, but `pipx` keeps the command package isolated from project environments.
 
 The npm and pip packages install the toolchain into a package-local cache on first install or first command use, then delegate to the real `incan` and `incan-lsp` binaries from the verified toolchain archive. They route through the same installer, so they also provision Rust unless you pass `--skip-rust` through `install-incan` or set `INCAN_SKIP_RUST_INSTALL=1`. Set `INCAN_TOOLCHAIN_MANIFEST` to pin a manifest, or use the direct `install.sh --manifest <URL|PATH>` path when you need fully explicit release control.
 

@@ -11,8 +11,7 @@ Incan has two core “string-like” types:
     Method names are intentionally familiar (`upper`, `lower`, `strip`, `split`, `replace`, …), but Incan is statically typed and `contains()` is a method (rather than Python’s `in` operator).
 
 !!! note "Coming from Rust?"
-    Incan hides most ownership/borrowing details. You write `str` and the compiler handles Rust interop details in generated
-    code.
+    Incan hides most ownership/borrowing details. You write `str` and the compiler handles Rust interop details in generated code.
 
 ## Quick reference
 

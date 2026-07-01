@@ -74,8 +74,7 @@ The key ideas:
 ??? info "Coming from TS/JS?"
     In JS/TS, `try/catch` works, but failures are often effectively “untyped” at the boundary (anything can be thrown, and caught values are frequently `unknown`).
 
-    In Incan, fallibility is explicit in the return type, and you handle it with `Result` + `match` (or propagate it with
-    `?`).
+    In Incan, fallibility is explicit in the return type, and you handle it with `Result` + `match` (or propagate it with `?`).
 
     **JS/TS `try/catch` → Incan `Result`**:
 
