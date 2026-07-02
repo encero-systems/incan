@@ -16,6 +16,16 @@ function binDir() {
   return process.env.INCAN_NPM_BIN_DIR || path.join(packageRoot(), ".incan", "bin");
 }
 
+function packageVersion() {
+  const packageJson = JSON.parse(fs.readFileSync(path.join(packageRoot(), "package.json"), "utf8"));
+  return packageJson.version;
+}
+
+function packageManifestUrl() {
+  const release = `v${packageVersion()}`;
+  return `https://github.com/encero-systems/incan/releases/download/${release}/manifest.json`;
+}
+
 function installerScript() {
   const candidates = [
     path.join(packageRoot(), "vendor", "install-incan.sh"),
@@ -35,6 +45,9 @@ function hasValueOption(args, name) {
 
 function installerArgs(args) {
   const next = args.filter((arg) => arg !== "--package-install");
+  if (!hasValueOption(next, "--manifest") && !process.env.INCAN_TOOLCHAIN_MANIFEST) {
+    next.push("--manifest", packageManifestUrl());
+  }
   if (!hasValueOption(next, "--incan-home")) {
     next.push("--incan-home", toolchainHome());
   }

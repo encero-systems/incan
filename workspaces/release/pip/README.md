@@ -9,4 +9,4 @@ pipx install incan
 incan --version
 ```
 
-The command shims install the toolchain into a package-local cache on first use. Set `INCAN_PIP_TOOLCHAIN_HOME`, `INCAN_PIP_BIN_DIR`, or `INCAN_TOOLCHAIN_MANIFEST` when you need a custom cache location or manifest.
+The command shims install the toolchain into a package-local cache on first use and default to the release manifest that matches this package version. If `pipx` warns that `~/.local/bin` is not on `PATH`, run `pipx ensurepath` or add that directory to your shell startup before calling `incan`. Set `INCAN_PIP_TOOLCHAIN_HOME`, `INCAN_PIP_BIN_DIR`, or `INCAN_TOOLCHAIN_MANIFEST` when you need a custom cache location or manifest.

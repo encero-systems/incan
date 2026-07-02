@@ -147,6 +147,33 @@ fn write_executable(path: &Path, contents: &str) -> Result<(), Box<dyn std::erro
     make_executable(path)
 }
 
+fn write_fake_bash_recorder(root: &Path) -> Result<(PathBuf, PathBuf), Box<dyn std::error::Error>> {
+    let fake_bin = root.join("fake-bin");
+    fs::create_dir_all(&fake_bin)?;
+    let log = root.join("bash-args.log");
+    write_executable(
+        &fake_bin.join("bash"),
+        r#"#!/usr/bin/env sh
+set -eu
+: > "$FAKE_BASH_LOG"
+for arg in "$@"; do
+  printf '%s\n' "$arg" >> "$FAKE_BASH_LOG"
+done
+"#,
+    )?;
+    Ok((fake_bin, log))
+}
+
+fn assert_recorded_arg_pair(log: &Path, name: &str, value: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let args = fs::read_to_string(log)?;
+    let lines = args.lines().collect::<Vec<_>>();
+    assert!(
+        lines.windows(2).any(|pair| pair == [name, value]),
+        "expected recorded args to contain {name} {value}, got:\n{args}"
+    );
+    Ok(())
+}
+
 fn write_fixture_toolchain_commands(root: &Path) -> Result<(PathBuf, PathBuf), Box<dyn std::error::Error>> {
     let bin = root.join("commands");
     fs::create_dir_all(&bin)?;
@@ -644,14 +671,14 @@ fn homebrew_formula_is_rendered_from_the_toolchain_manifest() -> Result<(), Box<
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let checksum = fs::read_to_string(dist.join("incan-v0.4.0-rc7-x86_64-unknown-linux-gnu.tar.gz.sha256"))?
+    let checksum = fs::read_to_string(dist.join("incan-v0.4.0-rc8-x86_64-unknown-linux-gnu.tar.gz.sha256"))?
         .trim()
         .to_string();
     let formula = fs::read_to_string(dist.join("incan.rb"))?;
-    assert!(formula.contains(r#"version "0.4.0-rc7""#));
+    assert!(formula.contains(r#"version "0.4.0-rc8""#));
     assert!(formula.contains("Homebrew installs the prebuilt Incan commands and bundled stdlib sources"));
     assert!(formula.contains(
-        r#"url "https://github.com/encero-systems/incan/releases/download/v0.4.0-rc7/incan-v0.4.0-rc7-x86_64-unknown-linux-gnu.tar.gz""#
+        r#"url "https://github.com/encero-systems/incan/releases/download/v0.4.0-rc8/incan-v0.4.0-rc8-x86_64-unknown-linux-gnu.tar.gz""#
     ));
     assert!(formula.contains(&format!(r#"sha256 "{checksum}""#)));
     assert!(formula.contains("def staged_files"));
@@ -777,6 +804,33 @@ fn npm_installer_wrapper_delegates_to_shared_toolchain_installer() -> Result<(),
 }
 
 #[test]
+fn npm_installer_wrapper_defaults_to_its_own_release_manifest() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let (fake_bin, log) = write_fake_bash_recorder(tmp.path())?;
+    let current_path = std::env::var("PATH")?;
+    let expected_manifest = "https://github.com/encero-systems/incan/releases/download/v0.4.0-rc8/manifest.json";
+
+    let output = Command::new("node")
+        .arg(npm_installer_wrapper())
+        .arg("--package-install")
+        .arg("--dry-run")
+        .env("PATH", format!("{}:{current_path}", fake_bin.display()))
+        .env("FAKE_BASH_LOG", &log)
+        .env_remove("INCAN_TOOLCHAIN_MANIFEST")
+        .env_remove("INCAN_SKIP_NPM_INSTALL")
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "npm wrapper failed with fake bash\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_recorded_arg_pair(&log, "--manifest", expected_manifest)?;
+    Ok(())
+}
+
+#[test]
 fn pip_installer_wrapper_delegates_to_shared_toolchain_installer() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let (archive, checksum) = write_fixture_archive(tmp.path())?;
@@ -802,5 +856,31 @@ fn pip_installer_wrapper_delegates_to_shared_toolchain_installer() -> Result<(),
         String::from_utf8_lossy(&output.stderr)
     );
     assert_toolchain_install(&incan_home, &bin_dir);
+    Ok(())
+}
+
+#[test]
+fn pip_installer_wrapper_defaults_to_its_own_release_manifest() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let (fake_bin, log) = write_fake_bash_recorder(tmp.path())?;
+    let current_path = std::env::var("PATH")?;
+    let expected_manifest = "https://github.com/encero-systems/incan/releases/download/v0.4.0-rc8/manifest.json";
+
+    let output = Command::new("python3")
+        .arg(pip_installer_wrapper())
+        .arg("install")
+        .arg("--dry-run")
+        .env("PATH", format!("{}:{current_path}", fake_bin.display()))
+        .env("FAKE_BASH_LOG", &log)
+        .env_remove("INCAN_TOOLCHAIN_MANIFEST")
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "pip wrapper failed with fake bash\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_recorded_arg_pair(&log, "--manifest", expected_manifest)?;
     Ok(())
 }

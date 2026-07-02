@@ -9,4 +9,4 @@ npm install -g @incan/toolchain
 incan --version
 ```
 
-The command shims install the toolchain into a package-local cache on first use. Set `INCAN_NPM_TOOLCHAIN_HOME`, `INCAN_NPM_BIN_DIR`, or `INCAN_TOOLCHAIN_MANIFEST` when you need a custom cache location or manifest.
+The command shims install the toolchain into a package-local cache on first use and default to the release manifest that matches this package version. Set `INCAN_NPM_TOOLCHAIN_HOME`, `INCAN_NPM_BIN_DIR`, or `INCAN_TOOLCHAIN_MANIFEST` when you need a custom cache location or manifest.
