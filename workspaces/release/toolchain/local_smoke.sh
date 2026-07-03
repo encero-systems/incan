@@ -65,6 +65,35 @@ archive_path() {
   printf '%s/incan-%s-%s.tar.gz\n' "$dist_dir" "$(toolchain_release)" "$host_target"
 }
 
+local_manifest_path() {
+  printf '%s/manifest.local.%s.json\n' "$dist_dir" "$host_target"
+}
+
+write_local_manifest() {
+  require_command python3
+  local source_manifest="$1"
+  local output_manifest="$2"
+  local archive
+  archive="$(archive_path)"
+  python3 - "$source_manifest" "$output_manifest" "$host_target" "$archive" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source_manifest = Path(sys.argv[1])
+output_manifest = Path(sys.argv[2])
+target = sys.argv[3]
+archive = Path(sys.argv[4]).resolve()
+
+payload = json.loads(source_manifest.read_text(encoding="utf-8"))
+try:
+    payload["hosts"][target]["archive_url"] = archive.as_uri()
+except KeyError as exc:
+    raise SystemExit(f"manifest is missing host {target}: {exc}") from exc
+output_manifest.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+}
+
 require_archive() {
   local archive
   archive="$(archive_path)"
@@ -129,26 +158,22 @@ smoke_npm() {
   require_command npm
   require_archive
   [ -f "${dist_dir}/manifest.json" ] || fail "missing manifest: ${dist_dir}/manifest.json; run make toolchain-release-assets first"
+  local local_manifest
+  local_manifest="$(local_manifest_path)"
+  write_local_manifest "${dist_dir}/manifest.json" "$local_manifest"
   npm_config_cache="${dist_dir}/npm-cache" \
     npm_config_logs_dir="${dist_dir}/npm-logs" \
     node "${root}/workspaces/release/npm/prepare_package.js" "$dist_dir"
   local npm_home="${dist_dir}/npm-home"
   rm -rf "$npm_home"
   mkdir -p "$npm_home"
-  INCAN_TOOLCHAIN_MANIFEST="${dist_dir}/manifest.json" \
-    INCAN_NPM_TOOLCHAIN_HOME="${npm_home}/toolchain-home" \
-    INCAN_NPM_BIN_DIR="${npm_home}/bin" \
+  INCAN_TOOLCHAIN_MANIFEST="$local_manifest" \
     npm_config_cache="${dist_dir}/npm-cache" \
     npm_config_logs_dir="${dist_dir}/npm-logs" \
-    npm install -g "${dist_dir}/incan-toolchain-$(toolchain_version).tgz" --prefix "$npm_home" --ignore-scripts
-  INCAN_TOOLCHAIN_MANIFEST="${dist_dir}/manifest.json" \
-    INCAN_NPM_TOOLCHAIN_HOME="${npm_home}/toolchain-home" \
-    INCAN_NPM_BIN_DIR="${npm_home}/bin" \
-    "${npm_home}/bin/install-incan" --archive "$(archive_path)" --target "$host_target"
-  INCAN_TOOLCHAIN_MANIFEST="${dist_dir}/manifest.json" \
-    INCAN_NPM_TOOLCHAIN_HOME="${npm_home}/toolchain-home" \
-    INCAN_NPM_BIN_DIR="${npm_home}/bin" \
-    "${npm_home}/bin/incan" --version
+    npm_config_foreground_scripts=true \
+    npm install -g "${dist_dir}/incan-toolchain-$(toolchain_version).tgz" --prefix "$npm_home"
+  "${npm_home}/bin/incan" --version
+  "${npm_home}/bin/incan-lsp" --help >/dev/null
 }
 
 python_build_runner() {
