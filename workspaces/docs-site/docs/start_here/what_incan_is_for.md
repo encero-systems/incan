@@ -63,6 +63,6 @@ The 1.0 direction is:
 ## Where to go next
 
 - If you are comparing against Python, read [Incan vs Python](../comparisons/python.md).
-- If you need Python compatibility details, read [Incan and Python compatibility](../comparisons/python_compatibility.md).
+- If you need Python compatibility details, read the compatibility boundary in [Incan vs Python](../comparisons/python.md#compatibility-boundary).
 - If you are evaluating the 1.0 category, read [1.0 domain-native demo target](domain_native_demo.md).
 - If you need the stabilization boundary, read [1.0 public contracts](public_contracts.md).

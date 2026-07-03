@@ -6,7 +6,7 @@ Start here:
 - What Incan is for: /start_here/what_incan_is_for/
 - Getting started: /tooling/tutorials/getting_started/
 - Incan vs Python: /comparisons/python/
-- Incan and Python compatibility: /comparisons/python_compatibility/
+- Incan vs JS/TS: /comparisons/javascript_typescript/
 - Incan vs Rust: /comparisons/rust/
 - Roadmap: /roadmap/
 

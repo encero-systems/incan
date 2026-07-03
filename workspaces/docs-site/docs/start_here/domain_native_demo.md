@@ -102,6 +102,6 @@ Exact syntax may change, but the contract should not: the demo must make typeche
 ## Related docs
 
 - [What Incan is for](what_incan_is_for.md)
-- [Incan and Python compatibility](../comparisons/python_compatibility.md)
+- [Incan vs Python](../comparisons/python.md)
 - [CLI reference](../tooling/reference/cli_reference.md)
 - [Codegraph inspection](../tooling/reference/codegraph_inspection.md)

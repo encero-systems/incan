@@ -1090,14 +1090,15 @@ body::after {
   overflow-x: auto;
 }
 
-/* Tables use fixed layout so long docs/RFC rows cannot blow out columns. */
+/* Tables keep intrinsic column widths and scroll inside Material's wrapper on narrow screens. */
 .md-typeset table:not([class]),
 .md-typeset .md-typeset__table table {
   display: table;
-  width: 100%;
-  max-width: 100%;
+  width: max-content;
+  min-width: 100%;
+  max-width: none;
   margin: 0.75rem 0 1.15rem;
-  table-layout: fixed;
+  table-layout: auto;
   border-collapse: separate;
   border-spacing: 0;
   border: 1px solid rgba(184, 142, 78, 0.26);
@@ -1120,7 +1121,8 @@ body::after {
 .md-typeset .md-typeset__table table td {
   padding: 0.62rem 0.7rem;
   border-color: rgba(222, 188, 132, 0.14);
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
   vertical-align: top;
 }
 
@@ -1131,6 +1133,7 @@ body::after {
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .md-typeset .tabbed-set {
@@ -1420,6 +1423,12 @@ body::after {
 }
 
 /* Landing-page module: scoped after generic docs styling to avoid override stacks. */
+@media screen and (min-width: 76.25em) {
+  .md-main__inner:has(.inc-home) .md-sidebar--primary {
+    display: none;
+  }
+}
+
 .md-content__inner:has(.inc-home) {
   padding: 1.05rem 1.3rem 1.3rem;
 }
