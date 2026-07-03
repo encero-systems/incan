@@ -407,21 +407,26 @@ body::after {
   opacity: 0.96;
 }
 
-/* Desktop sidebars should size to their content while remaining scrollable. */
+/* Desktop sidebars stay visible without creating nested scroll regions. */
 @media screen and (min-width: 76.25em) {
   .md-sidebar--primary,
   .md-sidebar--secondary {
-    height: auto;
+    position: sticky;
+    align-self: flex-start;
+    height: max-content;
+    min-height: max-content;
     top: calc(var(--inc-header-height) + 0.5rem);
     padding-top: 0;
+    overflow: visible;
   }
 
   .md-sidebar--primary .md-sidebar__scrollwrap,
   .md-sidebar--secondary .md-sidebar__scrollwrap {
-    height: auto;
-    max-height: calc(100vh - var(--inc-header-height) - 1.35rem);
+    height: max-content;
+    min-height: max-content;
+    max-height: none;
     margin-top: 0;
-    overflow: auto;
+    overflow: visible;
   }
 
   .md-sidebar--primary .md-sidebar__inner,
