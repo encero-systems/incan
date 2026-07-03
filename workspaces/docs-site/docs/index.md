@@ -1,7 +1,6 @@
 ---
 title: Incan
 hide:
-  - navigation
   - toc
 ---
 
