@@ -1,5 +1,16 @@
 ---
 title: Incan
+search:
+  boost: 2
+tags:
+  - programming language
+  - compiler toolchain
+  - readable source
+  - native binaries
+  - rust
+  - python-shaped
+  - ownership planning
+  - duckborrowing
 hide:
   - toc
 ---

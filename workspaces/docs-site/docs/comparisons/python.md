@@ -1,3 +1,15 @@
+---
+search:
+  boost: 4
+tags:
+  - python
+  - performance
+  - benchmarks
+  - static typing
+  - readable source
+  - rust
+---
+
 # Incan vs Python
 
 Python is the default choice when ecosystem reach, hiring familiarity, notebooks, and package availability matter most. Incan should not be chosen just because a program could be written in a Python-like syntax.

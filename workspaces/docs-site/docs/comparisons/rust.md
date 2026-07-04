@@ -1,3 +1,15 @@
+---
+search:
+  boost: 4
+tags:
+  - rust
+  - ownership
+  - cargo
+  - rustc
+  - readable source
+  - application code
+---
+
 # Incan vs Rust
 
 Rust is the right answer when low-level control, performance predictability, and ecosystem maturity matter more than authoring speed. Incan does not replace Rust. The current beta builds through Cargo/rustc, and the longer-lived product boundary is high-level application code that can produce native artifacts and interoperate with the Rust ecosystem.

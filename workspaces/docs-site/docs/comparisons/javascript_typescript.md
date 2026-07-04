@@ -1,3 +1,16 @@
+---
+search:
+  boost: 4
+tags:
+  - javascript
+  - typescript
+  - js
+  - ts
+  - node
+  - compiler contracts
+  - rust
+---
+
 # Incan vs JS/TS
 
 JavaScript and TypeScript are the right default when the browser, Node.js, npm packages, or frontend frameworks are central to the product. Incan should not be chosen just because a tool or service could be written with familiar high-level syntax.
