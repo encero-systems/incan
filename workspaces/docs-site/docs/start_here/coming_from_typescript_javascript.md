@@ -34,6 +34,7 @@ incan build --release
 ## What you should do next
 
 - Install the toolchain and create a starter project: [Getting Started](../tooling/tutorials/getting_started.md)
+- Compare the runtime and deployment tradeoffs: [Incan vs JS/TS](../comparisons/javascript_typescript.md)
 - If anything fails: [Troubleshooting](../tooling/how-to/troubleshooting.md)
 - Set up your editor: [Editor setup](../tooling/how-to/editor_setup.md)
 - Learn the basics: [The Incan Book (Basics)](../language/tutorials/book/index.md)

@@ -1,3 +1,13 @@
+---
+search:
+  boost: 3
+tags:
+  - release notes
+  - changelog
+  - releases
+  - versioning
+---
+
 # Release notes
 
 This section tracks user-facing changes in Incan across releases.

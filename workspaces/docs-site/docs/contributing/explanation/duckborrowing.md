@@ -1,3 +1,15 @@
+---
+search:
+  boost: 3
+tags:
+  - duckborrowing
+  - ownership planning
+  - generated rust
+  - borrow
+  - move
+  - clone
+---
+
 # Duckborrowing
 
 Duckborrowing is the backend ownership-planning layer that lets Incan keep value-oriented source semantics while emitting valid, predictable Rust. It is not a source-language feature and it is not a second Rust borrow checker. It is the compiler-side policy for deciding when generated Rust should move, borrow, mutably borrow, clone, convert with `.into()`, or materialize owned `String` storage.
