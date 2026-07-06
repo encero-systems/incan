@@ -1201,7 +1201,7 @@ fn lifecycle_new_version_and_env_commands_work() -> Result<(), Box<dyn std::erro
     assert!(initial_manifest.contains(r#"description = "A generated greeting app""#));
     assert!(initial_manifest.contains(r#"authors = ["Danny <danny@example.com>"]"#));
     assert!(initial_manifest.contains(r#"license = "MIT""#));
-    assert!(initial_manifest.contains(r#"requires-incan = ">=0.4.0-0,<0.5.0""#));
+    assert!(initial_manifest.contains(r#"requires-incan = ">=0.4.0,<0.5.0""#));
     assert!(project_dir.join("src/main.incn").exists());
     assert!(project_dir.join("tests/test_main.incn").exists());
 

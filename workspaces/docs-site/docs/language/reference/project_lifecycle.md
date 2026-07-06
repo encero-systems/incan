@@ -49,7 +49,7 @@ Minimal application manifest:
 [project]
 name = "greeter"
 version = "0.1.0"
-requires-incan = ">=0.4.0-0,<0.5.0"
+requires-incan = ">=0.4.0,<0.5.0"
 
 [project.scripts]
 main = "src/main.incn"
@@ -118,7 +118,7 @@ The generated scaffold includes `src/main.incn`, `tests/test_main.incn`, `README
 [project]
 name = "greeter"
 version = "0.1.0"
-requires-incan = ">=0.4.0-0,<0.5.0"
+requires-incan = ">=0.4.0,<0.5.0"
 ```
 
 If the active compiler is outside the range, `incan run` in project mode, `incan build`, `incan test`, `incan lock`, and `incan env run` fail early with a diagnostic that names the active compiler version and the contributing constraint layers. Single-file and inline commands without a discovered `incan.toml` remain manifest-free and do not infer a requirement.

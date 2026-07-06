@@ -40,7 +40,7 @@ This creates `incan.toml`, `src/main.incn`, `tests/test_main.incn`, `README.md`,
 [project]
 name = "hello_project"
 version = "0.1.0"
-requires-incan = ">=0.4.0-0,<0.5.0"
+requires-incan = ">=0.4.0,<0.5.0"
 
 [project.scripts]
 main = "src/main.incn"
