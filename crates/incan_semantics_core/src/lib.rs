@@ -22,6 +22,20 @@
 use incan_core::lang::decorators::DecoratorId;
 use incan_core::lang::keywords::KeywordId;
 
+mod facts;
+mod hir;
+mod types;
+
+pub use facts::{
+    CompilerNodeId, CompilerNodeKind, SemanticFact, SemanticFactKind, SemanticFactStore, SemanticFactValue,
+    SemanticSourceTarget, SemanticSourceTargetKind,
+};
+pub use hir::{HirDeclaration, HirDeclarationKind, HirModule, HirSourceSpan, SemanticModuleSnapshot};
+pub use types::{
+    AbiV0Ownership, AbiV0Representation, AbiV0ReservedFacts, AbiV0RuntimeRequirement, AbiV0TypeFacts,
+    AbiV0TypeIdentity, IncanCallableParam, IncanCallableParamKind, IncanPrimitiveType, IncanType,
+};
+
 /// Stable feature key used by parser handoff and semantics dispatch.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SurfaceFeatureKey {

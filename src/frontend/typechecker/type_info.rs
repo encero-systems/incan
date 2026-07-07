@@ -11,6 +11,11 @@ use crate::frontend::symbols::{
 };
 use crate::frontend::testing_markers::TestingFixtureScope;
 use incan_core::interop::{CoercionPolicy, RustFunctionSig};
+use incan_core::lang::types::collections::{self as collection_types, CollectionTypeId};
+use incan_semantics_core::{
+    CompilerNodeId, IncanCallableParam, IncanCallableParamKind, IncanPrimitiveType, IncanType, SemanticFact,
+    SemanticFactKind, SemanticFactStore, SemanticFactValue, SemanticSourceTarget,
+};
 
 use super::{ConstValue, const_eval};
 
@@ -577,6 +582,47 @@ pub struct TestingFixtureInfo {
 }
 
 impl TypeCheckInfo {
+    /// Export a backend-neutral fact snapshot for consumers that should not depend on typed AST or Rust IR shapes.
+    ///
+    /// This is the first bridge into the v0.5 semantic fact store. It deliberately reuses facts that the typechecker
+    /// has already proven, keyed by source spans, and avoids introducing a separate semantic authority.
+    pub fn semantic_fact_store(&self, module_path: &[String]) -> SemanticFactStore {
+        let module_identity = semantic_module_identity(module_path);
+        let mut facts = Vec::new();
+
+        for (&span, ty) in &self.expressions.expr_types {
+            facts.push(SemanticFact::new(
+                CompilerNodeId::expression_span(&module_identity, span.0, span.1),
+                SemanticFactKind::Type,
+                SemanticFactValue::semantic_type(semantic_type_from_resolved(ty)),
+            ));
+        }
+
+        for (&span, target) in &self.expressions.source_targets {
+            facts.push(SemanticFact::new(
+                CompilerNodeId::expression_span(&module_identity, span.0, span.1),
+                SemanticFactKind::SymbolTarget,
+                SemanticFactValue::source_target(semantic_source_target_from_typecheck(target)),
+            ));
+        }
+
+        for (name, binding) in &self.declarations.function_bindings {
+            facts.push(SemanticFact::new(
+                CompilerNodeId::declaration(&module_identity, name),
+                SemanticFactKind::Type,
+                SemanticFactValue::semantic_type(semantic_type_from_function_binding(binding)),
+            ));
+        }
+
+        facts.sort();
+
+        let mut store = SemanticFactStore::new();
+        for fact in facts {
+            store.insert(fact);
+        }
+        store
+    }
+
     /// Return the resolved type recorded for the expression at `span`, if any.
     pub fn expr_type(&self, span: Span) -> Option<&ResolvedType> {
         self.expressions.expr_types.get(&(span.start, span.end))
@@ -906,5 +952,90 @@ fn callable_param_needs_boundary_snapshot(ty: &ResolvedType) -> bool {
         }
         ResolvedType::Tuple(items) => items.iter().any(callable_param_needs_boundary_snapshot),
         _ => false,
+    }
+}
+
+/// Render the compiler-owned module identity used by semantic fact subjects.
+fn semantic_module_identity(module_path: &[String]) -> String {
+    if module_path.is_empty() {
+        "<module>".to_string()
+    } else {
+        module_path.join("::")
+    }
+}
+
+/// Convert a typechecker source-target artifact into the backend-neutral fact payload.
+fn semantic_source_target_from_typecheck(target: &SourceTargetInfo) -> SemanticSourceTarget {
+    SemanticSourceTarget::from_kind_str(target.module_path.clone(), target.name.clone(), target.kind.as_str())
+}
+
+/// Convert a resolved function binding into the semantic callable type stored on declaration facts.
+fn semantic_type_from_function_binding(binding: &FunctionBindingInfo) -> IncanType {
+    IncanType::Function {
+        params: binding
+            .params
+            .iter()
+            .map(semantic_callable_param_from_resolved)
+            .collect(),
+        return_type: Box::new(semantic_type_from_resolved(&binding.return_type)),
+    }
+}
+
+/// Convert the current typechecker type universe into the backend-neutral Incan semantic type model.
+fn semantic_type_from_resolved(ty: &ResolvedType) -> IncanType {
+    match ty {
+        ResolvedType::Int => IncanType::Primitive(IncanPrimitiveType::Int),
+        ResolvedType::Float => IncanType::Primitive(IncanPrimitiveType::Float),
+        ResolvedType::Numeric(_) => IncanType::Primitive(IncanPrimitiveType::Numeric(ty.to_string())),
+        ResolvedType::Bool => IncanType::Primitive(IncanPrimitiveType::Bool),
+        ResolvedType::Str => IncanType::Primitive(IncanPrimitiveType::Str),
+        ResolvedType::Bytes => IncanType::Primitive(IncanPrimitiveType::Bytes),
+        ResolvedType::FrozenStr => IncanType::Primitive(IncanPrimitiveType::FrozenStr),
+        ResolvedType::FrozenBytes => IncanType::Primitive(IncanPrimitiveType::FrozenBytes),
+        ResolvedType::FrozenList(elem) => IncanType::Generic {
+            base: collection_types::as_str(CollectionTypeId::FrozenList).to_string(),
+            args: vec![semantic_type_from_resolved(elem)],
+        },
+        ResolvedType::FrozenDict(key, value) => IncanType::Generic {
+            base: collection_types::as_str(CollectionTypeId::FrozenDict).to_string(),
+            args: vec![semantic_type_from_resolved(key), semantic_type_from_resolved(value)],
+        },
+        ResolvedType::FrozenSet(elem) => IncanType::Generic {
+            base: collection_types::as_str(CollectionTypeId::FrozenSet).to_string(),
+            args: vec![semantic_type_from_resolved(elem)],
+        },
+        ResolvedType::Unit => IncanType::Primitive(IncanPrimitiveType::Unit),
+        ResolvedType::Named(name) => IncanType::Named(name.clone()),
+        ResolvedType::Generic(base, args) => IncanType::Generic {
+            base: base.clone(),
+            args: args.iter().map(semantic_type_from_resolved).collect(),
+        },
+        ResolvedType::Function(params, return_type) => IncanType::Function {
+            params: params.iter().map(semantic_callable_param_from_resolved).collect(),
+            return_type: Box::new(semantic_type_from_resolved(return_type)),
+        },
+        ResolvedType::TypeToken(inner) => IncanType::TypeToken(Box::new(semantic_type_from_resolved(inner))),
+        ResolvedType::Tuple(items) => IncanType::Tuple(items.iter().map(semantic_type_from_resolved).collect()),
+        ResolvedType::TypeVar(name) => IncanType::TypeVar(name.clone()),
+        ResolvedType::SelfType => IncanType::SelfType,
+        ResolvedType::Ref(inner) => IncanType::Ref(Box::new(semantic_type_from_resolved(inner))),
+        ResolvedType::RefMut(inner) => IncanType::RefMut(Box::new(semantic_type_from_resolved(inner))),
+        ResolvedType::RustPath(path) => IncanType::RustInteropPath(path.clone()),
+        ResolvedType::CallSiteInfer => IncanType::Infer,
+        ResolvedType::Unknown => IncanType::Unknown,
+    }
+}
+
+/// Convert typechecker callable parameter metadata into semantic callable parameter metadata.
+fn semantic_callable_param_from_resolved(param: &CallableParam) -> IncanCallableParam {
+    IncanCallableParam {
+        name: param.name.clone(),
+        ty: semantic_type_from_resolved(&param.ty),
+        kind: match param.kind {
+            ParamKind::Normal => IncanCallableParamKind::Normal,
+            ParamKind::RestPositional => IncanCallableParamKind::RestPositional,
+            ParamKind::RestKeyword => IncanCallableParamKind::RestKeyword,
+        },
+        has_default: param.has_default,
     }
 }

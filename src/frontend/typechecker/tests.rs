@@ -33,7 +33,7 @@ use incan_core::interop::{
 };
 use incan_core::lang::surface::constructors::{self as surface_constructors, ConstructorId};
 use incan_core::lang::traits::{self as builtin_traits, TraitId};
-use incan_core::lang::types::collections::CollectionTypeId;
+use incan_core::lang::types::collections::{self as collection_types, CollectionTypeId};
 use std::collections::HashMap;
 #[cfg(feature = "rust_inspect")]
 use std::fs;
@@ -15737,6 +15737,229 @@ def run() -> int:
             .any(|e| e.message.contains("not supported for this call form")),
         "expected unsupported call-site type args diagnostic, got {errs:?}"
     );
+}
+
+fn typecheck_info_for_module(
+    source: &str,
+    module_path: Vec<String>,
+    context: &str,
+) -> Result<TypeCheckInfo, Box<dyn std::error::Error>> {
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("{errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("{errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(module_path));
+    checker
+        .check_program(&ast)
+        .map_err(|errs| std::io::Error::other(format!("{context}: {errs:?}")))?;
+    Ok(checker.type_info().clone())
+}
+
+#[test]
+fn type_info_semantic_fact_store_exports_expression_types_deterministically() -> Result<(), Box<dyn std::error::Error>>
+{
+    let module_path = vec!["facts".to_string(), "sample".to_string()];
+    let info = typecheck_info_for_module(
+        r#"
+def run() -> int:
+  value = 41
+  return value + 1
+"#,
+        module_path.clone(),
+        "semantic fact type export",
+    )?;
+
+    let facts = info.semantic_fact_store(&module_path);
+    let rendered = facts.iter().map(|fact| fact.render_snapshot()).collect::<Vec<_>>();
+    let mut sorted = rendered.clone();
+    sorted.sort();
+
+    assert_eq!(rendered, sorted, "semantic facts should iterate deterministically");
+    assert!(
+        rendered
+            .iter()
+            .any(|fact| fact.starts_with("expr:facts::sample#") && fact.ends_with(" type=int")),
+        "expected at least one expression type fact, got {rendered:?}"
+    );
+    assert!(
+        facts.iter().any(|fact| {
+            fact.kind == incan_semantics_core::SemanticFactKind::Type
+                && matches!(
+                    &fact.value,
+                    incan_semantics_core::SemanticFactValue::Type(incan_semantics_core::IncanType::Primitive(
+                        incan_semantics_core::IncanPrimitiveType::Int
+                    ))
+                )
+        }),
+        "expected a structured int semantic type fact"
+    );
+    Ok(())
+}
+
+#[test]
+fn type_info_semantic_fact_store_exports_source_targets() -> Result<(), Box<dyn std::error::Error>> {
+    let module_path = vec!["facts".to_string(), "sample".to_string()];
+    let info = typecheck_info_for_module(
+        r#"
+def helper() -> int:
+  return 1
+
+def run() -> int:
+  return helper()
+"#,
+        module_path.clone(),
+        "semantic fact source target export",
+    )?;
+
+    let facts = info.semantic_fact_store(&module_path);
+    let rendered = facts.iter().map(|fact| fact.render_snapshot()).collect::<Vec<_>>();
+
+    assert!(
+        rendered
+            .iter()
+            .any(|fact| fact.contains(" symbol_target=function:facts::sample::helper")),
+        "expected helper source-target fact, got {rendered:?}"
+    );
+    assert!(
+        facts.iter().any(|fact| matches!(
+            &fact.value,
+            incan_semantics_core::SemanticFactValue::SourceTarget(target)
+                if target.kind == incan_semantics_core::SemanticSourceTargetKind::Function
+                    && target.module_path == vec!["facts".to_string(), "sample".to_string()]
+                    && target.name == "helper"
+        )),
+        "expected structured helper source-target fact"
+    );
+    Ok(())
+}
+
+#[test]
+fn type_info_semantic_fact_store_preserves_imported_source_targets() -> Result<(), Box<dyn std::error::Error>> {
+    let helper_source = r#"
+pub def helper() -> int:
+  return 1
+"#;
+    let main_source = r#"
+from helpers import helper
+
+def run() -> int:
+  return helper()
+"#;
+    let helper_tokens = lexer::lex(helper_source).map_err(|errs| std::io::Error::other(format!("{errs:?}")))?;
+    let helper_ast = parser::parse(&helper_tokens).map_err(|errs| std::io::Error::other(format!("{errs:?}")))?;
+    let main_tokens = lexer::lex(main_source).map_err(|errs| std::io::Error::other(format!("{errs:?}")))?;
+    let main_ast = parser::parse(&main_tokens).map_err(|errs| std::io::Error::other(format!("{errs:?}")))?;
+    let module_path = vec!["app".to_string()];
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(module_path.clone()));
+    checker
+        .check_with_imports(&main_ast, &[("helpers", &helper_ast)])
+        .map_err(|errs| std::io::Error::other(format!("semantic fact imported target export: {errs:?}")))?;
+
+    let facts = checker.type_info().semantic_fact_store(&module_path);
+    assert!(
+        facts.iter().any(|fact| matches!(
+            &fact.value,
+            incan_semantics_core::SemanticFactValue::SourceTarget(target)
+                if target.kind == incan_semantics_core::SemanticSourceTargetKind::Function
+                    && target.module_path == vec!["helpers".to_string()]
+                    && target.name == "helper"
+        )),
+        "expected imported helper source-target fact"
+    );
+    Ok(())
+}
+
+#[test]
+fn type_info_semantic_fact_store_exports_nominal_and_collection_types() -> Result<(), Box<dyn std::error::Error>> {
+    let module_path = vec!["facts".to_string(), "nominal".to_string()];
+    let info = typecheck_info_for_module(
+        r#"
+model User:
+  name: str
+
+enum Status:
+  Active
+
+def first_user(users: list[User]) -> User:
+  return users[0]
+
+def current_status() -> Status:
+  return Status.Active
+"#,
+        module_path.clone(),
+        "semantic fact nominal type export",
+    )?;
+
+    let facts = info.semantic_fact_store(&module_path);
+    assert!(
+        facts.iter().any(|fact| matches!(
+            &fact.value,
+            incan_semantics_core::SemanticFactValue::Type(incan_semantics_core::IncanType::Named(name))
+                if name == "User"
+        )),
+        "expected a model nominal semantic type fact"
+    );
+    assert!(
+        facts.iter().any(|fact| matches!(
+            &fact.value,
+            incan_semantics_core::SemanticFactValue::Type(incan_semantics_core::IncanType::Named(name))
+                if name == "Status"
+        )),
+        "expected an enum nominal semantic type fact"
+    );
+    assert!(
+        facts.iter().any(|fact| matches!(
+            &fact.value,
+            incan_semantics_core::SemanticFactValue::Type(incan_semantics_core::IncanType::Generic { base, args })
+                if base == collection_types::as_str(CollectionTypeId::List)
+                    && matches!(
+                        args.as_slice(),
+                        [incan_semantics_core::IncanType::Named(name)] if name == "User"
+                    )
+        )),
+        "expected a collection semantic type fact for list[User]"
+    );
+    Ok(())
+}
+
+#[test]
+fn type_info_semantic_fact_store_exports_function_declaration_type() -> Result<(), Box<dyn std::error::Error>> {
+    let module_path = vec!["facts".to_string(), "decls".to_string()];
+    let info = typecheck_info_for_module(
+        r#"
+def add(x: int, y: int = 1) -> int:
+  return x + y
+"#,
+        module_path.clone(),
+        "semantic fact declaration type export",
+    )?;
+
+    let facts = info.semantic_fact_store(&module_path);
+    let add_fact = facts
+        .iter()
+        .find(|fact| {
+            fact.subject.to_string() == "decl:facts::decls::add"
+                && fact.kind == incan_semantics_core::SemanticFactKind::Type
+        })
+        .ok_or("missing add declaration type fact")?;
+    let incan_semantics_core::SemanticFactValue::Type(incan_semantics_core::IncanType::Function {
+        params,
+        return_type,
+    }) = &add_fact.value
+    else {
+        return Err(format!("expected function type fact, got {add_fact:?}").into());
+    };
+
+    assert_eq!(params.len(), 2);
+    assert_eq!(params[0].name.as_deref(), Some("x"));
+    assert!(!params[0].has_default);
+    assert_eq!(params[1].name.as_deref(), Some("y"));
+    assert!(params[1].has_default);
+    assert!(matches!(
+        return_type.as_ref(),
+        incan_semantics_core::IncanType::Primitive(incan_semantics_core::IncanPrimitiveType::Int)
+    ));
+    Ok(())
 }
 
 #[test]

@@ -293,7 +293,10 @@ nav:
           - Readable, maintainable Rust: contributing/explanation/readable-maintainable-rust.md
           - "std.testing internals": contributing/explanation/stdlib_testing_internals.md
       - Reference:
+          - Backend behavior inventory: contributing/reference/backend_behavior_inventory.md
           - Generated Rust stdlib coverage: contributing/reference/generated_rust_stdlib_coverage.md
+          - Hees.ai v0.5 dependency inventory: contributing/reference/hees_ai_v05_dependency_inventory.md
+          - Rust-source backend deprecation policy: contributing/reference/rust_source_backend_deprecation.md
       - RFCs: RFCs/index.md
   - Release notes:
       - Overview: release_notes/index.md

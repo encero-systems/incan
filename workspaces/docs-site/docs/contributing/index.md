@@ -27,8 +27,11 @@ If you’re new, start with:
 ## Reference (look up)
 
 - [Contributors](contributors.md) — community acknowledgements for external contributions
+- [Backend behavior inventory](reference/backend_behavior_inventory.md) — phase-0 inventory for preserving supported behavior during backend replacement
 - [Layering rules](explanation/layering.md) — dependency boundaries and guardrails
 - [Generated Rust stdlib coverage](reference/generated_rust_stdlib_coverage.md) — generated-Rust coverage inventory for stdlib modules
+- [Hees.ai v0.5 dependency inventory](reference/hees_ai_v05_dependency_inventory.md) — proof-lane dependency map and scope guardrails
+- [Rust-source backend deprecation policy](reference/rust_source_backend_deprecation.md) — compatibility rules while semantic authority moves out of generated Rust
 
 ## Design (RFCs and roadmap)
 
