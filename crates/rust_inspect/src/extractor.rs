@@ -6,7 +6,7 @@ use incan_core::interop::{
     RustFieldInfo, RustFunctionSig, RustImplementedTrait, RustItemKind, RustItemMetadata, RustMethodSig,
     RustModuleChild, RustModuleChildKind, RustModuleInfo, RustParam, RustTraitAssoc, RustTraitInfo, RustTypeInfo,
     RustTypeShape, RustTypeShapePathFallback, RustVariantInfo, RustVisibility, parse_rust_type_shape_text,
-    render_rust_type_shape, strip_rust_borrow_lifetimes,
+    render_rust_type_shape, split_top_level_rust_args, strip_rust_borrow_lifetimes,
 };
 use ra_ap_hir::{
     Adt, AssocItem, Crate, DisplayTarget, Enum, FieldSource, Function, HasSource, HasVisibility, HirDisplay, Impl,
@@ -49,6 +49,13 @@ fn display_looks_like_type_param(display: &str) -> bool {
         && !display.contains("::")
         && !display.contains(['<', '>', '(', ')', '[', ']', '&', ' '])
         && display.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Return a simple generic type-parameter identifier written in source.
+fn simple_type_param_name(text: &str) -> Option<&str> {
+    let trimmed = text.trim();
+    (display_looks_like_type_param(trimmed) && trimmed.chars().next().is_some_and(|ch| ch.is_ascii_uppercase()))
+        .then_some(trimmed)
 }
 
 fn module_path_segments(module: Module, db: &RootDatabase) -> Vec<String> {
@@ -242,6 +249,26 @@ fn source_type_shape(text: &str, crate_name: &str, module: Module, db: &RootData
     )
 }
 
+/// Detect a source-level borrow annotation and return whether it is mutable plus the inner type text.
+fn source_borrow_kind(text: &str) -> Option<(bool, &str)> {
+    let after_amp = text.trim().strip_prefix('&')?.trim_start();
+    let after_lifetime = if let Some(rest) = after_amp.strip_prefix('\'') {
+        let end = rest
+            .char_indices()
+            .find_map(|(idx, ch)| (!(ch == '_' || ch.is_ascii_alphanumeric())).then_some(idx))
+            .unwrap_or(rest.len());
+        rest[end..].trim_start()
+    } else {
+        after_amp
+    };
+    if let Some(rest) = after_lifetime.strip_prefix("mut")
+        && rest.chars().next().is_none_or(char::is_whitespace)
+    {
+        return Some((true, rest.trim_start()));
+    }
+    Some((false, after_lifetime))
+}
+
 fn source_field_type_shape(field: &ra_ap_hir::Field, db: &RootDatabase, crate_name: &str) -> Option<RustTypeShape> {
     let source = field.source(db)?;
     let text = match source.value {
@@ -404,6 +431,48 @@ fn source_function_return_type_display(f: Function, db: &RootDatabase) -> Option
     })
 }
 
+/// Render source type text in the same canonical display form used by extracted function metadata.
+fn source_function_type_display(f: Function, text: &str, db: &RootDatabase) -> Option<String> {
+    if let Some(display) = borrowed_builtin_source_display(text) {
+        return Some(display);
+    }
+    if let Some((is_mut, inner)) = source_borrow_kind(text) {
+        let inner = source_function_type_display(f, inner, db)?;
+        return Some(if is_mut {
+            format!("&mut {inner}")
+        } else {
+            format!("&{inner}")
+        });
+    }
+    if let Some(imported_display) = canonicalize_imported_single_segment_type_display(text, f, db) {
+        return Some(imported_display);
+    }
+    let module = f.module(db);
+    let crate_name = module
+        .krate(db)
+        .display_name(db)
+        .map(|name| name.canonical_name().as_str().to_owned())?;
+    let shape = source_type_shape(text, crate_name.as_str(), module, db);
+    if let Some(display) = exact_numeric_boundary_display(text) {
+        return Some(display);
+    }
+    if matches!(shape, RustTypeShape::TypeParam(_))
+        && let Some(imported_display) = canonicalize_imported_single_segment_type_display(text, f, db)
+    {
+        return Some(imported_display);
+    }
+    let rendered = match shape {
+        RustTypeShape::Unknown => normalize_display_path(text),
+        other => render_rust_type_shape(&other),
+    };
+    if rendered.contains('?')
+        && let Some(imported_display) = canonicalize_imported_single_segment_type_display(text, f, db)
+    {
+        return Some(imported_display);
+    }
+    Some(rendered)
+}
+
 /// Return the written RHS of a Rust `type` alias when available.
 ///
 /// HIR type displays may erase callable trait-object arguments inside aliases to `_`. The source RHS is the
@@ -516,12 +585,170 @@ fn type_shape_contains_unknown(shape: &RustTypeShape) -> bool {
     }
 }
 
+/// Return the matching `>` for a source generic list whose opening `<` is at `open_idx`.
+fn matching_angle_end(text: &str, open_idx: usize) -> Option<usize> {
+    let mut angle = 0usize;
+    let mut paren = 0usize;
+    let mut bracket = 0usize;
+    for (idx, ch) in text[open_idx..].char_indices() {
+        match ch {
+            '<' if paren == 0 && bracket == 0 => angle += 1,
+            '>' if paren == 0 && bracket == 0 => {
+                angle = angle.checked_sub(1)?;
+                if angle == 0 {
+                    return Some(open_idx + idx);
+                }
+            }
+            '(' => paren += 1,
+            ')' => paren = paren.saturating_sub(1),
+            '[' => bracket += 1,
+            ']' => bracket = bracket.saturating_sub(1),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Return the matching `)` for a source paren whose opening `(` is at `open_idx`.
+fn matching_paren_end(text: &str, open_idx: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (idx, ch) in text[open_idx..].char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(open_idx + idx);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Split top-level Rust trait bounds joined with `+`.
+fn split_top_level_rust_bounds(text: &str) -> Vec<&str> {
+    let mut bounds = Vec::new();
+    let mut start = 0usize;
+    let mut angle = 0usize;
+    let mut paren = 0usize;
+    let mut bracket = 0usize;
+    for (idx, ch) in text.char_indices() {
+        match ch {
+            '<' => angle += 1,
+            '>' => angle = angle.saturating_sub(1),
+            '(' => paren += 1,
+            ')' => paren = paren.saturating_sub(1),
+            '[' => bracket += 1,
+            ']' => bracket = bracket.saturating_sub(1),
+            '+' if angle == 0 && paren == 0 && bracket == 0 => {
+                let bound = text[start..idx].trim();
+                if !bound.is_empty() {
+                    bounds.push(bound);
+                }
+                start = idx + ch.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    let tail = text[start..].trim();
+    if !tail.is_empty() {
+        bounds.push(tail);
+    }
+    bounds
+}
+
+/// Normalize one `Fn*` bound while preserving Rust callable-bound syntax for downstream consumers.
+fn source_callable_bound_display<F>(bound: &str, mut normalize_type: F) -> Option<String>
+where
+    F: FnMut(&str) -> Option<String>,
+{
+    let bound = bound.trim();
+    let (name, after_name) = ["FnOnce", "FnMut", "Fn"]
+        .into_iter()
+        .find_map(|name| bound.strip_prefix(name).map(|rest| (name, rest.trim_start())))?;
+    if !after_name.starts_with('(') {
+        return None;
+    }
+    let args_end = matching_paren_end(after_name, 0)?;
+    let args_inner = &after_name[1..args_end];
+    let mut args = Vec::new();
+    for arg in split_top_level_rust_args(args_inner) {
+        args.push(normalize_type(arg)?);
+    }
+    let after_args = after_name[args_end + 1..].trim_start();
+    let ret = if let Some(ret) = after_args.strip_prefix("->") {
+        Some(normalize_type(
+            split_top_level_rust_bounds(ret).first().copied().unwrap_or(ret),
+        )?)
+    } else {
+        None
+    };
+    Some(match ret {
+        Some(ret) => format!("impl {name}({}) -> {ret}", args.join(", ")),
+        None => format!("impl {name}({})", args.join(", ")),
+    })
+}
+
+/// Return a source function's callable `Fn*` bound for a generic parameter, if one is declared.
+fn source_callable_bound_for_type_param<F>(
+    function_source: &str,
+    type_param: &str,
+    mut normalize_type: F,
+) -> Option<String>
+where
+    F: FnMut(&str) -> Option<String>,
+{
+    let type_param = simple_type_param_name(type_param)?;
+    let params_start = function_source.find('(').unwrap_or(function_source.len());
+    let before_params = &function_source[..params_start];
+    if let Some(generic_start) = before_params.find('<')
+        && let Some(generic_end) = matching_angle_end(before_params, generic_start)
+    {
+        for generic in split_top_level_rust_args(&before_params[generic_start + 1..generic_end]) {
+            let Some((name, bounds)) = generic.split_once(':') else {
+                continue;
+            };
+            if name.trim() == type_param {
+                for bound in split_top_level_rust_bounds(bounds) {
+                    if let Some(display) = source_callable_bound_display(bound, &mut normalize_type) {
+                        return Some(display);
+                    }
+                }
+            }
+        }
+    }
+
+    let params_end = function_source
+        .find('(')
+        .and_then(|idx| matching_paren_end(function_source, idx))
+        .unwrap_or(params_start);
+    let header_tail = &function_source[params_end + 1..];
+    let header_end = header_tail.find(['{', ';']).unwrap_or(header_tail.len());
+    let header_tail = &header_tail[..header_end];
+    let where_idx = header_tail.find("where")?;
+    for predicate in split_top_level_rust_args(&header_tail[where_idx + "where".len()..]) {
+        let Some((name, bounds)) = predicate.split_once(':') else {
+            continue;
+        };
+        if name.trim() == type_param {
+            for bound in split_top_level_rust_bounds(bounds) {
+                if let Some(display) = source_callable_bound_display(bound, &mut normalize_type) {
+                    return Some(display);
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Resolve a function parameter's declared source annotation into a canonical display string.
 ///
 /// rust-analyzer sometimes degrades borrowed parameter displays to `&?` even when the written source still carries a
 /// concrete imported or local pointee type. When that happens, the source annotation is the more faithful contract and
 /// should drive metadata so downstream typechecking/codegen can keep the concrete borrow boundary.
-fn source_function_param_type_display(f: Function, param: &ra_ap_hir::Param<'_>, db: &RootDatabase) -> Option<String> {
+fn source_function_param_type_text(f: Function, param: &ra_ap_hir::Param<'_>, db: &RootDatabase) -> Option<String> {
     let source = f.source(db)?;
     let param_list = source.value.param_list()?;
     let self_offset = usize::from(param_list.self_param().is_some());
@@ -529,37 +756,21 @@ fn source_function_param_type_display(f: Function, param: &ra_ap_hir::Param<'_>,
         return None;
     }
     let source_param = param_list.params().nth(param.index() - self_offset)?;
-    let text = source_param.ty()?.to_string();
-    if let Some(display) = borrowed_builtin_source_display(text.as_str()) {
+    source_param.ty().map(|ty| ty.to_string())
+}
+
+/// Resolve a function parameter's source annotation or callable generic bound into a canonical display string.
+fn source_function_param_type_display(f: Function, param: &ra_ap_hir::Param<'_>, db: &RootDatabase) -> Option<String> {
+    let text = source_function_param_type_text(f, param, db)?;
+    let source = f.source(db)?;
+    if let Some(display) =
+        source_callable_bound_for_type_param(source.value.syntax().text().to_string().as_str(), text.as_str(), |ty| {
+            source_function_type_display(f, ty, db)
+        })
+    {
         return Some(display);
     }
-    if let Some(imported_display) = canonicalize_imported_single_segment_type_display(text.as_str(), f, db) {
-        return Some(imported_display);
-    }
-    let module = f.module(db);
-    let crate_name = module
-        .krate(db)
-        .display_name(db)
-        .map(|name| name.canonical_name().as_str().to_owned())?;
-    let shape = source_type_shape(text.as_str(), crate_name.as_str(), module, db);
-    if let Some(display) = exact_numeric_boundary_display(text.as_str()) {
-        return Some(display);
-    }
-    if matches!(shape, RustTypeShape::TypeParam(_))
-        && let Some(imported_display) = canonicalize_imported_single_segment_type_display(text.as_str(), f, db)
-    {
-        return Some(imported_display);
-    }
-    let rendered = match shape {
-        RustTypeShape::Unknown => normalize_display_path(text.as_str()),
-        other => render_rust_type_shape(&other),
-    };
-    if rendered.contains('?')
-        && let Some(imported_display) = canonicalize_imported_single_segment_type_display(text.as_str(), f, db)
-    {
-        return Some(imported_display);
-    }
-    Some(rendered)
+    source_function_type_display(f, text.as_str(), db)
 }
 
 /// Extract a Rust function signature from inspection metadata.
