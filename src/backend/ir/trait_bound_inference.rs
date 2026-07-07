@@ -1620,6 +1620,7 @@ fn tuple_item_use_site<'a>(site: ValueUseSite<'a>, target_ty: Option<&'a IrType>
             in_return,
         },
         ValueUseSite::ExternalCallArg { .. } => ValueUseSite::ExternalCallArg { target_ty },
+        ValueUseSite::ExternalInferredGenericArg { .. } => ValueUseSite::ExternalInferredGenericArg { target_ty },
         ValueUseSite::StructField { .. } => ValueUseSite::StructField { target_ty },
         ValueUseSite::CollectionElement { .. } => ValueUseSite::CollectionElement { target_ty },
         ValueUseSite::Assignment { .. } => ValueUseSite::Assignment { target_ty },

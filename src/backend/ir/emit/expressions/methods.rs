@@ -37,6 +37,15 @@ use fast_paths::emit_registered_method_fast_path;
 use iterator_methods::emit_iterator_method;
 use string_methods::emit_string_method;
 
+/// Shared settings for emitting one method call's argument list.
+#[derive(Clone, Copy)]
+struct MethodCallArgEmission<'sig, 'site> {
+    callable_signature: Option<&'sig FunctionSignature>,
+    base_use_site: ValueUseSite<'site>,
+    result_target_ty: Option<&'site IrType>,
+    infer_unresolved_generic_args: bool,
+}
+
 /// Return the trait path used for type-level reflection.
 fn type_reflection_trait_path(method: &str) -> Option<&'static str> {
     match magic_methods::from_str(method) {
@@ -255,33 +264,49 @@ impl<'a> IrEmitter<'a> {
         type_has_rust_reference_shape(arg_ty)
     }
 
+    /// Return whether an external Rust generic parameter should infer from this argument's original string shape.
+    fn unresolved_external_generic_should_infer_from_string_arg(arg: &TypedExpr, param_ty: &IrType) -> bool {
+        matches!(param_ty, IrType::Generic(_))
+            && (matches!(
+                arg.kind,
+                IrExprKind::String(_) | IrExprKind::Literal(super::super::super::expr::Literal::StaticStr(_))
+            ) || matches!(
+                arg.ty,
+                IrType::String | IrType::StaticStr | IrType::StrRef | IrType::FrozenStr
+            ) || is_string_buffer_type(&arg.ty))
+    }
+
     /// Emit method-call arguments with Rust-boundary borrowing and union wrapping applied from callable metadata.
+    ///
+    /// The context's `infer_unresolved_generic_args` flag is enabled only for calls without explicit call-site type
+    /// arguments. It lets string-like arguments keep their original Rust shape for unresolved external generics such as
+    /// `E: Into<_>`, while explicit calls like `encode[str](...)` stay target-driven.
     fn emit_method_call_args(
         &self,
         method: &str,
         receiver: &TypedExpr,
         args: &[IrCallArg],
-        callable_signature: Option<&FunctionSignature>,
-        base_use_site: ValueUseSite<'_>,
-        result_target_ty: Option<&IrType>,
+        context: MethodCallArgEmission<'_, '_>,
     ) -> Result<Vec<TokenStream>, EmitError> {
-        let receiver_target_ty = match result_target_ty {
+        let receiver_target_ty = match context.result_target_ty {
             Some(IrType::Result(ok_ty, _)) => Some(ok_ty.as_ref()),
             other => other,
         };
         let receiver_specialized_signature = self.specialized_method_signature_for_receiver(&receiver.ty, method);
         let target_specialized_signature =
             receiver_target_ty.and_then(|ty| self.specialized_method_signature_for_receiver(ty, method));
-        let result_specialized_call_signature = callable_signature.and_then(|signature| {
-            result_target_ty.and_then(|ty| Self::specialize_signature_by_result_target(signature, ty))
+        let result_specialized_call_signature = context.callable_signature.and_then(|signature| {
+            context
+                .result_target_ty
+                .and_then(|ty| Self::specialize_signature_by_result_target(signature, ty))
         });
-        let receiver_specialized_call_signature = callable_signature.and_then(|signature| {
+        let receiver_specialized_call_signature = context.callable_signature.and_then(|signature| {
             receiver_target_ty.and_then(|ty| Self::specialize_signature_by_receiver_args(signature, ty))
         });
         let callable_signature = result_specialized_call_signature
             .as_ref()
             .or(receiver_specialized_call_signature.as_ref())
-            .or(callable_signature);
+            .or(context.callable_signature);
         let receiver_signature = receiver_specialized_signature
             .as_ref()
             .or_else(|| self.method_signature_for_receiver(&receiver.ty, method))
@@ -347,10 +372,18 @@ impl<'a> IrEmitter<'a> {
             .map(|(idx, (arg, from_default))| {
                 let param = callable_signature.as_ref().and_then(|sig| sig.params.get(idx));
                 let external_method_shape = matches!(
-                    base_use_site,
+                    context.base_use_site,
                     ValueUseSite::ExternalCallArg { .. } | ValueUseSite::MethodArg
                 );
-                let arg_use_site = match (base_use_site, param) {
+                let arg_use_site = match (context.base_use_site, param) {
+                    (ValueUseSite::ExternalCallArg { .. }, Some(param))
+                        if context.infer_unresolved_generic_args
+                            && Self::unresolved_external_generic_should_infer_from_string_arg(arg, &param.ty) =>
+                    {
+                        ValueUseSite::ExternalInferredGenericArg {
+                            target_ty: Some(&param.ty),
+                        }
+                    }
                     (ValueUseSite::ExternalCallArg { .. }, Some(param)) => ValueUseSite::ExternalCallArg {
                         target_ty: Some(&param.ty),
                     },
@@ -359,7 +392,7 @@ impl<'a> IrEmitter<'a> {
                         callee_param: Some(param),
                         in_return,
                     },
-                    _ => base_use_site,
+                    _ => context.base_use_site,
                 };
                 let previous_qualify = if *from_default {
                     Some(self.qualify_internal_canonical_paths.replace(true))
@@ -1041,8 +1074,17 @@ impl<'a> IrEmitter<'a> {
                     },
                     None,
                 );
-                let arg_tokens =
-                    self.emit_method_call_args(method, receiver, args, callable_signature, use_site, result_target_ty)?;
+                let arg_tokens = self.emit_method_call_args(
+                    method,
+                    receiver,
+                    args,
+                    MethodCallArgEmission {
+                        callable_signature,
+                        base_use_site: use_site,
+                        result_target_ty,
+                        infer_unresolved_generic_args: type_args.is_empty(),
+                    },
+                )?;
                 return Ok(quote! { #type_path::#m (#(#arg_tokens),*) });
             }
         }
@@ -1073,8 +1115,17 @@ impl<'a> IrEmitter<'a> {
             } else {
                 ValueUseSite::MethodArg
             };
-            let arg_tokens =
-                self.emit_method_call_args(method, receiver, args, callable_signature, use_site, result_target_ty)?;
+            let arg_tokens = self.emit_method_call_args(
+                method,
+                receiver,
+                args,
+                MethodCallArgEmission {
+                    callable_signature,
+                    base_use_site: use_site,
+                    result_target_ty,
+                    infer_unresolved_generic_args: false,
+                },
+            )?;
             return Ok(quote! { #trait_tokens::#m(&#r, #(#arg_tokens),*) });
         }
 
@@ -1108,8 +1159,17 @@ impl<'a> IrEmitter<'a> {
             },
             None,
         );
-        let arg_tokens =
-            self.emit_method_call_args(method, receiver, args, callable_signature, use_site, result_target_ty)?;
+        let arg_tokens = self.emit_method_call_args(
+            method,
+            receiver,
+            args,
+            MethodCallArgEmission {
+                callable_signature,
+                base_use_site: use_site,
+                result_target_ty,
+                infer_unresolved_generic_args: type_args.is_empty(),
+            },
+        )?;
         Ok(quote! { #r.#m #method_turbofish (#(#arg_tokens),*) })
     }
 
