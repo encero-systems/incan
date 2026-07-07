@@ -1,0 +1,7227 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Documentation for the Incan programming language">
+      
+      
+      
+      
+        <link rel="prev" href="../../explanation/lsp_architecture/">
+      
+      
+        <link rel="next" href="../codegraph_inspection/">
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
+    
+    
+      
+        <title>CLI reference - Incan Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.6f8fc17f.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../stylesheets/pygments.css">
+    
+      <link rel="stylesheet" href="/shared/incapunk/incapunk.css">
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#cli-reference" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+      
+  <img src="/shared/incapunk/wordmark_small_001.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Incan Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              CLI reference
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="amber"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/encero-systems/incan" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    encero-systems/incan
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+    
+      
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../.." class="md-tabs__link">
+        
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../start_here/" class="md-tabs__link">
+          
+  
+    
+  
+  Start here
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../language/" class="md-tabs__link">
+          
+  
+    
+  
+  Language
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../../" class="md-tabs__link">
+          
+  
+    
+  
+  Tooling
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../contributing/" class="md-tabs__link">
+          
+  
+    
+  
+  Contributing
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../release_notes/" class="md-tabs__link">
+          
+  
+    
+  
+  Release notes
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+    
+      
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../whitepapers/" class="md-tabs__link">
+          
+  
+    
+  
+  Project
+
+        </a>
+      </li>
+    
+  
+
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+    
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+      
+  <img src="/shared/incapunk/wordmark_small_001.png" alt="logo">
+
+    </a>
+    Incan Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/encero-systems/incan" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    encero-systems/incan
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../start_here/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Start here
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            Start here
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../start_here/what_incan_is_for/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    What Incan is for
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../start_here/coming_from_python/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Coming from Python (apps)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../start_here/coming_from_rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Coming from Rust (evaluator)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../start_here/coming_from_typescript_javascript/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Coming from TypeScript or JavaScript
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../start_here/pipelines_and_automation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Pipelines & automation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../start_here/encero_stack/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Encero stack
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../start_here/domain_native_demo/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    1.0 domain-native demo target
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../start_here/public_contracts/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    1.0 public contracts
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../start_here/beginner/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Beginner
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_11" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_11" id="__nav_2_11_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Comparisons
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_11">
+            <span class="md-nav__icon md-icon"></span>
+            Comparisons
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../comparisons/python/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Incan vs Python
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../comparisons/javascript_typescript/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Incan vs JS/TS
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../comparisons/rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Incan vs Rust
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../language/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Language
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            Language
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Tutorials
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2">
+            <span class="md-nav__icon md-icon"></span>
+            Tutorials
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2_1" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../language/tutorials/book/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    The Incan Book (Basics)
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_2_1" id="__nav_3_2_1_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_2_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2_1">
+            <span class="md-nav__icon md-icon"></span>
+            The Incan Book (Basics)
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/tutorials/book/01_hello_world/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    1. Hello world
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/tutorials/book/02_values_variables_and_types/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    2. Values, variables, and types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/tutorials/book/03_functions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    3. Functions
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/tutorials/book/04_control_flow/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    4. Control flow
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/tutorials/book/05_modules_and_imports/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    5. Modules and imports
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/tutorials/book/06_errors/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    6. Errors (Result/Option and `?`)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/tutorials/book/07_strings_and_formatting/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    7. Strings and formatting
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/tutorials/book/08_collections_and_iteration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    8. Collections and iteration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/tutorials/book/09_enums/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    9. Enums and better `match`
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/tutorials/book/10_models_vs_classes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    10. Models vs classes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/tutorials/book/11_traits_and_derives/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    11. Traits and derives
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/tutorials/book/12_newtypes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    12. Newtypes (stronger types)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/tutorials/book/13_unit_tests/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    13. Unit tests
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/tutorials/dates_and_times/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Dates and times
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/tutorials/build_your_first_api/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Build your first API
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/tutorials/fallible_and_infallible_paths/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Fallible and infallible paths
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/tutorials/web_framework/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Web framework
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    How-to
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            How-to
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/async_programming/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Async programming
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/customize_derived_behavior/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Customize derived behavior
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/dates_and_times/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Dates and times
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/error_handling_recipes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error handling recipes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/error_messages/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error messages
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/file_io/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    File I/O
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/binary_text_encoding/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Binary-text encoding
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/compression/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Compression
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/dynamic_json/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Dynamic JSON
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/generators/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Generators
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/imports_and_modules/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Imports and modules
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/module_state/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Module state
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/choosing_collections/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/choosing_numeric_types/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Choosing numeric types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/modeling_with_enums/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Modeling with enums
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/project_lifecycle/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Project lifecycle
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/testing_stdlib/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Testing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/string_processing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/working_with_uuids/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with UUIDs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/performance/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Performance
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/rust_interop/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Rust interop
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/rust_types_for_python_devs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Rust types (coming from Python)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Reference
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4">
+            <span class="md-nav__icon md-icon"></span>
+            Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/language/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Language reference (generated)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/feature_inventory/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Feature inventory (generated)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/code_style/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Code style guide
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/functions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Functions and calls
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/generators/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Generators
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/symbol_aliases/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Symbol aliases
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/callable_presets/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Callable presets
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/glossary/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Glossary
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/file_io/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    File I/O reference (Path/File APIs)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/imports_and_modules/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Imports and modules
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/static_storage/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Static storage
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/numeric_semantics/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Numeric semantics
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/project_lifecycle/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Project lifecycle
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/strings/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Strings and Bytes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/reflection/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Reflection
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/derives_and_traits/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Derives & traits (reference)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_17" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../language/reference/stdlib/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Standard library
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_4_17" id="__nav_3_4_17_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_17_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_17">
+            <span class="md-nav__icon md-icon"></span>
+            Standard library
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib/async/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.async
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib/collections/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.collections
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib/compression/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.compression
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib/derives/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.derives.*
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib/datetime/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.datetime
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib/encoding/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.encoding
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib/fs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.fs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib/graph/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.graph
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib/hash/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.hash
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib/io/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.io
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib/json/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.json
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib/telemetry/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.telemetry
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib/regex/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.regex
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib/uuid/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.uuid
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib/tempfile/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.tempfile
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib/reflection/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.reflection
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib/result/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.result
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib/traits/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.traits.*
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib/testing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.testing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib/math/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.math
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_18" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../language/reference/stdlib_traits/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Stdlib traits
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_4_18" id="__nav_3_4_18_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_18_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_18">
+            <span class="md-nav__icon md-icon"></span>
+            Stdlib traits
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib_traits/collection_protocols/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Collection protocols
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Indexing and slicing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib_traits/callable/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Callable objects
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib_traits/awaitable/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Awaitable values
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib_traits/error/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error trait
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib_traits/operators/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Operators
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib_traits/conversions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Conversions
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_19" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_4_19" id="__nav_3_4_19_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Derives
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_19_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_19">
+            <span class="md-nav__icon md-icon"></span>
+            Derives
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/derives/string_representation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    String representation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/derives/comparison/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Comparison
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/derives/copying_default/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Copying/default
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/derives/serialization/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Serialization
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/derives/validation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Validation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/derives/custom_behavior/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Custom behavior
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Explanation
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5">
+            <span class="md-nav__icon md-icon"></span>
+            Explanation
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/explanation/why_incan/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Why Incan?
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/explanation/why_not_just_rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Why not just Rust?
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/explanation/how_incan_works/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    How Incan works
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/explanation/compile_time_and_runtime/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Compile time and runtime
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/explanation/rust_shaped_confidence/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Rust-shaped confidence
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/explanation/control_flow/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Control flow
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/explanation/callable_presets/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Callable presets
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/explanation/closures/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Closures
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/explanation/consts/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Consts
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/explanation/generators/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Generators
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/explanation/static_storage/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Module static storage
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/explanation/numeric_types/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Numeric types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/explanation/datetime_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Date and time model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/explanation/ordinal_map/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    OrdinalMap
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/explanation/derives_and_traits/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Derives & traits (explained)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/explanation/call_site_type_arguments/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Why call-site type args exist
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/explanation/how_derives_work/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    How derives work
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/explanation/enums/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Enums
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/explanation/error_handling/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error handling
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/explanation/imports_and_modules/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Imports and modules
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_22" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../language/explanation/models_and_classes/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Models and classes
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_5_22" id="__nav_3_5_22_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5_22">
+            <span class="md-nav__icon md-icon"></span>
+            Models and classes
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/explanation/models_and_classes/models/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Models
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/explanation/models_and_classes/classes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Classes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/explanation/traits_as_language_hooks/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Traits as language hooks
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/explanation/scopes_and_name_resolution/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Scopes and name resolution
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+        
+        
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Tooling
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            Tooling
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_2" id="__nav_4_2_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Tutorials
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_2">
+            <span class="md-nav__icon md-icon"></span>
+            Tutorials
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/getting_started/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/your_first_project/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Your first project
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/pipeline_mini_project/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Pipeline mini-project
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_3" id="__nav_4_3_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    How-to
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_3">
+            <span class="md-nav__icon md-icon"></span>
+            How-to
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/install_and_run/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Install/build/run
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/dependencies/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Managing dependencies
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/ci_and_automation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    CI & automation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/troubleshooting/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Troubleshooting
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/editor_setup/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Editor setup
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/lsp/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    LSP
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/formatting/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Formatting with incan fmt
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/testing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Testing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_4" id="__nav_4_4_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Explanation
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_4">
+            <span class="md-nav__icon md-icon"></span>
+            Explanation
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/projects_today/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Projects today
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/lsp_architecture/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    LSP architecture
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4_5" id="__nav_4_5_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Reference
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4_5">
+            <span class="md-nav__icon md-icon"></span>
+            Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  <span class="md-ellipsis">
+    CLI reference
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  <span class="md-ellipsis">
+    CLI reference
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      Usage
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#semantic-inspection-surfaces" class="md-nav__link">
+    <span class="md-ellipsis">
+      Semantic inspection surfaces
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#global-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      Global options
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#global-options-debug" class="md-nav__link">
+    <span class="md-ellipsis">
+      Global options (debug)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      Commands
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Commands">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#incan-check" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan check
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incan-explain" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan explain
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incan-build" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan build
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incan-inspect-rust" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan inspect rust
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incan-inspect-codegraph" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan inspect codegraph
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incan-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan run
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incan-fmt" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan fmt
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incan-test" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan test
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incan-new" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan new
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incan-init" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan init
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incan-version" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan version
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incan-env" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan env
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incan-lock" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan lock
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incan-tools-doctor" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan tools doctor
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incan-tools-metadata-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan tools metadata api
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incan-tools-metadata-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan tools metadata model
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#outputs-and-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      Outputs and paths
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#environment-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      Environment variables
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#exit-codes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Exit codes
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#drift-prevention-maintainers" class="md-nav__link">
+    <span class="md-ellipsis">
+      Drift prevention (maintainers)
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../codegraph_inspection/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Codegraph inspection
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../agent_docs_surfaces/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Agent and tooling docs surfaces
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contract_metadata/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Checked contract metadata
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../checked_api_metadata/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Checked API metadata
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../project_configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Project configuration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../lsp_protocol_support/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    LSP protocol support
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+          
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../contributing/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Contributing
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            Contributing
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/contributors/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Contributors
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Tutorials
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3">
+            <span class="md-nav__icon md-icon"></span>
+            Tutorials
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3_1" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../contributing/tutorials/book/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Incan Contributor Book (Advanced)
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_3_1" id="__nav_5_3_1_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_5_3_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3_1">
+            <span class="md-nav__icon md-icon"></span>
+            Incan Contributor Book (Advanced)
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    1. Architecture tour
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    2. Layering and boundaries
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    3. Proposals: issues vs RFCs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    4. Your first change: add a builtin
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    5. Your first syntax change
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    6. Tooling loop: formatter + tests
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    7. Tooling loop: LSP
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    8. Docsite contributor loop
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_4" id="__nav_5_4_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    How-to
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_4">
+            <span class="md-nav__icon md-icon"></span>
+            How-to
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/how-to/extending_language/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Extending the language
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Author library DSLs with incan_vocab
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/how-to/auditing_generated_rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Auditing generated Rust
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Benchmarks & profiling (repository)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/how-to/ci_and_automation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    CI & automation (repository)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/how-to/writing_rfcs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Writing RFCs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_5" id="__nav_5_5_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Explanation
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_5">
+            <span class="md-nav__icon md-icon"></span>
+            Explanation
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/explanation/architecture/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Architecture
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/explanation/duckborrowing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Duckborrowing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/explanation/generated_rust_quality/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Generated Rust quality
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/explanation/layering/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Layering rules
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/explanation/incapunk_docs_theme/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Incapunk docs theme
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Readable, maintainable Rust
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.testing internals
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_6" id="__nav_5_6_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Reference
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_6">
+            <span class="md-nav__icon md-icon"></span>
+            Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contributing/reference/generated_rust_stdlib_coverage/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Generated Rust stdlib coverage
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../RFCs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    RFCs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../release_notes/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Release notes
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            Release notes
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../release_notes/0_4/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.4
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../release_notes/0_3/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.3
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../release_notes/0_2/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.2
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../release_notes/0_1/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.1
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Project
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            Project
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_1" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../whitepapers/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Whitepapers
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_7_1" id="__nav_7_1_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_1">
+            <span class="md-nav__icon md-icon"></span>
+            Whitepapers
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../whitepapers/incan_ecosystem_north_star/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Incan ecosystem north star
+  </span>
+  
+    
+  
+  
+    <span class="md-status md-status--Snapshot"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../roadmap/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Roadmap
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../stability/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Stability policy
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      Usage
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#semantic-inspection-surfaces" class="md-nav__link">
+    <span class="md-ellipsis">
+      Semantic inspection surfaces
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#global-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      Global options
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#global-options-debug" class="md-nav__link">
+    <span class="md-ellipsis">
+      Global options (debug)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      Commands
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Commands">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#incan-check" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan check
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incan-explain" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan explain
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incan-build" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan build
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incan-inspect-rust" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan inspect rust
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incan-inspect-codegraph" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan inspect codegraph
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incan-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan run
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incan-fmt" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan fmt
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incan-test" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan test
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incan-new" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan new
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incan-init" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan init
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incan-version" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan version
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incan-env" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan env
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incan-lock" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan lock
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incan-tools-doctor" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan tools doctor
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incan-tools-metadata-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan tools metadata api
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incan-tools-metadata-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      incan tools metadata model
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#outputs-and-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      Outputs and paths
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#environment-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      Environment variables
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#exit-codes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Exit codes
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#drift-prevention-maintainers" class="md-nav__link">
+    <span class="md-ellipsis">
+      Drift prevention (maintainers)
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+  
+
+
+<h1 id="cli-reference">CLI reference<a class="headerlink" href="#cli-reference" title="Permanent link">&para;</a></h1>
+<p>This is the authoritative CLI reference for <code>incan</code> (commands, flags, paths, and environment variables).</p>
+<div class="admonition note">
+<p class="admonition-title">Contributor source-build fallback</p>
+<p>If you are working from a compiler checkout instead of a toolchain install, you can run the repository-built binary directly:</p>
+<ul>
+<li>from the repository root:</li>
+</ul>
+<div class="language-bash highlight"><pre><span></span><code>./target/release/incan<span class="w"> </span>...
+</code></pre></div>
+<ul>
+<li>or via an absolute path (from anywhere):</li>
+</ul>
+<div class="language-bash highlight"><pre><span></span><code>/absolute/path/to/incan<span class="w"> </span>run<span class="w"> </span>path/to/file.incn
+</code></pre></div>
+</div>
+<h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h2>
+<p>Top-level usage:</p>
+<div class="language-text highlight"><pre><span></span><code>incan [OPTIONS] [FILE] [COMMAND]
+</code></pre></div>
+<ul>
+<li>If you pass a <code>FILE</code> without a subcommand, <code>incan</code> type-checks it (default action).</li>
+</ul>
+<p>Commands:</p>
+<ul>
+<li><code>check</code> - Type-check a file or project entrypoint, with optional stable JSON diagnostics</li>
+<li><code>explain</code> - Explain a stable diagnostic code</li>
+<li><code>build</code> - Compile to Rust and build an executable</li>
+<li><code>inspect</code> - Inspect compiler artifacts such as generated Rust output</li>
+<li><code>run</code> - Compile and run a program</li>
+<li><code>fmt</code> - Format Incan source files</li>
+<li><code>test</code> - Run tests (pytest-style)</li>
+<li><code>new</code> - Create a new Incan project directory</li>
+<li><code>init</code> - Add a starter <code>incan.toml</code> and project skeleton to an existing directory</li>
+<li><code>version</code> - Update the project version in <code>incan.toml</code></li>
+<li><code>env</code> - List, inspect, or run configured project environments</li>
+<li><code>lock</code> - Generate or update <code>incan.lock</code></li>
+<li><code>tools</code> - Inspect local toolchain, editor integration state, and checked metadata</li>
+</ul>
+<h2 id="semantic-inspection-surfaces">Semantic inspection surfaces<a class="headerlink" href="#semantic-inspection-surfaces" title="Permanent link">&para;</a></h2>
+<p>Incan 0.4 exposes several machine-readable inspection commands that are meant to agree on schema version, compiler version, project identity, source-file breadcrumbs, generated artifact paths, diagnostics, and provenance where their scopes overlap. Use <code>incan check --format json</code> for the stable diagnostic plane, <code>incan build --report json</code> for successful build and artifact metadata, <code>incan inspect rust --format json</code> for current generated Rust output, and <code>incan inspect codegraph --format jsonl</code> for source-structure graph facts.</p>
+<p>These commands are intentionally not a single full semantic database yet. They are the 0.4 baseline for the broader RFC 102 semantic inspection direction: stable public JSON surfaces that tools can join without scraping terminal prose, generated Rust, or source text independently. When a fact appears in more than one surface, consumers should prefer compiler-owned identity fields, source paths, schema versions, and explicit degraded-state or diagnostic records over human output.</p>
+<h2 id="global-options">Global options<a class="headerlink" href="#global-options" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>--no-banner</code>: suppress the ASCII logo banner when a command would otherwise show it (also via <code>INCAN_NO_BANNER=1</code>).</li>
+<li><code>--color=auto|always|never</code>: control ANSI color output (respects <code>NO_COLOR</code>).</li>
+</ul>
+<p>Banner policy:</p>
+<ul>
+<li>The banner is shown only for interactive <code>incan build</code> and <code>incan run</code> commands.</li>
+<li>Utility commands such as <code>new</code>, <code>init</code>, <code>version</code>, <code>env</code>, <code>lock</code>, <code>fmt</code>, and <code>test</code> stay quiet by default.</li>
+</ul>
+<h2 id="global-options-debug">Global options (debug)<a class="headerlink" href="#global-options-debug" title="Permanent link">&para;</a></h2>
+<p>These flags take a file and run a debug pipeline stage:</p>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>--lex<span class="w"> </span>path/to/file.incn
+incan<span class="w"> </span>--parse<span class="w"> </span>path/to/file.incn
+incan<span class="w"> </span>--check<span class="w"> </span>path/to/file.incn
+incan<span class="w"> </span>--emit-rust<span class="w"> </span>path/to/file.incn
+</code></pre></div>
+<p><code>incan --check path/to/file.incn --format json</code> remains supported for compatibility, but new tooling should prefer <code>incan check path/to/file.incn --format json</code>.</p>
+<p>Strict mode:</p>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>--strict<span class="w"> </span>--emit-rust<span class="w"> </span>path/to/file.incn
+</code></pre></div>
+<h2 id="commands">Commands<a class="headerlink" href="#commands" title="Permanent link">&para;</a></h2>
+<h3 id="incan-check"><code>incan check</code><a class="headerlink" href="#incan-check" title="Permanent link">&para;</a></h3>
+<p>Usage:</p>
+<div class="language-text highlight"><pre><span></span><code>incan check [OPTIONS] &lt;PATH&gt;
+</code></pre></div>
+<p>Type-checks a file or project entrypoint without building or running it. This is the canonical type-check command for humans, CI, editor integrations, and agents. Passing a file without a subcommand still type-checks it for compatibility, and the legacy debug spelling <code>incan --check &lt;FILE&gt;</code> remains available.</p>
+<p>Options:</p>
+<ul>
+<li><code>--format text|json</code>: Output human diagnostics or a stable machine-readable JSON report (default: <code>text</code>).</li>
+</ul>
+<p>JSON output uses <code>schema_version: 1</code> and prints a deterministic report with <code>ok</code> and <code>diagnostics</code>. Each diagnostic includes a stable <code>code</code>, <code>severity</code>, compiler <code>phase</code>, primary source span, message, notes, hints, related spans, and an <code>incan explain &lt;CODE&gt;</code> hook. Human output remains the default and continues to use source-highlighted compiler diagnostics.</p>
+<p>Examples:</p>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>check<span class="w"> </span>src/main.incn
+incan<span class="w"> </span>check<span class="w"> </span>src/main.incn<span class="w"> </span>--format<span class="w"> </span>json
+incan<span class="w"> </span>--check<span class="w"> </span>src/main.incn<span class="w"> </span>--format<span class="w"> </span>json
+</code></pre></div>
+<h3 id="incan-explain"><code>incan explain</code><a class="headerlink" href="#incan-explain" title="Permanent link">&para;</a></h3>
+<p>Usage:</p>
+<div class="language-text highlight"><pre><span></span><code>incan explain [OPTIONS] &lt;CODE&gt;
+</code></pre></div>
+<p>Explains a stable diagnostic code from <code>incan check --format json</code> or LSP diagnostics. The catalog is compiler-owned and versioned with the diagnostic schema, so tools can link users to an explanation without scraping terminal prose.</p>
+<p>Options:</p>
+<ul>
+<li><code>--format text|json</code>: Output a human explanation or the catalog entry as JSON (default: <code>text</code>).</li>
+</ul>
+<p>Seeded catalog codes:</p>
+<ul>
+<li><code>INCAN-P0001</code>: Syntax error.</li>
+<li><code>INCAN-T0001</code>: Type checking error.</li>
+<li><code>INCAN-I0001</code>: Import or module resolution error.</li>
+<li><code>INCAN-C0001</code>: CLI or tooling error.</li>
+<li><code>INCAN-U0001</code>: Unknown diagnostic code.</li>
+</ul>
+<p>Examples:</p>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>explain<span class="w"> </span>INCAN-T0001
+incan<span class="w"> </span>explain<span class="w"> </span>INCAN-T0001<span class="w"> </span>--format<span class="w"> </span>json
+</code></pre></div>
+<h3 id="incan-build"><code>incan build</code><a class="headerlink" href="#incan-build" title="Permanent link">&para;</a></h3>
+<p>Usage:</p>
+<div class="language-text highlight"><pre><span></span><code>incan build [OPTIONS] [FILE] [OUTPUT_DIR] [-- &lt;CARGO_PASSTHROUGH&gt;...]
+incan build --lib [OPTIONS] [OUTPUT_DIR]
+</code></pre></div>
+<p>Behavior:</p>
+<ul>
+<li>Default mode compiles a source file into an executable.</li>
+<li><code>--lib</code> builds the current project as a library. In this mode, <code>src/lib.incn</code> is required and <code>FILE</code> is optional.</li>
+<li>Prints the generated Rust project path (example): <code>target/incan/&lt;name&gt;/</code></li>
+<li>Builds the generated Rust project and prints the binary path (example): <code>target/incan/.cargo-target/release/&lt;name&gt;</code></li>
+<li>In <code>--lib</code> mode, also emits a library artifact under <code>target/lib/</code> (including <code>&lt;name&gt;.incnlib</code>).</li>
+</ul>
+<p>Dependency flags:</p>
+<ul>
+<li><code>--offline</code>: Pass <code>--offline</code> to Cargo subprocesses so dependency resolution/fetching fails instead of using the network.</li>
+<li><code>--locked</code>: Require <code>incan.lock</code> to exist and be up to date. Also passes <code>--locked</code> to Cargo.</li>
+<li><code>--frozen</code>: Like <code>--locked</code>, plus passes <code>--frozen</code> to Cargo (offline + locked).</li>
+<li><code>--no-offline</code>, <code>--no-locked</code>, <code>--no-frozen</code>: Disable matching environment defaults for this invocation.</li>
+<li><code>--cargo-args &lt;ARG&gt;...</code>: Forward additional arguments to Cargo after policy and feature flags. Arguments after <code>--</code> are also treated as Cargo arguments.</li>
+<li><code>--cargo-features &lt;FEATURES&gt;</code>: Enable specific Cargo features (comma-separated).</li>
+<li><code>--cargo-no-default-features</code>: Disable default Cargo features.</li>
+<li><code>--cargo-all-features</code>: Enable all Cargo features.</li>
+<li><code>--release</code>: Explicitly request the release Cargo profile. This is the default for <code>incan build</code>, and the flag exists so first-contact flows can spell out that they are producing an optimized build.</li>
+<li><code>--generated-cargo-target-dir &lt;PATH&gt;</code>: Use a shared Cargo target directory for generated Rust projects. This is useful for CI and downstream packages with expensive Rust dependencies because separate clean checkouts can reuse the same compiled dependency artifacts when the lock/profile/target inputs match.</li>
+<li><code>--report json</code>: Emit a versioned machine-readable build report.</li>
+<li><code>--report-output &lt;PATH&gt;</code>: Write the build report to a file instead of stdout.</li>
+</ul>
+<p>Without <code>--locked</code> or <code>--frozen</code>, <code>incan build</code> creates <code>incan.lock</code> when it is missing. If an existing lockfile is stale, the command warns and reuses the embedded <code>Cargo.lock</code> payload without rewriting <code>incan.lock</code>; run <code>incan lock</code> to refresh the committed lockfile intentionally.</p>
+<p>For <code>incan build --lib</code>, dependency preheat uses the generated lock workspace and the same release-profile Cargo target directory as the real generated library build. If the dependency graph is unchanged, the preheat stamp is reused; if it has to run, the command prints the target/profile domain before invoking Cargo and streams Cargo's progress while the preheat compiles. Vocab companion metadata and packaged desugarer artifacts are cached by companion input fingerprint; with <code>--generated-cargo-target-dir</code>, that cache lives alongside the shared generated Cargo target so repeated clean checkouts can reuse unchanged companion extraction and desugarer artifacts.</p>
+<p>Build reports use <code>schema_version: 1</code> and describe the successful build rather than restating terminal prose. They include the compiler version, build mode, profile, project identity, entrypoint or library root, source-file breadcrumbs, generated Rust project paths, emitted artifacts, Rust and Incan dependency summaries, Cargo policy flags, interop summary, coarse timings, and notes. Library reports include phase timings for source loading, dependency resolution, lock payload resolution, Rust metadata prewarm, typechecking, API validation, export resolution, manifest metadata, vocab metadata, Rust generation, dependency preheat, Cargo build, and total wall time. When <code>--report json</code> writes to stdout, human progress moves to stderr so tooling can parse stdout directly; when <code>--report-output &lt;PATH&gt;</code> is supplied, the report is written to that file and ordinary progress remains human-facing.</p>
+<p>Environment defaults:</p>
+<ul>
+<li><code>INCAN_OFFLINE=1</code>, <code>INCAN_LOCKED=1</code>, and <code>INCAN_FROZEN=1</code> behave like their matching flags.</li>
+<li><code>INCAN_FROZEN=1</code> implies offline and locked mode.</li>
+<li>CLI flags take precedence over these defaults. Use the <code>--no-*</code> forms to disable a policy default set by the environment.</li>
+<li><code>INCAN_CARGO_ARGS="..."</code> is split on whitespace and used when no Cargo args were supplied on the CLI.</li>
+<li><code>INCAN_LOCK_PREHEAT=0</code> disables dependency preheat for lock/test and generated-library build paths.</li>
+<li><code>INCAN_GENERATED_CARGO_TARGET_DIR=&lt;PATH&gt;</code> is the environment form of <code>--generated-cargo-target-dir</code>; the explicit CLI flag wins when both are set.</li>
+<li><code>INCAN_VOCAB_COMPANION_CACHE_DIR=&lt;PATH&gt;</code> overrides the vocab companion cache location when a package needs to keep that cache separate from the generated Cargo target.</li>
+</ul>
+<p>Examples:</p>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>build<span class="w"> </span>examples/simple/hello.incn
+incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span class="w"> </span>--offline
+incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span class="w"> </span>--locked
+incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span class="w"> </span>--frozen
+incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span class="w"> </span>--cargo-features<span class="w"> </span>fancy_logging
+incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span class="w"> </span>--<span class="w"> </span>--timings
+incan<span class="w"> </span>build<span class="w"> </span>--lib
+incan<span class="w"> </span>build<span class="w"> </span>--release
+incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span class="w"> </span>--report<span class="w"> </span>json
+incan<span class="w"> </span>build<span class="w"> </span>--lib<span class="w"> </span>--report<span class="w"> </span>json<span class="w"> </span>--report-output<span class="w"> </span>target/build-report.json
+</code></pre></div>
+<h3 id="incan-inspect-rust"><code>incan inspect rust</code><a class="headerlink" href="#incan-inspect-rust" title="Permanent link">&para;</a></h3>
+<p>Usage:</p>
+<div class="language-text highlight"><pre><span></span><code>incan inspect rust [OPTIONS] &lt;PATH&gt;
+</code></pre></div>
+<p>Generates the same Rust project that the current backend would build, then reports the emitted Rust files without invoking Cargo. Use this when you need to inspect backend output, debug generated paths, or hand artifact locations to tooling without treating <code>--emit-rust</code> as a structured interface.</p>
+<p>Options:</p>
+<ul>
+<li><code>--lib</code>: Inspect the library build surface rooted at <code>src/lib.incn</code>; <code>PATH</code> may be the project root or a source path inside the project.</li>
+<li><code>--format text|json</code>: Output a human file list or a versioned JSON report (default: <code>text</code>).</li>
+</ul>
+<p>JSON output uses <code>schema_version: 1</code> and includes the compiler version, mode, source-file breadcrumbs, generated project paths, emitted Rust file paths, crate-root markers, file sizes, and notes. Source declarations with checked docstrings preserve those docs as generated Rust doc comments for public emitted items when the compiler has checked API metadata available. Generated Rust is inspectable current backend output, not a stable Rust ABI contract; tools may use it for debugging and reporting, but public compatibility should be based on Incan source, manifests, checked API metadata, and documented CLI report schemas.</p>
+<p>Examples:</p>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>inspect<span class="w"> </span>rust<span class="w"> </span>src/main.incn
+incan<span class="w"> </span>inspect<span class="w"> </span>rust<span class="w"> </span>src/main.incn<span class="w"> </span>--format<span class="w"> </span>json
+incan<span class="w"> </span>inspect<span class="w"> </span>rust<span class="w"> </span>.<span class="w"> </span>--lib<span class="w"> </span>--format<span class="w"> </span>json
+</code></pre></div>
+<h3 id="incan-inspect-codegraph"><code>incan inspect codegraph</code><a class="headerlink" href="#incan-inspect-codegraph" title="Permanent link">&para;</a></h3>
+<p>Usage:</p>
+<div class="language-text highlight"><pre><span></span><code>incan inspect codegraph [OPTIONS] &lt;PATH&gt;
+</code></pre></div>
+<p>Exports compiler-backed codegraph records for an Incan source file or directory. The 0.4 export is a deterministic JSONL stream of Incan-language files, modules, top-level declarations, imports, public exports, body-level reference and call syntax, conservative resolved reference and call targets, containment relationships, source spans, provenance, degraded state, and diagnostics. It is intended for tools and agents that need Incan structure without scraping source text.</p>
+<p>Options:</p>
+<ul>
+<li><code>--format jsonl</code>: Emit newline-delimited JSON records. JSONL is the only supported 0.4 format.</li>
+<li><code>--allow-errors</code>: Emit a degraded partial graph and diagnostic records when the source is broken. Without this flag, diagnostics fail the command.</li>
+</ul>
+<p><code>incan inspect codegraph</code> is tooling output, not runtime <code>std.graph</code>, not a generated-Rust ABI, and not a whole-program reference/call graph in 0.4. The header lists the represented languages, and every fact record carries <code>language</code>, <code>provenance</code>, and <code>degraded</code> fields. Body facts with a compiler-proven <code>target_id</code> use checked provenance; syntax-only body facts keep syntax provenance. In 0.4, <code>target_id</code> points only at declaration records emitted in the same JSONL export; public-package manifest identity remains available in library manifests, but external package declarations are not emitted as codegraph targets yet. The 0.4 exporter emits <code>language: "incan"</code> only; first-class Rust graph records and MCP/task-context consumers are follow-up work.</p>
+<p>Examples:</p>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>inspect<span class="w"> </span>codegraph<span class="w"> </span>src/main.incn<span class="w"> </span>--format<span class="w"> </span>jsonl
+incan<span class="w"> </span>inspect<span class="w"> </span>codegraph<span class="w"> </span>src<span class="w"> </span>--format<span class="w"> </span>jsonl<span class="w"> </span>--allow-errors
+</code></pre></div>
+<h3 id="incan-run"><code>incan run</code><a class="headerlink" href="#incan-run" title="Permanent link">&para;</a></h3>
+<p>Usage:</p>
+<div class="language-text highlight"><pre><span></span><code>incan run [OPTIONS] [FILE] [-- &lt;CARGO_PASSTHROUGH&gt;...]
+</code></pre></div>
+<p>Run a file:</p>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>run<span class="w"> </span>path/to/file.incn
+</code></pre></div>
+<p>Run the project's configured main script:</p>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>run
+</code></pre></div>
+<p>Run inline code:</p>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>run<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;import this&quot;</span>
+</code></pre></div>
+<p>If <code>FILE</code> is omitted, <code>incan run</code> uses <code>[project.scripts].main</code> from the nearest <code>incan.toml</code>. Outside a project, you must pass <code>FILE</code> or <code>-c</code>.</p>
+<p>Dependency flags (same as <code>build</code>):</p>
+<ul>
+<li><code>--offline</code>, <code>--locked</code>, <code>--frozen</code>, <code>--no-offline</code>, <code>--no-locked</code>, <code>--no-frozen</code>, <code>--cargo-args</code>, <code>--cargo-features</code>, <code>--cargo-no-default-features</code>, <code>--cargo-all-features</code></li>
+<li><code>--release</code>: Build and run with Cargo's release profile.</li>
+</ul>
+<h3 id="incan-fmt"><code>incan fmt</code><a class="headerlink" href="#incan-fmt" title="Permanent link">&para;</a></h3>
+<p>Usage:</p>
+<div class="language-text highlight"><pre><span></span><code>incan fmt [OPTIONS] [PATH]
+</code></pre></div>
+<p>Examples:</p>
+<div class="language-bash highlight"><pre><span></span><code><span class="c1"># Format files in place</span>
+incan<span class="w"> </span>fmt<span class="w"> </span>.
+
+<span class="c1"># Check formatting without modifying (CI mode)</span>
+incan<span class="w"> </span>fmt<span class="w"> </span>--check<span class="w"> </span>.
+
+<span class="c1"># Show what would change without modifying files</span>
+incan<span class="w"> </span>fmt<span class="w"> </span>--diff<span class="w"> </span>path/to/file.incn
+</code></pre></div>
+<h3 id="incan-test"><code>incan test</code><a class="headerlink" href="#incan-test" title="Permanent link">&para;</a></h3>
+<p>Usage:</p>
+<div class="language-text highlight"><pre><span></span><code>incan test [OPTIONS] [PATH]
+</code></pre></div>
+<p>Test runner flags:</p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>-k &lt;KEYWORD&gt;</code></td>
+<td>Filter tests by stable test id substring</td>
+</tr>
+<tr>
+<td><code>-m &lt;EXPR&gt;</code> / <code>--markers &lt;EXPR&gt;</code></td>
+<td>Filter tests by marker expression (<code>and</code>, <code>or</code>, <code>not</code>, parentheses)</td>
+</tr>
+<tr>
+<td><code>-v</code></td>
+<td>Verbose output, including per-test timing and generated-harness preheat diagnostics</td>
+</tr>
+<tr>
+<td><code>-x</code></td>
+<td>Stop on first failure</td>
+</tr>
+<tr>
+<td><code>--slow</code></td>
+<td>Include slow tests (marked <code>@slow</code>)</td>
+</tr>
+<tr>
+<td><code>--strict-markers</code></td>
+<td>Reject unknown marker names during collection unless registered in <code>TEST_MARKERS</code></td>
+</tr>
+<tr>
+<td><code>-j &lt;N&gt;</code> / <code>--jobs &lt;N&gt;</code></td>
+<td>Run up to <code>N</code> generated worker batches concurrently (single-threaded libtest execution per batch)</td>
+</tr>
+<tr>
+<td><code>--feature &lt;NAME&gt;</code></td>
+<td>Enable collection-time <code>std.testing.feature("NAME")</code> probe for <code>skipif</code> / <code>xfailif</code></td>
+</tr>
+<tr>
+<td><code>--timeout &lt;DURATION&gt;</code></td>
+<td>Fail a test batch exceeding a duration (e.g., <code>250ms</code>, <code>5s</code>, <code>2m</code>)</td>
+</tr>
+<tr>
+<td><code>--nocapture</code></td>
+<td>Print child test output even for passing tests</td>
+</tr>
+<tr>
+<td><code>--fail-on-empty</code></td>
+<td>Return exit code 1 if no tests are collected</td>
+</tr>
+<tr>
+<td><code>--list</code></td>
+<td>List collected tests after filters without executing them</td>
+</tr>
+<tr>
+<td><code>--format console\|json</code></td>
+<td>Choose human console output or JSON Lines result output (<code>schema_version: "incan.test.v1"</code>)</td>
+</tr>
+<tr>
+<td><code>--junit &lt;PATH&gt;</code></td>
+<td>Write a JUnit XML report</td>
+</tr>
+<tr>
+<td><code>--durations &lt;N&gt;</code></td>
+<td>Print the slowest <code>N</code> test durations</td>
+</tr>
+<tr>
+<td><code>--shuffle</code></td>
+<td>Shuffle test execution order</td>
+</tr>
+<tr>
+<td><code>--seed &lt;N&gt;</code></td>
+<td>Seed for <code>--shuffle</code></td>
+</tr>
+<tr>
+<td><code>--run-xfail</code></td>
+<td>Run <code>@xfail</code> tests as ordinary tests</td>
+</tr>
+</tbody>
+</table>
+<p>Dependency flags (same as <code>build</code>):</p>
+<ul>
+<li><code>--offline</code>, <code>--locked</code>, <code>--frozen</code>, <code>--no-offline</code>, <code>--no-locked</code>, <code>--no-frozen</code>, <code>--cargo-args</code>, <code>--cargo-features</code>, <code>--cargo-no-default-features</code>, <code>--cargo-all-features</code></li>
+</ul>
+<p>Without <code>--locked</code> or <code>--frozen</code>, <code>incan test</code> creates <code>incan.lock</code> when it is missing. If an existing lockfile is stale, the command warns and reuses the embedded <code>Cargo.lock</code> payload without rewriting <code>incan.lock</code>; run <code>incan lock</code> to refresh the committed lockfile intentionally.</p>
+<p>Timeouts apply to generated test batches. <code>--timeout</code> sets the default batch timeout and <code>@timeout("duration")</code> from <code>std.testing</code> can override the batch containing one test. Fixtures, including async fixtures, do not have separate per-fixture timeout configuration. The runner awaits async fixture teardown after ordinary assertion failures and panics while the worker remains alive. If timeout enforcement terminates a worker process, remaining teardown is best-effort.</p>
+<p>Before executing a stale generated test harness, <code>incan test</code> preheats it with <code>cargo test --no-run</code> and stores a fingerprint next to the generated project. A normal console run prints a preheat line only when this work is needed and streams Cargo's progress for cold preheats; <code>-v</code> also shows generated-harness planning, preparation-cache hits or misses, preheat timing, Cargo target directory, and Cargo test phase timing. Lock generation also preheats non-trivial dependency graphs into the same generated test target domain before writing <code>incan.lock</code>, so the next harness run can reuse dependency artifacts instead of discovering a cold Cargo graph on the hot path. Rust metadata prewarm reports newly warmed, reused, and skipped items; with <code>INCAN_RUST_INSPECT_TIMING=1</code>, compiler timing logs also explain whether metadata came from process state, disk cache, or a cache miss such as an absent cache file, format change, or workspace fingerprint change.</p>
+<p>Examples:</p>
+<div class="language-bash highlight"><pre><span></span><code><span class="c1"># Run all tests in a directory</span>
+incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>tests/
+
+<span class="c1"># Run all tests under a path (default: .)</span>
+incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>.
+
+<span class="c1"># Filter tests by keyword expression</span>
+incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-k<span class="w"> </span><span class="s2">&quot;addition&quot;</span>
+
+<span class="c1"># List matching tests without running them</span>
+incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--list<span class="w"> </span>-k<span class="w"> </span><span class="s2">&quot;test_math&quot;</span>
+
+<span class="c1"># Verbose output (include timing)</span>
+incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-v
+
+<span class="c1"># Stop on first failure</span>
+incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-x
+
+<span class="c1"># Include slow tests</span>
+incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--slow
+
+<span class="c1"># Select marker-tagged tests</span>
+incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-m<span class="w"> </span><span class="s2">&quot;smoke and not slow&quot;</span><span class="w"> </span>tests/
+
+<span class="c1"># Validate marker names in CI</span>
+incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--strict-markers<span class="w"> </span>tests/
+
+<span class="c1"># Enforce a default timeout</span>
+incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--timeout<span class="w"> </span>5s<span class="w"> </span>tests/
+
+<span class="c1"># Show passing-test output</span>
+incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--nocapture<span class="w"> </span>tests/
+
+<span class="c1"># Fail if no tests are collected</span>
+incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--fail-on-empty
+
+<span class="c1"># Emit JSON Lines and a JUnit report for CI</span>
+incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--format<span class="w"> </span>json<span class="w"> </span>--junit<span class="w"> </span>reports/junit.xml<span class="w"> </span>tests/
+
+<span class="c1"># Reproduce a shuffled run</span>
+incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--shuffle<span class="w"> </span>--seed<span class="w"> </span><span class="m">12345</span><span class="w"> </span>tests/
+
+<span class="c1"># Strict mode for CI</span>
+incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--frozen
+</code></pre></div>
+<h3 id="incan-new"><code>incan new</code><a class="headerlink" href="#incan-new" title="Permanent link">&para;</a></h3>
+<p>Usage:</p>
+<div class="language-text highlight"><pre><span></span><code>incan new [OPTIONS] [NAME]
+</code></pre></div>
+<p>Creates a new project directory with <code>incan.toml</code>, <code>src/main.incn</code>, <code>tests/test_main.incn</code>, <code>README.md</code>, and <code>.gitignore</code>. The starter source includes a small public <code>greeting()</code> function plus a test that imports and checks it, so <code>incan run</code>, <code>incan test</code>, and <code>incan build --release</code> work immediately after project creation. When run in an interactive terminal without <code>--yes</code>, it prompts for project metadata. In non-interactive contexts, pass <code>NAME</code> or <code>--dir</code>.</p>
+<p>Options:</p>
+<ul>
+<li><code>NAME</code>: Project name. If omitted in an interactive terminal, <code>incan new</code> prompts for it.</li>
+<li><code>--dir &lt;PATH&gt;</code>: Directory to create or reuse. Defaults to <code>./&lt;name&gt;</code>.</li>
+<li><code>--description &lt;TEXT&gt;</code>: Project description written to <code>[project].description</code> and <code>README.md</code>.</li>
+<li><code>--author &lt;AUTHOR&gt;</code>: Author string, usually <code>Name &lt;email&gt;</code>, written to <code>[project].authors</code>.</li>
+<li><code>--license &lt;LICENSE&gt;</code>: License identifier or expression written to <code>[project].license</code>.</li>
+<li><code>--force</code>: Reuse a non-empty directory and overwrite existing manifest/source/test scaffold files.</li>
+<li><code>-y</code>, <code>--yes</code>: Use defaults and provided flags without interactive prompts.</li>
+</ul>
+<p>Examples:</p>
+<div class="language-bash highlight"><pre><span></span><code><span class="c1"># Interactive metadata prompts</span>
+incan<span class="w"> </span>new
+
+<span class="c1"># Script-friendly project creation</span>
+incan<span class="w"> </span>new<span class="w"> </span>greeter<span class="w"> </span>--description<span class="w"> </span><span class="s2">&quot;A small greeting command&quot;</span><span class="w"> </span>--license<span class="w"> </span>MIT<span class="w"> </span>--yes
+
+<span class="c1"># Create the project in a different directory from its name</span>
+incan<span class="w"> </span>new<span class="w"> </span>greeter<span class="w"> </span>--dir<span class="w"> </span>examples/greeter<span class="w"> </span>--yes
+</code></pre></div>
+<h3 id="incan-init"><code>incan init</code><a class="headerlink" href="#incan-init" title="Permanent link">&para;</a></h3>
+<p>Usage:</p>
+<div class="language-text highlight"><pre><span></span><code>incan init [OPTIONS] [PATH]
+</code></pre></div>
+<p>Adds Incan project files to an existing directory. Use this when you already have a directory and want to add <code>incan.toml</code>, <code>src/main.incn</code>, <code>tests/test_main.incn</code>, <code>README.md</code>, and <code>.gitignore</code>. New projects usually start with <code>incan new</code> instead.</p>
+<p>Options:</p>
+<ul>
+<li><code>--name &lt;NAME&gt;</code>: Project name (default: directory name).</li>
+<li><code>--version &lt;VERSION&gt;</code>: Project version (default: <code>"0.1.0"</code>).</li>
+<li><code>--description &lt;TEXT&gt;</code>: Project description written to <code>[project].description</code> and <code>README.md</code>.</li>
+<li><code>--author &lt;AUTHOR&gt;</code>: Author string, usually <code>Name &lt;email&gt;</code>, written to <code>[project].authors</code>.</li>
+<li><code>--license &lt;LICENSE&gt;</code>: License identifier or expression written to <code>[project].license</code>.</li>
+<li><code>--force</code>: Overwrite existing manifest/source/test scaffold files.</li>
+<li><code>--detect</code>: Preserve an existing <code>src/main.incn</code> and, when the placeholder project name is still in use, derive the project name from the directory.</li>
+<li><code>-y</code>, <code>--yes</code>: Use defaults and provided flags without interactive prompts.</li>
+</ul>
+<p>Examples:</p>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>init
+incan<span class="w"> </span>init<span class="w"> </span>--name<span class="w"> </span>my_app<span class="w"> </span>--description<span class="w"> </span><span class="s2">&quot;My app&quot;</span><span class="w"> </span>--license<span class="w"> </span>MIT<span class="w"> </span>my_project/
+incan<span class="w"> </span>init<span class="w"> </span>--detect<span class="w"> </span>--yes
+</code></pre></div>
+<p>See: <a href="../project_configuration/">Project configuration reference</a> for the full manifest format.</p>
+<h3 id="incan-version"><code>incan version</code><a class="headerlink" href="#incan-version" title="Permanent link">&para;</a></h3>
+<p>Usage:</p>
+<div class="language-text highlight"><pre><span></span><code>incan version [OPTIONS] [BUMP]
+</code></pre></div>
+<p>Updates <code>[project].version</code> in <code>incan.toml</code>. <code>BUMP</code> is one of <code>major</code>, <code>minor</code>, <code>patch</code>, <code>alpha</code>, <code>beta</code>, <code>rc</code>, or <code>dev</code>. Use <code>--set</code> when you need an exact SemVer value instead of a bump.</p>
+<p>Options:</p>
+<ul>
+<li><code>BUMP</code>: Version bump to apply.</li>
+<li><code>--set &lt;VERSION&gt;</code>: Explicit SemVer version to write.</li>
+<li><code>--dry-run</code>: Print the planned change without writing <code>incan.toml</code>.</li>
+<li><code>--keep-prerelease</code>: Keep prerelease metadata when applying <code>major</code>, <code>minor</code>, or <code>patch</code>.</li>
+<li><code>--project &lt;PATH&gt;</code>: Project root containing <code>incan.toml</code>.</li>
+</ul>
+<p>Examples:</p>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>version<span class="w"> </span>patch
+incan<span class="w"> </span>version<span class="w"> </span>rc<span class="w"> </span>--dry-run
+incan<span class="w"> </span>version<span class="w"> </span>--set<span class="w"> </span><span class="m">1</span>.2.3
+incan<span class="w"> </span>version<span class="w"> </span>minor<span class="w"> </span>--project<span class="w"> </span>examples/greeter
+</code></pre></div>
+<h3 id="incan-env"><code>incan env</code><a class="headerlink" href="#incan-env" title="Permanent link">&para;</a></h3>
+<p>Project environments are declared in <code>[tool.incan.envs]</code> in <code>incan.toml</code>. The ambient <code>default</code> environment is always available, and the <code>env</code> command lists available environments, shows a Hatch-style overview table, prints a compact resolved summary for one environment, or runs a named script from an environment.</p>
+<p>Treat envs as named command contexts for repeatable workflows such as local testing, CI, docs, or release checks. They are not shell sessions or virtual environments.</p>
+<p>Usage:</p>
+<div class="language-text highlight"><pre><span></span><code>incan env list [OPTIONS]
+incan env show [OPTIONS] [ENV]
+incan env run [OPTIONS] &lt;ENV&gt; &lt;SCRIPT&gt; [-- &lt;ARGS&gt;...]
+</code></pre></div>
+<p>Shared options:</p>
+<ul>
+<li><code>--format text|json</code>: Output format for <code>list</code> and <code>show</code> (default: <code>text</code>).</li>
+<li><code>--project &lt;PATH&gt;</code>: Project root containing <code>incan.toml</code>.</li>
+</ul>
+<p>Run options:</p>
+<ul>
+<li><code>--dry-run</code>: Print the resolved command without executing it.</li>
+<li><code>-- &lt;ARGS&gt;...</code>: Extra arguments appended to the configured script.</li>
+</ul>
+<p>Examples:</p>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>env<span class="w"> </span>list
+incan<span class="w"> </span>env<span class="w"> </span>show
+incan<span class="w"> </span>env<span class="w"> </span>show<span class="w"> </span>default
+incan<span class="w"> </span>env<span class="w"> </span>show<span class="w"> </span>dev<span class="w"> </span>--format<span class="w"> </span>json
+incan<span class="w"> </span>env<span class="w"> </span>run<span class="w"> </span>dev<span class="w"> </span><span class="nb">test</span>
+incan<span class="w"> </span>env<span class="w"> </span>run<span class="w"> </span>dev<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--<span class="w"> </span>--fail-on-empty
+incan<span class="w"> </span>env<span class="w"> </span>run<span class="w"> </span>release<span class="w"> </span>build<span class="w"> </span>--dry-run
+</code></pre></div>
+<p>For a fuller explanation of the mental model and a realistic <code>default</code> / <code>unit</code> / <code>ci</code> / <code>docs</code> configuration, see: <a href="../../../language/how-to/project_lifecycle/">Project lifecycle</a>.</p>
+<h3 id="incan-lock"><code>incan lock</code><a class="headerlink" href="#incan-lock" title="Permanent link">&para;</a></h3>
+<p>Usage:</p>
+<div class="language-text highlight"><pre><span></span><code>incan lock [OPTIONS] [FILE]
+</code></pre></div>
+<p>Resolves all dependencies (manifest + inline + test files) and generates or updates <code>incan.lock</code>.</p>
+<p>If <code>FILE</code> is omitted, uses the <code>[project.scripts].main</code> entry from <code>incan.toml</code>.</p>
+<p>Options:</p>
+<ul>
+<li><code>--cargo-features &lt;FEATURES&gt;</code>: Enable specific Cargo features for resolution.</li>
+<li><code>--cargo-no-default-features</code>: Disable default Cargo features.</li>
+<li><code>--cargo-all-features</code>: Enable all Cargo features.</li>
+</ul>
+<p>Example:</p>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>lock<span class="w"> </span>src/main.incn
+incan<span class="w"> </span>lock<span class="w">                          </span><span class="c1"># uses [project.scripts].main</span>
+incan<span class="w"> </span>lock<span class="w"> </span>--cargo-features<span class="w"> </span>metrics<span class="w"> </span><span class="c1"># include optional deps in lock</span>
+</code></pre></div>
+<p>The generated <code>incan.lock</code> contains an embedded <code>Cargo.lock</code> payload and a fingerprint of your dependency inputs. Commit it to version control for reproducible builds.</p>
+<p>See: <a href="../../how-to/dependencies/">Managing dependencies</a> for practical guidance.</p>
+<h3 id="incan-tools-doctor"><code>incan tools doctor</code><a class="headerlink" href="#incan-tools-doctor" title="Permanent link">&para;</a></h3>
+<p>Usage:</p>
+<div class="language-text highlight"><pre><span></span><code>incan tools doctor [OPTIONS]
+</code></pre></div>
+<p>Inspects local CLI/LSP/editor pathing and offline-readiness signals. Use this when the terminal and editor appear to be using different <code>incan</code> or <code>incan-lsp</code> binaries, when diagnostics look stale after rebuilding, or before a restricted/offline build where Cargo may be unable to fetch missing dependency inputs.</p>
+<p>Options:</p>
+<ul>
+<li><code>--format text|json</code>: Output format (default: <code>text</code>).</li>
+</ul>
+<p>The report includes:</p>
+<ul>
+<li>the running <code>incan</code> version and executable path</li>
+<li><code>incan</code> and <code>incan-lsp</code> resolution from <code>PATH</code></li>
+<li><code>~/.cargo/bin/incan</code> and <code>~/.cargo/bin/incan-lsp</code> existence, executable status, and symlink targets</li>
+<li>editor setup guidance for <code>incan.lsp.path</code>, <code>incan.compiler.path</code>, and reload behavior</li>
+</ul>
+<p>Offline-readiness:</p>
+<ul>
+<li>The doctor report is the supported preflight path for restricted or offline environments.</li>
+<li>The offline-readiness section is advisory. It checks local signals that affect whether Cargo can satisfy <code>--frozen</code> policy without fetching, but it does not guarantee a later <code>incan build --frozen</code> or <code>incan test --frozen</code> will succeed.</li>
+<li>Offline/locked policy constrains dependency resolution and fetching. Projects may still depend on Rust crates; those crates must already be available through Cargo's local inputs for an offline build to proceed.</li>
+<li>Use <code>--format json</code> when an editor, CI preflight, or issue template needs the same information in a machine-readable form.</li>
+</ul>
+<p>Examples:</p>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>tools<span class="w"> </span>doctor
+incan<span class="w"> </span>tools<span class="w"> </span>doctor<span class="w"> </span>--format<span class="w"> </span>json
+</code></pre></div>
+<h3 id="incan-tools-metadata-api"><code>incan tools metadata api</code><a class="headerlink" href="#incan-tools-metadata-api" title="Permanent link">&para;</a></h3>
+<p>Usage:</p>
+<div class="language-text highlight"><pre><span></span><code>incan tools metadata api [PATH] [OPTIONS]
+</code></pre></div>
+<p>Emits checked public API metadata for an Incan source file or project directory. The command parses and type-checks the target before producing output, so the result describes the checked API surface rather than source text alone.</p>
+<p>If <code>PATH</code> is omitted, the current directory is inspected. If <code>PATH</code> is a directory, <code>src/lib.incn</code> is preferred and <code>src/main.incn</code> is used as a fallback.</p>
+<p>This command is source/project inspection, not artifact inspection. It does not build the project, emit generated Rust, or read an existing <code>.incnlib</code>; use <code>incan build --lib</code> for library artifact emission.</p>
+<p>Options:</p>
+<ul>
+<li><code>--format json</code>: Output checked API metadata JSON (default).</li>
+<li><code>--format markdown</code>: Output a generated Markdown API reference derived from the same checked metadata.</li>
+</ul>
+<p>The JSON package contains:</p>
+<ul>
+<li><code>schema_version</code>: numeric schema version for the package payload</li>
+<li><code>package</code>: project name and version from <code>incan.toml</code>, when available</li>
+<li><code>modules</code>: checked metadata documents for the entry module and imported local modules</li>
+<li><code>declarations</code>: public functions, models, classes, traits, enums, newtypes, type aliases, consts, statics, public import aliases, and public partial callable presets</li>
+<li><code>anchor</code>: stable declaration ids plus source byte spans</li>
+<li><code>docstring</code>: raw declaration or method docstring text when present</li>
+<li><code>docstring_sections</code>: parsed summary, parameter, return, field, alias, and decorator sections when a docstring is present</li>
+<li><code>decorators</code>: resolved decorator paths and safe literal, type, or const-reference arguments</li>
+</ul>
+<p>Docstring validation is strict for mechanically checkable drift. If <code>Args:</code>, <code>Returns:</code>, <code>Fields:</code>, <code>Aliases:</code>, or <code>Decorators:</code> contradict checked source structure, the command reports diagnostics and does not print JSON.</p>
+<p>Examples:</p>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>tools<span class="w"> </span>metadata<span class="w"> </span>api
+incan<span class="w"> </span>tools<span class="w"> </span>metadata<span class="w"> </span>api<span class="w"> </span>src/lib.incn<span class="w"> </span>--format<span class="w"> </span>json
+incan<span class="w"> </span>tools<span class="w"> </span>metadata<span class="w"> </span>api<span class="w"> </span>src/lib.incn<span class="w"> </span>--format<span class="w"> </span>markdown
+incan<span class="w"> </span>tools<span class="w"> </span>metadata<span class="w"> </span>api<span class="w"> </span>path/to/project
+</code></pre></div>
+<p>See: <a href="../checked_api_metadata/">Checked API metadata</a> for the JSON contract.</p>
+<h3 id="incan-tools-metadata-model"><code>incan tools metadata model</code><a class="headerlink" href="#incan-tools-metadata-model" title="Permanent link">&para;</a></h3>
+<p>Usage:</p>
+<div class="language-text highlight"><pre><span></span><code>incan tools metadata model PATH MODEL [OPTIONS]
+</code></pre></div>
+<p>Emits one contract-backed model from project-declared bundle metadata, a bundle JSON file, or a built <code>.incnlib</code> artifact. <code>MODEL</code> may be the bundle <code>logical_type_name</code> or <code>stable_model_id</code>.</p>
+<p>Options:</p>
+<ul>
+<li><code>--format incan</code>: Output formatted Incan <code>model</code> source (default).</li>
+<li><code>--format json</code>: Output the selected canonical model bundle JSON.</li>
+</ul>
+<p>Examples:</p>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>tools<span class="w"> </span>metadata<span class="w"> </span>model<span class="w"> </span>.<span class="w"> </span>OrderSummary<span class="w"> </span>--format<span class="w"> </span>incan
+incan<span class="w"> </span>tools<span class="w"> </span>metadata<span class="w"> </span>model<span class="w"> </span>contracts/order_summary.json<span class="w"> </span>orders.summary<span class="w"> </span>--format<span class="w"> </span>json
+incan<span class="w"> </span>tools<span class="w"> </span>metadata<span class="w"> </span>model<span class="w"> </span>target/lib/orders.incnlib<span class="w"> </span>OrderSummary
+</code></pre></div>
+<p>See: <a href="../contract_metadata/">Checked contract metadata</a> for bundle schema, materialization, artifact inspection, and the matching LSP command.</p>
+<h2 id="outputs-and-paths">Outputs and paths<a class="headerlink" href="#outputs-and-paths" title="Permanent link">&para;</a></h2>
+<p>Build outputs:</p>
+<ul>
+<li><strong>Generated Rust project</strong>: <code>target/incan/&lt;name&gt;/</code></li>
+<li><strong>Built binary</strong>: <code>target/incan/.cargo-target/release/&lt;name&gt;</code></li>
+<li><strong>Built library artifact (<code>--lib</code>)</strong>: <code>target/lib/&lt;name&gt;.incnlib</code> plus the generated library crate output</li>
+</ul>
+<p>Cleaning:</p>
+<div class="language-bash highlight"><pre><span></span><code>rm<span class="w"> </span>-rf<span class="w"> </span>target/incan/
+</code></pre></div>
+<h2 id="environment-variables">Environment variables<a class="headerlink" href="#environment-variables" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong><code>INCAN_STDLIB</code></strong>: override the stdlib directory (usually auto-detected; set only if detection fails).</li>
+<li><strong><code>INCAN_FANCY_ERRORS</code></strong>: enable “fancy” diagnostics rendering (presence-based; output may change).</li>
+<li><strong><code>INCAN_EMIT_SERVICE=1</code></strong>: toggle codegen emit mode (internal/debug; not stable).</li>
+<li><strong><code>INCAN_NO_BANNER=1</code></strong>: disable the ASCII logo banner.</li>
+<li><strong><code>NO_COLOR</code></strong>: disable ANSI color output (standard convention).</li>
+</ul>
+<h2 id="exit-codes">Exit codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
+<p>General rule: success is exit code 0; errors are non-zero.</p>
+<p>Specific behavior:</p>
+<ul>
+<li><strong><code>incan run</code></strong>: returns the program’s exit code.</li>
+<li><strong><code>incan test</code></strong>:<ul>
+<li>returns 0 if all tests pass</li>
+<li>returns 0 if test files exist but no tests are collected</li>
+<li>returns 1 if <code>--fail-on-empty</code> is set and no tests are collected</li>
+<li>returns 1 if no test files are discovered under the provided path</li>
+<li>returns 1 if any tests fail or an xfail unexpectedly passes (XPASS)</li>
+</ul>
+</li>
+<li><strong><code>incan fmt --check</code></strong>: returns 1 if any files would be reformatted.</li>
+<li><strong><code>incan build</code> / <code>incan check</code> / <code>incan --check</code> / debug flags</strong>: return 1 on compile/build errors.</li>
+</ul>
+<h2 id="drift-prevention-maintainers">Drift prevention (maintainers)<a class="headerlink" href="#drift-prevention-maintainers" title="Permanent link">&para;</a></h2>
+<p>Before a release, verify the docs stay aligned with the real CLI surface:</p>
+<ul>
+<li>Compare <code>incan --help</code> and <code>incan {check,explain,build,run,fmt,test,init,inspect,lock,tools} --help</code> against this page.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "../../..", "features": ["navigation.instant", "navigation.tabs", "navigation.tabs.sticky", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      
+        <script src="../../../_snippets/javascripts/mathjax.js"></script>
+      
+        <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
+      
+        <script src="../../../_snippets/javascripts/tablesort.js"></script>
+      
+        <script src="../../../_snippets/javascripts/rfc_table_filter.js"></script>
+      
+    
+  </body>
+</html>

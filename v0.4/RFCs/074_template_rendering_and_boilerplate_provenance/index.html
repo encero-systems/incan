@@ -1,0 +1,7140 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Documentation for the Incan programming language">
+      
+      
+      
+      
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
+    
+    
+      
+        <title>RFC 074: template rendering and boilerplate provenance - Incan Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/pygments.css">
+    
+      <link rel="stylesheet" href="/shared/incapunk/incapunk.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#rfc-074-template-rendering-and-boilerplate-provenance" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+      
+  <img src="/shared/incapunk/wordmark_small_001.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Incan Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              RFC 074: template rendering and boilerplate provenance
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="amber"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/encero-systems/incan" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    encero-systems/incan
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+    
+      
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../start_here/" class="md-tabs__link">
+          
+  
+    
+  
+  Start here
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../language/" class="md-tabs__link">
+          
+  
+    
+  
+  Language
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../tooling/" class="md-tabs__link">
+          
+  
+    
+  
+  Tooling
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../contributing/" class="md-tabs__link">
+          
+  
+    
+  
+  Contributing
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../release_notes/" class="md-tabs__link">
+          
+  
+    
+  
+  Release notes
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+    
+      
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../whitepapers/" class="md-tabs__link">
+          
+  
+    
+  
+  Project
+
+        </a>
+      </li>
+    
+  
+
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+    
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+      
+  <img src="/shared/incapunk/wordmark_small_001.png" alt="logo">
+
+    </a>
+    Incan Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/encero-systems/incan" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    encero-systems/incan
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../start_here/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Start here
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            Start here
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../start_here/what_incan_is_for/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    What Incan is for
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../start_here/coming_from_python/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Coming from Python (apps)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../start_here/coming_from_rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Coming from Rust (evaluator)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../start_here/coming_from_typescript_javascript/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Coming from TypeScript or JavaScript
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../start_here/pipelines_and_automation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Pipelines & automation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../start_here/encero_stack/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Encero stack
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../start_here/domain_native_demo/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    1.0 domain-native demo target
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../start_here/public_contracts/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    1.0 public contracts
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../start_here/beginner/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Beginner
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_11" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_11" id="__nav_2_11_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Comparisons
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_11">
+            <span class="md-nav__icon md-icon"></span>
+            Comparisons
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../comparisons/python/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Incan vs Python
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../comparisons/javascript_typescript/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Incan vs JS/TS
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../comparisons/rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Incan vs Rust
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../language/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Language
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            Language
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Tutorials
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2">
+            <span class="md-nav__icon md-icon"></span>
+            Tutorials
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2_1" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../language/tutorials/book/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    The Incan Book (Basics)
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_2_1" id="__nav_3_2_1_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_2_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2_1">
+            <span class="md-nav__icon md-icon"></span>
+            The Incan Book (Basics)
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/01_hello_world/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    1. Hello world
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/02_values_variables_and_types/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    2. Values, variables, and types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/03_functions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    3. Functions
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/04_control_flow/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    4. Control flow
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/05_modules_and_imports/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    5. Modules and imports
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/06_errors/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    6. Errors (Result/Option and `?`)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/07_strings_and_formatting/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    7. Strings and formatting
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/08_collections_and_iteration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    8. Collections and iteration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/09_enums/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    9. Enums and better `match`
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/10_models_vs_classes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    10. Models vs classes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/11_traits_and_derives/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    11. Traits and derives
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/12_newtypes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    12. Newtypes (stronger types)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/13_unit_tests/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    13. Unit tests
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/dates_and_times/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Dates and times
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/build_your_first_api/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Build your first API
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/fallible_and_infallible_paths/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Fallible and infallible paths
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/web_framework/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Web framework
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    How-to
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            How-to
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/async_programming/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Async programming
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/customize_derived_behavior/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Customize derived behavior
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/dates_and_times/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Dates and times
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/error_handling_recipes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error handling recipes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/error_messages/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error messages
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/file_io/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    File I/O
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/binary_text_encoding/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Binary-text encoding
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/compression/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Compression
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/dynamic_json/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Dynamic JSON
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/generators/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Generators
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/imports_and_modules/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Imports and modules
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/module_state/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Module state
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/choosing_collections/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/choosing_numeric_types/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Choosing numeric types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/modeling_with_enums/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Modeling with enums
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/project_lifecycle/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Project lifecycle
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/testing_stdlib/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Testing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/string_processing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/working_with_uuids/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with UUIDs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/performance/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Performance
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/rust_interop/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Rust interop
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/rust_types_for_python_devs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Rust types (coming from Python)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Reference
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4">
+            <span class="md-nav__icon md-icon"></span>
+            Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/language/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Language reference (generated)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/feature_inventory/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Feature inventory (generated)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/code_style/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Code style guide
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/functions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Functions and calls
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/generators/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Generators
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/symbol_aliases/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Symbol aliases
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/callable_presets/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Callable presets
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/glossary/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Glossary
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/file_io/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    File I/O reference (Path/File APIs)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/imports_and_modules/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Imports and modules
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/static_storage/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Static storage
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/numeric_semantics/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Numeric semantics
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/project_lifecycle/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Project lifecycle
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/strings/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Strings and Bytes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/reflection/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Reflection
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/derives_and_traits/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Derives & traits (reference)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_17" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../language/reference/stdlib/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Standard library
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_4_17" id="__nav_3_4_17_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_17_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_17">
+            <span class="md-nav__icon md-icon"></span>
+            Standard library
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/async/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.async
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/collections/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.collections
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/compression/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.compression
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/derives/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.derives.*
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/datetime/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.datetime
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/encoding/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.encoding
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/fs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.fs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/graph/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.graph
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/hash/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.hash
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/io/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.io
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/json/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.json
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/telemetry/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.telemetry
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/regex/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.regex
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/uuid/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.uuid
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/tempfile/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.tempfile
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/reflection/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.reflection
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/result/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.result
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/traits/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.traits.*
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/testing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.testing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/math/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.math
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_18" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../language/reference/stdlib_traits/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Stdlib traits
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_4_18" id="__nav_3_4_18_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_18_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_18">
+            <span class="md-nav__icon md-icon"></span>
+            Stdlib traits
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib_traits/collection_protocols/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Collection protocols
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Indexing and slicing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib_traits/callable/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Callable objects
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib_traits/awaitable/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Awaitable values
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib_traits/error/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error trait
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib_traits/operators/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Operators
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib_traits/conversions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Conversions
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_19" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_4_19" id="__nav_3_4_19_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Derives
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_19_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_19">
+            <span class="md-nav__icon md-icon"></span>
+            Derives
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/derives/string_representation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    String representation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/derives/comparison/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Comparison
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/derives/copying_default/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Copying/default
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/derives/serialization/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Serialization
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/derives/validation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Validation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/derives/custom_behavior/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Custom behavior
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Explanation
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5">
+            <span class="md-nav__icon md-icon"></span>
+            Explanation
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/why_incan/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Why Incan?
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/why_not_just_rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Why not just Rust?
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/how_incan_works/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    How Incan works
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/compile_time_and_runtime/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Compile time and runtime
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/rust_shaped_confidence/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Rust-shaped confidence
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/control_flow/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Control flow
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/callable_presets/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Callable presets
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/closures/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Closures
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/consts/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Consts
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/generators/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Generators
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/static_storage/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Module static storage
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/numeric_types/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Numeric types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/datetime_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Date and time model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/ordinal_map/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    OrdinalMap
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/derives_and_traits/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Derives & traits (explained)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/call_site_type_arguments/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Why call-site type args exist
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/how_derives_work/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    How derives work
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/enums/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Enums
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/error_handling/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error handling
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/imports_and_modules/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Imports and modules
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_22" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../language/explanation/models_and_classes/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Models and classes
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_5_22" id="__nav_3_5_22_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5_22">
+            <span class="md-nav__icon md-icon"></span>
+            Models and classes
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/models_and_classes/models/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Models
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/models_and_classes/classes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Classes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/traits_as_language_hooks/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Traits as language hooks
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/scopes_and_name_resolution/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Scopes and name resolution
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../tooling/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Tooling
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            Tooling
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_2" id="__nav_4_2_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Tutorials
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_2">
+            <span class="md-nav__icon md-icon"></span>
+            Tutorials
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/tutorials/getting_started/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/tutorials/your_first_project/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Your first project
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Pipeline mini-project
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_3" id="__nav_4_3_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    How-to
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_3">
+            <span class="md-nav__icon md-icon"></span>
+            How-to
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/install_and_run/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Install/build/run
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/dependencies/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Managing dependencies
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/ci_and_automation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    CI & automation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/troubleshooting/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Troubleshooting
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/editor_setup/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Editor setup
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/lsp/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    LSP
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/formatting/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Formatting with incan fmt
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/testing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Testing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_4" id="__nav_4_4_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Explanation
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_4">
+            <span class="md-nav__icon md-icon"></span>
+            Explanation
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/explanation/projects_today/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Projects today
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/explanation/lsp_architecture/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    LSP architecture
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_5" id="__nav_4_5_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Reference
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5">
+            <span class="md-nav__icon md-icon"></span>
+            Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/reference/cli_reference/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    CLI reference
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/reference/codegraph_inspection/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Codegraph inspection
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/reference/agent_docs_surfaces/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Agent and tooling docs surfaces
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/reference/contract_metadata/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Checked contract metadata
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/reference/checked_api_metadata/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Checked API metadata
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/reference/project_configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Project configuration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    LSP protocol support
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+          
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../contributing/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Contributing
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            Contributing
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/contributors/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Contributors
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Tutorials
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3">
+            <span class="md-nav__icon md-icon"></span>
+            Tutorials
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3_1" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../contributing/tutorials/book/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Incan Contributor Book (Advanced)
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_3_1" id="__nav_5_3_1_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_5_3_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3_1">
+            <span class="md-nav__icon md-icon"></span>
+            Incan Contributor Book (Advanced)
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    1. Architecture tour
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    2. Layering and boundaries
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    3. Proposals: issues vs RFCs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    4. Your first change: add a builtin
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    5. Your first syntax change
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    6. Tooling loop: formatter + tests
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    7. Tooling loop: LSP
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    8. Docsite contributor loop
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_4" id="__nav_5_4_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    How-to
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_4">
+            <span class="md-nav__icon md-icon"></span>
+            How-to
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/how-to/extending_language/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Extending the language
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Author library DSLs with incan_vocab
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/how-to/auditing_generated_rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Auditing generated Rust
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Benchmarks & profiling (repository)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/how-to/ci_and_automation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    CI & automation (repository)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/how-to/writing_rfcs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Writing RFCs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_5" id="__nav_5_5_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Explanation
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_5">
+            <span class="md-nav__icon md-icon"></span>
+            Explanation
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/explanation/architecture/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Architecture
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/explanation/duckborrowing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Duckborrowing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/explanation/generated_rust_quality/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Generated Rust quality
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/explanation/layering/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Layering rules
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/explanation/incapunk_docs_theme/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Incapunk docs theme
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Readable, maintainable Rust
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.testing internals
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_6" id="__nav_5_6_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Reference
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_6">
+            <span class="md-nav__icon md-icon"></span>
+            Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/reference/generated_rust_stdlib_coverage/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Generated Rust stdlib coverage
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    RFCs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../release_notes/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Release notes
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            Release notes
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../release_notes/0_4/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.4
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../release_notes/0_3/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.3
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../release_notes/0_2/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.2
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../release_notes/0_1/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.1
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Project
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            Project
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_1" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../whitepapers/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Whitepapers
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_7_1" id="__nav_7_1_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_1">
+            <span class="md-nav__icon md-icon"></span>
+            Whitepapers
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../whitepapers/incan_ecosystem_north_star/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Incan ecosystem north star
+  </span>
+  
+    
+  
+  
+    <span class="md-status md-status--Snapshot"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../roadmap/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Roadmap
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../stability/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Stability policy
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      Summary
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#core-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      Core model
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#motivation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Motivation
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Goals
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Non-Goals
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#guide-level-explanation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Guide-level explanation
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Guide-level explanation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#provider-side-template" class="md-nav__link">
+    <span class="md-ellipsis">
+      Provider-side template
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#consumer-side-result" class="md-nav__link">
+    <span class="md-ellipsis">
+      Consumer-side result
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#provenance" class="md-nav__link">
+    <span class="md-ellipsis">
+      Provenance
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#generating-a-values-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      Generating a values file
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#checking-generated-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      Checking generated files
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#checking-template-status" class="md-nav__link">
+    <span class="md-ellipsis">
+      Checking template status
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#diffing-an-update" class="md-nav__link">
+    <span class="md-ellipsis">
+      Diffing an update
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#updating-explicitly" class="md-nav__link">
+    <span class="md-ellipsis">
+      Updating explicitly
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#resetting-generated-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      Resetting generated files
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reference-level-explanation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Reference-level explanation
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Reference-level explanation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#terminology" class="md-nav__link">
+    <span class="md-ellipsis">
+      Terminology
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#descriptor-authority" class="md-nav__link">
+    <span class="md-ellipsis">
+      Descriptor authority
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#template-source-kinds" class="md-nav__link">
+    <span class="md-ellipsis">
+      Template source kinds
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#placeholder-syntax" class="md-nav__link">
+    <span class="md-ellipsis">
+      Placeholder syntax
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#parameter-kinds" class="md-nav__link">
+    <span class="md-ellipsis">
+      Parameter kinds
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#parameter-declarations" class="md-nav__link">
+    <span class="md-ellipsis">
+      Parameter declarations
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#optional-file-groups" class="md-nav__link">
+    <span class="md-ellipsis">
+      Optional file groups
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#non-rendered-assets" class="md-nav__link">
+    <span class="md-ellipsis">
+      Non-rendered assets
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#multi-pass-placeholders" class="md-nav__link">
+    <span class="md-ellipsis">
+      Multi-pass placeholders
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rendering-algorithm" class="md-nav__link">
+    <span class="md-ellipsis">
+      Rendering algorithm
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incan-validation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Incan validation
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#non-incan-targets" class="md-nav__link">
+    <span class="md-ellipsis">
+      Non-Incan targets
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#path-safety" class="md-nav__link">
+    <span class="md-ellipsis">
+      Path safety
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#generated-file-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      Generated-file ownership
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#provenance-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Provenance modes
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#provenance-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      Provenance fields
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#template-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      Template commands
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#provider-validation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Provider validation
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#security-and-trust" class="md-nav__link">
+    <span class="md-ellipsis">
+      Security and trust
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#diagnostics" class="md-nav__link">
+    <span class="md-ellipsis">
+      Diagnostics
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#design-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      Design details
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Design details">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#relationship-to-rfc-015" class="md-nav__link">
+    <span class="md-ellipsis">
+      Relationship to RFC 015
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#relationship-to-rfc-075" class="md-nav__link">
+    <span class="md-ellipsis">
+      Relationship to RFC 075
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#relationship-to-ctx" class="md-nav__link">
+    <span class="md-ellipsis">
+      Relationship to ctx
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#relationship-to-catalogs-and-incanpub" class="md-nav__link">
+    <span class="md-ellipsis">
+      Relationship to catalogs and incan.pub
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#relationship-to-rfc-076" class="md-nav__link">
+    <span class="md-ellipsis">
+      Relationship to RFC 076
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#relationship-to-tooling-and-agents" class="md-nav__link">
+    <span class="md-ellipsis">
+      Relationship to tooling and agents
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compatibility-and-migration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Compatibility and migration
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alternatives-considered" class="md-nav__link">
+    <span class="md-ellipsis">
+      Alternatives considered
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Alternatives considered">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#use-arbitrary-generator-scripts" class="md-nav__link">
+    <span class="md-ellipsis">
+      Use arbitrary generator scripts
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#create-everything-and-delete-disabled-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      Create everything and delete disabled files
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#make-tpl-extension-semantics-authoritative" class="md-nav__link">
+    <span class="md-ellipsis">
+      Make .tpl extension semantics authoritative
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#adopt-a-full-template-language-in-v1" class="md-nav__link">
+    <span class="md-ellipsis">
+      Adopt a full template language in v1
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#do-not-record-provenance" class="md-nav__link">
+    <span class="md-ellipsis">
+      Do not record provenance
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#treat-all-generated-files-as-managed" class="md-nav__link">
+    <span class="md-ellipsis">
+      Treat all generated files as managed
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#store-generated-files-as-hidden-build-artifacts" class="md-nav__link">
+    <span class="md-ellipsis">
+      Store generated files as hidden build artifacts
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#drawbacks" class="md-nav__link">
+    <span class="md-ellipsis">
+      Drawbacks
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#layers-affected" class="md-nav__link">
+    <span class="md-ellipsis">
+      Layers affected
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unresolved-questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Unresolved questions
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+  
+
+
+<h1 id="rfc-074-template-rendering-and-boilerplate-provenance">RFC 074: template rendering and boilerplate provenance<a class="headerlink" href="#rfc-074-template-rendering-and-boilerplate-provenance" title="Permanent link">&para;</a></h1>
+<ul>
+<li><strong>Status:</strong> Draft</li>
+<li><strong>Created:</strong> 2026-04-25</li>
+<li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
+<li><strong>Related:</strong><ul>
+<li>RFC 015 (hatch-like tooling and project lifecycle CLI)</li>
+<li>RFC 020 (Cargo offline and locked policy)</li>
+<li>RFC 033 (<code>ctx</code> typed configuration context)</li>
+<li>RFC 034 (<code>incan.pub</code> package registry)</li>
+<li>RFC 075 (starter profiles and capability packs)</li>
+<li>RFC 076 (project mutation policy and recovery)</li>
+</ul>
+</li>
+<li><strong>Issue:</strong> https://github.com/encero-systems/incan/issues/402</li>
+<li><strong>RFC PR:</strong> —</li>
+<li><strong>Written against:</strong> v0.3</li>
+<li><strong>Shipped in:</strong> —</li>
+</ul>
+<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
+<p>This RFC defines a deterministic template rendering, generated-file ownership, and provenance model for Incan project tooling. Templates are static input files referenced by lifecycle tooling, starter profiles, capability packs, or package-provided setup data. Rendering is intentionally constrained: v1 templates may substitute declared parameters, but they must not execute arbitrary code, run shell commands, fetch remote data, or infer behavior from filename conventions alone. When rendered files are written into a project, the toolchain may record provenance so users and tools can later check, diff, status, reset, or update generated boilerplate without treating the original template as hidden build state.</p>
+<h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
+<p>Read this RFC as ten foundations:</p>
+<ol>
+<li><strong>Template files are tooling inputs, not Incan source syntax.</strong> A file such as <code>main.incn.tpl</code> is a conventional provider-side artifact. The rendered <code>main.incn</code> is the Incan source file users edit, compile, and commit.</li>
+<li><strong>Descriptors are authoritative.</strong> A template file's source path, target path, target language, parameter declarations, and provenance behavior are declared by a descriptor consumed by lifecycle tooling. The <code>.tpl</code> suffix is a convention, not the semantic contract.</li>
+<li><strong>Rendering is deterministic.</strong> Given the same template bytes, declared parameters, parameter values, renderer version, and project metadata, the renderer must produce the same output.</li>
+<li><strong>Rendering is intentionally small.</strong> V1 supports declared placeholder substitution. It does not support loops, conditionals, imports, functions, filters, arbitrary expression evaluation, network access, or shell execution.</li>
+<li><strong>Parameters are declared and typed.</strong> A template descriptor declares every accepted parameter and its kind. The renderer must reject undeclared placeholders and invalid values before writing files.</li>
+<li><strong>Rendered Incan must be validated.</strong> If the target language is <code>incan</code>, the toolchain must parse the rendered output and should format it before writing when a formatter is available.</li>
+<li><strong>Provenance is explicit tooling state.</strong> A project may record which template produced a file, which package or descriptor supplied it, which parameter values were used, and which hashes were observed.</li>
+<li><strong>Updates are explicit, receiver-owned, conflict-aware, and security-sensitive.</strong> Template provenance enables <code>check</code>, <code>diff</code>, and <code>update</code> workflows, but it must not cause automatic rewrites during build, test, import, editor startup, or package resolution. Updating generated source is a project code change in the receiving repository and must be reviewed as one.</li>
+<li><strong>Generated files have ownership policy.</strong> A rendered file may be bootstrap-only, managed by template updates, or advisory provenance only. The update policy must be explicit per file rather than inferred from path conventions.</li>
+<li><strong>Template inputs are reviewable.</strong> Tooling must be able to show or write the parameter values that would drive a render so teams can review, automate, and reproduce template application.</li>
+</ol>
+<h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
+<p>RFC 015 gives Incan a minimal lifecycle CLI, and RFC 075 builds richer starter and capability workflows on top of it. Those workflows need a way to create files from reusable boilerplate. Without a template contract, each feature would either invent its own extension convention, embed ad-hoc generator scripts, or copy example files without enough metadata to explain later where they came from.</p>
+<p>The problem is not just initial scaffolding. Generated boilerplate often needs maintenance. A project may start with a generated CLI entrypoint, <code>ctx</code> configuration module, data-session helper, or test skeleton, then edit it over time. Tooling should be able to answer practical questions: is this file still the generated output, was the upstream template changed, what diff would an update apply, and which capability introduced this file? Those questions require provenance, not just file creation.</p>
+<p>This RFC keeps the boundary narrow. It does not create a general template programming language. It gives the lifecycle layer a safe rendering primitive that higher-level RFCs can depend on.</p>
+<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Define a project-tooling template model that can be used by lifecycle commands, starter profiles, capability packs, and package-provided setup data.</li>
+<li>Make descriptor metadata authoritative so behavior does not depend only on <code>.tpl</code> filename conventions.</li>
+<li>Define a constrained v1 placeholder syntax and parameter model.</li>
+<li>Require deterministic rendering and safe path handling.</li>
+<li>Require rendered Incan output to parse before it is written.</li>
+<li>Define provenance records that support check, status, diff, update, and reset workflows.</li>
+<li>Define generated-file ownership policies that distinguish bootstrap-only files from managed files.</li>
+<li>Support real template suites that need prompts, defaults, constrained choices, derived values, optional file groups, and non-rendered binary or fixture assets.</li>
+<li>Support values-file generation for non-interactive and reviewable template application.</li>
+<li>Support version-aware template status checks when package or registry metadata is available.</li>
+<li>Require template render plans to explain why files are included, skipped, blocked, unchanged, or unsafe.</li>
+<li>Define a safe reset escape hatch for corrupted or heavily conflicted generated files.</li>
+<li>Keep generated projects ordinary: rendered files are normal files, and templates do not participate in compilation unless the user explicitly keeps them as project data.</li>
+<li>Allow templates to be resolved from source-agnostic catalogs such as built-in descriptors, local paths, git sources, public package registries, or private catalogs while keeping rendering and mutation local to the lifecycle CLI.</li>
+<li>Leave room for <code>incan.pub</code> packages to distribute public templates without making public registry support mandatory for v1.</li>
+<li>Provide a tooling surface that IDEs, docs tooling, and agents can inspect without reimplementing template semantics.</li>
+</ul>
+<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Defining starter profiles, capability packs, or their command surface. RFC 075 owns that layer.</li>
+<li>Defining package registry transport, ranking, or remote discovery. RFC 034 owns package registry semantics.</li>
+<li>Defining private catalog hosting, identity, authorization, administration, or commercial policy.</li>
+<li>Defining a general-purpose template language comparable to Jinja, Handlebars, Tera, or Liquid.</li>
+<li>Supporting arbitrary generator scripts, shell commands, network calls, plugin execution, or procedural macros during template rendering.</li>
+<li>Supporting post-generation cleanup hooks as the primary way to model optional slices. Optional files should be represented in descriptors before rendering rather than created and deleted afterward.</li>
+<li>Automatically updating generated files during build, test, package add, import, or editor startup.</li>
+<li>Perfectly merging arbitrary user edits with updated templates.</li>
+<li>Treating generated files as compiler-special or read-only.</li>
+<li>Replacing examples and docs. Templates make recommended boilerplate executable; they do not explain why the boilerplate exists.</li>
+</ul>
+<h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
+<h3 id="provider-side-template">Provider-side template<a class="headerlink" href="#provider-side-template" title="Permanent link">&para;</a></h3>
+<p>A package or built-in tool may ship a static template:</p>
+<div class="language-text highlight"><pre><span></span><code>templates/
+  session.incn.tpl
+</code></pre></div>
+<p>The template is not compiled directly. It is provider-side data:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pub</span><span class="p">::</span><span class="n">sample_session</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Session</span><span class="o">,</span><span class="w"> </span><span class="nn">backends</span>
+<span class="kn">from</span><span class="w"> </span><span class="p">{{</span> <span class="n">config_module</span> <span class="p">}}</span> <span class="kn">import</span><span class="w"> </span><span class="p">{{</span> <span class="n">config_type</span> <span class="p">}}</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">default_session</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nc">Session</span><span class="p">:</span>
+    <span class="k">return</span> <span class="nc">Session</span><span class="o">.</span><span class="n">builder</span><span class="p">()</span>
+        <span class="o">.</span><span class="n">with_backend</span><span class="p">(</span><span class="n">backends</span><span class="o">.</span><span class="p">{{</span> <span class="n">backend_type</span> <span class="p">}}())</span>
+        <span class="o">.</span><span class="n">with_data_root</span><span class="p">({{</span> <span class="n">config_type</span> <span class="p">}}</span><span class="o">.</span><span class="n">data_root</span><span class="p">)</span>
+        <span class="o">.</span><span class="n">build</span><span class="p">()</span>
+</code></pre></div>
+<p>The descriptor declares how that file may be rendered:</p>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[[templates]]</span>
+<span class="n">source</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;templates/session.incn.tpl&quot;</span>
+<span class="n">target</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;src/data/session.incn&quot;</span>
+<span class="n">language</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;incan&quot;</span>
+<span class="n">provenance</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;tracked&quot;</span>
+<span class="n">ownership</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;managed&quot;</span>
+
+<span class="k">[templates.parameters.config_module]</span>
+<span class="n">kind</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;module_path&quot;</span>
+<span class="n">prompt</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;Configuration module path&quot;</span>
+<span class="n">default</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;data.config&quot;</span>
+
+<span class="k">[templates.parameters.config_type]</span>
+<span class="n">kind</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;identifier&quot;</span>
+<span class="n">prompt</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;Configuration type name&quot;</span>
+<span class="n">default</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;DataConfig&quot;</span>
+
+<span class="k">[templates.parameters.backend_type]</span>
+<span class="n">kind</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;identifier&quot;</span>
+<span class="n">prompt</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;Session backend&quot;</span>
+<span class="n">default</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;DataFusion&quot;</span>
+<span class="n">choices</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;DataFusion&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;Memory&quot;</span><span class="p">]</span>
+</code></pre></div>
+<p>The renderer validates every value, substitutes the placeholders, parses the rendered Incan source, formats it when possible, and writes the target file only if the calling lifecycle operation allows that file mutation.</p>
+<h3 id="consumer-side-result">Consumer-side result<a class="headerlink" href="#consumer-side-result" title="Permanent link">&para;</a></h3>
+<p>After a starter or capability applies the template, the project contains a normal file:</p>
+<div class="language-text highlight"><pre><span></span><code>src/data/session.incn
+</code></pre></div>
+<p>The rendered file is ordinary source:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pub</span><span class="p">::</span><span class="n">sample_session</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Session</span><span class="o">,</span><span class="w"> </span><span class="nn">backends</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">data.config</span><span class="w"> </span><span class="kn">import</span> <span class="nc">DataConfig</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">default_session</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nc">Session</span><span class="p">:</span>
+    <span class="k">return</span> <span class="nc">Session</span><span class="o">.</span><span class="n">builder</span><span class="p">()</span>
+        <span class="o">.</span><span class="n">with_backend</span><span class="p">(</span><span class="n">backends</span><span class="o">.</span><span class="nc">DataFusion</span><span class="p">())</span>
+        <span class="o">.</span><span class="n">with_data_root</span><span class="p">(</span><span class="nc">DataConfig</span><span class="o">.</span><span class="n">data_root</span><span class="p">)</span>
+        <span class="o">.</span><span class="n">build</span><span class="p">()</span>
+</code></pre></div>
+<p>The project does not need the template to compile. The template was used to create a file; it is not a hidden source dependency.</p>
+<h3 id="provenance">Provenance<a class="headerlink" href="#provenance" title="Permanent link">&para;</a></h3>
+<p>If the descriptor requests tracked provenance, the lifecycle tool records enough metadata to explain the file later:</p>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[tool.incan.templates.</span><span class="s2">&quot;src/data/session.incn&quot;</span><span class="k">]</span>
+<span class="n">source</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;sample_session:templates/session.incn.tpl&quot;</span>
+<span class="n">package</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;sample_session&quot;</span>
+<span class="n">version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.1.0&quot;</span>
+<span class="n">origin</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;capability:sample_session.session&quot;</span>
+<span class="n">language</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;incan&quot;</span>
+<span class="n">renderer</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;incan-template-v1&quot;</span>
+<span class="n">template_hash</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;sha256:4b5a...&quot;</span>
+<span class="n">values_hash</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;sha256:42d9...&quot;</span>
+<span class="n">rendered_hash</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;sha256:18c2...&quot;</span>
+</code></pre></div>
+<p>This record is tooling provenance. Removing it must not break compilation. Keeping it allows the toolchain to answer questions about generated files.</p>
+<h3 id="generating-a-values-file">Generating a values file<a class="headerlink" href="#generating-a-values-file" title="Permanent link">&para;</a></h3>
+<p>A user may ask the toolchain to write the values a template expects before applying it:</p>
+<div class="language-text highlight"><pre><span></span><code>incan template values-file sample_session:templates/session.incn.tpl --output session.values.toml
+</code></pre></div>
+<p>The generated file contains declared parameters, defaults, choices, and prompt text:</p>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[values]</span>
+<span class="n">config_module</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;data.config&quot;</span>
+<span class="n">config_type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;DataConfig&quot;</span>
+<span class="n">backend_type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;DataFusion&quot;</span>
+</code></pre></div>
+<p>This gives teams something concrete to review in automation and allows non-interactive application:</p>
+<div class="language-text highlight"><pre><span></span><code>incan template render sample_session:templates/session.incn.tpl --values session.values.toml --dry-run
+</code></pre></div>
+<p>The exact command spelling may change, but the lifecycle layer must expose the same capability: inspect required values, write a values file, and render from that file without interactive prompts.</p>
+<h3 id="checking-generated-files">Checking generated files<a class="headerlink" href="#checking-generated-files" title="Permanent link">&para;</a></h3>
+<p>A user may ask whether tracked files are stale or edited:</p>
+<div class="language-text highlight"><pre><span></span><code>incan template check
+</code></pre></div>
+<p>Example output:</p>
+<div class="language-text highlight"><pre><span></span><code>tracked templates:
+  src/data/session.incn
+    status: edited
+    source: sample_session:templates/session.incn.tpl
+    origin: capability:sample_session.session
+
+  tests/test_session.incn
+    status: current
+    source: sample_session:templates/test_session.incn.tpl
+</code></pre></div>
+<p><code>edited</code> means the current file hash differs from the recorded <code>rendered_hash</code>. It does not mean the file is invalid. Users are expected to edit generated files.</p>
+<h3 id="checking-template-status">Checking template status<a class="headerlink" href="#checking-template-status" title="Permanent link">&para;</a></h3>
+<p>When a template source comes from a package, starter, capability, or registry-backed catalog, users need more than byte-level drift. They also need to know whether the project is using the latest compatible template source:</p>
+<div class="language-text highlight"><pre><span></span><code>incan template status
+</code></pre></div>
+<p>Example output:</p>
+<div class="language-text highlight"><pre><span></span><code>target                   source                         current   latest    file
+src/data/session.incn    sample_session:templates/session.incn    0.1.0     0.2.0     edited
+tests/test_session.incn  sample_session:templates/test_session    0.1.0     0.1.0     current
+</code></pre></div>
+<p>If the source catalog is unavailable, status may fall back to local provenance and report the version as unknown or cached. Machine-readable status should include the provenance record path, source package, source version, latest compatible version, and file drift state.</p>
+<h3 id="diffing-an-update">Diffing an update<a class="headerlink" href="#diffing-an-update" title="Permanent link">&para;</a></h3>
+<p>If a package version provides a newer template, tooling can show the proposed change without writing it:</p>
+<div class="language-text highlight"><pre><span></span><code>incan template diff src/data/session.incn
+</code></pre></div>
+<p>The diff is between the current project file and the output that would be rendered from the current descriptor and parameter values. If the file has user edits, the tool must make that clear before offering an update.</p>
+<h3 id="updating-explicitly">Updating explicitly<a class="headerlink" href="#updating-explicitly" title="Permanent link">&para;</a></h3>
+<p>Template updates are explicit:</p>
+<div class="language-text highlight"><pre><span></span><code>incan template update src/data/session.incn --dry-run
+incan template update src/data/session.incn
+</code></pre></div>
+<p>If the current file still matches <code>rendered_hash</code>, an explicit receiver-approved update may replace it with the newly rendered output. If the file has user edits, the tool must either stop with a conflict diagnostic or use a documented merge strategy. It must not silently overwrite user edits.</p>
+<h3 id="resetting-generated-files">Resetting generated files<a class="headerlink" href="#resetting-generated-files" title="Permanent link">&para;</a></h3>
+<p>If an update cannot be applied cleanly, users may need a stronger operation that recreates managed files from the current template source while preserving recorded values:</p>
+<div class="language-text highlight"><pre><span></span><code>incan template reset src/data/session.incn --dry-run
+incan template reset src/data/session.incn
+</code></pre></div>
+<p>Reset is not a normal update. It should be treated as an explicit recovery operation. By default, it must preserve bootstrap-owned files, preserve values from provenance or an explicit values file, show a dry-run plan, require confirmation unless running in an explicit non-interactive mode, and leave the resulting changes for review in source control. Reset is still a receiver-side code mutation and must follow the same rendered-diff review and source-identity checks as update.</p>
+<h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
+<h3 id="terminology">Terminology<a class="headerlink" href="#terminology" title="Permanent link">&para;</a></h3>
+<p>A <strong>template file</strong> is a static provider-side file that contains placeholders and is rendered into a project file.</p>
+<p>A <strong>template descriptor</strong> is structured metadata that declares the template source, target, target language, parameters, parameter kinds, provenance mode, and any renderer options.</p>
+<p>A <strong>placeholder</strong> is a marked location in the template body that references one declared parameter.</p>
+<p>A <strong>parameter</strong> is a named value accepted by a template descriptor. Parameters have a kind that controls validation and escaping.</p>
+<p>A <strong>rendered file</strong> is the output produced by applying parameter values to a template file.</p>
+<p>A <strong>template provenance record</strong> is project tooling state that records where a rendered file came from and which hashes were used.</p>
+<p>A <strong>generated-file ownership policy</strong> describes how the lifecycle tool may treat a rendered file after initial creation.</p>
+<p>A <strong>template source</strong> is where a template descriptor and its files are resolved from. Source kinds may include built-in templates, local paths, git references, package-provided templates, public catalogs, and private catalogs.</p>
+<h3 id="descriptor-authority">Descriptor authority<a class="headerlink" href="#descriptor-authority" title="Permanent link">&para;</a></h3>
+<p>The descriptor is authoritative for template behavior. Implementations must not infer target language, target path, provenance behavior, or parameter kinds solely from the template filename.</p>
+<p>The <code>.tpl</code> suffix is recommended for provider-side template files because it is familiar and avoids confusing templates with directly compiled source. For Incan templates, <code>.incn.tpl</code> is the recommended provider-side suffix. Implementations may accept other filenames when the descriptor marks the file as a template.</p>
+<h3 id="template-source-kinds">Template source kinds<a class="headerlink" href="#template-source-kinds" title="Permanent link">&para;</a></h3>
+<p>Template source kind affects discovery, provenance, trust, and upgrade metadata. It must not change rendering semantics. A template loaded from a private catalog, public registry, git reference, local path, package, or built-in source is rendered with the same placeholder validation, path safety, parse validation, overwrite rules, and provenance requirements.</p>
+<p>V1 implementations must support built-in templates. They may also support explicit local descriptor paths. Later implementations may add git sources, package-owned templates, public catalog sources, and private catalog sources without changing the descriptor semantics.</p>
+<p>Source metadata should answer these questions:</p>
+<ul>
+<li>where the descriptor came from</li>
+<li>which immutable version, commit, package version, or content hash was selected</li>
+<li>whether integrity metadata was verified</li>
+<li>whether the source has been yanked, revoked, or superseded</li>
+<li>whether the source can provide latest-compatible version information</li>
+<li>whether the source can provide source diffs between template versions</li>
+</ul>
+<p>Private catalog sources are for organization-specific or team-specific templates that should not be discoverable through the public package ecosystem. They are not special renderers. They must still provide descriptor bytes, referenced template files, and provenance metadata to the local lifecycle CLI.</p>
+<p>Diagnostics and machine-readable output must include the selected source kind and source identity when that information is available. If multiple sources provide the same template id, the lifecycle CLI must either reject the ambiguity or apply a documented source precedence rule and show the selected source.</p>
+<h3 id="placeholder-syntax">Placeholder syntax<a class="headerlink" href="#placeholder-syntax" title="Permanent link">&para;</a></h3>
+<p>V1 placeholders use double braces around one parameter name:</p>
+<div class="language-text highlight"><pre><span></span><code>{{ parameter_name }}
+</code></pre></div>
+<p>Whitespace immediately inside the braces is ignored. Parameter names must be ASCII identifiers matching this shape:</p>
+<div class="language-text highlight"><pre><span></span><code>[A-Za-z_][A-Za-z0-9_]*
+</code></pre></div>
+<p>The renderer must reject:</p>
+<ul>
+<li>placeholders that reference undeclared parameters</li>
+<li>parameters that are declared but unused, unless the descriptor explicitly allows unused parameters</li>
+<li>malformed placeholders</li>
+<li>nested placeholders</li>
+<li>expression syntax inside placeholders</li>
+<li>escaping or control syntax that is not defined by this RFC</li>
+</ul>
+<h3 id="parameter-kinds">Parameter kinds<a class="headerlink" href="#parameter-kinds" title="Permanent link">&para;</a></h3>
+<p>V1 defines these parameter kinds:</p>
+<ul>
+<li><code>identifier</code>: an Incan identifier segment</li>
+<li><code>module_path</code>: one or more identifier segments separated by <code>.</code></li>
+<li><code>string</code>: a UTF-8 string value rendered with target-language string escaping when inserted into an Incan template</li>
+<li><code>path</code>: a normalized relative project path that must not escape the project root</li>
+<li><code>literal</code>: a raw textual value that is inserted without escaping</li>
+</ul>
+<p>Descriptors should avoid <code>literal</code> unless the rendered target language validation can catch invalid output. For <code>language = "incan"</code>, use of <code>literal</code> is allowed only when the final rendered source parses successfully. For executable, configuration, CI, or agent-facing targets, <code>literal</code> parameters should be treated as security-sensitive in dry-run output because they bypass escaping.</p>
+<p>Future RFCs may add more kinds. Unknown parameter kinds must be rejected unless the renderer has explicitly opted into an extension namespace.</p>
+<h3 id="parameter-declarations">Parameter declarations<a class="headerlink" href="#parameter-declarations" title="Permanent link">&para;</a></h3>
+<p>A template descriptor may declare metadata for each parameter:</p>
+<ul>
+<li><code>kind</code>: the validation and escaping kind</li>
+<li><code>prompt</code>: a short human-facing prompt for interactive tools</li>
+<li><code>default</code>: the default value, when one exists</li>
+<li><code>choices</code>: a finite set of accepted values</li>
+<li><code>required</code>: whether the caller must provide a value</li>
+<li><code>sensitive</code>: whether the value may contain secret or private material</li>
+<li><code>derived</code>: a deterministic derivation from other parameters or project metadata</li>
+</ul>
+<p>Prompt text is tooling metadata. It must not affect rendering semantics.</p>
+<p>If <code>choices</code> is present, the renderer must reject values outside the declared set before substitution.</p>
+<p>If <code>sensitive = true</code>, the renderer must not store the raw parameter value in provenance, logs, diagnostics, machine-readable plans, or generated comments. If drift detection requires a value fingerprint, the renderer should store a salted or keyed hash, not an unsalted hash of the raw value. Diagnostics should identify the parameter by name rather than printing the value.</p>
+<p>Derived values must be deterministic. V1 descriptors should prefer renderer-known transforms such as casing, identifier normalization, slug normalization, path joining, and package-name normalization. Descriptors must not embed arbitrary expression evaluation to compute derived values in v1.</p>
+<h3 id="optional-file-groups">Optional file groups<a class="headerlink" href="#optional-file-groups" title="Permanent link">&para;</a></h3>
+<p>Real template suites often contain optional slices: docs support, CI support, test fixtures, backend-specific files, or deployment scaffolding. Descriptors should model those slices before rendering:</p>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[[file_groups]]</span>
+<span class="n">id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;docs&quot;</span>
+<span class="n">enabled_by</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;enable_docs&quot;</span>
+
+<span class="k">[[file_groups.files]]</span>
+<span class="n">source</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;templates/docs/index.md.tpl&quot;</span>
+<span class="n">target</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;docs/index.md&quot;</span>
+<span class="n">language</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;markdown&quot;</span>
+</code></pre></div>
+<p>The renderer must not rely on post-generation deletion hooks to express optionality. Creating a large tree and deleting disabled parts makes dry-run output less honest, weakens provenance, and makes updates harder because the tool cannot tell whether a missing file was intentionally excluded or later removed by the user.</p>
+<p>Optional file-group decisions must be explainable. A render plan should report whether each group was included, skipped, blocked, or unavailable, and it should include the parameter, project metadata, source compatibility, or policy condition that caused that decision. This gives lifecycle tooling enough information to show a condition-style report without reimplementing template logic.</p>
+<h3 id="non-rendered-assets">Non-rendered assets<a class="headerlink" href="#non-rendered-assets" title="Permanent link">&para;</a></h3>
+<p>Some template suites include binary fixtures, fonts, icons, archives, datasets, or other files that must be copied without placeholder scanning. The descriptor must mark those files explicitly:</p>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[[templates]]</span>
+<span class="n">source</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;templates/assets/logo.png&quot;</span>
+<span class="n">target</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;docs/assets/logo.png&quot;</span>
+<span class="n">render</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
+<span class="n">provenance</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;tracked&quot;</span>
+</code></pre></div>
+<p>For <code>render = false</code>, the renderer copies bytes exactly after path validation. It must not scan the file for placeholders. Provenance should record the source hash and copied output hash.</p>
+<h3 id="multi-pass-placeholders">Multi-pass placeholders<a class="headerlink" href="#multi-pass-placeholders" title="Permanent link">&para;</a></h3>
+<p>Some generated files intentionally contain placeholder syntax for a later tool, runtime, deployment system, or user edit. The descriptor must make this explicit rather than relying on renderer-specific escaping tricks:</p>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[[templates.preserve_placeholders]]</span>
+<span class="n">syntax</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;double-brace&quot;</span>
+<span class="n">names</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;runtime_schema&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;deployment_env&quot;</span><span class="p">]</span>
+</code></pre></div>
+<p>Preserved placeholders are copied through as literal text and are not treated as missing Incan template parameters. This is separate from <code>_copy_without_render</code>: a rendered file may still preserve selected placeholder regions for another phase.</p>
+<h3 id="rendering-algorithm">Rendering algorithm<a class="headerlink" href="#rendering-algorithm" title="Permanent link">&para;</a></h3>
+<p>Rendering one template must follow this order:</p>
+<ol>
+<li>Load the template descriptor.</li>
+<li>Normalize and validate the source path relative to the descriptor package or descriptor root.</li>
+<li>Normalize and validate the target path relative to the project root.</li>
+<li>Parse the template body for placeholders.</li>
+<li>Validate that every placeholder references a declared parameter.</li>
+<li>Resolve parameter values from descriptor defaults, project metadata, caller-supplied values, derived values, or the calling lifecycle operation.</li>
+<li>Validate each value against its declared parameter kind, choices, required state, and sensitivity policy.</li>
+<li>Resolve optional file-group inclusion before rendering or copying.</li>
+<li>Substitute placeholders in memory, preserving explicitly declared later-phase placeholders.</li>
+<li>Validate the rendered output according to the declared target language.</li>
+<li>Format the rendered output when a formatter is available and formatting is enabled.</li>
+<li>Return a planned rendered file to the calling lifecycle operation.</li>
+</ol>
+<p>The renderer does not decide whether the file may be written. File creation, merge, replace, and overwrite policy belong to the calling lifecycle operation, such as RFC 015 project creation or RFC 075 capability application.</p>
+<h3 id="incan-validation">Incan validation<a class="headerlink" href="#incan-validation" title="Permanent link">&para;</a></h3>
+<p>If <code>language = "incan"</code>, the rendered output must parse as Incan source before it is written. If the parser rejects the rendered output, the lifecycle command must fail without writing the target file.</p>
+<p>If an Incan formatter is available, the lifecycle command should format the rendered output before computing <code>rendered_hash</code> and before writing. Hashes must be computed over the exact bytes that would be written.</p>
+<p>This RFC does not require full type checking before writing a rendered file because a template may depend on files that are created by the same mutation plan. The calling lifecycle operation may typecheck the whole project after applying a plan when appropriate.</p>
+<h3 id="non-incan-targets">Non-Incan targets<a class="headerlink" href="#non-incan-targets" title="Permanent link">&para;</a></h3>
+<p>Templates may target non-Incan files such as Markdown, TOML, JSON, GitHub Actions YAML, or editor settings. Non-Incan targets must still use safe path handling and deterministic rendering.</p>
+<p>Where the toolchain has a structured parser for a target format, it should validate rendered output before writing. If no parser exists, the descriptor must declare <code>language = "text"</code> or another known unchecked language mode so users and tools can see that only textual rendering was performed.</p>
+<h3 id="path-safety">Path safety<a class="headerlink" href="#path-safety" title="Permanent link">&para;</a></h3>
+<p>Source paths are resolved relative to the descriptor root or package root. Target paths are resolved relative to the project root.</p>
+<p>The renderer must reject absolute target paths, parent-directory escapes, symlink escapes when detectable, control characters, and platform-specific path forms that would escape the project root.</p>
+<p>Templates must not write outside the target project.</p>
+<h3 id="generated-file-ownership">Generated-file ownership<a class="headerlink" href="#generated-file-ownership" title="Permanent link">&para;</a></h3>
+<p>Each rendered file may declare one ownership policy:</p>
+<ul>
+<li><code>bootstrap</code>: create the file during initial application, record provenance if requested, but do not update it through normal template update commands</li>
+<li><code>managed</code>: create the file and consider it eligible for explicit template updates</li>
+<li><code>advisory</code>: record origin metadata for explanation, but never treat the file as owned by update tooling</li>
+</ul>
+<p><code>bootstrap</code> is appropriate for files that users are expected to customize immediately, such as application-specific source files, domain models, local configuration examples, and initial docs content.</p>
+<p><code>managed</code> is appropriate for files that should follow template evolution, such as generated tool configuration, shared helper files, CI boilerplate, or formatter/linter configuration.</p>
+<p><code>advisory</code> is appropriate when a tool wants to explain origin without assuming future ownership.</p>
+<p>The ownership policy must be independent from whether provenance is recorded. A bootstrap file may still record provenance so tooling can explain where it came from, but <code>incan template update</code> must not rewrite it by default.</p>
+<h3 id="provenance-modes">Provenance modes<a class="headerlink" href="#provenance-modes" title="Permanent link">&para;</a></h3>
+<p>Descriptors may choose one of these provenance modes:</p>
+<ul>
+<li><code>none</code>: do not record template provenance</li>
+<li><code>tracked</code>: record template provenance and rendered hashes</li>
+<li><code>tracked-owned</code>: record provenance and treat unchanged generated output as tool-owned for update purposes</li>
+</ul>
+<p><code>tracked-owned</code> is retained as a shorthand for <code>provenance = "tracked"</code> with <code>ownership = "managed"</code> while the exact descriptor encoding is finalized. It does not make files read-only. It means update tooling may replace the file without a content merge only while the current file still matches the recorded <code>rendered_hash</code>, and only as part of an explicit receiver-approved update operation. Once a user edits the file, update tooling must treat it as user-owned and require conflict handling.</p>
+<p>The default provenance mode is <code>tracked</code> for files produced by starter or capability operations and <code>none</code> for one-off explicit rendering commands, unless the command documents a different default.</p>
+<h3 id="provenance-fields">Provenance fields<a class="headerlink" href="#provenance-fields" title="Permanent link">&para;</a></h3>
+<p>When provenance is recorded, the project record must include:</p>
+<ul>
+<li>target path</li>
+<li>source kind and source identity</li>
+<li>source identifier or source path</li>
+<li>renderer id</li>
+<li>target language</li>
+<li>generated-file ownership policy</li>
+<li>template hash</li>
+<li>rendered hash</li>
+</ul>
+<p>When available, the record should also include:</p>
+<ul>
+<li>package name and version</li>
+<li>registry or descriptor source</li>
+<li>immutable source version, git commit, descriptor version, or content hash</li>
+<li>publisher or provider identity</li>
+<li>integrity, signature, yanking, revocation, or trust-tier metadata</li>
+<li>starter or capability origin</li>
+<li>values hash</li>
+<li>Incan version used by the renderer</li>
+</ul>
+<p>The record must not store secrets. If parameter values may include secrets, the provenance record must store only a values hash and enough non-secret metadata to repeat or explain the render.</p>
+<h3 id="template-commands">Template commands<a class="headerlink" href="#template-commands" title="Permanent link">&para;</a></h3>
+<p>This RFC adds the following lifecycle tooling concepts:</p>
+<ul>
+<li><code>incan template check</code></li>
+<li><code>incan template status</code></li>
+<li><code>incan template values-file &lt;template-or-origin&gt;</code></li>
+<li><code>incan template render &lt;template-or-origin&gt;</code></li>
+<li><code>incan template diff [target]</code></li>
+<li><code>incan template update [target]</code></li>
+<li><code>incan template reset [target]</code></li>
+</ul>
+<p>The exact command spelling may be adjusted if the lifecycle CLI uses a different namespace, but the toolchain must support these operations before tracked provenance can be considered complete.</p>
+<p><code>check</code> reports whether tracked files are missing, current, edited, stale, or blocked by missing source metadata.</p>
+<p><code>status</code> reports version-aware source status when package or registry metadata is available, including whether tracked templates are on the latest compatible source version.</p>
+<p><code>values-file</code> writes a reviewable values file for a template, starter, capability, or provenance origin.</p>
+<p><code>render</code> renders one template from supplied values and returns a dry-run or planned file output. It is primarily useful for debugging descriptors and provider validation. The rendered plan must include reason codes for included, skipped, blocked, unchanged, and unsafe files when those states apply.</p>
+<p><code>diff</code> renders the current template source with the recorded values and shows what would change for one file or for all tracked files. When the template is part of an applied RFC 075 capability, this file-level diff is a lower-level diagnostic; the normal user-facing upgrade review should happen through the capability-level diff and update plan.</p>
+<p><code>update</code> applies an explicit receiver-approved update only when conflicts are absent or resolved through documented flags. It must respect generated-file ownership: bootstrap files are not rewritten by normal updates, managed files may be updated when unchanged or cleanly merged, and advisory files are explained but not owned.</p>
+<p><code>reset</code> recreates managed files from the selected template source using preserved or supplied values. It must be explicit, dry-runnable, conflict-aware, and subject to the same receiver-side rendered-diff review as update.</p>
+<p>All template inspection and mutation operations should support a machine-readable output mode. Template update and reset plans must expose machine-readable security-sensitive mutation categories, source identity changes, integrity or trust-state changes, and receiver-side rendered file changes.</p>
+<h3 id="provider-validation">Provider validation<a class="headerlink" href="#provider-validation" title="Permanent link">&para;</a></h3>
+<p>Template authors need to know whether a descriptor renders into a realistic project and whether a future update behaves correctly. The lifecycle layer should therefore make template validation possible without publishing the template first.</p>
+<p>V1 should support at least descriptor validation and dry-run rendering against fixture values. A later implementation may add a full target-project harness that initializes a project, applies updates, runs local checks, and records archive diffs between template versions. This RFC does not require that full harness in v1, but descriptor and provenance design must not prevent it.</p>
+<h3 id="security-and-trust">Security and trust<a class="headerlink" href="#security-and-trust" title="Permanent link">&para;</a></h3>
+<p>Template rendering must not execute arbitrary code. It must not run shell commands, load dynamic plugins, fetch remote URLs, evaluate expressions, or inspect unrelated files in the project.</p>
+<p>Templates distributed through packages inherit the package trust story. If package templates are distributed through <code>incan.pub</code>, registry integrity, checksum, yanking, and publisher identity rules belong to RFC 034 or later registry RFCs. Rendering remains local and must still validate paths and output.</p>
+<p>Procedural extension points are especially risky for upgradeable templates. If a template suite needs environment-derived defaults, optional slices, or target cleanup, those concerns should be represented as typed parameters, descriptor conditions, and mutation-plan rules rather than hidden Python, shell, or plugin hooks. A later RFC may define sandboxed hooks, but v1 should assume hooks make provenance and updates less reliable.</p>
+<p>The update path is part of the supply chain because templates may render executable source files, scripts, CI configuration, env definitions, or agent-facing guidance. A malicious upstream template update can therefore inject behavior into a project even when the renderer itself is deterministic and non-executable.</p>
+<p>The receiver-side codebase is the security boundary. A template provider, package registry, catalog, or automated refresh tool may propose rendered changes, but it must not be treated as having authority to mutate the receiving project. The receiving project owns the decision to accept, edit, reject, or defer the patch.</p>
+<p>Reviewing the template source diff is not sufficient. Update tooling must show the exact rendered diff that would land in the receiving project, including generated source, scripts, CI/config files, env definitions, manifest changes, and agent-facing metadata. Template-source diffs are useful supporting evidence, but the rendered project diff is the artifact that must be reviewed.</p>
+<p>Template provenance must pin the selected source strongly enough to detect unexpected changes. For git sources, provenance should record an immutable commit, not only a branch or tag. For package or catalog sources, provenance should record the package or descriptor version, source identity, and content hash or verified integrity metadata when available. A later update must surface changes to source identity, publisher identity, integrity state, yanking state, or trust tier before showing file diffs.</p>
+<p><code>incan template update</code> must default to a dry-run review path for security-sensitive changes. At minimum, the update plan must call out newly created files, executable source changes, manifest dependency changes, script or task changes, CI/configuration changes, env changes, and agent guidance metadata changes. Non-interactive update modes must still emit this information in machine-readable output and should require an explicit flag for source identity changes.</p>
+<p>If two template sources can satisfy the same id, update tooling must not silently switch sources. This is especially important when private and public catalogs both contain a matching id. The lifecycle CLI must either preserve the recorded source identity or require explicit user intent to change it.</p>
+<p>Implementations should support project or organization policy controls for template updates. Useful controls include requiring immutable source pins for non-built-in templates, restricting allowed catalog sources, rejecting mutable git refs for managed files, requiring explicit approval for source identity changes, and classifying high-risk file categories in machine-readable output so code review tooling can request the right owners.</p>
+<p>Automation that keeps templates current should propose reviewable changes rather than applying them silently. A Dependabot-like flow is appropriate: detect stale or vulnerable template sources, produce a dry-run plan or pull-request-sized patch, include source identity and integrity changes, and leave final approval to normal project review.</p>
+<p>Automation that proposes a template update must not also satisfy the receiver's review gate. If a project requires approval for source files, scripts, CI configuration, env definitions, or agent guidance, the approving identity must be independent from the update producer. This prevents a compromised update process from both injecting and approving its own rendered code changes.</p>
+<h3 id="diagnostics">Diagnostics<a class="headerlink" href="#diagnostics" title="Permanent link">&para;</a></h3>
+<p>Template diagnostics must name:</p>
+<ul>
+<li>the template source</li>
+<li>the target path</li>
+<li>the placeholder or parameter involved, when applicable</li>
+<li>the parameter kind and invalid value shape, when applicable</li>
+<li>the output parser error, when target-language validation fails</li>
+<li>the provenance record involved, when check, diff, or update fails</li>
+</ul>
+<p>Diagnostics should distinguish template rendering failures from file mutation conflicts. A syntactically invalid rendered Incan file is a rendering failure. An existing target file is a mutation conflict owned by the lifecycle operation that requested the render.</p>
+<h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
+<h3 id="relationship-to-rfc-015">Relationship to RFC 015<a class="headerlink" href="#relationship-to-rfc-015" title="Permanent link">&para;</a></h3>
+<p>RFC 015 owns basic project creation and initialization. This RFC provides the rendering primitive those commands may use when they need more than a fixed built-in source file.</p>
+<p>The RFC 015 default scaffold may continue to be implemented without this RFC. Once template support exists, the default scaffold may be represented internally as templates, but that is an implementation choice.</p>
+<h3 id="relationship-to-rfc-075">Relationship to RFC 075<a class="headerlink" href="#relationship-to-rfc-075" title="Permanent link">&para;</a></h3>
+<p>RFC 075 depends on this RFC for file templates used by starters and capability packs. Starter and capability descriptors may reference templates, parameter values, and provenance modes, but the rendering semantics come from this RFC.</p>
+<p>This split keeps the layers clear: RFC 074 answers "how does a static template become a validated project file and how do we track it later?" RFC 075 answers "which project-level recipes and capability mutations should use those rendered files?"</p>
+<p>For versioned project concerns such as "move the <code>cli</code> capability from <code>1.3.0</code> to <code>1.6.0</code>", RFC 075 owns the user-facing capability update. This RFC owns the file-level mechanics used inside that plan: preserved values, rendered output, generated-file ownership, drift detection, managed-file replacement, edited-file conflicts, and reset behavior. A template update command is therefore an escape hatch or diagnostic tool, not the primary model for upgrading an applied capability.</p>
+<h3 id="relationship-to-ctx">Relationship to <code>ctx</code><a class="headerlink" href="#relationship-to-ctx" title="Permanent link">&para;</a></h3>
+<p>Templates that need compiler-visible configuration should generate ordinary Incan <code>ctx</code> declarations or source files that use <code>ctx</code> declarations. They should not invent a sidecar configuration system for values that the compiler should understand.</p>
+<h3 id="relationship-to-catalogs-and-incanpub">Relationship to catalogs and <code>incan.pub</code><a class="headerlink" href="#relationship-to-catalogs-and-incanpub" title="Permanent link">&para;</a></h3>
+<p><code>incan.pub</code> is a natural public distribution point for package-owned templates because it already owns package identity and versioning in RFC 034. This RFC does not require registry support. It only requires that templates loaded from packages, registries, git sources, local paths, or private catalogs be rendered locally with the same safety rules as built-in templates.</p>
+<p>When registry or catalog metadata is available, it can make template status and upgrade previews much more useful: it can expose latest compatible versions, yanked sources, integrity metadata, and precomputed source diffs between template versions. The catalog layer may help with discovery and trust. The local lifecycle CLI still owns project-specific planning, rendering, validation, conflict handling, and file mutation.</p>
+<h3 id="relationship-to-rfc-076">Relationship to RFC 076<a class="headerlink" href="#relationship-to-rfc-076" title="Permanent link">&para;</a></h3>
+<p>RFC 076 owns project and organization policy for receiver-side mutation approval, source allowlists, risk classification, advisory handling, quarantine, and recovery workflows. This RFC defines the template render plan and provenance data that RFC 076 policy evaluates.</p>
+<h3 id="relationship-to-tooling-and-agents">Relationship to tooling and agents<a class="headerlink" href="#relationship-to-tooling-and-agents" title="Permanent link">&para;</a></h3>
+<p>IDE integrations, docs tooling, and agentic workflows may inspect template provenance to explain generated files, offer update code actions, or select relevant project guidance. They must not infer template semantics from filenames or reimplement rendering independently. The lifecycle tooling remains the source of truth for check, diff, update, rendering validation, and conflict diagnostics.</p>
+<p>Prompt metadata, choices, optional file groups, and preserved placeholders are also tooling data. IDEs may use them to build forms or preview plans, but they should call the lifecycle layer to validate the final parameter set and render plan.</p>
+<h3 id="compatibility-and-migration">Compatibility and migration<a class="headerlink" href="#compatibility-and-migration" title="Permanent link">&para;</a></h3>
+<p>This RFC is additive. Existing projects without template provenance continue to build normally.</p>
+<p>Projects that already contain copied example files may choose to adopt provenance later, but tooling must not assume a file is generated merely because it matches a known template by content. Provenance must be explicit.</p>
+<p>If an early implementation used only <code>.tpl</code> filename conventions, it can migrate by generating descriptors that record the source, target, language, and parameter declarations explicitly.</p>
+<p>When adopting templates into an existing project, tooling should default to preserving existing user-authored files. Initializing an existing directory is not the same operation as creating a new project from an empty directory.</p>
+<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
+<h3 id="use-arbitrary-generator-scripts">Use arbitrary generator scripts<a class="headerlink" href="#use-arbitrary-generator-scripts" title="Permanent link">&para;</a></h3>
+<p>Rejected because scripts are powerful but hard to audit, sandbox, reproduce, diff, and explain. Static templates with typed parameters cover the common scaffolding case with a smaller trust boundary.</p>
+<h3 id="create-everything-and-delete-disabled-files">Create everything and delete disabled files<a class="headerlink" href="#create-everything-and-delete-disabled-files" title="Permanent link">&para;</a></h3>
+<p>Rejected because post-generation cleanup obscures intent. Optional files should be excluded from the mutation plan before rendering. That gives users an honest dry run and gives provenance enough information to distinguish "not selected" from "selected and later deleted."</p>
+<h3 id="make-tpl-extension-semantics-authoritative">Make <code>.tpl</code> extension semantics authoritative<a class="headerlink" href="#make-tpl-extension-semantics-authoritative" title="Permanent link">&para;</a></h3>
+<p>Rejected because filename conventions are too weak for tooling. A file extension cannot safely declare parameter kinds, target paths, target language validation, provenance behavior, or update policy.</p>
+<h3 id="adopt-a-full-template-language-in-v1">Adopt a full template language in v1<a class="headerlink" href="#adopt-a-full-template-language-in-v1" title="Permanent link">&para;</a></h3>
+<p>Rejected for scope. Loops, conditionals, includes, filters, and expression evaluation may become useful later, but they should be added only after the minimal rendering and provenance model proves insufficient.</p>
+<h3 id="do-not-record-provenance">Do not record provenance<a class="headerlink" href="#do-not-record-provenance" title="Permanent link">&para;</a></h3>
+<p>Rejected because initial file creation is only half the problem. Without provenance, tooling cannot explain generated files, check drift, or offer safe updates.</p>
+<h3 id="treat-all-generated-files-as-managed">Treat all generated files as managed<a class="headerlink" href="#treat-all-generated-files-as-managed" title="Permanent link">&para;</a></h3>
+<p>Rejected because generated files are not all the same. Some files are boilerplate that should keep receiving template updates; others are starter content meant to be edited by the user immediately. A single "generated" category causes either missed updates or accidental overwrites.</p>
+<h3 id="store-generated-files-as-hidden-build-artifacts">Store generated files as hidden build artifacts<a class="headerlink" href="#store-generated-files-as-hidden-build-artifacts" title="Permanent link">&para;</a></h3>
+<p>Rejected because generated project boilerplate should be reviewable, editable, and source controlled. The generated files are part of the user's project, not hidden compiler inputs.</p>
+<h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
+<ul>
+<li>A constrained template model may feel too small for complex project generation.</li>
+<li>Provenance introduces another piece of tooling metadata that can drift if users edit files manually.</li>
+<li>Hash-based tracking cannot understand user intent; it can only detect byte changes.</li>
+<li>Typed parameters require descriptor authors to be more explicit.</li>
+<li>Descriptor-level optional file groups are less flexible than arbitrary post-generation hooks.</li>
+<li>Template check, status, values-file, diff, update, and reset add lifecycle CLI surface area that must be maintained.</li>
+<li>File ownership policies create another concept users must understand when reviewing generated artifacts.</li>
+</ul>
+<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Parser:</strong> rendered Incan templates must parse before they are written when <code>language = "incan"</code>.</li>
+<li><strong>Formatter:</strong> rendered Incan templates should be formatted before write and before <code>rendered_hash</code> is recorded when a formatter is available.</li>
+<li><strong>Manifest schema / configuration validation:</strong> project tooling must support an explicit provenance location for tracked templates, whether in <code>incan.toml</code>, a sidecar state file, or a future lock/state artifact.</li>
+<li><strong>CLI / tooling:</strong> lifecycle tooling must implement deterministic template rendering, path validation, parameter validation, ownership handling, provenance recording, and check/status/values-file/diff/update/reset operations.</li>
+<li><strong>LSP / IDE tooling:</strong> editor-facing tools should consume machine-readable template provenance and lifecycle diagnostics rather than reimplementing template rendering.</li>
+<li><strong>Package integration:</strong> package-provided templates must be loaded as package data and rendered locally under the same safety rules as built-in templates. Package or registry metadata may feed version-aware status and upgrade previews.</li>
+<li><strong>Documentation:</strong> user docs must explain the difference between provider-side templates, rendered project files, bootstrap files, managed files, and provenance records.</li>
+</ul>
+<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Should template provenance live in <code>incan.toml</code>, <code>incan.lock</code>, or a separate tool-owned state file?</li>
+<li>Is the v1 parameter kind set sufficient, or should it include specific kinds for package names, dependency requirements, env names, and script ids?</li>
+<li>Which derived-value transforms should be standardized in v1?</li>
+<li>Should optional file groups live in RFC 074 as template renderer metadata, or should RFC 075 own them as starter/capability mutation metadata?</li>
+<li>Should generated-file ownership be encoded as a separate <code>ownership</code> field, as part of provenance mode, or as part of RFC 075 file mutation metadata?</li>
+<li>Should descriptors reject declared-but-unused parameters by default, or should unused parameters be permitted for descriptor reuse?</li>
+<li>Should <code>tracked</code> or <code>none</code> be the default provenance mode for file templates applied by starter and capability workflows?</li>
+<li>What merge strategy, if any, should <code>incan template update</code> support for edited tracked files in v1?</li>
+<li>Should <code>incan template diff</code> produce a stable machine-readable patch format in v1, or is human-readable diff output enough initially?</li>
+<li>What is the minimum useful <code>incan template status</code> behavior without registry access?</li>
+<li>Should <code>incan template reset</code> be part of v1, or should it wait until normal update behavior has shipped?</li>
+<li>What provider validation command, if any, should be required before templates can be published or promoted in <code>incan.pub</code>?</li>
+<li>Should <code>.incn.tpl</code> be the recommended suffix for all Incan source templates, or should package authors prefer neutral names plus descriptor metadata?</li>
+<li>How should preserved later-phase placeholders be represented so they are explicit but not awkward for common deployment/configuration tools?</li>
+</ul>
+<!-- Rename this section to "Design Decisions" once all questions have been resolved.
+     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.instant", "navigation.tabs", "navigation.tabs.sticky", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      
+        <script src="../../_snippets/javascripts/mathjax.js"></script>
+      
+        <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
+      
+        <script src="../../_snippets/javascripts/tablesort.js"></script>
+      
+        <script src="../../_snippets/javascripts/rfc_table_filter.js"></script>
+      
+    
+  </body>
+</html>

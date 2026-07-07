@@ -1,0 +1,7197 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Documentation for the Incan programming language">
+      
+      
+      
+      
+      
+      
+      <link rel="icon" href="../../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
+    
+    
+      
+        <title>RFC 072: std.logging — logger acquisition, configuration, and structured events - Incan Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../../assets/stylesheets/main.6f8fc17f.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../../stylesheets/pygments.css">
+    
+      <link rel="stylesheet" href="/shared/incapunk/incapunk.css">
+    
+    <script>__md_scope=new URL("../../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#rfc-072-stdlogging-logger-acquisition-configuration-and-structured-events" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+      
+  <img src="/shared/incapunk/wordmark_small_001.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Incan Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              RFC 072: std.logging — logger acquisition, configuration, and structured events
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="amber"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/encero-systems/incan" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    encero-systems/incan
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+    
+      
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../../.." class="md-tabs__link">
+        
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../../start_here/" class="md-tabs__link">
+          
+  
+    
+  
+  Start here
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../../language/" class="md-tabs__link">
+          
+  
+    
+  
+  Language
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../../tooling/" class="md-tabs__link">
+          
+  
+    
+  
+  Tooling
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../../contributing/" class="md-tabs__link">
+          
+  
+    
+  
+  Contributing
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../../release_notes/" class="md-tabs__link">
+          
+  
+    
+  
+  Release notes
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+    
+      
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../../whitepapers/" class="md-tabs__link">
+          
+  
+    
+  
+  Project
+
+        </a>
+      </li>
+    
+  
+
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+    
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+      
+  <img src="/shared/incapunk/wordmark_small_001.png" alt="logo">
+
+    </a>
+    Incan Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/encero-systems/incan" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    encero-systems/incan
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../.." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../start_here/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Start here
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            Start here
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../start_here/what_incan_is_for/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    What Incan is for
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../start_here/coming_from_python/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Coming from Python (apps)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../start_here/coming_from_rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Coming from Rust (evaluator)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../start_here/coming_from_typescript_javascript/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Coming from TypeScript or JavaScript
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../start_here/pipelines_and_automation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Pipelines & automation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../start_here/encero_stack/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Encero stack
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../start_here/domain_native_demo/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    1.0 domain-native demo target
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../start_here/public_contracts/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    1.0 public contracts
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../start_here/beginner/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Beginner
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_11" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_11" id="__nav_2_11_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Comparisons
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_11">
+            <span class="md-nav__icon md-icon"></span>
+            Comparisons
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../comparisons/python/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Incan vs Python
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../comparisons/javascript_typescript/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Incan vs JS/TS
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../comparisons/rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Incan vs Rust
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../language/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Language
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            Language
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Tutorials
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2">
+            <span class="md-nav__icon md-icon"></span>
+            Tutorials
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2_1" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../language/tutorials/book/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    The Incan Book (Basics)
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_2_1" id="__nav_3_2_1_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_2_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2_1">
+            <span class="md-nav__icon md-icon"></span>
+            The Incan Book (Basics)
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/book/01_hello_world/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    1. Hello world
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/book/02_values_variables_and_types/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    2. Values, variables, and types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/book/03_functions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    3. Functions
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/book/04_control_flow/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    4. Control flow
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/book/05_modules_and_imports/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    5. Modules and imports
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/book/06_errors/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    6. Errors (Result/Option and `?`)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/book/07_strings_and_formatting/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    7. Strings and formatting
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/book/08_collections_and_iteration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    8. Collections and iteration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/book/09_enums/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    9. Enums and better `match`
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/book/10_models_vs_classes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    10. Models vs classes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/book/11_traits_and_derives/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    11. Traits and derives
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/book/12_newtypes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    12. Newtypes (stronger types)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/book/13_unit_tests/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    13. Unit tests
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/dates_and_times/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Dates and times
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/build_your_first_api/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Build your first API
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/fallible_and_infallible_paths/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Fallible and infallible paths
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/tutorials/web_framework/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Web framework
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    How-to
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            How-to
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/async_programming/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Async programming
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/customize_derived_behavior/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Customize derived behavior
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/dates_and_times/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Dates and times
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/error_handling_recipes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error handling recipes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/error_messages/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error messages
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/file_io/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    File I/O
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/binary_text_encoding/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Binary-text encoding
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/compression/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Compression
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/dynamic_json/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Dynamic JSON
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/generators/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Generators
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/imports_and_modules/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Imports and modules
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/module_state/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Module state
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/choosing_collections/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/choosing_numeric_types/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Choosing numeric types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/modeling_with_enums/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Modeling with enums
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/project_lifecycle/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Project lifecycle
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/testing_stdlib/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Testing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/string_processing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/working_with_uuids/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with UUIDs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/performance/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Performance
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/rust_interop/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Rust interop
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/rust_types_for_python_devs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Rust types (coming from Python)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Reference
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4">
+            <span class="md-nav__icon md-icon"></span>
+            Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/language/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Language reference (generated)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/feature_inventory/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Feature inventory (generated)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/code_style/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Code style guide
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/functions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Functions and calls
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/generators/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Generators
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/symbol_aliases/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Symbol aliases
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/callable_presets/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Callable presets
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/glossary/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Glossary
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/file_io/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    File I/O reference (Path/File APIs)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/imports_and_modules/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Imports and modules
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/static_storage/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Static storage
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/numeric_semantics/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Numeric semantics
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/project_lifecycle/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Project lifecycle
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/strings/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Strings and Bytes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/reflection/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Reflection
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/derives_and_traits/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Derives & traits (reference)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_17" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../language/reference/stdlib/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Standard library
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_4_17" id="__nav_3_4_17_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_17_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_17">
+            <span class="md-nav__icon md-icon"></span>
+            Standard library
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/async/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.async
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/collections/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.collections
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/compression/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.compression
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/derives/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.derives.*
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/datetime/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.datetime
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/encoding/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.encoding
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/fs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.fs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/graph/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.graph
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/hash/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.hash
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/io/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.io
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/json/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.json
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/telemetry/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.telemetry
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/regex/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.regex
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/uuid/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.uuid
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/tempfile/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.tempfile
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/reflection/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.reflection
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/result/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.result
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/traits/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.traits.*
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/testing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.testing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/math/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.math
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_18" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../language/reference/stdlib_traits/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Stdlib traits
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_4_18" id="__nav_3_4_18_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_18_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_18">
+            <span class="md-nav__icon md-icon"></span>
+            Stdlib traits
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib_traits/collection_protocols/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Collection protocols
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Indexing and slicing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib_traits/callable/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Callable objects
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib_traits/awaitable/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Awaitable values
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib_traits/error/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error trait
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib_traits/operators/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Operators
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib_traits/conversions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Conversions
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_19" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_4_19" id="__nav_3_4_19_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Derives
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_19_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_19">
+            <span class="md-nav__icon md-icon"></span>
+            Derives
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/derives/string_representation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    String representation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/derives/comparison/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Comparison
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/derives/copying_default/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Copying/default
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/derives/serialization/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Serialization
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/derives/validation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Validation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/derives/custom_behavior/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Custom behavior
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Explanation
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5">
+            <span class="md-nav__icon md-icon"></span>
+            Explanation
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/why_incan/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Why Incan?
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/why_not_just_rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Why not just Rust?
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/how_incan_works/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    How Incan works
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/compile_time_and_runtime/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Compile time and runtime
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/rust_shaped_confidence/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Rust-shaped confidence
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/control_flow/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Control flow
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/callable_presets/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Callable presets
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/closures/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Closures
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/consts/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Consts
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/generators/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Generators
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/static_storage/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Module static storage
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/numeric_types/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Numeric types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/datetime_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Date and time model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/ordinal_map/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    OrdinalMap
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/derives_and_traits/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Derives & traits (explained)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/call_site_type_arguments/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Why call-site type args exist
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/how_derives_work/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    How derives work
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/enums/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Enums
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/error_handling/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error handling
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/imports_and_modules/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Imports and modules
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_22" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../language/explanation/models_and_classes/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Models and classes
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_5_22" id="__nav_3_5_22_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5_22">
+            <span class="md-nav__icon md-icon"></span>
+            Models and classes
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/models_and_classes/models/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Models
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/models_and_classes/classes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Classes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/traits_as_language_hooks/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Traits as language hooks
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/explanation/scopes_and_name_resolution/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Scopes and name resolution
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../tooling/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Tooling
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            Tooling
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_2" id="__nav_4_2_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Tutorials
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_2">
+            <span class="md-nav__icon md-icon"></span>
+            Tutorials
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/tutorials/getting_started/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/tutorials/your_first_project/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Your first project
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Pipeline mini-project
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_3" id="__nav_4_3_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    How-to
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_3">
+            <span class="md-nav__icon md-icon"></span>
+            How-to
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/how-to/install_and_run/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Install/build/run
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/how-to/dependencies/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Managing dependencies
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/how-to/ci_and_automation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    CI & automation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/how-to/troubleshooting/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Troubleshooting
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/how-to/editor_setup/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Editor setup
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/how-to/lsp/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    LSP
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/how-to/formatting/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Formatting with incan fmt
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/how-to/testing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Testing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_4" id="__nav_4_4_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Explanation
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_4">
+            <span class="md-nav__icon md-icon"></span>
+            Explanation
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/explanation/projects_today/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Projects today
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/explanation/lsp_architecture/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    LSP architecture
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_5" id="__nav_4_5_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Reference
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5">
+            <span class="md-nav__icon md-icon"></span>
+            Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/reference/cli_reference/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    CLI reference
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/reference/codegraph_inspection/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Codegraph inspection
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/reference/agent_docs_surfaces/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Agent and tooling docs surfaces
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/reference/contract_metadata/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Checked contract metadata
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/reference/checked_api_metadata/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Checked API metadata
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/reference/project_configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Project configuration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    LSP protocol support
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+          
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../contributing/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Contributing
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            Contributing
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/contributors/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Contributors
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Tutorials
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3">
+            <span class="md-nav__icon md-icon"></span>
+            Tutorials
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3_1" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../contributing/tutorials/book/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Incan Contributor Book (Advanced)
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_3_1" id="__nav_5_3_1_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_5_3_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3_1">
+            <span class="md-nav__icon md-icon"></span>
+            Incan Contributor Book (Advanced)
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    1. Architecture tour
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    2. Layering and boundaries
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    3. Proposals: issues vs RFCs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    4. Your first change: add a builtin
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    5. Your first syntax change
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    6. Tooling loop: formatter + tests
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    7. Tooling loop: LSP
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    8. Docsite contributor loop
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_4" id="__nav_5_4_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    How-to
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_4">
+            <span class="md-nav__icon md-icon"></span>
+            How-to
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/how-to/extending_language/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Extending the language
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Author library DSLs with incan_vocab
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/how-to/auditing_generated_rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Auditing generated Rust
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Benchmarks & profiling (repository)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/how-to/ci_and_automation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    CI & automation (repository)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/how-to/writing_rfcs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Writing RFCs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_5" id="__nav_5_5_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Explanation
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_5">
+            <span class="md-nav__icon md-icon"></span>
+            Explanation
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/explanation/architecture/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Architecture
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/explanation/duckborrowing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Duckborrowing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/explanation/generated_rust_quality/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Generated Rust quality
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/explanation/layering/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Layering rules
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/explanation/incapunk_docs_theme/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Incapunk docs theme
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Readable, maintainable Rust
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.testing internals
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_6" id="__nav_5_6_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Reference
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_6">
+            <span class="md-nav__icon md-icon"></span>
+            Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../contributing/reference/generated_rust_stdlib_coverage/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Generated Rust stdlib coverage
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    RFCs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../release_notes/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Release notes
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            Release notes
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../release_notes/0_4/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.4
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../release_notes/0_3/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.3
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../release_notes/0_2/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.2
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../release_notes/0_1/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.1
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Project
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            Project
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_1" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../whitepapers/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Whitepapers
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_7_1" id="__nav_7_1_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_1">
+            <span class="md-nav__icon md-icon"></span>
+            Whitepapers
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../whitepapers/incan_ecosystem_north_star/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Incan ecosystem north star
+  </span>
+  
+    
+  
+  
+    <span class="md-status md-status--Snapshot"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../roadmap/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Roadmap
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../stability/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Stability policy
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      Summary
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#core-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      Core model
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#motivation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Motivation
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Goals
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Non-Goals
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#guide-level-explanation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Guide-level explanation
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Guide-level explanation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#basic-application-logging" class="md-nav__link">
+    <span class="md-ellipsis">
+      Basic application logging
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#named-loggers" class="md-nav__link">
+    <span class="md-ellipsis">
+      Named loggers
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#structured-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      Structured fields
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bound-context" class="md-nav__link">
+    <span class="md-ellipsis">
+      Bound context
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#library-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      Library behavior
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#configuration-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      Configuration boundary
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reference-level-explanation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Reference-level explanation
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Reference-level explanation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#module-scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      Module scope
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#telemetry-core-layering" class="md-nav__link">
+    <span class="md-ellipsis">
+      Telemetry core layering
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#levels" class="md-nav__link">
+    <span class="md-ellipsis">
+      Levels
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#logger-acquisition" class="md-nav__link">
+    <span class="md-ellipsis">
+      Logger acquisition
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#logger-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      Logger API
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#structured-field-values" class="md-nav__link">
+    <span class="md-ellipsis">
+      Structured field values
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#event-records" class="md-nav__link">
+    <span class="md-ellipsis">
+      Event records
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Configuration
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#project-and-runtime-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Project and runtime configuration
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#human-rendering" class="md-nav__link">
+    <span class="md-ellipsis">
+      Human rendering
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#json-rendering" class="md-nav__link">
+    <span class="md-ellipsis">
+      JSON rendering
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#filtering" class="md-nav__link">
+    <span class="md-ellipsis">
+      Filtering
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#library-and-application-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      Library and application boundary
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#source-implementation-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      Source implementation boundary
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#opentelemetry-compatibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      OpenTelemetry compatibility
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#design-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      Design details
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Design details">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#why-ambient-log-lowers-into-stdlogging" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why ambient log lowers into std.logging
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#why-not-copy-python-logging-wholesale" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why not copy Python logging wholesale
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#why-fields-is-the-structured-field-syntax" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why fields={...} is the structured field syntax
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#why-bound-context-returns-a-new-logger" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why bound context returns a new logger
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#why-libraries-must-not-configure-logging" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why libraries must not configure logging
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#why-json-is-a-format-not-a-style" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why JSON is a format, not a style
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#why-opentelemetry-alignment-belongs-in-this-rfc" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why OpenTelemetry alignment belongs in this RFC
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#why-full-telemetry-is-not-part-of-this-rfc" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why full telemetry is not part of this RFC
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alternatives-considered" class="md-nav__link">
+    <span class="md-ellipsis">
+      Alternatives considered
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#drawbacks" class="md-nav__link">
+    <span class="md-ellipsis">
+      Drawbacks
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#layers-affected" class="md-nav__link">
+    <span class="md-ellipsis">
+      Layers affected
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#delivery-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      Delivery Plan
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Delivery Plan">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-stdlib-surface-and-registry" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 1: Stdlib surface and registry
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-2-source-behavior-and-generated-code-support" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 2: Source behavior and generated-code support
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-3-deferred-host-configuration-policy" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 3: Deferred host configuration policy
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-4-tests-and-docs" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 4: Tests and docs
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#progress-checklist" class="md-nav__link">
+    <span class="md-ellipsis">
+      Progress Checklist
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Progress Checklist">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#spec-design" class="md-nav__link">
+    <span class="md-ellipsis">
+      Spec / design
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stdlib-surface-and-registry" class="md-nav__link">
+    <span class="md-ellipsis">
+      Stdlib surface and registry
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#runtime-and-generated-code-handoff" class="md-nav__link">
+    <span class="md-ellipsis">
+      Runtime and generated-code handoff
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#configuration-policy" class="md-nav__link">
+    <span class="md-ellipsis">
+      Configuration policy
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      Tests
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#docs-release-notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Docs / release notes
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#design-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Design Decisions
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+  
+
+
+<h1 id="rfc-072-stdlogging-logger-acquisition-configuration-and-structured-events">RFC 072: <code>std.logging</code> — logger acquisition, configuration, and structured events<a class="headerlink" href="#rfc-072-stdlogging-logger-acquisition-configuration-and-structured-events" title="Permanent link">&para;</a></h1>
+<ul>
+<li><strong>Status:</strong> Implemented</li>
+<li><strong>Created:</strong> 2026-04-23</li>
+<li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
+<li><strong>Related:</strong><ul>
+<li>RFC 022 (namespaced stdlib modules and compiler handoff)</li>
+<li>RFC 023 (compilable stdlib and Rust module binding)</li>
+<li>RFC 033 (<code>ctx</code> typed configuration context)</li>
+<li>RFC 038 (variadic positional args and keyword capture)</li>
+<li>RFC 041 (first-class Rust interop authoring)</li>
+<li>RFC 063 (<code>std.process</code> process spawning and command execution)</li>
+<li>RFC 066 (<code>std.http</code> HTTP client surface)</li>
+<li>RFC 093 (<code>std.telemetry</code> OpenTelemetry-aligned observability)</li>
+<li>OpenTelemetry semantic conventions (external)</li>
+<li>OpenTelemetry GenAI semantic conventions (external)</li>
+</ul>
+</li>
+<li><strong>Issue:</strong> https://github.com/encero-systems/incan/issues/392</li>
+<li><strong>RFC PR:</strong> —</li>
+<li><strong>Written against:</strong> v0.2</li>
+<li><strong>Shipped in:</strong> v0.3</li>
+</ul>
+<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
+<p>This RFC defines <code>std.logging</code> as Incan's standard-library logging module for ordinary application and library logging. The user-facing model is explicit and Pythonic: applications configure source-level logging policy through <code>basic_config(...)</code>, code may acquire named loggers through <code>get_logger(...)</code>, and ordinary events are emitted with the ambient <code>log</code> surface through calls such as <code>log.info("message")</code> and <code>log.warning("message", fields={"path": path})</code>. The record model is OpenTelemetry LogRecord-aligned from the start, using Incan-native field names with official OpenTelemetry field spellings as aliases and descriptions, while keeping backend crates such as Rust <code>tracing</code> outside the public Incan API.</p>
+<p>The design is deliberately event-focused. It introduces ambient <code>log</code> as a shadowable soft surface for the current module's default logger, but it does not introduce span/export APIs, handler/filter graphs, or a Rust-backed logging runtime. The runtime model is still structured enough that observability RFCs can add spans, metrics, resource identity, context propagation, OpenTelemetry-compatible export, and semantic-convention mapping without changing ordinary event call sites.</p>
+<h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
+<p>Read this RFC as one foundation plus five mechanisms:</p>
+<ol>
+<li><strong>Foundation:</strong> Logging is a namespaced stdlib/runtime surface with an ambient <code>log</code> convenience, not a Rust interop recipe.</li>
+<li><strong>Mechanism A:</strong> Applications configure source-level logging policy through <code>std.logging.basic_config(...)</code>.</li>
+<li><strong>Mechanism B:</strong> Code emits ordinary events through ambient <code>log</code>, which behaves like the current module's <code>get_logger()</code> default when not shadowed.</li>
+<li><strong>Mechanism C:</strong> Logger names are hierarchical, dot-separated targets such as <code>app</code>, <code>app.loader</code>, or an inferred module name.</li>
+<li><strong>Mechanism D:</strong> Structured event fields and logger-bound context are first-class and must remain structured through the runtime boundary.</li>
+<li><strong>Mechanism E:</strong> <code>std.logging.LogRecord</code> uses the shared <code>std.telemetry.core</code> data model shape for logs/events without requiring the full <code>std.telemetry</code> provider or exporters.</li>
+<li><strong>Mechanism F:</strong> Host primitives are limited to ordinary <code>rust::std</code> imports where the source module needs platform data such as the system clock.</li>
+</ol>
+<h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
+<p>Logging is a stdlib surface that determines whether a language feels credible for real programs. CLIs, services, automation scripts, libraries, test helpers, and query-language surfaces all need one coherent diagnostics story. Today, the practical escape hatch is Rust interop. That proves capability, but not language design. It leaks Rust crate names, backend assumptions, and macro-shaped habits into code that should stay ordinary Incan.</p>
+<p>The standard library should solve the common case directly. A user should not need to decide between Rust <code>log</code>, <code>env_logger</code>, <code>tracing</code>, or <code>tracing-subscriber</code> just to emit an info event from an Incan program. At the same time, a library should not seize process-wide configuration just because it wants to report useful progress. The module needs a clean split between emission and runtime policy.</p>
+<p>The long-run destination is broader than plain text logging. Purpose-built libraries, pipeline frameworks, query systems, and application runtimes need correlation identifiers, operation boundaries, and machine-usable diagnostics. This RFC therefore standardizes structured event records now and leaves span/export semantics to follow-up RFCs that can build on the same event payload.</p>
+<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Provide a first-class <code>std.logging</code> module for ordinary logging.</li>
+<li>Keep ordinary call sites simple: <code>log.info(...)</code>, <code>log.warning(...)</code>, and similar methods on a <code>Logger</code>.</li>
+<li>Provide <code>get_logger(...)</code> for logger acquisition and <code>basic_config(...)</code> for application-level configuration.</li>
+<li>Support hierarchical dot-separated logger names.</li>
+<li>Preserve structured fields and logger-bound context as structured data, not only rendered text.</li>
+<li>Separate library emission from application/runtime configuration.</li>
+<li>Provide built-in human rendering and JSON rendering policy.</li>
+<li>Keep the public source-level contract backend-agnostic and implemented in Incan source.</li>
+<li>Align <code>LogRecord</code> with the OpenTelemetry Logs Data Model now, including official field aliases and human-readable field descriptions.</li>
+<li>Establish <code>std.telemetry.core</code> as the pure data-model substrate under <code>std.logging</code>, while leaving the full opt-in telemetry provider/exporter surface to <code>std.telemetry</code>.</li>
+<li>Leave room for span/tracing/export APIs without changing the event call-site model.</li>
+</ul>
+<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Making <code>log</code> unshadowable or giving it span/export responsibilities.</li>
+<li>Introducing a logging keyword or special logging statement syntax.</li>
+<li>Copying Python logging wholesale, including the full handler, formatter, filter, propagation, and adapter graph.</li>
+<li>Exposing Rust crate names such as <code>tracing</code>, <code>log</code>, or OpenTelemetry packages in ordinary Incan source code.</li>
+<li>Defining span APIs, distributed tracing, or exporter configuration in this RFC.</li>
+<li>Claiming whole-language OpenTelemetry compliance from <code>std.logging</code> alone.</li>
+<li>Requiring <code>std.telemetry.configure(...)</code>, network exporters, or collector configuration for ordinary <code>std.logging</code> use.</li>
+<li>Vendoring or freezing OpenTelemetry semantic-convention registries inside <code>std.logging</code>.</li>
+<li>Making JSON the default human-facing terminal output.</li>
+<li>Making logging depend on <code>ctx</code>; typed configuration integration is additive.</li>
+<li>Treating logging as a text-only <code>println</code> replacement with no structured payload underneath.</li>
+</ul>
+<h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
+<h3 id="basic-application-logging">Basic application logging<a class="headerlink" href="#basic-application-logging" title="Permanent link">&para;</a></h3>
+<p>Applications configure logging once near their entrypoint:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.logging</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Level</span><span class="p">,</span> <span class="n">basic_config</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">basic_config</span><span class="p">(</span><span class="n">level</span><span class="o">=</span><span class="nc">Level</span><span class="o">.</span><span class="nc">INFO</span><span class="p">)</span>
+    <span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Starting session&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Ambient <code>log</code> is a soft surface: if user code has no local <code>log</code> binding, <code>log.info(...)</code> behaves like calling <code>get_logger()</code> for the current module and then invoking the method. A local variable, parameter, import, or explicit <code>log = get_logger("...")</code> binding shadows the ambient surface.</p>
+<p><code>get_logger()</code> without a name returns a logger whose name is inferred from the current module when the compiler can provide that metadata. When module-name inference is not available, the fallback name is <code>"root"</code>. Package and executable identity are telemetry/provider integration concerns rather than ordinary logging defaults.</p>
+<h3 id="named-loggers">Named loggers<a class="headerlink" href="#named-loggers" title="Permanent link">&para;</a></h3>
+<p>Libraries and larger applications should use hierarchical names:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.logging</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_logger</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">load_dataset</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">Dataset</span><span class="p">:</span>
+    <span class="n">log</span> <span class="o">=</span> <span class="n">get_logger</span><span class="p">(</span><span class="s2">&quot;etl.loader&quot;</span><span class="p">)</span>
+    <span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Loading dataset&quot;</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;path&quot;</span><span class="p">:</span> <span class="n">path</span><span class="p">})</span>
+    <span class="k">return</span> <span class="nc">Dataset</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
+</code></pre></div>
+<p>The hierarchy is dot-separated. A logger named <code>etl.loader</code> is a child of <code>etl</code>, and filtering policy may match either the exact logger name or an ancestor prefix.</p>
+<h3 id="structured-fields">Structured fields<a class="headerlink" href="#structured-fields" title="Permanent link">&para;</a></h3>
+<p>Fields are part of the event payload:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Loaded dataset rows&quot;</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;dataset&quot;</span><span class="p">:</span> <span class="n">dataset_name</span><span class="p">,</span> <span class="s2">&quot;rows&quot;</span><span class="p">:</span> <span class="n">row_count</span><span class="p">})</span>
+</code></pre></div>
+<p>Human renderers may show only the message and selected metadata. JSON output and runtime sinks must preserve the field map as structured data.</p>
+<h3 id="bound-context">Bound context<a class="headerlink" href="#bound-context" title="Permanent link">&para;</a></h3>
+<p>Repeated context should be bound once instead of repeated manually:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">handle_request</span><span class="p">(</span><span class="n">request_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">user_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">elapsed_ms</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">request_log</span> <span class="o">=</span> <span class="n">get_logger</span><span class="p">(</span><span class="s2">&quot;api.request&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">bind</span><span class="p">({</span><span class="s2">&quot;request_id&quot;</span><span class="p">:</span> <span class="n">request_id</span><span class="p">,</span> <span class="s2">&quot;user_id&quot;</span><span class="p">:</span> <span class="n">user_id</span><span class="p">})</span>
+    <span class="n">request_log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Accepted request&quot;</span><span class="p">)</span>
+    <span class="n">request_log</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;Slow upstream response&quot;</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;elapsed_ms&quot;</span><span class="p">:</span> <span class="n">elapsed_ms</span><span class="p">})</span>
+</code></pre></div>
+<p>Fields passed on an individual event override bound fields with the same key for that event only.</p>
+<h3 id="library-behavior">Library behavior<a class="headerlink" href="#library-behavior" title="Permanent link">&para;</a></h3>
+<p>Libraries should acquire loggers and emit events, but they should not configure process-wide logging policy:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.logging</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_logger</span>
+
+<span class="k">pub</span> <span class="k">def</span><span class="w"> </span><span class="nf">read_csv</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Table</span><span class="p">,</span> <span class="nc">CsvError</span><span class="p">]:</span>
+    <span class="n">log</span> <span class="o">=</span> <span class="n">get_logger</span><span class="p">(</span><span class="s2">&quot;csv.reader&quot;</span><span class="p">)</span>
+    <span class="n">log</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">&quot;Reading CSV&quot;</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;path&quot;</span><span class="p">:</span> <span class="n">path</span><span class="p">})</span>
+    <span class="o">...</span>
+</code></pre></div>
+<p>Application entrypoints, tests, command runners, or embedding hosts own <code>basic_config(...)</code> and runtime overrides.</p>
+<h3 id="configuration-boundary">Configuration boundary<a class="headerlink" href="#configuration-boundary" title="Permanent link">&para;</a></h3>
+<p>The implementable baseline is source-owned configuration:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.logging</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Level</span><span class="p">,</span> <span class="nc">LogFormat</span><span class="p">,</span> <span class="n">basic_config</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">basic_config</span><span class="p">(</span><span class="n">level</span><span class="o">=</span><span class="nc">Level</span><span class="o">.</span><span class="nc">DEBUG</span><span class="p">,</span> <span class="nb">format</span><span class="o">=</span><span class="nc">LogFormat</span><span class="o">.</span><span class="nc">JSON</span><span class="p">,</span> <span class="n">target</span><span class="o">=</span><span class="s2">&quot;stdout&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Project defaults, environment overrides, and CLI flags are out of scope until Incan has a source-owned host configuration boundary that can feed stdlib state without introducing a Rust logging helper module.</p>
+<h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
+<h3 id="module-scope">Module scope<a class="headerlink" href="#module-scope" title="Permanent link">&para;</a></h3>
+<p><code>std.logging</code> must provide:</p>
+<ul>
+<li><code>Level</code></li>
+<li><code>LoggerName</code></li>
+<li><code>Logger</code></li>
+<li><code>LogFormat</code></li>
+<li><code>LogStyle</code></li>
+<li><code>ColorPolicy</code></li>
+<li><code>OutputTarget</code></li>
+<li><code>LogRecord</code></li>
+<li><code>get_logger(...)</code></li>
+<li><code>basic_config(...)</code></li>
+</ul>
+<p>Implementations may expose additional advanced configuration types compatibly, but the names above are the committed surface for this RFC.</p>
+<h3 id="telemetry-core-layering">Telemetry core layering<a class="headerlink" href="#telemetry-core-layering" title="Permanent link">&para;</a></h3>
+<p><code>std.logging</code> sits on the pure data-model subset of <code>std.telemetry</code>, not on the full opt-in provider/exporter stack. The shared substrate is <code>std.telemetry.core</code>: timestamp values, telemetry value types, attributes, resource identity, instrumentation scope, and trace context value types.</p>
+<p>This layering has three rules:</p>
+<ul>
+<li>importing or using <code>std.logging</code> must not require <code>std.telemetry.configure(...)</code>;</li>
+<li>the default logging path must remain local and simple when no telemetry provider is configured;</li>
+<li>when a <code>std.telemetry</code> provider is configured, <code>std.logging</code> records must be enrichable with resource, instrumentation scope, trace context, baggage-derived attributes where policy permits, and exporter routing without changing ordinary logging call sites.</li>
+</ul>
+<p>In other words, <code>std.logging</code> is the simple log/event facade, while <code>std.telemetry</code> is the explicit opt-in full observability layer.</p>
+<h3 id="levels">Levels<a class="headerlink" href="#levels" title="Permanent link">&para;</a></h3>
+<p>The standard level set is:</p>
+<ul>
+<li><code>TRACE</code></li>
+<li><code>DEBUG</code></li>
+<li><code>INFO</code></li>
+<li><code>WARN</code></li>
+<li><code>ERROR</code></li>
+<li><code>FATAL</code></li>
+</ul>
+<p><code>WARN</code> and <code>FATAL</code> are canonical because they match OpenTelemetry's normalized severity range names. <code>WARNING</code> aliases <code>WARN</code>, and <code>CRITICAL</code> aliases <code>FATAL</code> for source readability and Python-style familiarity.</p>
+<p>The ordering is <code>TRACE &lt; DEBUG &lt; INFO &lt; WARN &lt; ERROR &lt; FATAL</code>. A runtime threshold includes events at that level or above.</p>
+<h3 id="logger-acquisition">Logger acquisition<a class="headerlink" href="#logger-acquisition" title="Permanent link">&para;</a></h3>
+<p><code>get_logger(name: Option[str] = None) -&gt; Logger</code> returns a logger value.</p>
+<p>The name contract is:</p>
+<ul>
+<li>logger names are represented by the validated <code>LoggerName</code> newtype;</li>
+<li>explicit names must be non-empty dot-separated identifiers;</li>
+<li>each segment must be non-empty;</li>
+<li>the implementation should reject names with empty segments such as <code>"app..db"</code>;</li>
+<li>names are case-sensitive;</li>
+<li><code>get_logger()</code> with no name uses compiler/runtime module identity when available, then <code>"root"</code>.</li>
+</ul>
+<p>Calling <code>get_logger(...)</code> repeatedly with the same name must produce loggers with the same effective identity. The API does not require object identity or global mutable logger objects to be observable.</p>
+<p><code>log</code> is an ambient soft surface for the current module's default logger:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;ready&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>It is equivalent to using a default logger for the current module. It must be shadowable by ordinary source bindings:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">load</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">log</span> <span class="o">=</span> <span class="n">get_logger</span><span class="p">(</span><span class="s2">&quot;etl.loader&quot;</span><span class="p">)</span>
+    <span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;ready&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>An implementation must not freeze ambient <code>log</code> to the implementation module <code>std.logging</code>, because that would make the shortcut less correct than the explicit <code>get_logger()</code> form.</p>
+<h3 id="logger-api">Logger API<a class="headerlink" href="#logger-api" title="Permanent link">&para;</a></h3>
+<p><code>Logger</code> must expose:</p>
+<ul>
+<li><code>name: LoggerName</code></li>
+<li><code>child(suffix: str) -&gt; Logger</code></li>
+<li><code>bind(fields: Dict[str, LogValue]) -&gt; Logger</code></li>
+<li><code>is_enabled(level: Level) -&gt; bool</code></li>
+<li><code>trace(message: str, fields: Dict[str, LogValue] = {}) -&gt; None</code></li>
+<li><code>debug(message: str, fields: Dict[str, LogValue] = {}) -&gt; None</code></li>
+<li><code>info(message: str, fields: Dict[str, LogValue] = {}) -&gt; None</code></li>
+<li><code>warning(message: str, fields: Dict[str, LogValue] = {}) -&gt; None</code></li>
+<li><code>error(message: str, fields: Dict[str, LogValue] = {}) -&gt; None</code></li>
+<li><code>critical(message: str, fields: Dict[str, LogValue] = {}) -&gt; None</code></li>
+</ul>
+<p><code>child("loader")</code> on logger <code>etl</code> returns a logger named <code>etl.loader</code>. Calling <code>child(...)</code> with a suffix containing <code>.</code> is allowed and appends the suffix as a dotted descendant path after validating that it has no empty segments.</p>
+<p><code>bind(...)</code> returns a logger with additional bound context. It must not mutate the original logger in place.</p>
+<h3 id="structured-field-values">Structured field values<a class="headerlink" href="#structured-field-values" title="Permanent link">&para;</a></h3>
+<p><code>LogValue</code> is a conceptual structured value accepted by the runtime boundary. The implementation must support at least:</p>
+<ul>
+<li><code>None</code></li>
+<li><code>bool</code></li>
+<li>signed and unsigned integer values representable by the runtime payload</li>
+<li>floating-point values</li>
+<li><code>str</code></li>
+<li><code>bytes</code> rendered or encoded according to output format policy</li>
+<li>lists and maps containing supported <code>LogValue</code> values</li>
+</ul>
+<p>Model values may be accepted if the implementation has a stable structured representation for them. If a value cannot be preserved structurally, the runtime must either reject it with a typed logging configuration or emission error before rendering, or preserve a clearly marked debug string fallback. It must not silently pretend lossy stringification is the same as structured preservation in JSON output.</p>
+<p>Field keys must be strings. Field keys should be valid identifier-like names for maximum backend portability, but this RFC only requires that keys are non-empty and do not contain control characters.</p>
+<p>Reserved runtime keys include <code>timestamp</code>, <code>level</code>, <code>message</code>, <code>logger</code>, <code>target</code>, <code>module</code>, <code>file</code>, <code>line</code>, and <code>thread</code>. User-provided fields with reserved names are allowed only inside the user field map and must not overwrite the top-level runtime metadata fields.</p>
+<p>Field keys may use dotted semantic-convention names such as <code>http.request.method</code>, <code>db.system.name</code>, <code>gen_ai.request.model</code>, <code>mcp.method.name</code>, or provider-specific keys. <code>std.logging</code> must preserve those keys as ordinary structured fields. It must not normalize, split, or reserve external telemetry namespaces in the base logging API.</p>
+<h3 id="event-records">Event records<a class="headerlink" href="#event-records" title="Permanent link">&para;</a></h3>
+<p>Each emitted event produces a <code>LogRecord</code> internally. <code>LogRecord</code> is the Incan source-level projection of the OpenTelemetry Logs Data Model. It must use idiomatic Incan field names while preserving the official OpenTelemetry field spellings as field aliases:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">pub</span> <span class="k">model</span> <span class="nc">LogRecord</span><span class="p">:</span>
+    <span class="n">timestamp</span> <span class="p">[</span><span class="n">alias</span><span class="o">=</span><span class="s2">&quot;Timestamp&quot;</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Time when the event occurred.&quot;</span><span class="p">]:</span> <span class="nc">Timestamp</span>
+    <span class="n">observed_timestamp</span> <span class="p">[</span><span class="n">alias</span><span class="o">=</span><span class="s2">&quot;ObservedTimestamp&quot;</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Time when telemetry observed the event.&quot;</span><span class="p">]:</span> <span class="kt">Option</span><span class="p">[</span><span class="nc">Timestamp</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">trace_id</span> <span class="p">[</span><span class="n">alias</span><span class="o">=</span><span class="s2">&quot;TraceId&quot;</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Request trace identifier when the event is span-correlated.&quot;</span><span class="p">]:</span> <span class="kt">Option</span><span class="p">[</span><span class="nc">TraceId</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">span_id</span> <span class="p">[</span><span class="n">alias</span><span class="o">=</span><span class="s2">&quot;SpanId&quot;</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Span identifier when the event is span-correlated.&quot;</span><span class="p">]:</span> <span class="kt">Option</span><span class="p">[</span><span class="nc">SpanId</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">trace_flags</span> <span class="p">[</span><span class="n">alias</span><span class="o">=</span><span class="s2">&quot;TraceFlags&quot;</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;W3C trace flags for the correlated span.&quot;</span><span class="p">]:</span> <span class="kt">Option</span><span class="p">[</span><span class="nc">TraceFlags</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">severity_text</span> <span class="p">[</span><span class="n">alias</span><span class="o">=</span><span class="s2">&quot;SeverityText&quot;</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;OpenTelemetry severity text, such as INFO or WARN.&quot;</span><span class="p">]:</span> <span class="nb">str</span>
+    <span class="n">severity_number</span> <span class="p">[</span><span class="n">alias</span><span class="o">=</span><span class="s2">&quot;SeverityNumber&quot;</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;OpenTelemetry normalized severity number.&quot;</span><span class="p">]:</span> <span class="nb">int</span>
+    <span class="n">body</span> <span class="p">[</span><span class="n">alias</span><span class="o">=</span><span class="s2">&quot;Body&quot;</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Human or structured event body.&quot;</span><span class="p">]:</span> <span class="nc">TelemetryValue</span>
+    <span class="n">resource</span> <span class="p">[</span><span class="n">alias</span><span class="o">=</span><span class="s2">&quot;Resource&quot;</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Entity that produced this telemetry.&quot;</span><span class="p">]:</span> <span class="nc">Resource</span>
+    <span class="n">instrumentation_scope</span> <span class="p">[</span><span class="n">alias</span><span class="o">=</span><span class="s2">&quot;InstrumentationScope&quot;</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Logical scope that emitted this record.&quot;</span><span class="p">]:</span> <span class="nc">InstrumentationScope</span>
+    <span class="n">attributes</span> <span class="p">[</span><span class="n">alias</span><span class="o">=</span><span class="s2">&quot;Attributes&quot;</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Additional structured attributes for this event.&quot;</span><span class="p">]:</span> <span class="nc">Attributes</span>
+    <span class="n">event_name</span> <span class="p">[</span><span class="n">alias</span><span class="o">=</span><span class="s2">&quot;EventName&quot;</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Optional event class or type name.&quot;</span><span class="p">]:</span> <span class="kt">Option</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+</code></pre></div>
+<p><code>timestamp</code>, <code>severity_text</code>, <code>severity_number</code>, <code>body</code>, <code>resource</code>, <code>instrumentation_scope</code>, and <code>attributes</code> are the required Incan-side fields for records emitted by <code>std.logging</code>. Trace context fields remain optional unless a tracing provider supplies an active span context. <code>observed_timestamp</code> remains optional unless a collector/exporter boundary records observation time. <code>event_name</code> remains optional for ordinary log messages and should be set when the record represents a named event class.</p>
+<p><code>Level</code> maps to OpenTelemetry severity as follows:</p>
+<ul>
+<li><code>TRACE</code> -&gt; <code>severity_text="TRACE"</code>, <code>severity_number=1</code></li>
+<li><code>DEBUG</code> -&gt; <code>severity_text="DEBUG"</code>, <code>severity_number=5</code></li>
+<li><code>INFO</code> -&gt; <code>severity_text="INFO"</code>, <code>severity_number=9</code></li>
+<li><code>WARN</code> -&gt; <code>severity_text="WARN"</code>, <code>severity_number=13</code></li>
+<li><code>ERROR</code> -&gt; <code>severity_text="ERROR"</code>, <code>severity_number=17</code></li>
+<li><code>FATAL</code> -&gt; <code>severity_text="FATAL"</code>, <code>severity_number=21</code></li>
+</ul>
+<p><code>WARNING</code> and <code>CRITICAL</code> are aliases for the canonical <code>WARN</code> and <code>FATAL</code> variants, so JSON output can use <code>level.value()</code> directly for <code>SeverityText</code>. Human renderers may still display <code>WARNING</code> and <code>CRITICAL</code> if that is the configured Incan presentation policy.</p>
+<p>Human output is a projection of this record. JSON output must preserve the record as structured data. OTel-oriented JSON output should honor the field aliases above so downstream tools see the official OpenTelemetry field spellings, while human-oriented projections may use Incan names or compact labels.</p>
+<h3 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h3>
+<p><code>basic_config(...)</code> configures the source-level logging policy for the current generated program. It is an application entrypoint API, not a library API.</p>
+<p>The committed configuration knobs are:</p>
+<ul>
+<li><code>level: Level</code></li>
+<li><code>format: LogFormat</code></li>
+<li><code>style: LogStyle</code></li>
+<li><code>color: ColorPolicy</code></li>
+<li><code>target: OutputTarget</code></li>
+</ul>
+<p><code>LogFormat</code> must include:</p>
+<ul>
+<li><code>HUMAN</code></li>
+<li><code>JSON</code></li>
+</ul>
+<p><code>LogStyle</code> applies only when <code>format</code> is <code>HUMAN</code> and must include:</p>
+<ul>
+<li><code>MINIMAL</code></li>
+<li><code>SHORT</code></li>
+<li><code>COMPLETE</code></li>
+<li><code>VERBOSE</code></li>
+</ul>
+<p><code>ColorPolicy</code> must include:</p>
+<ul>
+<li><code>AUTO</code></li>
+<li><code>ALWAYS</code></li>
+<li><code>NEVER</code></li>
+</ul>
+<p><code>OutputTarget</code> is a validated newtype over <code>str</code>. It accepts at least <code>"stderr"</code> and <code>"stdout"</code> and owns routing emitted lines to the selected standard stream. <code>basic_config(...)</code> may continue to accept a string argument at the call boundary, but the stored configuration should use the nominal target type instead of carrying an unchecked string.</p>
+<p>Calling <code>basic_config(...)</code> more than once is deterministic. A second call replaces the previous source-level policy.</p>
+<h3 id="project-and-runtime-configuration">Project and runtime configuration<a class="headerlink" href="#project-and-runtime-configuration" title="Permanent link">&para;</a></h3>
+<p><code>incan.toml</code>, CLI flags, and environment overrides are not part of the implementable baseline in this RFC. They should be specified once Incan has a source-owned configuration/import boundary for host-provided settings.</p>
+<p>A project configuration surface may look like:</p>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[logging]</span>
+<span class="n">level</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;warning&quot;</span>
+<span class="n">format</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;human&quot;</span>
+<span class="n">style</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;short&quot;</span>
+<span class="n">color</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;auto&quot;</span>
+<span class="n">target</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;stderr&quot;</span>
+</code></pre></div>
+<p>CLI and environment values should use the same semantic vocabulary as <code>basic_config(...)</code>. String parsing should be case-insensitive for level, format, style, and color names.</p>
+<p>The CLI/environment surface may include:</p>
+<ul>
+<li><code>--log-level</code></li>
+<li><code>--log-format</code></li>
+<li><code>--log-style</code></li>
+<li><code>--log-color</code></li>
+<li><code>INCAN_LOG_LEVEL</code></li>
+<li><code>INCAN_LOG_FORMAT</code></li>
+<li><code>INCAN_LOG_STYLE</code></li>
+<li><code>INCAN_LOG_COLOR</code></li>
+</ul>
+<p>The implementation may add <code>--quiet</code> or <code>--verbose</code> convenience flags, but those flags must be specified as translations into the same logging policy model rather than as separate hidden behavior.</p>
+<h3 id="human-rendering">Human rendering<a class="headerlink" href="#human-rendering" title="Permanent link">&para;</a></h3>
+<p>Human rendering must be readable in terminals. <code>short</code> is the default style.</p>
+<p>Normative style expectations:</p>
+<ul>
+<li><code>minimal</code> omits timestamps and renders level plus message.</li>
+<li><code>short</code> renders a compact time-of-day timestamp.</li>
+<li><code>complete</code> renders a full datetime timestamp.</li>
+<li><code>verbose</code> may render additional metadata and fields, but it must keep the first line message-first and readable.</li>
+<li>When a record carries active span context, human renderers should be able to expose that hierarchy with lightweight span guides rather than long repeated logger prefixes.</li>
+</ul>
+<p>Illustrative shapes:</p>
+<div class="language-text highlight"><pre><span></span><code>[INFO] starting query
+</code></pre></div>
+<div class="language-text highlight"><pre><span></span><code>21:18:04 [INFO] starting query
+</code></pre></div>
+<div class="language-text highlight"><pre><span></span><code>2026-04-23T21:18:04.221Z [INFO] starting query
+</code></pre></div>
+<div class="language-text highlight"><pre><span></span><code>2026-04-23T21:18:04.221Z [INFO] starting query
+  logger=query.engine module=query.run fields={dataset=&quot;sales&quot;, rows=42}
+</code></pre></div>
+<p>Illustrative span-correlated <code>short</code> output:</p>
+<div class="language-text highlight"><pre><span></span><code>21:18:04 [INFO] starting query
+21:18:04 └─ [INFO] lowering plan
+21:18:04 └─ [INFO] emitting sql
+21:18:04 └─ [INFO] query complete
+</code></pre></div>
+<p>Illustrative span-correlated <code>verbose</code> output:</p>
+<div class="language-text highlight"><pre><span></span><code>2026-04-23T21:18:04.221Z [INFO] starting query
+  logger=query.engine trace=7f9c span=01 fields={dataset=&quot;sales&quot;}
+2026-04-23T21:18:04.228Z └─ [INFO] lowering plan
+  logger=query.engine.lowering trace=7f9c span=02 parent=01
+</code></pre></div>
+<p>The exact spacing and glyph topology are renderer policy. The level, message, selected metadata, and span relationship must be visible without requiring a JSON consumer. Span guides are a human projection of trace/span context supplied by the telemetry layer; this RFC does not make <code>std.logging</code> responsible for starting or ending spans.</p>
+<h3 id="json-rendering">JSON rendering<a class="headerlink" href="#json-rendering" title="Permanent link">&para;</a></h3>
+<p>JSON output is selected with <code>format=LogFormat.JSON</code>.</p>
+<p>Each event should render as one JSON object per line. The object must separate named OpenTelemetry top-level fields from user/event attributes. A representative OTel-oriented shape is:</p>
+<div class="language-json highlight"><pre><span></span><code><span class="p">{</span><span class="nt">&quot;Timestamp&quot;</span><span class="p">:</span><span class="s2">&quot;2026-04-23T21:18:04.221Z&quot;</span><span class="p">,</span><span class="nt">&quot;SeverityText&quot;</span><span class="p">:</span><span class="s2">&quot;INFO&quot;</span><span class="p">,</span><span class="nt">&quot;SeverityNumber&quot;</span><span class="p">:</span><span class="mi">9</span><span class="p">,</span><span class="nt">&quot;Body&quot;</span><span class="p">:{</span><span class="nt">&quot;Type&quot;</span><span class="p">:</span><span class="s2">&quot;string&quot;</span><span class="p">,</span><span class="nt">&quot;StringValue&quot;</span><span class="p">:</span><span class="s2">&quot;starting query&quot;</span><span class="p">,</span><span class="nt">&quot;BoolValue&quot;</span><span class="p">:</span><span class="kc">null</span><span class="p">,</span><span class="nt">&quot;IntValue&quot;</span><span class="p">:</span><span class="kc">null</span><span class="p">,</span><span class="nt">&quot;FloatValue&quot;</span><span class="p">:</span><span class="kc">null</span><span class="p">,</span><span class="nt">&quot;BytesValue&quot;</span><span class="p">:</span><span class="kc">null</span><span class="p">,</span><span class="nt">&quot;ArrayValue&quot;</span><span class="p">:[],</span><span class="nt">&quot;MapValue&quot;</span><span class="p">:{}},</span><span class="nt">&quot;Resource&quot;</span><span class="p">:{</span><span class="nt">&quot;Attributes&quot;</span><span class="p">:{}},</span><span class="nt">&quot;InstrumentationScope&quot;</span><span class="p">:{</span><span class="nt">&quot;Name&quot;</span><span class="p">:</span><span class="s2">&quot;query.engine&quot;</span><span class="p">,</span><span class="nt">&quot;Version&quot;</span><span class="p">:</span><span class="kc">null</span><span class="p">,</span><span class="nt">&quot;SchemaUrl&quot;</span><span class="p">:</span><span class="kc">null</span><span class="p">},</span><span class="nt">&quot;Attributes&quot;</span><span class="p">:{</span><span class="nt">&quot;dataset&quot;</span><span class="p">:{</span><span class="nt">&quot;Type&quot;</span><span class="p">:</span><span class="s2">&quot;string&quot;</span><span class="p">,</span><span class="nt">&quot;StringValue&quot;</span><span class="p">:</span><span class="s2">&quot;sales&quot;</span><span class="p">,</span><span class="nt">&quot;BoolValue&quot;</span><span class="p">:</span><span class="kc">null</span><span class="p">,</span><span class="nt">&quot;IntValue&quot;</span><span class="p">:</span><span class="kc">null</span><span class="p">,</span><span class="nt">&quot;FloatValue&quot;</span><span class="p">:</span><span class="kc">null</span><span class="p">,</span><span class="nt">&quot;BytesValue&quot;</span><span class="p">:</span><span class="kc">null</span><span class="p">,</span><span class="nt">&quot;ArrayValue&quot;</span><span class="p">:[],</span><span class="nt">&quot;MapValue&quot;</span><span class="p">:{}},</span><span class="nt">&quot;rows&quot;</span><span class="p">:{</span><span class="nt">&quot;Type&quot;</span><span class="p">:</span><span class="s2">&quot;int&quot;</span><span class="p">,</span><span class="nt">&quot;StringValue&quot;</span><span class="p">:</span><span class="kc">null</span><span class="p">,</span><span class="nt">&quot;BoolValue&quot;</span><span class="p">:</span><span class="kc">null</span><span class="p">,</span><span class="nt">&quot;IntValue&quot;</span><span class="p">:</span><span class="mi">42</span><span class="p">,</span><span class="nt">&quot;FloatValue&quot;</span><span class="p">:</span><span class="kc">null</span><span class="p">,</span><span class="nt">&quot;BytesValue&quot;</span><span class="p">:</span><span class="kc">null</span><span class="p">,</span><span class="nt">&quot;ArrayValue&quot;</span><span class="p">:[],</span><span class="nt">&quot;MapValue&quot;</span><span class="p">:{}}}}</span>
+</code></pre></div>
+<p>JSON output must be colorless regardless of <code>ColorPolicy</code>.</p>
+<h3 id="filtering">Filtering<a class="headerlink" href="#filtering" title="Permanent link">&para;</a></h3>
+<p>The minimum filter is a global threshold level. Implementations may support per-logger filters through project, CLI, or environment policy, but this RFC does not require a complete filter expression language.</p>
+<p>If per-logger filters are implemented, matching must respect hierarchical names. A policy for <code>etl</code> applies to <code>etl.loader</code> unless a more specific <code>etl.loader</code> policy overrides it.</p>
+<h3 id="library-and-application-boundary">Library and application boundary<a class="headerlink" href="#library-and-application-boundary" title="Permanent link">&para;</a></h3>
+<p>Libraries may call <code>get_logger(...)</code>, <code>Logger.bind(...)</code>, and event methods. Libraries must not call <code>basic_config(...)</code> as part of import-time or normal helper execution.</p>
+<p>Application entrypoints, command runners, tests, and embedding hosts may call <code>basic_config(...)</code>. Documentation should teach this boundary explicitly.</p>
+<h3 id="source-implementation-boundary">Source implementation boundary<a class="headerlink" href="#source-implementation-boundary" title="Permanent link">&para;</a></h3>
+<p>The reference implementation is authored in <code>crates/incan_stdlib/stdlib/logging.incn</code>. It may import from <code>rust::std</code> for platform primitives such as <code>SystemTime</code>, but it must not use a Rust backing module or <code>@rust.extern</code> logging helpers.</p>
+<p>The source implementation must preserve:</p>
+<ul>
+<li>logger name</li>
+<li>event level</li>
+<li>message</li>
+<li>structured field values</li>
+<li>bound context</li>
+</ul>
+<p>Logger-name source metadata uses module identity where the compiler can provide it. File and line metadata are outside this RFC and belong with the broader telemetry source-location policy.</p>
+<h3 id="opentelemetry-compatibility">OpenTelemetry compatibility<a class="headerlink" href="#opentelemetry-compatibility" title="Permanent link">&para;</a></h3>
+<p>This RFC does not standardize the full OpenTelemetry model. <code>std.telemetry</code> owns provider configuration, tracing decorators, explicit span handles, metric instruments, baggage/context propagation, OpenTelemetry export, semantic-convention helpers, and stdlib instrumentation policy. The event payload defined here must remain usable as the log/event component inside that observability model.</p>
+<p>The absence of span, metric, resource, and propagation APIs is intentional. It keeps RFC 072 implementable as a standard-library/runtime surface without adding parser support or a new ambient language binding.</p>
+<p>Incan should become OpenTelemetry-compatible as a language and stdlib ecosystem, not merely GenAI-compatible. That means observability RFCs should account for OpenTelemetry's traces, metrics, logs/events, resources, profiles, and context propagation concepts, and should use semantic conventions where Incan stdlib surfaces correspond to common operations. <code>std.logging</code> contributes by adopting the OpenTelemetry log record shape now and preserving structured attributes and a stable named-fields/attributes boundary.</p>
+<p>The preferred tracing surface is decorator-first because decorators can own span lifetime for whole functions:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.telemetry</span><span class="w"> </span><span class="kn">import</span> <span class="n">trace</span>
+
+<span class="nd">@trace</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">submit</span><span class="p">(</span><span class="n">req</span><span class="p">:</span> <span class="kt">Request</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kt">Response</span><span class="p">,</span> <span class="nc">Error</span><span class="p">]:</span>
+    <span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;accepted&quot;</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;order.id&quot;</span><span class="p">:</span> <span class="n">req</span><span class="o">.</span><span class="n">order_id</span><span class="p">})</span>
+    <span class="k">return</span> <span class="n">charge</span><span class="p">(</span><span class="n">req</span><span class="p">)</span>
+</code></pre></div>
+<p>The default span name should be derived from the fully qualified Incan symbol, such as <code>checkout.submit</code>, so common tracing does not require repeating the function name as a string. The decorator may accept an explicit override and an attribute factory when needed:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="nd">@trace</span><span class="p">(</span><span class="s2">&quot;checkout.payment.authorize&quot;</span><span class="p">,</span> <span class="n">attributes</span><span class="o">=</span><span class="n">payment_attrs</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">authorize</span><span class="p">(</span><span class="n">req</span><span class="p">:</span> <span class="kt">Request</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Auth</span><span class="p">,</span> <span class="nc">Error</span><span class="p">]:</span>
+    <span class="k">return</span> <span class="n">gateway</span><span class="o">.</span><span class="n">authorize</span><span class="p">(</span><span class="n">req</span><span class="p">)</span>
+</code></pre></div>
+<p>Manual span handles should remain available for non-function scopes, but they are an escape hatch until Incan has a block-level scope construct:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">span</span> <span class="o">=</span> <span class="n">telemetry</span><span class="o">.</span><span class="n">start_span</span><span class="p">(</span><span class="s2">&quot;cache.lookup&quot;</span><span class="p">,</span> <span class="n">attributes</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;cache.key&quot;</span><span class="p">:</span> <span class="n">key</span><span class="p">})</span>
+<span class="kt">result</span> <span class="o">=</span> <span class="n">cache</span><span class="o">.</span><span class="nb">get</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+<span class="n">span</span><span class="o">.</span><span class="n">end</span><span class="p">()</span>
+</code></pre></div>
+<p>Scoped span blocks are owned by the telemetry/context-manager RFCs rather than by <code>std.logging</code>.</p>
+<p>OpenTelemetry's GenAI semantic conventions define GenAI, MCP, and provider-specific telemetry vocabulary outside Incan's standard library. They are one convention family under the broader OpenTelemetry compatibility goal, not the whole target. RFC 072 should align with that direction by preserving arbitrary structured field names, but it should not copy any convention registry into <code>std.logging</code>. <code>std.telemetry</code> should define opt-in mapping profiles for OpenTelemetry logs/events/spans/metrics.</p>
+<h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
+<h3 id="why-ambient-log-lowers-into-stdlogging">Why ambient <code>log</code> lowers into <code>std.logging</code><a class="headerlink" href="#why-ambient-log-lowers-into-stdlogging" title="Permanent link">&para;</a></h3>
+<p>Ambient <code>log</code> is worth the language commitment because logging is part of the everyday program surface. Requiring every module to spell <code>log = get_logger()</code> adds ceremony without adding useful information in the common case.</p>
+<p>The important constraint is that ambient <code>log</code> is soft and shadowable. It should behave like an unresolved identifier fallback, not like an unshadowable keyword. This keeps explicit logger values available for libraries, tests, and code that wants a deliberate hierarchy:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">load</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">log</span> <span class="o">=</span> <span class="n">get_logger</span><span class="p">(</span><span class="s2">&quot;etl.loader&quot;</span><span class="p">)</span>
+    <span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;ready&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>The ambient form lowers into <code>std.logging.get_logger(&lt;current module&gt;)</code> and then uses the same source-defined <code>Logger</code> implementation as explicit logger values.</p>
+<h3 id="why-not-copy-python-logging-wholesale">Why not copy Python logging wholesale<a class="headerlink" href="#why-not-copy-python-logging-wholesale" title="Permanent link">&para;</a></h3>
+<p>Python's logging module has useful concepts, especially named loggers and application-owned configuration, but its handler, formatter, filter, propagation, and adapter graph is too much surface for this RFC. Incan should preserve the parts that matter for ordinary code while avoiding a compatibility-shaped clone that would be hard to implement and harder to teach.</p>
+<h3 id="why-fields-is-the-structured-field-syntax">Why <code>fields={...}</code> is the structured field syntax<a class="headerlink" href="#why-fields-is-the-structured-field-syntax" title="Permanent link">&para;</a></h3>
+<p><code>fields={...}</code> keeps the event signature implementable and explicit. It avoids making arbitrary keyword capture part of every logging method's public contract. A keyword-style field layer can be added compatibly, but <code>fields={...}</code> remains the stable baseline.</p>
+<h3 id="why-bound-context-returns-a-new-logger">Why bound context returns a new logger<a class="headerlink" href="#why-bound-context-returns-a-new-logger" title="Permanent link">&para;</a></h3>
+<p>Returning a new logger from <code>bind(...)</code> keeps context local and composable. It avoids hidden mutation on shared logger values and makes it easier to pass request- or job-scoped loggers through code without changing global policy.</p>
+<h3 id="why-libraries-must-not-configure-logging">Why libraries must not configure logging<a class="headerlink" href="#why-libraries-must-not-configure-logging" title="Permanent link">&para;</a></h3>
+<p>Configuration is a process-level policy decision. If libraries call <code>basic_config(...)</code>, importing a helper can unexpectedly change application output, filtering, or JSON ingestion. Libraries should emit events and let applications or hosts decide how those events are rendered or exported.</p>
+<h3 id="why-json-is-a-format-not-a-style">Why JSON is a format, not a style<a class="headerlink" href="#why-json-is-a-format-not-a-style" title="Permanent link">&para;</a></h3>
+<p>JSON is for machine consumers, collectors, and ingestion pipelines. Human styles are terminal presentation policy. Keeping <code>format</code> and <code>style</code> separate avoids treating JSON as another terminal skin and keeps color/template settings from leaking into machine output.</p>
+<h3 id="why-opentelemetry-alignment-belongs-in-this-rfc">Why OpenTelemetry alignment belongs in this RFC<a class="headerlink" href="#why-opentelemetry-alignment-belongs-in-this-rfc" title="Permanent link">&para;</a></h3>
+<p>OpenTelemetry's Logs Data Model already separates named top-level fields from attribute collections. That is exactly the distinction <code>std.logging</code> needs: timestamp, severity, body, resource, scope, and trace context are not just arbitrary user fields, while application-specific data remains in attributes. Aligning <code>LogRecord</code> prevents Incan from shipping a local record shape that needs a breaking migration.</p>
+<p>Incan should still use Incan names in source. Field aliases provide the bridge: source code reads as <code>severity_text</code> and <code>instrumentation_scope</code>, while wire-oriented serialization can use <code>SeverityText</code> and <code>InstrumentationScope</code>.</p>
+<h3 id="why-full-telemetry-is-not-part-of-this-rfc">Why full telemetry is not part of this RFC<a class="headerlink" href="#why-full-telemetry-is-not-part-of-this-rfc" title="Permanent link">&para;</a></h3>
+<p>Span semantics need more than a helper method. They raise questions about scoped lifetime syntax, async/task propagation, context inheritance, duration recording, error association, and exporter mapping. Metrics add aggregation, units, temporality, views, and cardinality concerns. Exporters add endpoint configuration, batching, retries, shutdown flushing, and host/network I/O. Those are real requirements, but adding them here would make this logging RFC too broad. The correct move is to adopt the OpenTelemetry log record model and design the full <code>std.telemetry</code> provider/exporter surface in its own RFC.</p>
+<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>Ambient built-in <code>log</code></strong></li>
+<li>
+<p>Rejected for this RFC because it requires new language/tooling behavior and bypasses the existing namespaced stdlib model.</p>
+</li>
+<li>
+<p><strong>Expose Rust <code>tracing</code> or <code>log</code> directly</strong></p>
+</li>
+<li>
+<p>Rejected because ordinary Incan code should not need Rust crate names, macros, subscribers, or backend-specific error behavior.</p>
+</li>
+<li>
+<p><strong>Only provide <code>println</code>-style text logging</strong></p>
+</li>
+<li>
+<p>Rejected because fields, logger names, and machine output are core requirements, not optional polish.</p>
+</li>
+<li>
+<p><strong>Copy Python logging's full handler/filter graph</strong></p>
+</li>
+<li>
+<p>Rejected because it is too large for this Incan stdlib contract and would overfit Python runtime assumptions.</p>
+</li>
+<li>
+<p><strong>Start with spans as the primary API</strong></p>
+</li>
+<li>
+<p>Rejected because spans deserve their own RFC and should build on a stable event record model.</p>
+</li>
+<li>
+<p><strong>Bake OpenTelemetry attribute types directly into <code>std.logging</code></strong></p>
+</li>
+<li>Rejected because OpenTelemetry semantic conventions evolve independently and cover more than ordinary log events. The logging API should preserve namespaced structured fields now and let dedicated observability/export RFCs own the mapping contract.</li>
+</ol>
+<h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Ambient <code>log</code> is a small language/tooling commitment and needs shadowing, formatting, and LSP support.</li>
+<li>The runtime must preserve structured field values, which is more work than plain text printing.</li>
+<li>Keeping spans out of this RFC means some tracing use cases still need a follow-up design.</li>
+<li><code>basic_config(...)</code> plus project/CLI/env policy requires clear precedence tests to avoid confusing behavior.</li>
+<li>The <code>LogValue</code> boundary needs careful implementation to avoid lossy structured output.</li>
+</ul>
+<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Stdlib registry:</strong> add <code>std.logging</code> as a registered source stdlib namespace.</li>
+<li><strong>Language surface:</strong> add ambient, shadowable <code>log</code> resolution for ordinary event calls.</li>
+<li><strong>Stdlib source:</strong> add the <code>.incn</code> implementation for imports, typechecking, logger values, bound context, OTel-aligned event records, filtering, and rendering.</li>
+<li><strong>Telemetry core stdlib source:</strong> add the pure data-model subset needed by <code>std.logging</code>, including telemetry values, attributes, resource identity, instrumentation scope, and trace context value types.</li>
+<li><strong>Runtime (<code>incan_stdlib</code>):</strong> no logging-specific Rust module; existing generated-code storage is reused and stream output uses ordinary <code>rust::std</code> imports from source.</li>
+<li><strong>Emission:</strong> support source stdlib default arguments, static-field reads, and static-field mutation well enough for <code>std.logging</code> to dogfood them.</li>
+<li><strong>LSP / tooling:</strong> provide import completions, hover docs, and diagnostics for the new stdlib module.</li>
+<li><strong>Docs / examples:</strong> document ordinary use, library/application boundaries, configuration, structured fields, and JSON output.</li>
+</ul>
+<h2 id="delivery-plan">Delivery Plan<a class="headerlink" href="#delivery-plan" title="Permanent link">&para;</a></h2>
+<h3 id="phase-1-stdlib-surface-and-registry">Phase 1: Stdlib surface and registry<a class="headerlink" href="#phase-1-stdlib-surface-and-registry" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Add <code>std.logging</code> to the stdlib namespace registry so imports, stub lookup, and LSP completion recognize the module.</li>
+<li>Add the source-defined <code>std.telemetry.core</code> data-model subset that <code>std.logging</code> depends on.</li>
+<li>Add <code>std.logging</code> source declarations and implementations for <code>Level</code>, <code>LoggerName</code>, <code>Logger</code>, <code>LogFormat</code>, <code>LogStyle</code>, <code>ColorPolicy</code>, <code>OutputTarget</code>, OTel-aligned <code>LogRecord</code>, <code>get_logger(...)</code>, and <code>basic_config(...)</code>.</li>
+<li>Add ambient <code>log</code> lowering as a shadowable default logger surface.</li>
+<li>Dogfood Incan for the public stdlib contract; no logging-specific <code>@rust.extern</code> implementation is allowed.</li>
+</ul>
+<h3 id="phase-2-source-behavior-and-generated-code-support">Phase 2: Source behavior and generated-code support<a class="headerlink" href="#phase-2-source-behavior-and-generated-code-support" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Implement logger values, bound context, OTel-aligned structured event records, threshold filtering, human rendering, and JSON rendering in Incan source.</li>
+<li>Map Incan <code>Level</code> values to OpenTelemetry <code>SeverityText</code> and <code>SeverityNumber</code>.</li>
+<li>Render OTel-oriented JSON with the official field aliases while keeping human rendering concise.</li>
+<li>Use <code>std.datetime</code> for timestamps so logging follows the stdlib time surface rather than importing Rust time directly.</li>
+<li>Fix generated-code support for source stdlib default arguments, static-field reads, and static-field mutation as needed.</li>
+</ul>
+<h3 id="phase-3-deferred-host-configuration-policy">Phase 3: Deferred host configuration policy<a class="headerlink" href="#phase-3-deferred-host-configuration-policy" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Keep <code>basic_config(...)</code> as the implemented source-level configuration mechanism.</li>
+<li>Defer <code>incan.toml</code>, CLI, and environment handling until a source-owned host configuration boundary exists.</li>
+<li>Route <code>"stdout"</code> and <code>"stderr"</code> through ordinary source-level <code>rust::std::io</code> imports.</li>
+</ul>
+<h3 id="phase-4-tests-and-docs">Phase 4: Tests and docs<a class="headerlink" href="#phase-4-tests-and-docs" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Add focused tests for logger acquisition, level filtering, structured fields, bound context, source configuration, human rendering, JSON rendering, and library/application behavior.</li>
+<li>Add user-facing stdlib documentation and examples outside the RFC.</li>
+<li>Add release notes for the active development release.</li>
+</ul>
+<h2 id="progress-checklist">Progress Checklist<a class="headerlink" href="#progress-checklist" title="Permanent link">&para;</a></h2>
+<h3 id="spec-design">Spec / design<a class="headerlink" href="#spec-design" title="Permanent link">&para;</a></h3>
+<ul class="task-list">
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Move RFC 072 to an implementation-ready <code>std.logging</code> contract.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Record the dogfooding constraint: public stdlib surface and logging behavior are Incan-defined, with no logging-specific <code>rust.extern</code> implementation.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Record OpenTelemetry LogRecord alignment as a requirement for the committed <code>LogRecord</code> model.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Record ambient <code>log</code> as the ordinary default event surface.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Keep the RFC checklist synchronized with implementation progress.</li>
+</ul>
+<h3 id="stdlib-surface-and-registry">Stdlib surface and registry<a class="headerlink" href="#stdlib-surface-and-registry" title="Permanent link">&para;</a></h3>
+<ul class="task-list">
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Register <code>std.logging</code> in the stdlib namespace registry.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Add source-defined <code>std.logging</code> declarations.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Add source-defined <code>std.telemetry.core</code> declarations needed by the logging record model.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Confirm imports such as <code>from std.logging import Level, basic_config, get_logger</code> typecheck.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Confirm ambient <code>log.info(...)</code> typechecks and lowers to the current module's default logger.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Confirm the public <code>Logger</code> surface is source-defined rather than a Rust-only type shell where possible.</li>
+</ul>
+<h3 id="runtime-and-generated-code-handoff">Runtime and generated-code handoff<a class="headerlink" href="#runtime-and-generated-code-handoff" title="Permanent link">&para;</a></h3>
+<ul class="task-list">
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Implement logger values and logger-name validation.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Implement <code>Logger.child(...)</code>, <code>Logger.bind(...)</code>, and level-specific event methods.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Implement the OTel-aligned <code>LogRecord</code> model with official field aliases and descriptions.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Map <code>Level</code> to OpenTelemetry <code>SeverityText</code> and <code>SeverityNumber</code>.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Preserve structured event fields and bound context in runtime records.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Implement human rendering for <code>minimal</code>, <code>short</code>, <code>complete</code>, and <code>verbose</code>.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Implement OTel-oriented JSON-lines rendering with official field aliases and without color control sequences.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Preserve source metadata where available.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Keep Rust backend crate choices out of the Incan source-level API.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Use <code>std.datetime</code> for timestamps and avoid logging-specific Rust host primitives.</li>
+</ul>
+<h3 id="configuration-policy">Configuration policy<a class="headerlink" href="#configuration-policy" title="Permanent link">&para;</a></h3>
+<ul class="task-list">
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Implement <code>basic_config(...)</code> threshold, format, style, color, and target validation in source.</li>
+</ul>
+<p>Deferred until Incan has a source-owned host configuration boundary:</p>
+<ul>
+<li>Apply terminal color policy in human rendering.</li>
+<li>Load project defaults from <code>[logging]</code> in <code>incan.toml</code>.</li>
+<li>Add runtime overrides through CLI flags.</li>
+<li>Add runtime overrides through <code>INCAN_LOG_*</code> environment variables.</li>
+<li>Test and document the host/source precedence order.</li>
+</ul>
+<h3 id="tests">Tests<a class="headerlink" href="#tests" title="Permanent link">&para;</a></h3>
+<ul class="task-list">
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Test logger acquisition and hierarchical child names.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Test level filtering and <code>is_enabled(...)</code>.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Test structured fields and field override behavior.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Test bound logger context without mutating the original logger.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Test library emission without root configuration ownership.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Test human renderer styles.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Test OTel-aligned JSON renderer output.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Test source-level <code>basic_config(...)</code>.</li>
+</ul>
+<p>Configuration precedence tests are deferred with the project/CLI/environment configuration surface.</p>
+<h3 id="docs-release-notes">Docs / release notes<a class="headerlink" href="#docs-release-notes" title="Permanent link">&para;</a></h3>
+<ul class="task-list">
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Add user-facing <code>std.logging</code> reference documentation.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Add an example that shows application-owned configuration and library-owned emission.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Add release notes for RFC 072.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Run <code>mkdocs build --strict</code>.</li>
+</ul>
+<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>std.logging</code> is a namespaced stdlib module with ambient, shadowable <code>log</code> as the ordinary event surface.</li>
+<li><code>std.logging</code> sits on the pure <code>std.telemetry.core</code> data model, while full <code>std.telemetry</code> provider/exporter behavior remains explicit and opt-in.</li>
+<li><code>get_logger(...)</code> and <code>basic_config(...)</code> are in scope for this RFC.</li>
+<li>Logger names are hierarchical, dot-separated, and case-sensitive.</li>
+<li><code>WARN</code> is the canonical warning level spelling, with <code>WARNING</code> as an alias.</li>
+<li>Structured event fields use <code>fields={...}</code> in the committed API.</li>
+<li><code>Logger.bind(...)</code> returns a new logger and event fields override bound fields for that event.</li>
+<li>Libraries emit logs but must not own root logging configuration.</li>
+<li><code>short</code> is the default human style.</li>
+<li>JSON is a <code>LogFormat</code>, not a <code>LogStyle</code>, and OTel-oriented JSON uses the official <code>LogRecord</code> field aliases.</li>
+<li>Color policy is human-renderer-only and never affects JSON output.</li>
+<li>Colorized terminal behavior remains tied to a source-owned CLI/terminal capability surface instead of a Rust logging helper.</li>
+<li>The filter contract requires a global threshold; per-logger filtering may be added compatibly.</li>
+<li>The implemented reference surface is source Incan and may only use ordinary <code>rust::std</code> imports for host primitives.</li>
+<li>Rust <code>tracing</code> integration is deferred until it can be introduced without replacing the source-owned logging surface.</li>
+<li>Span, context propagation, and external export APIs are deferred to follow-up RFCs.</li>
+<li>OpenTelemetry compatibility is an Incan-wide observability goal. RFC 072 adopts the OpenTelemetry log record model, while full provider/exporter behavior, semantic convention helpers, tracing decorators, baggage/context propagation, and metrics are deferred to dedicated observability RFCs.</li>
+<li>RFC 093 owns the full <code>std.telemetry</code> provider/exporter direction; RFC 094 and RFC 095 record the context-manager and <code>span</code> vocabulary foundations needed for ambient but controlled spans.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "../../../..", "features": ["navigation.instant", "navigation.tabs", "navigation.tabs.sticky", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      
+        <script src="../../../../_snippets/javascripts/mathjax.js"></script>
+      
+        <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
+      
+        <script src="../../../../_snippets/javascripts/tablesort.js"></script>
+      
+        <script src="../../../../_snippets/javascripts/rfc_table_filter.js"></script>
+      
+    
+  </body>
+</html>
