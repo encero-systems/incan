@@ -5,7 +5,7 @@
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 000 (core language)
 - **Issue:** —
-- **RFC PR:** [#12](https://github.com/dannys-code-corner/incan/pull/12)
+- **RFC PR:** [#12](https://github.com/encero-systems/incan/pull/12)
 - **Written against:** v0.1
 - **Shipped in:** v0.1
 

@@ -2,7 +2,7 @@
 
 This section covers the Incan tooling experience:
 
-- SDK install and project creation
+- Toolchain install and project creation
 - CLI (`check`, `build`, `run`, `fmt`, `test`, `inspect`, and `tools`)
 - editor setup and LSP
 
@@ -23,9 +23,10 @@ If you’re not sure where you fit, start at [Start here](../start_here/index.md
 
 Single source of truth pages under Tooling:
 
-- [Install and run](how-to/install_and_run.md) (SDK-first)
+- [Install and run](how-to/install_and_run.md) (toolchain-first)
 - [CLI reference](reference/cli_reference.md) (commands/flags/env vars)
 - [Codegraph inspection](reference/codegraph_inspection.md) (compiler-backed source-structure JSONL)
+- [Agent and tooling documentation surfaces](reference/agent_docs_surfaces.md) (LLM entrypoints, JSON surfaces, current/planned schema posture)
 
 Use the CLI reference for `incan build --report json` and `incan inspect rust --format json`; those commands share the same 0.4 semantic-inspection plane as diagnostics and codegraph export.
 

@@ -2246,6 +2246,13 @@ fn test_rust_interop_associated_functions_codegen() {
 }
 
 #[test]
+fn test_issue806_rust_receiver_turbofish_codegen() {
+    let source = load_test_file("issue_806");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("issue_806", rust_code);
+}
+
+#[test]
 fn test_rust_associated_call_in_elif_codegen() {
     let source = load_test_file("rust_associated_call_in_elif");
     let rust_code = generate_rust(&source);

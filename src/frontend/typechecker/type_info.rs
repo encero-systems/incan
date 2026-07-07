@@ -191,6 +191,12 @@ pub struct RustInteropArtifacts {
     /// whose parameter shape cannot be faithfully represented by ordinary Incan surface types, such as `&[T]`.
     /// Lowering/emission consumes the displays directly so generated closures keep Rust inference stable.
     pub closure_param_type_displays: HashMap<(usize, usize), Vec<String>>,
+    /// Rust async call expressions proven during call validation, keyed by the full call-expression span.
+    ///
+    /// Rust metadata is now loaded lazily at the call boundary rather than during import collection. `await` consumes
+    /// this artifact so direct async Rust calls still realize to their output type without reintroducing import-time
+    /// extraction or relying on stale symbol metadata.
+    pub async_call_realizations: HashSet<(usize, usize)>,
 }
 
 /// Declaration-level binding rewrites and visibility facts consumed by lowering.

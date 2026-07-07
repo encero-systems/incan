@@ -8,7 +8,7 @@
     - RFC 023 (stdlib namespacing and compiler handoff)
     - RFC 030 (std collections)
     - RFC 033 (`ctx` — contrast only; graphs are not ambient singletons)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/204
+- **Issue:** https://github.com/encero-systems/incan/issues/204
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** v0.3.0-dev.37

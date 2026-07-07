@@ -4,8 +4,8 @@
 - **Created:** 2026-03-06
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 025 (multi-instantiation trait dispatch), RFC 027 (vocab crate — block/desugaring substrate), RFC 024 (extensible derive protocol), RFC 029 (union types), RFC 040 (scoped DSL surface forms), RFC 054 (explicit call-site generics)
-- **Issue:** [#162](https://github.com/dannys-code-corner/incan/issues/162)
-- **RFC PR:** https://github.com/dannys-code-corner/incan/pull/454
+- **Issue:** [#162](https://github.com/encero-systems/incan/issues/162)
+- **RFC PR:** https://github.com/encero-systems/incan/pull/454
 - **Written against:** v0.2
 - **Shipped in:** v0.3
 

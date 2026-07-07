@@ -11,7 +11,7 @@
     - RFC 023 (compilable stdlib and Rust module binding)
     - RFC 041 (first-class Rust interop authoring)
     - RFC 055 (`std.fs` path-centric filesystem APIs)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/291
+- **Issue:** https://github.com/encero-systems/incan/issues/291
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** v0.3.0-dev.37

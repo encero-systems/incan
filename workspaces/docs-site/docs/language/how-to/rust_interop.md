@@ -1,6 +1,6 @@
 # Rust Interoperability
 
-Incan compiles to Rust, which means you can import from Rust crates and interoperate with Rust types.
+Incan exposes a Rust interop boundary for crates and Rust types. In the current beta, Incan builds through Cargo/rustc, so `rust::` imports can connect Incan source to Rust crates while keeping the application surface in Incan.
 
 ## Importing Rust Crates
 

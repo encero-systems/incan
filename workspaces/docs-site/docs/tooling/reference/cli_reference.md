@@ -148,14 +148,15 @@ Dependency flags:
 - `--cargo-no-default-features`: Disable default Cargo features.
 - `--cargo-all-features`: Enable all Cargo features.
 - `--release`: Explicitly request the release Cargo profile. This is the default for `incan build`, and the flag exists so first-contact flows can spell out that they are producing an optimized build.
+- `--generated-cargo-target-dir <PATH>`: Use a shared Cargo target directory for generated Rust projects. This is useful for CI and downstream packages with expensive Rust dependencies because separate clean checkouts can reuse the same compiled dependency artifacts when the lock/profile/target inputs match.
 - `--report json`: Emit a versioned machine-readable build report.
 - `--report-output <PATH>`: Write the build report to a file instead of stdout.
 
 Without `--locked` or `--frozen`, `incan build` creates `incan.lock` when it is missing. If an existing lockfile is stale, the command warns and reuses the embedded `Cargo.lock` payload without rewriting `incan.lock`; run `incan lock` to refresh the committed lockfile intentionally.
 
-For `incan build --lib`, dependency preheat uses the generated lock workspace and the same release-profile Cargo target directory as the real generated library build. If the dependency graph is unchanged, the preheat stamp is reused; if it has to run, the command prints the target/profile domain before invoking Cargo and streams Cargo's progress while the preheat compiles.
+For `incan build --lib`, dependency preheat uses the generated lock workspace and the same release-profile Cargo target directory as the real generated library build. If the dependency graph is unchanged, the preheat stamp is reused; if it has to run, the command prints the target/profile domain before invoking Cargo and streams Cargo's progress while the preheat compiles. Vocab companion metadata and packaged desugarer artifacts are cached by companion input fingerprint; with `--generated-cargo-target-dir`, that cache lives alongside the shared generated Cargo target so repeated clean checkouts can reuse unchanged companion extraction and desugarer artifacts.
 
-Build reports use `schema_version: 1` and describe the successful build rather than restating terminal prose. They include the compiler version, build mode, profile, project identity, entrypoint or library root, source-file breadcrumbs, generated Rust project paths, emitted artifacts, Rust and Incan dependency summaries, Cargo policy flags, interop summary, coarse timings, and notes. When `--report json` writes to stdout, human progress moves to stderr so tooling can parse stdout directly; when `--report-output <PATH>` is supplied, the report is written to that file and ordinary progress remains human-facing.
+Build reports use `schema_version: 1` and describe the successful build rather than restating terminal prose. They include the compiler version, build mode, profile, project identity, entrypoint or library root, source-file breadcrumbs, generated Rust project paths, emitted artifacts, Rust and Incan dependency summaries, Cargo policy flags, interop summary, coarse timings, and notes. Library reports include phase timings for source loading, dependency resolution, lock payload resolution, Rust metadata prewarm, typechecking, API validation, export resolution, manifest metadata, vocab metadata, Rust generation, dependency preheat, Cargo build, and total wall time. When `--report json` writes to stdout, human progress moves to stderr so tooling can parse stdout directly; when `--report-output <PATH>` is supplied, the report is written to that file and ordinary progress remains human-facing.
 
 Environment defaults:
 
@@ -164,6 +165,8 @@ Environment defaults:
 - CLI flags take precedence over these defaults. Use the `--no-*` forms to disable a policy default set by the environment.
 - `INCAN_CARGO_ARGS="..."` is split on whitespace and used when no Cargo args were supplied on the CLI.
 - `INCAN_LOCK_PREHEAT=0` disables dependency preheat for lock/test and generated-library build paths.
+- `INCAN_GENERATED_CARGO_TARGET_DIR=<PATH>` is the environment form of `--generated-cargo-target-dir`; the explicit CLI flag wins when both are set.
+- `INCAN_VOCAB_COMPANION_CACHE_DIR=<PATH>` overrides the vocab companion cache location when a package needs to keep that cache separate from the generated Cargo target.
 
 Examples:
 
@@ -220,7 +223,7 @@ Options:
 - `--format jsonl`: Emit newline-delimited JSON records. JSONL is the only supported 0.4 format.
 - `--allow-errors`: Emit a degraded partial graph and diagnostic records when the source is broken. Without this flag, diagnostics fail the command.
 
-`incan inspect codegraph` is tooling output, not runtime `std.graph`, not a generated-Rust ABI, and not a whole-program reference/call graph in 0.4. The header lists the represented languages, and every fact record carries `language`, `provenance`, and `degraded` fields. Body facts with a compiler-proven `target_id` use checked provenance; syntax-only body facts keep syntax provenance. The 0.4 exporter emits `language: "incan"` only; first-class Rust graph records and MCP/task-context consumers are follow-up work.
+`incan inspect codegraph` is tooling output, not runtime `std.graph`, not a generated-Rust ABI, and not a whole-program reference/call graph in 0.4. The header lists the represented languages, and every fact record carries `language`, `provenance`, and `degraded` fields. Body facts with a compiler-proven `target_id` use checked provenance; syntax-only body facts keep syntax provenance. In 0.4, `target_id` points only at declaration records emitted in the same JSONL export; public-package manifest identity remains available in library manifests, but external package declarations are not emitted as codegraph targets yet. The 0.4 exporter emits `language: "incan"` only; first-class Rust graph records and MCP/task-context consumers are follow-up work.
 
 Examples:
 
@@ -677,4 +680,4 @@ Specific behavior:
 
 Before a release, verify the docs stay aligned with the real CLI surface:
 
-- Compare `incan --help` and `incan {check,explain,build,run,fmt,test,init,lock,tools} --help` against this page.
+- Compare `incan --help` and `incan {check,explain,build,run,fmt,test,init,inspect,lock,tools} --help` against this page.

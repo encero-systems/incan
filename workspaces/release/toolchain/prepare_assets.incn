@@ -1,0 +1,205 @@
+from rust::std::env import var as env_var
+from rust::std::process import exit
+from std.fs import Path
+from std.json import JsonValue
+
+const RUST_POLICY: str = "The toolchain installer provisions stable Rust through rustup when needed and ensures the wasm32-wasip1 target for packages that ship vocab companions."
+
+
+model HostAsset:
+    target: str
+    archive_name: str
+    archive_url: str
+    archive_sha256: str
+
+
+def env_or(name: str, fallback: str) -> str:
+    match env_var(name):
+        Ok(value) => return value
+        Err(_) => return fallback
+
+
+def env_flag(name: str) -> bool:
+    value = env_or(name, "")
+    return value == "1" or value == "true" or value == "TRUE" or value == "yes" or value == "YES"
+
+
+def read_first_line(path: str) -> Result[str, str]:
+    text = Path(path).read_text("utf-8", "strict").map_err((err) => f"read {path}: {err.message()}")?
+    lines = text.split("\n")
+    if len(lines) == 0:
+        return Err(f"{path} is empty")
+    return Ok(lines[0].strip())
+
+
+def write_text(path: str, text: str) -> Result[None, str]:
+    return Path(path).write_text(text, "utf-8", "strict", None).map_err((err) => f"write {path}: {err.message()}")
+
+
+def copy_text(source: str, target: str) -> Result[None, str]:
+    text = Path(source).read_text("utf-8", "strict").map_err((err) => f"read {source}: {err.message()}")?
+    return write_text(target, text)
+
+
+def archive_target(archive_name: str, release: str) -> Result[str, str]:
+    prefix = f"incan-{release}-"
+    suffix = ".tar.gz"
+    if not archive_name.startswith(prefix) or not archive_name.endswith(suffix):
+        return Err(f"archive name does not match release {release}: {archive_name}")
+    return Ok(archive_name[len(prefix):len(archive_name) - len(suffix)])
+
+
+def sorted_strings(values: list[str]) -> list[str]:
+    mut out: list[str] = []
+    for value in values:
+        out.append(value)
+    mut i = 1
+    while i < len(out):
+        current = out[i]
+        mut j = i
+        while j > 0 and out[j - 1] > current:
+            out[j] = out[j - 1]
+            j = j - 1
+        out[j] = current
+        i = i + 1
+    return out
+
+
+def collect_assets(dist_dir: str, release: str) -> Result[list[HostAsset], str]:
+    pattern = f"incan-{release}-*.tar.gz"
+    paths = Path(dist_dir).glob(pattern).map_err((err) => err.message())?
+    mut archive_paths: list[str] = []
+    for path in paths:
+        archive_paths.append(path.0)
+    archive_paths = sorted_strings(archive_paths)
+    if len(archive_paths) == 0:
+        return Err(f"no toolchain archives found in {dist_dir}")
+
+    mut assets: list[HostAsset] = []
+    for archive_path in archive_paths:
+        archive_name = Path(archive_path).name()
+        target = archive_target(archive_name, release)?
+        checksum = read_first_line(f"{archive_path}.sha256")?
+        assets.append(
+            HostAsset(
+                target=target,
+                archive_name=archive_name,
+                archive_url=f"https://github.com/encero-systems/incan/releases/download/{release}/{archive_name}",
+                archive_sha256=checksum,
+            ),
+        )
+    return Ok(assets)
+
+
+def command_paths_json() -> JsonValue:
+    return JsonValue.object({"incan": JsonValue.str("bin/incan"), "incan-lsp": JsonValue.str("bin/incan-lsp")})
+
+
+def host_json(asset: HostAsset) -> JsonValue:
+    return JsonValue.object(
+        {"archive_url": JsonValue.str(asset.archive_url), "archive_sha256": JsonValue.str(asset.archive_sha256), "archive_format": JsonValue.str(
+            "tar.gz",
+        ), "commands": command_paths_json()},
+    )
+
+
+def hosts_json(assets: list[HostAsset]) -> JsonValue:
+    mut hosts: Dict[str, JsonValue] = {}
+    for asset in assets:
+        hosts[asset.target] = host_json(asset)
+    return JsonValue.object(hosts)
+
+
+def manifest_json(version: str, release: str, generated_at: str, assets: list[HostAsset]) -> JsonValue:
+    return JsonValue.object(
+        {"schema_version": JsonValue.int(1), "toolchain_version": JsonValue.str(version), "release": JsonValue.str(
+            release,
+        ), "channel": JsonValue.str("stable"), "generated_at": JsonValue.str(generated_at), "manifest_url": JsonValue.str(
+            f"https://github.com/encero-systems/incan/releases/download/{release}/manifest.json",
+        ), "rust_toolchain": JsonValue.object(
+            {"channel": JsonValue.str("stable"), "min_rust": JsonValue.str("1.92"), "targets": JsonValue.array(
+                [JsonValue.str("wasm32-wasip1")],
+            ), "policy": JsonValue.str(RUST_POLICY)},
+        ), "commands": JsonValue.array([JsonValue.str("incan"), JsonValue.str("incan-lsp")]), "hosts": hosts_json(assets)},
+    )
+
+
+def ruby_string(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("\"", "\\\"")
+
+
+def find_asset(assets: list[HostAsset], target: str) -> Option[HostAsset]:
+    for asset in assets:
+        if asset.target == target:
+            return Some(asset)
+    return None
+
+
+def has_asset(assets: list[HostAsset], target: str) -> bool:
+    match find_asset(assets, target):
+        Some(_) => return true
+        None => return false
+
+
+def host_block(assets: list[HostAsset], target: str, indent: str) -> Result[str, str]:
+    match find_asset(assets, target):
+        Some(asset) =>
+            url = ruby_string(asset.archive_url)
+            checksum = ruby_string(asset.archive_sha256)
+            return Ok(f"{indent}url \"{url}\"\n{indent}sha256 \"{checksum}\"")
+        None => return Err(target)
+
+
+def render_formula(version: str, assets: list[HostAsset]) -> Result[str, str]:
+    mut missing: list[str] = []
+    if not has_asset(assets, "aarch64-apple-darwin"):
+        missing.append("aarch64-apple-darwin")
+    if not has_asset(assets, "x86_64-apple-darwin"):
+        missing.append("x86_64-apple-darwin")
+    if not has_asset(assets, "x86_64-unknown-linux-gnu"):
+        missing.append("x86_64-unknown-linux-gnu")
+    if len(missing) > 0:
+        return Err("manifest is missing Homebrew targets: " + ", ".join(missing))
+
+    mac_arm = host_block(assets, "aarch64-apple-darwin", "      ")?
+    mac_intel = host_block(assets, "x86_64-apple-darwin", "      ")?
+    linux_x86 = host_block(assets, "x86_64-unknown-linux-gnu", "      ")?
+    formula_version = ruby_string(version)
+    return Ok(
+        "# typed: false\n" + "# frozen_string_literal: true\n" + "\n" + "class Incan < Formula\n" + "  desc \"Statically typed language that compiles to native Rust\"\n" + "  homepage \"https://github.com/encero-systems/incan\"\n" + f"  version \"{formula_version}\"\n" + "\n" + "  on_macos do\n" + "    if Hardware::CPU.arm?\n" + mac_arm + "\n" + "    else\n" + mac_intel + "\n" + "    end\n" + "  end\n" + "\n" + "  on_linux do\n" + linux_x86 + "\n" + "  end\n" + "\n" + "  def staged_files\n" + "    (Dir[\"#{buildpath}/**/*\"] + Dir[\"**/*\"]).uniq\n" + "  end\n" + "\n" + "  def staged_binary(name)\n" + "    path = staged_files.find do |candidate|\n" + "      File.basename(candidate) == name && File.basename(File.dirname(candidate)) == \"bin\"\n" + "    end\n" + "    path.nil? ? nil : Pathname.new(path)\n" + "  end\n" + "\n" + "  def staged_file_sample\n" + "    staged_files.first(25).join(\", \")\n" + "  end\n" + "\n" + "  def install\n" + "    incan_bin = staged_binary(\"incan\")\n" + "    incan_lsp_bin = staged_binary(\"incan-lsp\")\n" + "    stdlib_dir = Pathname.new(\"stdlib\")\n" + "    odie \"could not find incan binary in archive; staged files: #{staged_file_sample}\" if incan_bin.nil?\n" + "    odie \"could not find incan-lsp binary in archive; staged files: #{staged_file_sample}\" if incan_lsp_bin.nil?\n" + "    odie \"could not find stdlib/testing.incn in archive; staged files: #{staged_file_sample}\" unless (stdlib_dir/\"testing.incn\").exist?\n" + "    libexec.install Dir[\"*\"]\n" + "    bin.write_exec_script libexec/\"bin/incan\"\n" + "    bin.write_exec_script libexec/\"bin/incan-lsp\"\n" + "  end\n" + "\n" + "  def caveats\n" + "    <<~EOS\n" + "      Incan builds projects through Cargo. The direct, npm, and pipx installers can provision Rust automatically; Homebrew installs the prebuilt Incan commands and bundled stdlib sources, so make sure rustup, cargo, rustc, and the wasm32-wasip1 target are available before running projects:\n" + "        rustup target add wasm32-wasip1\n" + "    EOS\n" + "  end\n" + "\n" + "  test do\n" + "    assert_match version.to_s, shell_output(\"#{bin}/incan --version\")\n" + "  end\n" + "end\n",
+    )
+
+
+def prepare_assets() -> Result[None, str]:
+    repo_root = env_or("INCAN_REPO_ROOT", ".")
+    dist_dir = env_or("INCAN_TOOLCHAIN_DIST_DIR", "dist/toolchain")
+    generated_at = env_or("INCAN_TOOLCHAIN_GENERATED_AT", "unspecified")
+    skip_homebrew = env_flag("INCAN_TOOLCHAIN_SKIP_HOMEBREW")
+
+    Path(dist_dir).mkdir(parents=true, exist_ok=true).map_err((err) => err.message())?
+    version = read_first_line(f"{dist_dir}/toolchain-version.txt")?
+    release = read_first_line(f"{dist_dir}/toolchain-release.txt")?
+    assets = collect_assets(dist_dir, release)?
+
+    manifest = manifest_json(version, release, generated_at, assets)
+    manifest_text = manifest.to_pretty_json().map_err((err) => err.message())?
+    write_text(f"{dist_dir}/manifest.json", manifest_text + "\n")?
+    copy_text(f"{repo_root}/workspaces/release/install-incan.sh", f"{dist_dir}/install.sh")?
+    copy_text(
+        f"{repo_root}/workspaces/release/toolchain/manifest.schema.v1.json",
+        f"{dist_dir}/toolchain-manifest.schema.v1.json",
+    )?
+
+    if not skip_homebrew:
+        formula = render_formula(version, assets)?
+        write_text(f"{dist_dir}/incan.rb", formula)?
+
+    return Ok(None)
+
+
+def main() -> None:
+    match prepare_assets():
+        Ok(_) => return
+        Err(err) =>
+            println(f"prepare-assets: {err}")
+            exit(1)

@@ -1,20 +1,25 @@
 # Getting started with Incan
 
-This tutorial is the shortest public path from an installed SDK to running, testing, and release-building a project. It does not require cloning the compiler repository.
+This tutorial is the shortest public path from an installed toolchain to running, testing, and release-building a project. It does not require cloning the compiler repository.
 
 ## Install and verify
 
-Install the SDK, then make sure the command is on `PATH`:
+Install the toolchain, then make sure the command is on `PATH`. The direct installer provisions stable Rust through `rustup` when needed and installs the `wasm32-wasip1` target used by package vocab companions:
 
 ```bash
-curl -fsSL https://github.com/dannys-code-corner/incan/releases/latest/download/install.sh | sh
+--8<-- "_snippets/commands/direct_install.sh"
 export PATH="$HOME/.local/bin:$PATH"
 incan --version
 ```
 
-You can also install through Homebrew, npm, or pipx; those package-manager channels use the same GitHub Release manifest and verified SDK archives as the shell installer.
+You can also install through Homebrew, npm, or pipx; those package-manager channels use the same GitHub Release manifest and verified toolchain archives as the shell installer. npm and pipx route through the shared installer and can provision Rust automatically. Homebrew installs the prebuilt command binaries from the Encero tap and expects Rust to be managed separately.
 
-Native Windows and Linux arm64 are not supported by the initial SDK installer. Use WSL2 or a source build for those hosts for now.
+```bash
+brew tap encero-systems/tap
+brew install incan
+```
+
+Native Windows and Linux arm64 are not supported by the initial toolchain installer. Use WSL2 or a source build for those hosts for now.
 
 ## Create your first project
 
@@ -60,7 +65,7 @@ incan build --release
 
 ## What 0.4 is good for
 
-0.4 is intended for trying Incan as an installed SDK, creating small projects, running tests, checking diagnostics, inspecting generated artifacts, and evaluating how Incan fits into Rust-backed application tooling.
+0.4 is intended for trying Incan as an installed toolchain, creating small projects, running tests, checking diagnostics, inspecting generated artifacts, and evaluating how Incan fits into Rust-backed application tooling.
 
 ## What 0.4 is not yet good for
 

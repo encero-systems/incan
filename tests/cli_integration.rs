@@ -196,7 +196,7 @@ def main() -> None:
     let build_json = parse_json_stdout(&build)?;
     assert_eq!(build_json["schema_version"], check_json["schema_version"]);
     assert_eq!(build_json["project"]["name"], serde_json::json!("semantic_probe"));
-    assert_source_files_include(&build_json, &["src/main.incn", "src/helpers.incn"]);
+    assert_source_files_include(&build_json, &["src/main.incn", "src/helpers.incn"])?;
 
     let inspect = run_incan(tmp.path(), &["inspect", "rust", main_arg, "--format", "json"])?;
     assert_success(&inspect, "incan inspect rust --format json semantic inspection fixture");
@@ -215,7 +215,7 @@ def main() -> None:
         inspect_json["generated"]["crate_root"],
         build_json["generated"]["crate_root"]
     );
-    assert_source_files_include(&inspect_json, &["src/main.incn", "src/helpers.incn"]);
+    assert_source_files_include(&inspect_json, &["src/main.incn", "src/helpers.incn"])?;
 
     let codegraph = run_incan(tmp.path(), &["inspect", "codegraph", main_arg, "--format", "jsonl"])?;
     assert_success(
@@ -254,18 +254,22 @@ def main() -> None:
     Ok(())
 }
 
-fn assert_source_files_include(report: &serde_json::Value, suffixes: &[&str]) {
+fn assert_source_files_include(
+    report: &serde_json::Value,
+    suffixes: &[&str],
+) -> Result<(), Box<dyn std::error::Error>> {
     let files = report["source_files"]
         .as_array()
-        .unwrap_or_else(|| panic!("report source_files should be an array: {report}"));
+        .ok_or_else(|| format!("report source_files should be an array: {report}"))?;
     for suffix in suffixes {
-        assert!(
-            files
-                .iter()
-                .any(|file| file["path"].as_str().is_some_and(|path| path.ends_with(suffix))),
-            "expected report to include source file ending with {suffix}: {report}"
-        );
+        if !files
+            .iter()
+            .any(|file| file["path"].as_str().is_some_and(|path| path.ends_with(suffix)))
+        {
+            return Err(format!("expected report to include source file ending with {suffix}: {report}").into());
+        }
     }
+    Ok(())
 }
 
 #[test]
@@ -342,6 +346,96 @@ fn check_json_reports_typechecker_diagnostics() -> Result<(), Box<dyn std::error
     assert_failure(&legacy_output, "incan --check --format json typechecker diagnostic");
     let legacy_json = parse_json_stdout(&legacy_output)?;
     assert_eq!(legacy_json["diagnostics"][0]["code"], serde_json::json!("INCAN-T0001"));
+
+    Ok(())
+}
+
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn rust_std_result_interop_supports_try_operator_issue801() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let src_dir = tmp.path().join("src");
+    fs::create_dir_all(&src_dir)?;
+    fs::write(
+        tmp.path().join("incan.toml"),
+        r#"[project]
+name = "result_interop_probe"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+"#,
+    )?;
+    let source_path = src_dir.join("main.incn");
+    fs::write(
+        &source_path,
+        r#"from rust::std::fs import metadata
+from rust::std::io import Error as IoError
+from rust::std::path import Path as RustPath
+
+pub def file_len(path: str) -> Result[int, IoError]:
+    meta = metadata(RustPath.new(path))?
+    return Ok(int(meta.len()))
+
+def main() -> None:
+    result = file_len("incan.toml")
+    print("checked")
+"#,
+    )?;
+    let source_arg = source_path.to_str().ok_or("source path was not valid UTF-8")?;
+
+    let check = run_incan(tmp.path(), &["check", source_arg, "--format", "json"])?;
+    assert_success(&check, "incan check should type std::fs::metadata as Result");
+    let check_json = parse_json_stdout(&check)?;
+    assert_eq!(check_json["ok"], serde_json::json!(true));
+
+    let build = run_incan(tmp.path(), &["build", source_arg, "--offline"])?;
+    assert_success(
+        &build,
+        "incan build should emit Rust for std::fs::metadata try operator",
+    );
+
+    Ok(())
+}
+
+#[test]
+fn contextual_f32_float_literals_emit_inferable_rust_issue802() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let src_dir = tmp.path().join("src");
+    fs::create_dir_all(&src_dir)?;
+    fs::write(
+        tmp.path().join("incan.toml"),
+        r#"[project]
+name = "f32_literal_probe"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+"#,
+    )?;
+    let source_path = src_dir.join("main.incn");
+    fs::write(
+        &source_path,
+        r#"def accepts_f32(value: f32) -> None:
+    print("ok")
+
+def main() -> None:
+    zero: f32 = 0.0
+    accepts_f32(1.5)
+"#,
+    )?;
+    let source_arg = source_path.to_str().ok_or("source path was not valid UTF-8")?;
+
+    let build = run_incan(tmp.path(), &["build", source_arg, "--offline"])?;
+    assert_success(
+        &build,
+        "incan build should let Rust infer contextual f32 float literals",
+    );
+    let generated = fs::read_to_string(tmp.path().join("target/incan/f32_literal_probe/src/main.rs"))?;
+    assert!(
+        !generated.contains("0f64") && !generated.contains("1.5f64"),
+        "contextual float literals should not be hard-suffixed as f64:\n{generated}"
+    );
 
     Ok(())
 }
@@ -521,12 +615,17 @@ version = "0.1.0"
 "#,
     )?;
     let report_path = tmp.path().join("target").join("build-report.json");
+    let generated_target_dir = tmp.path().join("target").join("generated-cargo-target");
     let output = run_incan(
         tmp.path(),
         &[
             "build",
             "--lib",
             "--offline",
+            "--generated-cargo-target-dir",
+            generated_target_dir
+                .to_str()
+                .ok_or("generated target path was not valid UTF-8")?,
             "--report",
             "json",
             "--report-output",
@@ -546,6 +645,10 @@ version = "0.1.0"
         report["entrypoint"].as_str().map(|path| path.ends_with("src/lib.incn")),
         Some(true)
     );
+    assert_eq!(
+        report["generated"]["cargo_target_dir"],
+        serde_json::json!(generated_target_dir.to_string_lossy().to_string())
+    );
     assert!(report["source_files"].as_array().is_some_and(|files| {
         files
             .iter()
@@ -563,6 +666,15 @@ version = "0.1.0"
                 && artifact["exists"] == serde_json::json!(true)
         })
     }));
+    assert!(report["timings_ms"]["library_load_sources"].as_u64().is_some());
+    assert!(
+        report["timings_ms"]["library_collect_vocab_metadata"]
+            .as_u64()
+            .is_some()
+    );
+    assert!(report["timings_ms"]["library_prepare_total"].as_u64().is_some());
+    assert!(report["timings_ms"]["cargo_build"].as_u64().is_some());
+    assert!(report["timings_ms"]["total"].as_u64().is_some());
 
     Ok(())
 }

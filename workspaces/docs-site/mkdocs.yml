@@ -1,7 +1,7 @@
 site_name: Incan Documentation
 site_description: Documentation for the Incan programming language
-repo_name: dannys-code-corner/incan
-repo_url: https://github.com/dannys-code-corner/incan
+repo_name: encero-systems/incan
+repo_url: https://github.com/encero-systems/incan
 edit_uri: edit/main/workspaces/docs-site/docs/
 
 docs_dir: docs
@@ -25,7 +25,8 @@ theme:
       accent: amber
   features:
     - navigation.instant
-    - navigation.sections
+    - navigation.tabs
+    - navigation.tabs.sticky
     - navigation.indexes
     - content.code.copy
     - content.code.annotate
@@ -90,16 +91,19 @@ nav:
   - Home: index.md
   - Start here:
       - Overview: start_here/index.md
+      - What Incan is for: start_here/what_incan_is_for.md
       - Coming from Python (apps): start_here/coming_from_python.md
       - Coming from Rust (evaluator): start_here/coming_from_rust.md
+      - Coming from TypeScript or JavaScript: start_here/coming_from_typescript_javascript.md
       - Pipelines & automation: start_here/pipelines_and_automation.md
       - Encero stack: start_here/encero_stack.md
+      - 1.0 domain-native demo target: start_here/domain_native_demo.md
+      - 1.0 public contracts: start_here/public_contracts.md
       - Beginner: start_here/beginner.md
-  - Comparisons:
-      - Overview: comparisons/index.md
-      - Incan vs Python: comparisons/python.md
-      - Incan vs Rust: comparisons/rust.md
-      - Incan vs Python compatibility tools: comparisons/python_compatibility_tools.md
+      - Comparisons:
+          - Incan vs Python: comparisons/python.md
+          - Incan vs JS/TS: comparisons/javascript_typescript.md
+          - Incan vs Rust: comparisons/rust.md
   - Language:
       - Start here: language/index.md
       - Tutorials:
@@ -254,15 +258,14 @@ nav:
       - Reference:
           - CLI reference: tooling/reference/cli_reference.md
           - Codegraph inspection: tooling/reference/codegraph_inspection.md
+          - Agent and tooling docs surfaces: tooling/reference/agent_docs_surfaces.md
           - Checked contract metadata: tooling/reference/contract_metadata.md
           - Checked API metadata: tooling/reference/checked_api_metadata.md
           - Project configuration: tooling/reference/project_configuration.md
           - LSP protocol support: tooling/reference/lsp_protocol_support.md
-  - Whitepapers:
-      - Overview: whitepapers/index.md
-      - Incan ecosystem north star: whitepapers/incan_ecosystem_north_star.md
   - Contributing:
       - Start here: contributing/index.md
+      - Contributors: contributing/contributors.md
       - Tutorials:
           - Incan Contributor Book (Advanced):
               - Overview: contributing/tutorials/book/index.md
@@ -298,6 +301,10 @@ nav:
       - Release 0.3: release_notes/0_3.md
       - Release 0.2: release_notes/0_2.md
       - Release 0.1: release_notes/0_1.md
-  - Roadmap: roadmap.md
-  # XXX: Temporary page while in beta
-  - Stability policy: stability.md
+  - Project:
+      - Whitepapers:
+          - Overview: whitepapers/index.md
+          - Incan ecosystem north star: whitepapers/incan_ecosystem_north_star.md
+      - Roadmap: roadmap.md
+      # XXX: Temporary page while in beta
+      - Stability policy: stability.md

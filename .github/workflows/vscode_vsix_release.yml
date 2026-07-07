@@ -1,9 +1,7 @@
 name: VS Code Extension VSIX
 
 on:
-  push:
-    tags:
-      - "v*"  # TODO: revisit this once we finalize our release process
+  workflow_dispatch:
 
 permissions:
   contents: write

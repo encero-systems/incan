@@ -270,15 +270,16 @@ fn load_testing_marker_semantics_from_stdlib() -> Result<TestingMarkerSemantics,
 /// Search order:
 /// 1. `$INCAN_STDLIB_DIR/<relative>` if the env var is set (runtime)
 /// 2. `$CARGO_MANIFEST_DIR/crates/incan_stdlib/<relative>` (compile-time workspace path)
-/// 3. `$CWD/crates/incan_stdlib/<relative>`
-/// 4. `$CWD/<relative>`
+/// 3. Toolchain-relative paths from the current executable, including symlinked launchers
+/// 4. `$CWD/crates/incan_stdlib/<relative>`
+/// 5. `$CWD/<relative>`
+/// 6. `$INCAN_STDLIB_PATH/<relative>` for installed layouts
 fn find_stdlib_file(relative: &str) -> Option<PathBuf> {
     // 1. Explicit override root (runtime).
-    if let Ok(dir) = std::env::var("INCAN_STDLIB_DIR") {
-        let p = PathBuf::from(dir).join(relative);
-        if p.exists() {
-            return Some(p);
-        }
+    if let Ok(dir) = std::env::var("INCAN_STDLIB_DIR")
+        && let Some(path) = find_stdlib_file_in_root(relative, PathBuf::from(dir))
+    {
+        return Some(path);
     }
 
     // 2. Development build: workspace-relative (compile-time path).
@@ -290,19 +291,48 @@ fn find_stdlib_file(relative: &str) -> Option<PathBuf> {
         return Some(workspace_path);
     }
 
-    // 3-4. Relative to current working directory.
-    if let Ok(cwd) = std::env::current_dir() {
-        let crate_local = cwd.join("crates/incan_stdlib").join(relative);
+    // 3. Relative to executable location, covering installed toolchains, symlinked launchers, and local target builds.
+    if let Some(path) = find_stdlib_file_in_bases(relative, crate::toolchain_layout::current_executable_search_bases())
+    {
+        return Some(path);
+    }
+
+    // 4-5. Relative to current working directory.
+    if let Ok(cwd) = std::env::current_dir()
+        && let Some(path) = find_stdlib_file_in_bases(relative, [cwd])
+    {
+        return Some(path);
+    }
+
+    // 6. Installed stdlib path (runtime, for production installs).
+    if let Ok(stdlib_root) = std::env::var("INCAN_STDLIB_PATH")
+        && let Some(path) = find_stdlib_file_in_root(relative, PathBuf::from(stdlib_root))
+    {
+        return Some(path);
+    }
+
+    tracing::debug!(relative_path = %relative, "stdlib file not found in any search path");
+    None
+}
+
+/// Find a stdlib file under one explicit root directory.
+fn find_stdlib_file_in_root(relative: &str, root: PathBuf) -> Option<PathBuf> {
+    let path = root.join(relative);
+    path.exists().then_some(path)
+}
+
+/// Find a stdlib file under candidate base directories.
+fn find_stdlib_file_in_bases(relative: &str, bases: impl IntoIterator<Item = PathBuf>) -> Option<PathBuf> {
+    for base in bases {
+        let crate_local = base.join("crates/incan_stdlib").join(relative);
         if crate_local.exists() {
             return Some(crate_local);
         }
-        let local = cwd.join(relative);
+        let local = base.join(relative);
         if local.exists() {
             return Some(local);
         }
     }
-
-    tracing::debug!(relative_path = %relative, "stdlib file not found in any search path");
     None
 }
 
@@ -584,6 +614,36 @@ mod tests {
         runtime_names.sort_unstable();
 
         assert_eq!(metadata_names, runtime_names);
+        Ok(())
+    }
+
+    #[test]
+    fn testing_marker_source_lookup_accepts_installed_toolchain_base() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let toolchain_root = tmp.path().join("toolchains/0.4.0-test");
+        let stdlib_dir = toolchain_root.join("stdlib");
+        std::fs::create_dir_all(&stdlib_dir)?;
+        std::fs::write(stdlib_dir.join("testing.incn"), "")?;
+
+        let found = find_stdlib_file_in_bases("stdlib/testing.incn", [toolchain_root])
+            .ok_or("expected installed stdlib/testing.incn to be resolved")?;
+
+        assert!(found.ends_with("stdlib/testing.incn"));
+        Ok(())
+    }
+
+    #[test]
+    fn testing_marker_source_lookup_accepts_explicit_installed_stdlib_root() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let stdlib_root = tmp.path().join("installed");
+        let stdlib_dir = stdlib_root.join("stdlib");
+        std::fs::create_dir_all(&stdlib_dir)?;
+        std::fs::write(stdlib_dir.join("testing.incn"), "")?;
+
+        let found = find_stdlib_file_in_root("stdlib/testing.incn", stdlib_root)
+            .ok_or("expected explicit installed stdlib root to resolve stdlib/testing.incn")?;
+
+        assert!(found.ends_with("stdlib/testing.incn"));
         Ok(())
     }
 

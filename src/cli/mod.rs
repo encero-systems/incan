@@ -41,7 +41,6 @@ pub mod test_runner;
 
 use std::env;
 use std::fmt;
-use std::fs;
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 use std::process;
@@ -217,6 +216,9 @@ pub enum Command {
         /// Enable all Cargo features
         #[arg(long = "cargo-all-features")]
         cargo_all_features: bool,
+        /// Shared Cargo target directory for generated Rust projects
+        #[arg(long = "generated-cargo-target-dir", value_name = "PATH")]
+        generated_cargo_target_dir: Option<PathBuf>,
         /// Explicitly request the release build profile. This is the default for `incan build` and exists for
         /// first-contact command symmetry.
         #[arg(long)]
@@ -698,6 +700,7 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             cargo_features,
             cargo_no_default_features,
             cargo_all_features,
+            generated_cargo_target_dir,
             release: _,
             report,
             report_output,
@@ -720,28 +723,19 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 cargo_args,
                 cargo_passthrough,
             );
+            let build_options = commands::build::BuildCommandOptions {
+                cargo_policy,
+                cargo_features,
+                cargo_no_default_features,
+                cargo_all_features,
+                generated_cargo_target_dir,
+            };
             if lib_mode {
                 let file_arg = file.as_ref().map(|p| p.to_string_lossy().to_string());
-                commands::build_library(
-                    file_arg.as_deref(),
-                    out.as_ref(),
-                    cargo_policy,
-                    cargo_features,
-                    cargo_no_default_features,
-                    cargo_all_features,
-                    report_options,
-                )
+                commands::build_library(file_arg.as_deref(), out.as_ref(), build_options, report_options)
             } else {
                 let file = resolve_build_entry_file(file)?;
-                commands::build_file(
-                    &file.to_string_lossy(),
-                    out.as_ref(),
-                    cargo_policy,
-                    cargo_features,
-                    cargo_no_default_features,
-                    cargo_all_features,
-                    report_options,
-                )
+                commands::build_file(&file.to_string_lossy(), out.as_ref(), build_options, report_options)
             }
         }
         Some(Command::Check { path, format }) => commands::check_path(&path, format),
@@ -1020,38 +1014,17 @@ fn resolve_run_entry_file(file: Option<PathBuf>) -> CliResult<PathBuf> {
 fn execute_run(input: RunInput, opts: RunOptions) -> CliResult<ExitCode> {
     // ---- Context: inline source execution (`incan run -c ...`) ----
     if let Some(code) = input.code {
-        // Run inline code
         if code.is_empty() {
             return Err(CliError::failure("Error: -c/--command requires source code string"));
         }
-        // If the snippet already declares a main, leave as-is; otherwise, append a stub main.
-        let wrapped = if code.contains("def main") {
-            code
-        } else {
-            format!("{code}\n\ndef main() -> Unit:\n  pass\n")
-        };
-        // Write code to a temporary file and run it.
-        let tmp_path = env::temp_dir().join(format!(
-            "incan_cmd_{}_{}.incn",
-            process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis())
-                .unwrap_or(0)
-        ));
-        fs::write(&tmp_path, wrapped)
-            .map_err(|e| CliError::failure(format!("Error writing temporary command file: {}", e)))?;
-
-        let result = commands::run_file(
-            &tmp_path.to_string_lossy(),
+        commands::run_inline_source(
+            &code,
             opts.cargo_policy.clone(),
             opts.cargo_features.clone(),
             opts.cargo_no_default_features,
             opts.cargo_all_features,
             opts.release,
-        );
-        let _ = fs::remove_file(&tmp_path);
-        result
+        )
     // ---- Context: file execution (`incan run path/to/file.incn`) ----
     } else {
         let file = resolve_run_entry_file(input.file)?;
@@ -1218,6 +1191,29 @@ mod tests {
         assert!(!no_locked);
         assert!(!no_frozen);
         assert_eq!(cargo_args, vec!["--timings", "--color=always"]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_cli_parse_build_generated_cargo_target_dir() -> Result<(), clap::Error> {
+        let cli = parse_cli([
+            "incan",
+            "build",
+            "--lib",
+            "--generated-cargo-target-dir",
+            "target/generated-shared",
+        ])?;
+        let Some(Command::Build {
+            generated_cargo_target_dir,
+            ..
+        }) = cli.command
+        else {
+            return Err(expected_command("build"));
+        };
+        assert_eq!(
+            generated_cargo_target_dir,
+            Some(PathBuf::from("target/generated-shared"))
+        );
         Ok(())
     }
 

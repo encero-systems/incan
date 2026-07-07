@@ -164,6 +164,23 @@ pub struct MetadataFreeMethodSignatureRule {
     pub is_unsafe: bool,
 }
 
+/// One parameter in a metadata-free Rust free-function signature.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MetadataFreeFunctionParamRule {
+    pub name: Option<&'static str>,
+    pub type_display: &'static str,
+}
+
+/// Complete callable signature for one metadata-free Rust free-function surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MetadataFreeFunctionSignatureRule {
+    pub path: &'static str,
+    pub params: &'static [MetadataFreeFunctionParamRule],
+    pub return_type: &'static str,
+    pub is_async: bool,
+    pub is_unsafe: bool,
+}
+
 /// Metadata-free external method borrow policies used when rust-inspect metadata is unavailable.
 pub const METADATA_FREE_METHOD_BORROW_RULES: &[MetadataFreeMethodBorrowRule] = &[
     MetadataFreeMethodBorrowRule {
@@ -218,6 +235,80 @@ pub const METADATA_FREE_METHOD_SIGNATURE_RULES: &[MetadataFreeMethodSignatureRul
         is_unsafe: false,
     }];
 
+/// Metadata-free Rust free-function signatures used when rust-inspect cannot inspect sysroot crates.
+///
+/// rust-inspect intentionally indexes Cargo workspace crates and path/registry dependencies; sysroot crates such as
+/// `std` are not always available as ordinary metadata roots. Keep this table to stable std APIs whose signatures are
+/// part of Rust's public contract and whose result shapes matter for Incan source typing.
+pub const METADATA_FREE_FUNCTION_SIGNATURE_RULES: &[MetadataFreeFunctionSignatureRule] = &[
+    MetadataFreeFunctionSignatureRule {
+        path: "std::fs::metadata",
+        params: &[MetadataFreeFunctionParamRule {
+            name: Some("path"),
+            type_display: "impl AsRef<std::path::Path>",
+        }],
+        return_type: "std::io::Result<std::fs::Metadata>",
+        is_async: false,
+        is_unsafe: false,
+    },
+    MetadataFreeFunctionSignatureRule {
+        path: "std::fs::symlink_metadata",
+        params: &[MetadataFreeFunctionParamRule {
+            name: Some("path"),
+            type_display: "impl AsRef<std::path::Path>",
+        }],
+        return_type: "std::io::Result<std::fs::Metadata>",
+        is_async: false,
+        is_unsafe: false,
+    },
+    MetadataFreeFunctionSignatureRule {
+        path: "std::fs::read",
+        params: &[MetadataFreeFunctionParamRule {
+            name: Some("path"),
+            type_display: "impl AsRef<std::path::Path>",
+        }],
+        return_type: "std::io::Result<Vec<u8>>",
+        is_async: false,
+        is_unsafe: false,
+    },
+    MetadataFreeFunctionSignatureRule {
+        path: "std::fs::read_dir",
+        params: &[MetadataFreeFunctionParamRule {
+            name: Some("path"),
+            type_display: "impl AsRef<std::path::Path>",
+        }],
+        return_type: "std::io::Result<std::fs::ReadDir>",
+        is_async: false,
+        is_unsafe: false,
+    },
+    MetadataFreeFunctionSignatureRule {
+        path: "std::fs::read_to_string",
+        params: &[MetadataFreeFunctionParamRule {
+            name: Some("path"),
+            type_display: "impl AsRef<std::path::Path>",
+        }],
+        return_type: "std::io::Result<String>",
+        is_async: false,
+        is_unsafe: false,
+    },
+    MetadataFreeFunctionSignatureRule {
+        path: "std::fs::write",
+        params: &[
+            MetadataFreeFunctionParamRule {
+                name: Some("path"),
+                type_display: "impl AsRef<std::path::Path>",
+            },
+            MetadataFreeFunctionParamRule {
+                name: Some("contents"),
+                type_display: "impl AsRef<[u8]>",
+            },
+        ],
+        return_type: "std::io::Result<()>",
+        is_async: false,
+        is_unsafe: false,
+    },
+];
+
 /// Return conservative callable metadata for Rust surfaces the stdlib must compile against even when rust-inspect
 /// cannot recover full crate metadata in generated smoke projects.
 #[must_use]
@@ -225,6 +316,28 @@ pub fn metadata_free_method_signature(rust_path: &str, method: &str) -> Option<R
     let rule = METADATA_FREE_METHOD_SIGNATURE_RULES
         .iter()
         .find(|rule| rule.receiver_path == rust_path && rule.method == method)?;
+    Some(RustFunctionSig {
+        params: rule
+            .params
+            .iter()
+            .map(|param| RustParam {
+                name: param.name.map(str::to_string),
+                type_display: param.type_display.to_string(),
+            })
+            .collect(),
+        return_type: rule.return_type.to_string(),
+        is_async: rule.is_async,
+        is_unsafe: rule.is_unsafe,
+    })
+}
+
+/// Return conservative callable metadata for Rust free functions whose signatures are stable but unavailable through
+/// rust-inspect's Cargo-workspace view.
+#[must_use]
+pub fn metadata_free_function_signature(rust_path: &str) -> Option<RustFunctionSig> {
+    let rule = METADATA_FREE_FUNCTION_SIGNATURE_RULES
+        .iter()
+        .find(|rule| rule.path == rust_path)?;
     Some(RustFunctionSig {
         params: rule
             .params
@@ -746,5 +859,19 @@ mod tests {
             parse_rust_type_shape_text("T", |_| None, RustTypeShapePathFallback::RustPath),
             RustTypeShape::TypeParam("T".to_string()),
         );
+    }
+
+    #[test]
+    fn metadata_free_function_signature_describes_stable_std_result_surfaces() {
+        let signature = metadata_free_function_signature("std::fs::metadata")
+            .expect("std::fs::metadata should have a metadata-free signature");
+
+        assert_eq!(signature.return_type, "std::io::Result<std::fs::Metadata>");
+        assert_eq!(signature.params.len(), 1);
+        assert_eq!(signature.params[0].name.as_deref(), Some("path"));
+        assert_eq!(signature.params[0].type_display, "impl AsRef<std::path::Path>");
+        assert!(!signature.is_async);
+        assert!(!signature.is_unsafe);
+        assert!(metadata_free_function_signature("std::fs::remove_file").is_none());
     }
 }

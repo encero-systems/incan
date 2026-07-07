@@ -42,7 +42,7 @@ def main() -> None:
     - **metadata**: additional information about a field (e.g., a description or an alias)
 
 ??? info "Coming from Rust?"
-    Both `model` and `class` compile to Rust `struct`s + `impl`s. A `model` is semantically "this is data"; a `class` is "this is an object with behavior".
+    In the current backend, both `model` and `class` lower to Rust `struct`s + `impl`s. A `model` is semantically "this is data"; a `class` is "this is an object with behavior".
 
     - `def m(self)` corresponds to an immutable receiver (roughly like `&self`)
     - `def m(mut self)` corresponds to a mutable receiver (roughly like `&mut self`)
@@ -55,7 +55,7 @@ def main() -> None:
     - `@derive(Validate)` is the Incan equivalent of pydantic validators / `model_validator`.
 
 ??? info "Coming from TypeScript / JavaScript?"
-    - A `model` is like a TypeScript `interface` or `type`, but with runtime presence (it compiles to a real struct).
+    - A `model` is like a TypeScript `interface` or `type`, but with runtime presence (it lowers to a concrete value type).
     - Use models for API request/response payloads (DTOs).
     - Field aliases let you keep code-safe names (`type_`) while matching JSON keys (`"type"`).
 

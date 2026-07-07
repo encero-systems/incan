@@ -4,7 +4,7 @@
 - **Created:** 2024-12-11
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 005 (Rust interop)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/325
+- **Issue:** https://github.com/encero-systems/incan/issues/325
 - **RFC PR:** —
 - **Written against:** v0.1
 - **Shipped in:** v0.3

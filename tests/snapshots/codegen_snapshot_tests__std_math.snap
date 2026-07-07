@@ -21,8 +21,8 @@ fn main() {
         }),
     );
     let constants = math::PI + math::E + math::TAU + math::INFINITY + math::NAN;
-    let funcs = math::round(1.4f64) + math::log2(8f64) + math::atan2(1f64, 1f64)
-        + math::hypot(3f64, 4f64);
+    let funcs = math::round(1.4) + math::log2(8.0) + math::atan2(1.0, 1.0)
+        + math::hypot(3.0, 4.0);
     let ints = math::gcd(54, 24) + math::lcm(6, 8);
     let _ = println!("{}", constants + funcs + (ints) as f64);
 }

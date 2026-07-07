@@ -10,8 +10,8 @@
     - RFC 033 (`ctx` keyword and generated initialization)
     - RFC 036 (user-defined decorators and compiler built-ins)
     - RFC 041 (first-class Rust interop authoring)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/337
-- **RFC PR:** https://github.com/dannys-code-corner/incan/pull/409
+- **Issue:** https://github.com/encero-systems/incan/issues/337
+- **RFC PR:** https://github.com/encero-systems/incan/pull/409
 - **Written against:** v0.2
 - **Shipped in:** v0.3
 

@@ -1,10 +1,37 @@
 # Coming from Python (apps)
 
-This page is a routing guide for Python developers building apps/services.
+This page routes Python developers who are evaluating Incan for application code, services, typed domain packages, and deployment-oriented tooling.
+
+## Install first
+
+If you use Python tooling day to day, `pipx` is the cleanest package-manager entrypoint because it keeps the command package isolated from project environments while still installing the verified Incan toolchain archive. The installer also provisions the Rust backend when needed, so a fresh machine can move straight from install to `incan run`:
+
+```bash
+pipx install incan
+incan --version
+```
+
+The direct installer is the same toolchain release path and is useful in shell scripts, CI images, and environments where you do not want another package manager involved:
+
+```bash
+--8<-- "_snippets/commands/direct_install.sh"
+export PATH="$HOME/.local/bin:$PATH"
+incan --version
+```
+
+After installation, create a project and run the normal first-contact loop:
+
+```bash
+incan new hello --yes
+cd hello
+incan run
+incan test
+incan build --release
+```
 
 ## What you should do next
 
-- Install the SDK and create a starter project: [Getting Started](../tooling/tutorials/getting_started.md)
+- Install the toolchain and create a starter project: [Getting Started](../tooling/tutorials/getting_started.md)
 - If anything fails: [Troubleshooting](../tooling/how-to/troubleshooting.md)
 - Learn the basics: [The Incan Book (Basics)](../language/tutorials/book/index.md)
 - Build your first API: [Build your first API](../language/tutorials/build_your_first_api.md)

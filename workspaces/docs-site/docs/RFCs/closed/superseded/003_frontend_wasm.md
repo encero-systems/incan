@@ -8,7 +8,7 @@
     - RFC 031 (library system phase 1)
     - RFC 037 (native web and HTTP stdlib redesign)
     - RFC 092 (interactive runtime stdlib contracts)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/312
+- **Issue:** https://github.com/encero-systems/incan/issues/312
 - **RFC PR:** —
 - **Written against:** v0.1
 - **Shipped in:** —

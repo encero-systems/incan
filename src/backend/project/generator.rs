@@ -68,6 +68,8 @@ pub struct ProjectGenerator {
     pub(super) cargo_lock_payload: Option<String>,
     /// Extra cargo policy flags (e.g. --locked, --frozen).
     pub(super) cargo_policy_flags: Vec<String>,
+    /// Optional shared Cargo target directory for generated Rust projects.
+    pub(super) cargo_target_dir_override: Option<PathBuf>,
     /// Optional Rust edition override.
     pub(super) rust_edition: Option<String>,
     /// Profile used when building the generated crate for `incan run`.
@@ -97,6 +99,7 @@ impl ProjectGenerator {
             include_dev_dependencies: false,
             cargo_lock_payload: None,
             cargo_policy_flags: Vec::new(),
+            cargo_target_dir_override: None,
             rust_edition: None,
             run_profile: RunProfile::Debug,
         }
@@ -144,6 +147,11 @@ impl ProjectGenerator {
         self.cargo_policy_flags = flags;
     }
 
+    /// Set the Cargo target directory used by generated Rust projects.
+    pub fn set_cargo_target_dir_override(&mut self, target_dir: Option<PathBuf>) {
+        self.cargo_target_dir_override = target_dir;
+    }
+
     /// Override the Rust edition used in Cargo.toml.
     pub fn set_rust_edition(&mut self, edition: Option<String>) {
         self.rust_edition = edition;
@@ -187,6 +195,14 @@ impl ProjectGenerator {
         Some(Self::resolve_target_dir(raw))
     }
 
+    /// Return the explicit target override, falling back to the legacy environment variable.
+    pub(super) fn cargo_target_dir_override(&self) -> Option<PathBuf> {
+        self.cargo_target_dir_override
+            .clone()
+            .map(Self::resolve_target_dir)
+            .or_else(Self::generated_cargo_target_dir_override)
+    }
+
     /// Resolve the cargo target directory for a generated project.
     pub(super) fn resolve_target_dir(target_dir: PathBuf) -> PathBuf {
         if target_dir.is_absolute() {
@@ -206,7 +222,7 @@ impl ProjectGenerator {
     /// and parallel build collisions. Library target names stay stable because native Rust consumers import them as
     /// crate names from generated library artifacts.
     pub(super) fn cargo_target_name(&self) -> String {
-        if self.is_binary && Self::generated_cargo_target_dir_override().is_some() {
+        if self.is_binary && self.cargo_target_dir_override().is_some() {
             Self::shared_target_safe_name(&self.name, &self.output_dir)
         } else {
             self.name.clone()

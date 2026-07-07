@@ -13,7 +13,7 @@
     - RFC 090 (typed CLI framework)
     - RFC 093 (`std.telemetry` observability)
     - RFC 102 (semantic layer inspection surface)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/661
+- **Issue:** https://github.com/encero-systems/incan/issues/661
 - **RFC PR:** -
 - **Written against:** v0.3
 - **Shipped in:** —

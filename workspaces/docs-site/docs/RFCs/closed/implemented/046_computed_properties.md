@@ -7,7 +7,7 @@
     - RFC 021 (model field metadata and aliases)
     - RFC 042 (traits are always abstract)
     - RFC 044 (open-ended trait methods)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/203
+- **Issue:** https://github.com/encero-systems/incan/issues/203
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** v0.3

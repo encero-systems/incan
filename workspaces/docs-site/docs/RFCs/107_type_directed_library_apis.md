@@ -10,8 +10,8 @@
     - RFC 054 (explicit call-site generic arguments)
     - RFC 083 (symbol and method aliases)
     - RFC 098 (native associated types)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/752
-- **RFC PR:** https://github.com/dannys-code-corner/incan/pull/751
+- **Issue:** https://github.com/encero-systems/incan/issues/752
+- **RFC PR:** https://github.com/encero-systems/incan/pull/751
 - **Written against:** v0.3
 - **Shipped in:** —
 
@@ -51,6 +51,7 @@ The larger design still needs an RFC because this surface touches several langua
 - Preserve decorated overload behavior, side effects, callable identity, defaults, checked signatures, and metadata.
 - Preserve the same semantics through same-module use, cross-module imports, public package imports, package consumers, facade reexports, test harnesses, and generated documentation.
 - Define diagnostics for bare type names used without `Type[T]` expected context.
+- Preserve type-token overloads, type-directed return mappings, alias relationships, decorator identity, selected overloads, and boundary-invariant proofs in checked metadata, generated docs, LSP views, and package manifests.
 - Document where this feature stops so users do not infer broader type-level programming support.
 
 ## Non-Goals
@@ -223,6 +224,20 @@ Library manifests and checked API metadata must preserve `Type[T]` parameter sha
 
 Generated documentation and LSP surfaces should display type-token overloads as ordinary overloads. Documentation for aliases should show the alias as a public name while preserving the target relationship.
 
+### Metadata and inspection contract
+
+Type-directed API behavior must be explainable without reading generated backend code. Checked API metadata, package manifests, generated documentation, semantic inspection, and LSP surfaces must be able to expose at least:
+
+- every overload that accepts a `Type[T]` token, including the source type token, selected return type, defaults, and callable identity;
+- type-directed return mappings declared by the library, including the source of the mapping and the resulting type for known substitutions;
+- alias and public reexport relationships that preserve an overload set rather than creating wrapper callables;
+- decorator metadata and callable identity that distinguish source-level behavior from generated implementation names;
+- selected-overload facts for checked call sites when the compiler can resolve the call;
+- boundary-invariant facts showing that same-module, imported, facade, package, alias, and test-harness paths expose the same callable surface when they refer to the same public symbol;
+- degraded-state markers for tolerant tooling modes when a mapping or overload set is incomplete because of earlier diagnostics.
+
+An explanation command should be able to answer why `cast(col("amount"), int)` selected a particular overload and why importing the same symbol through a facade does not change the selected return type. Diagnostics should use the same identities as manifests and docs, so users do not see one name in an error, another name in generated documentation, and a third generated backend name in inspection output.
+
 ## Design details
 
 ### Why support both `cast(expr, int)` and `cast[int](expr)`?
@@ -311,9 +326,9 @@ Backends should treat type tokens as zero-sized compile-time evidence unless a r
 - **IR Lowering**: must lower type-token expressions and overloaded aliases without splitting same-module and import-boundary behavior.
 - **Emission**: must emit backend representations for type tokens and preserve source callable names in generated metadata.
 - **Stdlib / Runtime (`incan_stdlib`)**: must provide the minimal token carrier and primitive reflection hooks needed by compiler-emitted code.
-- **Library manifests / checked API metadata**: must serialize `Type[T]`, overload sets, aliases, decorators, defaults, and package reexports without erasing identity.
+- **Library manifests / checked API metadata**: must serialize `Type[T]`, overload sets, selected return mappings, aliases, decorators, defaults, package reexports, boundary-invariant relationships, and degraded-state markers without erasing identity.
 - **Formatter**: should preserve ordinary call syntax and type annotations; no special formatting beyond existing type syntax is expected.
-- **LSP / Tooling**: should show type-token overloads in completion, hover, signature help, generated API docs, and diagnostics.
+- **LSP / Tooling**: should show type-token overloads, selected overloads, mapping explanations, alias targets, facade/reexport invariants, and degraded-state warnings in completion, hover, signature help, generated API docs, semantic inspection, and diagnostics.
 
 ## Unresolved questions
 

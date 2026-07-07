@@ -96,7 +96,7 @@ impl AstLowering {
                             &mut hidden_counter,
                         );
                         let ty = Self::lower_param_container_type(p.node.kind, base_ty);
-                        FunctionParam {
+                        Ok(FunctionParam {
                             name: p.node.name.clone(),
                             ty,
                             mutability: if p.node.is_mut {
@@ -106,13 +106,10 @@ impl AstLowering {
                             },
                             is_self: false,
                             kind: p.node.kind,
-                            default: match &p.node.default {
-                                Some(default_expr) => self.lower_expr_spanned(default_expr).ok(),
-                                None => None,
-                            },
-                        }
+                            default: self.lower_param_default_expr(p.node.default.as_ref())?,
+                        })
                     })
-                    .collect();
+                    .collect::<Result<_, LoweringError>>()?;
                 params.extend(other_params);
 
                 let return_type =

@@ -5,7 +5,7 @@
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** —
 - **Issue:** —
-- **RFC PR:** [#50](https://github.com/dannys-code-corner/incan/pull/50)
+- **RFC PR:** [#50](https://github.com/encero-systems/incan/pull/50)
 - **Written against:** v0.1
 - **Shipped in:** v0.1
 

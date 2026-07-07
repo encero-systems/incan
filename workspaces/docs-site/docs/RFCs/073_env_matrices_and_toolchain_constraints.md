@@ -9,7 +9,7 @@
     - RFC 018 (language primitives for testing)
     - RFC 019 (test runner, CLI, and ecosystem)
     - RFC 020 (Cargo offline and locked policy)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/401
+- **Issue:** https://github.com/encero-systems/incan/issues/401
 - **RFC PR:** —
 - **Written against:** v0.3
 - **Shipped in:** —

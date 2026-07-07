@@ -4,7 +4,7 @@ This page is a routing guide for step/pipeline-style workflows (automation, repr
 
 ## What you should do next
 
-- Quickstart: [Getting Started](../tooling/tutorials/getting_started.md) (SDK install and starter project)
+- Quickstart: [Getting Started](../tooling/tutorials/getting_started.md) (toolchain install and starter project)
 - Pipeline tutorial: [Pipeline mini-project](../tooling/tutorials/pipeline_mini_project.md)
 - CI entrypoint (projects): [CI & automation](../tooling/how-to/ci_and_automation.md)
 - CI entrypoint (contributors): [CI & automation (repository)](../contributing/how-to/ci_and_automation.md)

@@ -500,26 +500,15 @@ fn find_stdlib_file(relative: &str) -> Option<PathBuf> {
         return Some(workspace_local);
     }
 
-    // 4. Relative to executable location (works for some installed/bundled layouts).
-    if let Ok(exe_path) = std::env::current_exe()
-        && let Some(exe_dir) = exe_path.parent()
-    {
-        for base in [
-            Some(exe_dir),
-            exe_dir.parent(),
-            exe_dir.parent().and_then(|p| p.parent()),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            let candidate_crate_local = base.join("crates/incan_stdlib").join(relative);
-            if candidate_crate_local.exists() {
-                return Some(candidate_crate_local);
-            }
-            let candidate_local = base.join(relative);
-            if candidate_local.exists() {
-                return Some(candidate_local);
-            }
+    // 4. Relative to executable location, including installed symlink launchers.
+    for base in crate::toolchain_layout::current_executable_search_bases() {
+        let candidate_crate_local = base.join("crates/incan_stdlib").join(relative);
+        if candidate_crate_local.exists() {
+            return Some(candidate_crate_local);
+        }
+        let candidate_local = base.join(relative);
+        if candidate_local.exists() {
+            return Some(candidate_local);
         }
     }
 
@@ -623,11 +612,42 @@ fn lookup_type_docstring_inner(
 
 /// Parse a stdlib stub module into an AST program for metadata lookups that need source expressions.
 fn load_stdlib_program(module_path: &[String]) -> Option<ast::Program> {
-    let relative = stdlib::stdlib_stub_path(module_path)?;
-    let path = find_stdlib_file(&relative)?;
-    let source = std::fs::read_to_string(path).ok()?;
-    let tokens = crate::frontend::lexer::lex(&source).ok()?;
-    crate::frontend::parser::parse(&tokens).ok()
+    let relative = match stdlib::stdlib_stub_path(module_path) {
+        Some(path) => path,
+        None => {
+            tracing::warn!("Stdlib module not found: {}", module_path.join("::"));
+            return None;
+        }
+    };
+    let path = match find_stdlib_file(&relative) {
+        Some(path) => path,
+        None => {
+            tracing::warn!("Failed to find stdlib file: {}", relative);
+            return None;
+        }
+    };
+    let source = match std::fs::read_to_string(&path) {
+        Ok(source) => source,
+        Err(e) => {
+            tracing::warn!("Failed to read stdlib file {}: {}", relative, e);
+            return None;
+        }
+    };
+    let tokens = match crate::frontend::lexer::lex(&source) {
+        Ok(tokens) => tokens,
+        Err(e) => {
+            tracing::warn!("Lexer error in stdlib {}: {:?}", relative, e);
+            return None;
+        }
+    };
+    let ast = match crate::frontend::parser::parse(&tokens) {
+        Ok(ast) => ast,
+        Err(e) => {
+            tracing::warn!("Parser error in stdlib {}: {:?}", relative, e);
+            return None;
+        }
+    };
+    Some(ast)
 }
 
 /// Find a top-level function declaration directly in a parsed stdlib program.

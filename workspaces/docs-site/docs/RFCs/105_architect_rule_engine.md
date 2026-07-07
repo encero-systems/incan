@@ -9,7 +9,7 @@
     - RFC 070 (Result combinators)
     - RFC 088 (iterator adapter surface)
     - RFC 096 (declaration metadata blocks)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/663
+- **Issue:** https://github.com/encero-systems/incan/issues/663
 - **RFC PR:** -
 - **Written against:** v0.3
 - **Shipped in:** —

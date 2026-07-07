@@ -18,7 +18,7 @@ The Incan Language Server provides IDE integration for real-time feedback while 
 From the Incan repository, a normal debug build updates both the compiler and the language server and, on local machines (not CI), symlinks them into `~/.cargo/bin` so your shell and editor see the same binaries:
 
 ```bash
-cd /path/to/incan-programming-language
+cd /path/to/incan
 make build
 ```
 
@@ -53,14 +53,14 @@ After upgrading the compiler or changing either binary path, reload the editor w
 ### Alternative: release binary on `PATH`
 
 ```bash
-cd /path/to/incan-programming-language
+cd /path/to/incan
 make lsp
 ```
 
 Then add `target/release` to your `PATH`, or install into `~/.cargo/bin`:
 
 ```bash
-cd /path/to/incan-programming-language
+cd /path/to/incan
 cargo install --path . --features lsp --bin incan-lsp --force
 ```
 

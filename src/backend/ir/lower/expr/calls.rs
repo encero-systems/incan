@@ -87,15 +87,18 @@ impl AstLowering {
 
     /// Rebuild a callable signature directly from a stdlib method declaration so default expressions survive import
     /// metadata boundaries.
-    fn callable_signature_from_stdlib_method_decl(&mut self, method: &ast::MethodDecl) -> FunctionSignature {
-        FunctionSignature {
+    fn callable_signature_from_stdlib_method_decl(
+        &mut self,
+        method: &ast::MethodDecl,
+    ) -> Result<FunctionSignature, LoweringError> {
+        Ok(FunctionSignature {
             params: method
                 .params
                 .iter()
                 .map(|param| {
                     let base_ty = self.lower_type(&param.node.ty.node);
                     let ty = Self::lower_param_container_type(param.node.kind, base_ty);
-                    FunctionParam {
+                    Ok(FunctionParam {
                         name: param.node.name.clone(),
                         ty,
                         mutability: if param.node.is_mut {
@@ -105,29 +108,28 @@ impl AstLowering {
                         },
                         is_self: false,
                         kind: param.node.kind,
-                        default: param
-                            .node
-                            .default
-                            .as_ref()
-                            .and_then(|default_expr| self.lower_expr_spanned(default_expr).ok()),
-                    }
+                        default: self.lower_param_default_expr(param.node.default.as_ref())?,
+                    })
                 })
-                .collect(),
+                .collect::<Result<_, LoweringError>>()?,
             return_type: self.lower_type(&method.return_type.node),
-        }
+        })
     }
 
     /// Rebuild a callable signature directly from a stdlib function declaration so default expressions survive import
     /// metadata boundaries.
-    fn callable_signature_from_stdlib_function_decl(&mut self, func: &ast::FunctionDecl) -> FunctionSignature {
-        FunctionSignature {
+    fn callable_signature_from_stdlib_function_decl(
+        &mut self,
+        func: &ast::FunctionDecl,
+    ) -> Result<FunctionSignature, LoweringError> {
+        Ok(FunctionSignature {
             params: func
                 .params
                 .iter()
                 .map(|param| {
                     let base_ty = self.lower_type(&param.node.ty.node);
                     let ty = Self::lower_param_container_type(param.node.kind, base_ty);
-                    FunctionParam {
+                    Ok(FunctionParam {
                         name: param.node.name.clone(),
                         ty,
                         mutability: if param.node.is_mut {
@@ -137,16 +139,12 @@ impl AstLowering {
                         },
                         is_self: false,
                         kind: param.node.kind,
-                        default: param
-                            .node
-                            .default
-                            .as_ref()
-                            .and_then(|default_expr| self.lower_expr_spanned(default_expr).ok()),
-                    }
+                        default: self.lower_param_default_expr(param.node.default.as_ref())?,
+                    })
                 })
-                .collect(),
+                .collect::<Result<_, LoweringError>>()?,
             return_type: self.lower_type(&func.return_type.node),
-        }
+        })
     }
 
     /// Resolve a callable signature from a public dependency manifest, including materialized default expressions.
@@ -507,15 +505,19 @@ impl AstLowering {
         &mut self,
         path: &[String],
         method_name: &str,
-    ) -> Option<FunctionSignature> {
+    ) -> Result<Option<FunctionSignature>, LoweringError> {
         if path.len() < 3 || path.first().map(String::as_str) != Some(incan_core::lang::stdlib::STDLIB_ROOT) {
-            return None;
+            return Ok(None);
         }
-        let type_name = path.last()?;
+        let Some(type_name) = path.last() else {
+            return Ok(None);
+        };
         let module_path = &path[..path.len() - 1];
         let mut cache = crate::frontend::typechecker::stdlib_loader::StdlibAstCache::new();
-        let method = cache.lookup_type_method_decl(module_path, type_name, method_name)?;
-        Some(self.callable_signature_from_stdlib_method_decl(&method))
+        let Some(method) = cache.lookup_type_method_decl(module_path, type_name, method_name) else {
+            return Ok(None);
+        };
+        self.callable_signature_from_stdlib_method_decl(&method).map(Some)
     }
 
     /// Resolve an imported public dependency model/class method signature from the provider manifest.
@@ -675,15 +677,19 @@ impl AstLowering {
     pub(in crate::backend::ir::lower) fn callable_signature_for_imported_stdlib_path(
         &mut self,
         path: &[String],
-    ) -> Option<FunctionSignature> {
+    ) -> Result<Option<FunctionSignature>, LoweringError> {
         if path.len() < 2 || path.first().map(String::as_str) != Some(incan_core::lang::stdlib::STDLIB_ROOT) {
-            return None;
+            return Ok(None);
         }
-        let function_name = path.last()?;
+        let Some(function_name) = path.last() else {
+            return Ok(None);
+        };
         let module_path = &path[..path.len() - 1];
         let mut cache = crate::frontend::typechecker::stdlib_loader::StdlibAstCache::new();
-        let func = cache.lookup_function_decl(module_path, function_name)?;
-        Some(self.callable_signature_from_stdlib_function_decl(&func))
+        let Some(func) = cache.lookup_function_decl(module_path, function_name) else {
+            return Ok(None);
+        };
+        self.callable_signature_from_stdlib_function_decl(&func).map(Some)
     }
 
     /// Resolve a callable signature from the callee expression's type information.
@@ -2281,10 +2287,13 @@ impl AstLowering {
         };
         let callable_signature = imported_callee_path
             .as_deref()
-            .and_then(|path| {
-                self.callable_signature_for_imported_stdlib_path(path)
-                    .or_else(|| self.callable_signature_for_imported_pub_path(path))
+            .map(|path| {
+                Ok(self
+                    .callable_signature_for_imported_stdlib_path(path)?
+                    .or_else(|| self.callable_signature_for_imported_pub_path(path)))
             })
+            .transpose()?
+            .flatten()
             .or(call_site_signature)
             .or(local_callable_signature)
             .or_else(|| self.callable_signature_for_callee_span(f.span));
@@ -2589,7 +2598,7 @@ impl AstLowering {
                 type_args: Vec::new(),
                 args: args_ir,
                 callable_signature: self
-                    .callable_signature_for_imported_stdlib_type_method_path(&type_path, TYPE_CONSTRUCTOR_HOOK),
+                    .callable_signature_for_imported_stdlib_type_method_path(&type_path, TYPE_CONSTRUCTOR_HOOK)?,
                 arg_policy: MethodCallArgPolicy::Default,
             },
             ret_ty,

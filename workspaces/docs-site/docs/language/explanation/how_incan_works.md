@@ -4,7 +4,7 @@ This page is a user-level mental model of what happens when you run Incan.
 
 ## The short version
 
-Incan compiles `.incn` source code to Rust, then builds an executable.
+In the current beta, Incan checks `.incn` source code, lowers it through the Rust backend, and builds an executable. Generated Rust is inspectable backend output today, but the longer-lived public contract is the checked source, diagnostics, build reports, semantic facts, package metadata, and native artifacts.
 
 ## Pipeline (conceptual)
 

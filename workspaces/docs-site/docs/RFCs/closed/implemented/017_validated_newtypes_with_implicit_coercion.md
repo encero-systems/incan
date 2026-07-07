@@ -4,7 +4,7 @@
 - **Created:** 2026-01-12
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 021 (model field metadata and aliases)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/75
+- **Issue:** https://github.com/encero-systems/incan/issues/75
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** v0.3.0-dev.39

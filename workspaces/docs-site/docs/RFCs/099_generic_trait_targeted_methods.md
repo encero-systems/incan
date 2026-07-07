@@ -13,8 +13,8 @@
     - RFC 091 (constrained integer newtype storage carriers)
     - RFC 098 (native associated types for traits)
     - RFC 101 (`std.collections.OrdinalMap`)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/581
-- **Blocks:** https://github.com/dannys-code-corner/incan/issues/596 (v0.5 RFC 101 trait-system bridge removal)
+- **Issue:** https://github.com/encero-systems/incan/issues/581
+- **Blocks:** https://github.com/encero-systems/incan/issues/596 (v0.5 RFC 101 trait-system bridge removal)
 - **RFC PR:** —
 - **Written against:** v0.3
 - **Shipped in:** —
@@ -53,6 +53,7 @@ RFC 101 exposed the complementary case. `std.collections.OrdinalKey` owns a dete
 - Support trait-owned capability families for deterministic registry-backed contracts such as stable ordinal keys.
 - Preserve the existing `with TraitName` and method-level `for TraitName` mental model from RFC 043.
 - Reject overlapping adoption families clearly rather than adding specialization by accident.
+- Preserve trait adoption families, where-constraint proofs, trait-owned capability-family membership, selected substitutions, and overlap diagnostics in checked metadata, generated docs, LSP views, and package manifests.
 
 ## Non-Goals
 
@@ -175,6 +176,20 @@ The compiler must reject overlapping generic trait-targeted methods when two met
 
 Call resolution must continue to treat trait-targeted methods as trait behavior, not arbitrary overloads. A direct method call may use the targeted method when existing trait-method resolution can identify the relevant trait instantiation from argument types, expected result type, or an explicit target. If no target can be proven, the compiler must report an ambiguity or missing-method diagnostic rather than trying every method with a matching name as a runtime overload set.
 
+### Metadata and inspection contract
+
+Generic trait-targeted methods must produce inspectable trait adoption facts. Checked API metadata, package manifests, generated documentation, semantic inspection, and LSP surfaces must be able to expose at least:
+
+- the enclosing type that owns the method family;
+- the targeted trait instantiation, including method-local type parameters;
+- bounds and `where` constraints that decide whether a substitution belongs to the adoption family;
+- associated type projections and storage-carrier relationships used by the family;
+- trait-owned capability-family predicates and registry-backed membership sources;
+- overlap-rejection facts when two adoption families would satisfy the same trait target;
+- the concrete substitution selected for a resolved method call when enough type information is available.
+
+These facts are part of the public semantic contract. A package consumer, generated-doc reader, LSP hover, or explanation command should be able to answer why `BytesIO` satisfies `BinaryWrite[Month]`, which storage carrier made that possible, and which constraint would fail if the same call were attempted for a non-storage-backed type. The metadata must preserve the distinction between authored adoption families, trait-owned capability families, and backend lowering choices so generated Rust does not become the only way to understand the behavior.
+
 ## Design details
 
 ### Syntax
@@ -268,7 +283,8 @@ Storage-backed constrained newtypes should expose their storage carrier through 
 - **Emission**: Rust emission should lower eligible generic trait-targeted methods to valid Rust trait implementations or equivalent generated code while respecting coherence.
 - **Stdlib / Runtime (`incan_stdlib`)**: numeric family traits and storage-backed integer traits should be exposed where `std.io`, codecs, serializers, and related APIs need them.
 - **Formatter**: multiline generic method headers with `for` and repeated `where` clauses must format stably.
-- **LSP / Tooling**: hover, completion, go-to-definition, and diagnostics should surface the trait target, adoption family constraints, and concrete substitutions.
+- **Library manifests / checked API metadata**: public adoption-family metadata must preserve trait targets, constraints, capability-family predicates, substitutions, overlap diagnostics, and provenance.
+- **LSP / Tooling**: hover, completion, go-to-definition, diagnostics, semantic inspection, and explanation commands should surface the trait target, adoption family constraints, concrete substitutions, and reasons a substitution was accepted or rejected.
 - **Documentation**: trait, class, numeric, newtype, and `std.io` docs should explain when generic trait-targeted methods are appropriate.
 
 ## Unresolved questions

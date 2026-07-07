@@ -85,7 +85,7 @@ For explicit typing, use a named function instead.
     We deliberately chose **not** to include Python-style `lambda` in Incan for several reasons:
 
     1. **Readability** — `lambda x, y: x + y` is less clear than `(x, y) => x + y`
-    2. **Consistency with Rust** — Incan compiles to Rust, which uses `|x, y| expr` closures
+    2. **Backend alignment** — the current backend lowers closures to Rust-style closure expressions
     3. **Modern syntax** — Arrow functions are familiar from JavaScript, TypeScript, and Rust
     4. **Visual distinction** — The `=>` arrow clearly separates parameters from body
 

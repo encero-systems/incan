@@ -10,7 +10,7 @@
     - RFC 031 (library system phase 1)
     - RFC 034 (`incan.pub` registry)
     - RFC 082 (checked API documentation generation)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/205, https://github.com/dannys-code-corner/incan/issues/438
+- **Issue:** https://github.com/encero-systems/incan/issues/205, https://github.com/encero-systems/incan/issues/438
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** v0.3.0-dev.20

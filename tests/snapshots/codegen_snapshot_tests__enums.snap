@@ -131,13 +131,13 @@ fn handle_message(msg: Message) -> String {
 fn calculate_area(shape: Shape) -> f64 {
     let _ = match shape {
         Shape::Circle(r) => {
-            return 3.14159f64 * r * r;
+            return 3.14159 * r * r;
         }
         Shape::Rectangle(w, h) => {
             return w * h;
         }
         Shape::Triangle(b, h) => {
-            return 0.5f64 * b * h;
+            return 0.5 * b * h;
         }
     };
 }
@@ -215,9 +215,9 @@ fn main() {
     let _ = println!("{}", handle_message(move_msg));
     let _ = println!("{}", handle_message(write_msg));
     let _ = println!("{}", handle_message(color_msg));
-    let circle: Shape = Shape::Circle(5f64);
-    let rectangle: Shape = Shape::Rectangle(4f64, 6f64);
-    let triangle: Shape = Shape::Triangle(3f64, 8f64);
+    let circle: Shape = Shape::Circle(5.0);
+    let rectangle: Shape = Shape::Rectangle(4.0, 6.0);
+    let triangle: Shape = Shape::Triangle(3.0, 8.0);
     let circle_area: f64 = calculate_area(circle);
     let rect_area: f64 = calculate_area(rectangle);
     let tri_area: f64 = calculate_area(triangle);

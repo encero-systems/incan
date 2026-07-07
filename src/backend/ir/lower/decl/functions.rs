@@ -384,7 +384,7 @@ impl AstLowering {
                 if p.node.is_mut {
                     self.mutable_vars.insert(p.node.name.clone(), true);
                 }
-                FunctionParam {
+                Ok(FunctionParam {
                     name: p.node.name.clone(),
                     ty: param_ty, // Store the emitted parameter type (emit will add &mut for mutable params)
                     mutability: if p.node.is_mut {
@@ -394,13 +394,10 @@ impl AstLowering {
                     },
                     is_self: false,
                     kind: p.node.kind,
-                    default: match &p.node.default {
-                        Some(default_expr) => self.lower_expr_spanned(default_expr).ok(),
-                        None => None,
-                    },
-                }
+                    default: self.lower_param_default_expr(p.node.default.as_ref())?,
+                })
             })
-            .collect();
+            .collect::<Result<_, LoweringError>>()?;
 
         let return_type = self.lower_callable_return_type(&f.return_type.node, Some(&type_param_names));
         let is_generator = return_type_is_generator(&return_type) && body_contains_yield(&f.body);

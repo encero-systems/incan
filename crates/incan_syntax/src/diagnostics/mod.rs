@@ -17,5 +17,5 @@ pub use catalog::{errors, lints};
 pub use miette::{IncanDiagnostic, format_error_smart, render_miette};
 pub use stable::{
     DIAGNOSTIC_SCHEMA_VERSION, DiagnosticCatalogEntry, DiagnosticPhase, StableDiagnostic, catalog_entries,
-    code_for_error, explain, stable_diagnostic,
+    code_for_error, explain, phase_for_typecheck_span, stable_diagnostic,
 };

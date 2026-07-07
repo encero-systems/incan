@@ -109,7 +109,7 @@ impl Rectangle {
         return self.width * self.height;
     }
     pub fn perimeter(&self) -> f64 {
-        return 2f64 * (self.width + self.height);
+        return 2.0 * (self.width + self.height);
     }
 }
 impl Shape for Rectangle {
@@ -117,7 +117,7 @@ impl Shape for Rectangle {
         return self.width * self.height;
     }
     fn perimeter(&self) -> f64 {
-        return 2f64 * (self.width + self.height);
+        return 2.0 * (self.width + self.height);
     }
 }
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
@@ -233,7 +233,7 @@ impl Shape for Square {
         return self.side * self.side;
     }
     fn perimeter(&self) -> f64 {
-        return 4f64 * self.side;
+        return 4.0 * self.side;
     }
 }
 impl Drawable for Square {
@@ -447,8 +447,8 @@ fn main() {
         __parts, & __args) }
     );
     let rect: Rectangle = Rectangle {
-        width: 5f64,
-        height: 3f64,
+        width: 5.0,
+        height: 3.0,
     };
     let rect_area: f64 = rect.area();
     let rect_perimeter: f64 = rect.perimeter();
@@ -457,10 +457,10 @@ fn main() {
         ""]; let __args : Vec < String > = vec![format!("{}", rect_area), format!("{}",
         rect_perimeter)]; incan_stdlib::strings::fstring(& __parts, & __args) }
     );
-    let circle: Circle = Circle { radius: 2.5f64 };
+    let circle: Circle = Circle { radius: 2.5 };
     let circle_drawing: String = circle.draw();
     let _ = println!("{}", circle_drawing);
-    let square: Square = Square { side: 4f64 };
+    let square: Square = Square { side: 4.0 };
     let square_area: f64 = square.area();
     let square_drawing: String = square.draw();
     let _ = println!(
@@ -470,9 +470,9 @@ fn main() {
     );
     let _ = println!("{}", square_drawing);
     let mut carton: Carton = Carton {
-        width: 2f64,
-        height: 3f64,
-        depth: 4f64,
+        width: 2.0,
+        height: 3.0,
+        depth: 4.0,
     };
     let original_volume: f64 = carton.volume();
     let _ = println!(
@@ -480,7 +480,7 @@ fn main() {
         Vec < String > = vec![format!("{}", original_volume)];
         incan_stdlib::strings::fstring(& __parts, & __args) }
     );
-    let _ = carton.resize(2f64);
+    let _ = carton.resize(2.0);
     let new_volume: f64 = carton.volume();
     let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["New volume: ", ""]; let __args : Vec <

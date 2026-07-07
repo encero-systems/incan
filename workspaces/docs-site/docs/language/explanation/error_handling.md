@@ -74,8 +74,7 @@ The key ideas:
 ??? info "Coming from TS/JS?"
     In JS/TS, `try/catch` works, but failures are often effectively “untyped” at the boundary (anything can be thrown, and caught values are frequently `unknown`).
 
-    In Incan, fallibility is explicit in the return type, and you handle it with `Result` + `match` (or propagate it with
-    `?`).
+    In Incan, fallibility is explicit in the return type, and you handle it with `Result` + `match` (or propagate it with `?`).
 
     **JS/TS `try/catch` → Incan `Result`**:
 
@@ -223,7 +222,7 @@ Prefer:
 
 ## See also
 
-- [Example: Error Handling](https://github.com/dannys-code-corner/incan/blob/main/examples/intermediate/error_handling.incn)
+- [Example: Error Handling](https://github.com/encero-systems/incan/blob/main/examples/intermediate/error_handling.incn)
 - [Fallible and infallible paths](../tutorials/fallible_and_infallible_paths.md)
 - [Async programming](../how-to/async_programming.md)
 - [Error handling recipes](../how-to/error_handling_recipes.md)

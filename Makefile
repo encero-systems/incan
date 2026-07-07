@@ -417,6 +417,40 @@ vscode-package:
 	@cd workspaces/ide/vscode && npx @vscode/vsce package
 	@echo "\033[32m✓ Extension packaged\033[0m"
 
+.PHONY: toolchain-release-build  ## tool - Build toolchain release binaries (compiler + LSP)
+toolchain-release-build:
+	@echo "\033[1mBuilding toolchain release binaries...\033[0m"
+	@cargo build --locked --release --features lsp --bin incan --bin incan-lsp
+	@echo "\033[32m✓ toolchain release binaries built\033[0m"
+
+.PHONY: toolchain-release-package  ## tool - Package local toolchain archive (TOOLCHAIN_DIST=/private/tmp/incan-local-test)
+toolchain-release-package: toolchain-release-build
+	@TOOLCHAIN_DIST="$${TOOLCHAIN_DIST:-/private/tmp/incan-local-test}" bash workspaces/release/toolchain/local_smoke.sh package
+
+.PHONY: toolchain-release-assets  ## tool - Write local toolchain manifest/install assets
+toolchain-release-assets:
+	@TOOLCHAIN_DIST="$${TOOLCHAIN_DIST:-/private/tmp/incan-local-test}" bash workspaces/release/toolchain/local_smoke.sh assets
+
+.PHONY: toolchain-release-smoke-direct  ## tool - Smoke local toolchain installer directly
+toolchain-release-smoke-direct:
+	@TOOLCHAIN_DIST="$${TOOLCHAIN_DIST:-/private/tmp/incan-local-test}" bash workspaces/release/toolchain/local_smoke.sh direct
+
+.PHONY: toolchain-release-smoke-npm  ## tool - Smoke npm thin installer from local toolchain assets
+toolchain-release-smoke-npm:
+	@TOOLCHAIN_DIST="$${TOOLCHAIN_DIST:-/private/tmp/incan-local-test}" bash workspaces/release/toolchain/local_smoke.sh npm
+
+.PHONY: toolchain-release-smoke-pip  ## tool - Smoke pip thin installer from local toolchain assets
+toolchain-release-smoke-pip:
+	@TOOLCHAIN_DIST="$${TOOLCHAIN_DIST:-/private/tmp/incan-local-test}" bash workspaces/release/toolchain/local_smoke.sh pip
+
+.PHONY: toolchain-release-smoke-homebrew  ## tool - Render and syntax-check local Homebrew formula
+toolchain-release-smoke-homebrew:
+	@TOOLCHAIN_DIST="$${TOOLCHAIN_DIST:-/private/tmp/incan-local-test}" bash workspaces/release/toolchain/local_smoke.sh homebrew
+
+.PHONY: toolchain-release-smoke  ## tool - Full local toolchain release smoke (direct + npm + pip + Homebrew syntax)
+toolchain-release-smoke: toolchain-release-build
+	@TOOLCHAIN_DIST="$${TOOLCHAIN_DIST:-/private/tmp/incan-local-test}" bash workspaces/release/toolchain/local_smoke.sh all
+
 .PHONY: watch  ## tool - Watch for changes and rebuild (requires cargo-watch)
 watch:
 	@echo "\033[1mWatching for changes...\033[0m"

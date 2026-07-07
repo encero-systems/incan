@@ -61,6 +61,16 @@ struct RustTraitMethodCall<'a> {
     span: Span,
 }
 
+struct RustPathMethodCall<'a> {
+    rust_path: &'a str,
+    method: &'a str,
+    type_args: &'a [Spanned<Type>],
+    args: &'a [CallArg],
+    arg_types: &'a [ResolvedType],
+    receiver_span: Span,
+    span: Span,
+}
+
 #[derive(Debug, Clone)]
 struct RustCallableAliasParam {
     rust_display: String,
@@ -1635,20 +1645,26 @@ impl TypeChecker {
         None
     }
 
+    /// Check if a Rust type has generic parameters.
+    fn is_type_generic(&self, rust_path: &str) -> Option<bool> {
+        Some(rust_path.contains('<') || rust_path.contains("::<"))
+    }
+
     /// Resolve and validate a method call on a rust-inspect-backed path.
     ///
     /// Returns:
     /// - `None` when rust-inspect data is unavailable (caller should preserve permissive fallback behavior)
     /// - `Some(ty)` when metadata exists and the call was resolved (or diagnosed as invalid)
-    fn resolve_rust_path_method_call(
-        &mut self,
-        rust_path: &str,
-        method: &str,
-        args: &[CallArg],
-        arg_types: &[ResolvedType],
-        receiver_span: Span,
-        span: Span,
-    ) -> Option<ResolvedType> {
+    fn resolve_rust_path_method_call(&mut self, call: RustPathMethodCall<'_>) -> Option<ResolvedType> {
+        let RustPathMethodCall {
+            rust_path,
+            method,
+            type_args,
+            args,
+            arg_types,
+            receiver_span,
+            span,
+        } = call;
         let preserves_lookup_arg_shape = RustCollectionFamily::for_canonical_path(rust_path)
             .is_some_and(|family| family.preserves_lookup_arg_shape(method));
         if preserves_lookup_arg_shape {
@@ -1669,12 +1685,16 @@ impl TypeChecker {
                 }));
             }
             if let Some(ret) = self.validate_metadata_free_rust_method_call(
-                rust_path,
-                method,
-                args,
-                arg_types,
+                RustPathMethodCall {
+                    rust_path,
+                    method,
+                    type_args,
+                    args,
+                    arg_types,
+                    receiver_span,
+                    span,
+                },
                 preserves_lookup_arg_shape,
-                span,
             ) {
                 return Some(ret);
             }
@@ -1710,18 +1730,34 @@ impl TypeChecker {
                         }));
                     }
                     if let Some(ret) = self.validate_metadata_free_rust_method_call(
-                        rust_path,
-                        method,
-                        args,
-                        arg_types,
+                        RustPathMethodCall {
+                            rust_path,
+                            method,
+                            type_args,
+                            args,
+                            arg_types,
+                            receiver_span,
+                            span,
+                        },
                         preserves_lookup_arg_shape,
-                        span,
                     ) {
                         return Some(ret);
                     }
                     // Stay permissive when no unambiguous imported trait or trait method signature can be selected.
                     return Some(ResolvedType::Unknown);
                 };
+                if !type_args.is_empty() {
+                    let method_has_generic = sig
+                        .params
+                        .iter()
+                        .any(|param| param.type_display.contains('T') || param.type_display.contains("impl"));
+                    let types_has_generic = self.is_type_generic(rust_path)?;
+                    if !method_has_generic && !types_has_generic {
+                        self.errors
+                            .push(errors::explicit_call_site_type_args_not_supported(span));
+                        return Some(ResolvedType::Unknown);
+                    }
+                }
                 if Self::rust_signature_has_receiver(&sig)
                     && sig.params[1..].iter().any(|param| {
                         let normalized = param.type_display.replace(' ', "");
@@ -1801,13 +1837,18 @@ impl TypeChecker {
     /// Validate one metadata-free Rust method compatibility rule through the ordinary Rust-boundary path.
     fn validate_metadata_free_rust_method_call(
         &mut self,
-        rust_path: &str,
-        method: &str,
-        args: &[CallArg],
-        arg_types: &[ResolvedType],
+        call: RustPathMethodCall<'_>,
         preserves_lookup_arg_shape: bool,
-        span: Span,
     ) -> Option<ResolvedType> {
+        let RustPathMethodCall {
+            rust_path,
+            method,
+            type_args: _,
+            args,
+            arg_types,
+            receiver_span: _,
+            span,
+        } = call;
         let sig: RustFunctionSig = metadata_free_method_signature(rust_path, method)?;
         let callable_display = format!("rust::{rust_path}.{method}");
         let error_count = self.errors.len();
@@ -3260,7 +3301,15 @@ impl TypeChecker {
             if let Some(ret) = Self::known_rust_path_method_return(path.as_str(), method) {
                 return ret;
             }
-            let Some(ret) = self.resolve_rust_path_method_call(&path, method, args, &arg_types, base.span, span) else {
+            let Some(ret) = self.resolve_rust_path_method_call(RustPathMethodCall {
+                rust_path: &path,
+                method,
+                type_args,
+                args,
+                arg_types: &arg_types,
+                receiver_span: base.span,
+                span,
+            }) else {
                 // Metadata backend disabled/unavailable: preserve permissive RFC 005 behavior.
                 return ResolvedType::Unknown;
             };
@@ -3738,8 +3787,15 @@ impl TypeChecker {
                     }
                     if newtype.is_rusttype
                         && let ResolvedType::RustPath(path) = &newtype.underlying
-                        && let Some(ret) =
-                            self.resolve_rust_path_method_call(path, resolved_method, args, &arg_types, base.span, span)
+                        && let Some(ret) = self.resolve_rust_path_method_call(RustPathMethodCall {
+                            rust_path: path,
+                            method: resolved_method,
+                            type_args,
+                            args,
+                            arg_types: &arg_types,
+                            receiver_span: base.span,
+                            span,
+                        })
                     {
                         return ret;
                     }
@@ -3837,14 +3893,15 @@ impl TypeChecker {
                         }
                         if nt.is_rusttype
                             && let ResolvedType::RustPath(path) = &nt.underlying
-                            && let Some(ret) = self.resolve_rust_path_method_call(
-                                path,
-                                resolved_method,
+                            && let Some(ret) = self.resolve_rust_path_method_call(RustPathMethodCall {
+                                rust_path: path,
+                                method: resolved_method,
+                                type_args,
                                 args,
-                                &arg_types,
-                                base.span,
+                                arg_types: &arg_types,
+                                receiver_span: base.span,
                                 span,
-                            )
+                            })
                         {
                             return ret;
                         }

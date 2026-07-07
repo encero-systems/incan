@@ -1,20 +1,20 @@
 {
   "schema_version": 1,
-  "sdk_version": "0.4.0",
+  "toolchain_version": "0.4.0",
   "release": "v0.4.0",
   "channel": "stable",
   "generated_at": "2026-06-06T00:00:00Z",
-  "manifest_url": "https://github.com/dannys-code-corner/incan/releases/download/v0.4.0/manifest.json",
+  "manifest_url": "https://github.com/encero-systems/incan/releases/download/v0.4.0/manifest.json",
   "rust_toolchain": {
     "channel": "stable",
     "min_rust": "1.92",
     "targets": ["wasm32-wasip1"],
-    "policy": "The SDK ships Incan binaries and expects generated Rust builds to use the user's installed stable Rust toolchain plus the wasm32-wasip1 target for vocab companions."
+    "policy": "The toolchain installer provisions stable Rust through rustup when needed and ensures the wasm32-wasip1 target for packages that ship vocab companions."
   },
   "commands": ["incan", "incan-lsp"],
   "hosts": {
     "x86_64-unknown-linux-gnu": {
-      "archive_url": "https://github.com/dannys-code-corner/incan/releases/download/v0.4.0/incan-v0.4.0-x86_64-unknown-linux-gnu.tar.gz",
+      "archive_url": "https://github.com/encero-systems/incan/releases/download/v0.4.0/incan-v0.4.0-x86_64-unknown-linux-gnu.tar.gz",
       "archive_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
       "archive_format": "tar.gz",
       "commands": {
@@ -23,7 +23,7 @@
       }
     },
     "x86_64-apple-darwin": {
-      "archive_url": "https://github.com/dannys-code-corner/incan/releases/download/v0.4.0/incan-v0.4.0-x86_64-apple-darwin.tar.gz",
+      "archive_url": "https://github.com/encero-systems/incan/releases/download/v0.4.0/incan-v0.4.0-x86_64-apple-darwin.tar.gz",
       "archive_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
       "archive_format": "tar.gz",
       "commands": {
@@ -32,7 +32,7 @@
       }
     },
     "aarch64-apple-darwin": {
-      "archive_url": "https://github.com/dannys-code-corner/incan/releases/download/v0.4.0/incan-v0.4.0-aarch64-apple-darwin.tar.gz",
+      "archive_url": "https://github.com/encero-systems/incan/releases/download/v0.4.0/incan-v0.4.0-aarch64-apple-darwin.tar.gz",
       "archive_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
       "archive_format": "tar.gz",
       "commands": {

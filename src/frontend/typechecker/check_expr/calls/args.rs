@@ -241,11 +241,11 @@ impl TypeChecker {
                     if let Some((_, param)) = normal_params.get(positional_index) {
                         normal_bound_spans[positional_index] = Some(arg_span);
                         self.infer_type_param_bindings(&param.ty, arg_ty, type_bindings);
-                        self.emit_arg_type_mismatch_if_needed(&param.ty, arg_ty, arg_span);
+                        self.emit_arg_type_mismatch_if_needed(callee, param.name(), &param.ty, arg_ty, arg_span);
                         positional_index += 1;
                     } else if let Some(param) = rest_positional {
                         self.infer_type_param_bindings(&param.ty, arg_ty, type_bindings);
-                        self.emit_arg_type_mismatch_if_needed(&param.ty, arg_ty, arg_span);
+                        self.emit_arg_type_mismatch_if_needed(callee, param.name(), &param.ty, arg_ty, arg_span);
                     } else {
                         unexpected_positional += 1;
                     }
@@ -267,11 +267,23 @@ impl TypeChecker {
                             if let Some((_, param)) = normal_params.get(positional_index) {
                                 normal_bound_spans[positional_index] = Some(item_span);
                                 self.infer_type_param_bindings(&param.ty, item_ty, type_bindings);
-                                self.emit_arg_type_mismatch_if_needed(&param.ty, item_ty, item_span);
+                                self.emit_arg_type_mismatch_if_needed(
+                                    callee,
+                                    param.name(),
+                                    &param.ty,
+                                    item_ty,
+                                    item_span,
+                                );
                                 positional_index += 1;
                             } else if let Some(param) = rest_positional {
                                 self.infer_type_param_bindings(&param.ty, item_ty, type_bindings);
-                                self.emit_arg_type_mismatch_if_needed(&param.ty, item_ty, item_span);
+                                self.emit_arg_type_mismatch_if_needed(
+                                    callee,
+                                    param.name(),
+                                    &param.ty,
+                                    item_ty,
+                                    item_span,
+                                );
                             } else {
                                 unexpected_positional += 1;
                             }
@@ -282,11 +294,23 @@ impl TypeChecker {
                             if let Some((_, param)) = normal_params.get(positional_index) {
                                 normal_bound_spans[positional_index] = Some(arg_span);
                                 self.infer_type_param_bindings(&param.ty, item_ty, type_bindings);
-                                self.emit_arg_type_mismatch_if_needed(&param.ty, item_ty, arg_span);
+                                self.emit_arg_type_mismatch_if_needed(
+                                    callee,
+                                    param.name(),
+                                    &param.ty,
+                                    item_ty,
+                                    arg_span,
+                                );
                                 positional_index += 1;
                             } else if let Some(param) = rest_positional {
                                 self.infer_type_param_bindings(&param.ty, item_ty, type_bindings);
-                                self.emit_arg_type_mismatch_if_needed(&param.ty, item_ty, arg_span);
+                                self.emit_arg_type_mismatch_if_needed(
+                                    callee,
+                                    param.name(),
+                                    &param.ty,
+                                    item_ty,
+                                    arg_span,
+                                );
                             } else {
                                 unexpected_positional += 1;
                             }
@@ -294,7 +318,7 @@ impl TypeChecker {
                     } else if let Some(param) = rest_positional {
                         let expected = list_ty(param.ty.clone());
                         self.infer_type_param_bindings(&expected, arg_ty, type_bindings);
-                        self.emit_arg_type_mismatch_if_needed(&expected, arg_ty, arg_span);
+                        self.emit_arg_type_mismatch_if_needed(callee, param.name(), &expected, arg_ty, arg_span);
                     } else {
                         self.errors
                             .push(errors::call_unpack_without_rest(callee, "*", arg_span));
@@ -318,10 +342,10 @@ impl TypeChecker {
                         }
                         normal_bound_spans[normal_idx] = Some(arg_span);
                         self.infer_type_param_bindings(&param.ty, arg_ty, type_bindings);
-                        self.emit_arg_type_mismatch_if_needed(&param.ty, arg_ty, arg_span);
+                        self.emit_arg_type_mismatch_if_needed(callee, param.name(), &param.ty, arg_ty, arg_span);
                     } else if let Some(param) = rest_keyword {
                         self.infer_type_param_bindings(&param.ty, arg_ty, type_bindings);
-                        self.emit_arg_type_mismatch_if_needed(&param.ty, arg_ty, arg_span);
+                        self.emit_arg_type_mismatch_if_needed(callee, param.name(), &param.ty, arg_ty, arg_span);
                     } else {
                         self.errors
                             .push(errors::unknown_keyword_argument(callee, name, arg_span));
@@ -368,17 +392,35 @@ impl TypeChecker {
                                     }
                                     normal_bound_spans[normal_idx] = Some(value.span);
                                     self.infer_type_param_bindings(&param.ty, value_ty, type_bindings);
-                                    self.emit_arg_type_mismatch_if_needed(&param.ty, value_ty, value.span);
+                                    self.emit_arg_type_mismatch_if_needed(
+                                        callee,
+                                        param.name(),
+                                        &param.ty,
+                                        value_ty,
+                                        value.span,
+                                    );
                                 } else if let Some(param) = rest_keyword {
                                     self.infer_type_param_bindings(&param.ty, value_ty, type_bindings);
-                                    self.emit_arg_type_mismatch_if_needed(&param.ty, value_ty, value.span);
+                                    self.emit_arg_type_mismatch_if_needed(
+                                        callee,
+                                        param.name(),
+                                        &param.ty,
+                                        value_ty,
+                                        value.span,
+                                    );
                                 } else {
                                     self.errors
                                         .push(errors::unknown_keyword_argument(callee, name, key.span));
                                 }
                             } else if let Some(param) = rest_keyword {
                                 self.infer_type_param_bindings(&param.ty, value_ty, type_bindings);
-                                self.emit_arg_type_mismatch_if_needed(&param.ty, value_ty, value.span);
+                                self.emit_arg_type_mismatch_if_needed(
+                                    callee,
+                                    param.name(),
+                                    &param.ty,
+                                    value_ty,
+                                    value.span,
+                                );
                             } else {
                                 self.errors
                                     .push(errors::call_unpack_without_rest(callee, "**", key.span));
@@ -387,7 +429,7 @@ impl TypeChecker {
                     } else if let Some(param) = rest_keyword {
                         let expected = dict_ty(ResolvedType::Str, param.ty.clone());
                         self.infer_type_param_bindings(&expected, arg_ty, type_bindings);
-                        self.emit_arg_type_mismatch_if_needed(&expected, arg_ty, arg_span);
+                        self.emit_arg_type_mismatch_if_needed(callee, param.name(), &expected, arg_ty, arg_span);
                     } else {
                         self.errors
                             .push(errors::call_unpack_without_rest(callee, "**", arg_span));
@@ -417,13 +459,25 @@ impl TypeChecker {
     }
 
     /// Emit a call-argument mismatch unless RFC 017 allows a validated-newtype coercion at this argument span.
-    fn emit_arg_type_mismatch_if_needed(&mut self, expected: &ResolvedType, actual: &ResolvedType, span: Span) {
+    fn emit_arg_type_mismatch_if_needed(
+        &mut self,
+        callee: &str,
+        parameter: Option<&str>,
+        expected: &ResolvedType,
+        actual: &ResolvedType,
+        span: Span,
+    ) {
         if !self.types_compatible(actual, expected) {
             if self.record_validated_newtype_coercion_if_possible(actual, expected, span) {
                 return;
             }
-            self.errors
-                .push(errors::type_mismatch(&expected.to_string(), &actual.to_string(), span));
+            self.errors.push(errors::call_argument_type_mismatch(
+                callee,
+                parameter,
+                &expected.to_string(),
+                &actual.to_string(),
+                span,
+            ));
         }
     }
 }

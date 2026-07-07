@@ -1,0 +1,5 @@
+from rust::rubato import Fft
+
+pub def test_fft() -> Fft[f32]:
+    let fft = Fft.new[f32](1024)
+    return fft

@@ -30,6 +30,7 @@ pub mod project_lifecycle;
 #[cfg(feature = "rust_inspect")]
 pub mod rust_inspect;
 pub(crate) mod semantics_registry;
+pub(crate) mod toolchain_layout;
 pub mod version;
 
 pub use frontend::ast;

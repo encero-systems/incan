@@ -7,7 +7,7 @@
     - RFC 027 (`incan-vocab` block registration and desugaring)
     - RFC 028 (global operator overloading)
     - RFC 045 (scoped DSL symbol surfaces — companion RFC for identifier-level scoping)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/174
+- **Issue:** https://github.com/encero-systems/incan/issues/174
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** v0.3

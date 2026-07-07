@@ -8,8 +8,8 @@
     - RFC 017 (validated newtypes with implicit coercion)
     - RFC 023 (compilable stdlib and Rust module binding)
     - RFC 033 (ctx keyword)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/242
-- **RFC PR:** https://github.com/dannys-code-corner/incan/pull/243
+- **Issue:** https://github.com/encero-systems/incan/issues/242
+- **RFC PR:** https://github.com/encero-systems/incan/pull/243
 - **Written against:** v0.2
 - **Shipped in:** v0.2
 

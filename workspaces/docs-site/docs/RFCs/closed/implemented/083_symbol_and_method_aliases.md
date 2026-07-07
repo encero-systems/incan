@@ -11,7 +11,7 @@
     - RFC 054 (explicit call-site generics)
     - RFC 082 (checked API documentation generation)
     - RFC 084 (RHS partial callable presets)
-- **Issue:** [#437](https://github.com/dannys-code-corner/incan/issues/437)
+- **Issue:** [#437](https://github.com/encero-systems/incan/issues/437)
 - **RFC PR:** —
 - **Written against:** v0.3
 - **Shipped in:** v0.3

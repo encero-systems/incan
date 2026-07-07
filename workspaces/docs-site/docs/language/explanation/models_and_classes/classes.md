@@ -45,7 +45,7 @@ The key ideas:
     - **composition**: building larger types by putting one value inside another (e.g. a class holding a model)
 
 ??? info "Coming from Rust?"
-    Incan `class`es compile to Rust `struct`s + `impl`s, but the surface syntax is closer to Python.
+    In the current backend, Incan `class`es lower to Rust `struct`s + `impl`s, but the surface syntax is closer to Python.
 
     - `def m(self)` corresponds to an immutable receiver (roughly like `&self`)
     - `def m(mut self)` corresponds to a mutable receiver (roughly like `&mut self`)

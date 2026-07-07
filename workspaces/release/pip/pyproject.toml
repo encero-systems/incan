@@ -3,16 +3,16 @@ requires = ["hatchling>=1.25"]
 build-backend = "hatchling.build"
 
 [project]
-name = "incan-sdk"
-version = "0.4.0.dev9"
-description = "Thin installer package for the Incan SDK"
+name = "incan"
+version = "0.4.0"
+description = "Thin installer package for the Incan toolchain"
 readme = "README.md"
 requires-python = ">=3.9"
 license = "Apache-2.0"
 authors = [
   { name = "Danny Meijer", email = "dannys.code.corner@gmail.com" },
 ]
-keywords = ["incan", "compiler", "sdk"]
+keywords = ["incan", "compiler", "toolchain"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Environment :: Console",
@@ -24,13 +24,13 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/dannys-code-corner/incan"
-Repository = "https://github.com/dannys-code-corner/incan"
+Homepage = "https://incan.io"
+Repository = "https://github.com/encero-systems/incan"
 
 [project.scripts]
-incan = "incan_sdk.cli:incan"
-incan-lsp = "incan_sdk.cli:incan_lsp"
-install-incan-sdk = "incan_sdk.cli:install"
+incan = "incan_toolchain.cli:incan"
+incan-lsp = "incan_toolchain.cli:incan_lsp"
+install-incan = "incan_toolchain.cli:install"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/incan_sdk"]
+packages = ["src/incan_toolchain"]

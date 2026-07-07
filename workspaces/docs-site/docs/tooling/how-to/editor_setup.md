@@ -50,7 +50,7 @@ cp -r workspaces/ide/vscode ~/.cursor/extensions/incan-language
 - Markdown code block highlighting for `incan` language
 - **LSP integration** - Diagnostics, hover, go-to-definition (requires incan-lsp)
 
-See [`workspaces/ide/vscode/README.md`](https://github.com/dannys-code-corner/incan/blob/main/workspaces/ide/vscode/README.md) for full details.
+See [`workspaces/ide/vscode/README.md`](https://github.com/encero-systems/incan/blob/main/workspaces/ide/vscode/README.md) for full details.
 
 **Alternative**: Use Python highlighting
 
@@ -125,4 +125,4 @@ For now, you can set up a task or use a file watcher:
 - [Incan Code Style Guide](../../language/reference/code_style.md) - Canonical source layout rules
 - [Formatting with `incan fmt`](formatting.md) - Formatter command usage
 - [Language Guide](../../language/index.md) - Learn Incan syntax and features
-- [Examples](https://github.com/dannys-code-corner/incan/tree/main/examples) - Sample programs
+- [Examples](https://github.com/encero-systems/incan/tree/main/examples) - Sample programs

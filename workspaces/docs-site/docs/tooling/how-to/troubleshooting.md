@@ -1,10 +1,10 @@
 # Troubleshooting
 
-This page collects common setup and first-run fixes for the installed SDK path. Contributor-only source-build notes are called out separately.
+This page collects common setup and first-run fixes for the installed toolchain path. Contributor-only source-build notes are called out separately.
 
-## `incan: command not found` after SDK install
+## `incan: command not found` after toolchain install
 
-The SDK installer links `incan` and `incan-lsp` into `INCAN_BIN_DIR`, defaulting to `~/.local/bin`. Make sure that directory is on your `PATH`:
+The toolchain installer links `incan` and `incan-lsp` into `INCAN_BIN_DIR`, defaulting to `~/.local/bin`. Make sure that directory is on your `PATH`:
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
@@ -15,7 +15,7 @@ incan --version
 If you installed with a custom bin directory, use that path instead:
 
 ```bash
-curl -fsSL https://github.com/dannys-code-corner/incan/releases/latest/download/install.sh | INCAN_BIN_DIR="$HOME/bin" sh
+curl -fsSL https://github.com/encero-systems/incan/releases/latest/download/install.sh | INCAN_BIN_DIR="$HOME/bin" bash
 export PATH="$HOME/bin:$PATH"
 ```
 
@@ -50,7 +50,7 @@ After changing paths or reinstalling, reload the editor window so it starts a ne
 
 ## Contributor source builds
 
-If you are working from a compiler checkout, use repository `make` targets instead of the SDK installer:
+If you are working from a compiler checkout, use repository `make` targets instead of the toolchain installer:
 
 ```bash
 cd /path/to/incan
@@ -65,6 +65,19 @@ If you intentionally want the release binary from a checkout:
 make release
 ./target/release/incan --version
 ```
+
+## Rust backend provisioning fails
+
+The direct installer, npm adapter, and pipx adapter provision stable Rust through `rustup` when `rustup`, `cargo`, or `rustc` are missing, then run `rustup target add wasm32-wasip1`. If the install fails on a fresh machine, check whether your network can reach the rustup bootstrap script and Rust distribution servers:
+
+```bash
+command -v rustup || true
+command -v cargo || true
+command -v rustc || true
+rustup target list --installed 2>/dev/null || true
+```
+
+Use `INCAN_SKIP_RUST_INSTALL=1` or `install.sh --skip-rust` only when your environment manages Rust separately. In that mode, make sure `cargo`, `rustc`, and `wasm32-wasip1` are already available before running `incan run`, `incan test`, `incan build`, or package checks that load vocab companions.
 
 ## Builds are slow the first time
 
@@ -101,4 +114,4 @@ xcode-select --install
 
 ## Still stuck?
 
-If you’re still stuck, please [open an issue](https://github.com/dannys-code-corner/incan/issues) and include your OS, architecture, exact commands, and full error output.
+If you’re still stuck, please [open an issue](https://github.com/encero-systems/incan/issues) and include your OS, architecture, exact commands, and full error output.

@@ -6,7 +6,7 @@
 - **Related:**
     - RFC 035 (First-class named function references)
     - RFC 039 (`race` for awaitable concurrency)
-- **Issue:** [#83](https://github.com/dannys-code-corner/incan/issues/83)
+- **Issue:** [#83](https://github.com/encero-systems/incan/issues/83)
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** 0.3

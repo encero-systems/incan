@@ -9,7 +9,7 @@
     - RFC 040 (scoped DSL surface forms)
     - RFC 022 (namespaced stdlib and compiler handoff)
     - RFC 031 (library system phase 1)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/202
+- **Issue:** https://github.com/encero-systems/incan/issues/202
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** v0.3

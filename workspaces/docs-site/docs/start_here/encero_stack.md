@@ -1,10 +1,10 @@
 # Encero stack
 
-Incan is the typed compiler substrate for the Encero stack. It is not the whole product story by itself: the goal is a set of domain tools that can use Python-like source ergonomics, Rust-backed execution, explicit metadata, and inspectable build artifacts without every project rebuilding those foundations independently.
+Incan is the typed compiler substrate for the Encero stack. It is not the whole product story by itself: the goal is a set of domain tools that can use Python-like source ergonomics, native artifacts, Rust ecosystem boundaries, explicit metadata, and inspectable build facts without every project rebuilding those foundations independently.
 
 ```mermaid
 flowchart TD
-    Incan["Incan compiler and SDK"]
+    Incan["Incan compiler and toolchain"]
     InQL["InQL query and analytics DSL"]
     Pallay["Pallay application layer"]
     Omerus["Omerus operational tooling"]

@@ -11,7 +11,7 @@
     - RFC 038 (variadic positional args and keyword capture)
     - RFC 054 (explicit call-site generics)
     - RFC 083 (symbol and method aliases)
-- **Issue:** [#453](https://github.com/dannys-code-corner/incan/issues/453)
+- **Issue:** [#453](https://github.com/encero-systems/incan/issues/453)
 - **RFC PR:** —
 - **Written against:** v0.3
 - **Shipped in:** v0.3

@@ -11,8 +11,8 @@
     - RFC 029 (Union types)
     - RFC 030 (`std.collections`)
     - RFC 039 (`race` for awaitable concurrency)
-- **Issue:** [#175](https://github.com/dannys-code-corner/incan/issues/175)
-- **RFC PR:** [#183](https://github.com/dannys-code-corner/incan/pull/183)
+- **Issue:** [#175](https://github.com/encero-systems/incan/issues/175)
+- **RFC PR:** [#183](https://github.com/encero-systems/incan/pull/183)
 - **Written against:** v0.1
 - **Shipped in:** v0.2
 

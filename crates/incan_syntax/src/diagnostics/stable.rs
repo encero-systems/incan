@@ -6,6 +6,8 @@
 
 use serde::Serialize;
 
+use crate::ast::{Declaration, Program, Span};
+
 use super::{CompileError, ErrorKind};
 
 /// Schema version for machine-readable diagnostic reports.
@@ -40,45 +42,70 @@ impl DiagnosticPhase {
 /// Public diagnostic catalog entry returned by `incan explain`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct DiagnosticCatalogEntry {
+    /// Stable public diagnostic code, such as `INCAN-T0001`.
     pub code: &'static str,
+    /// Short human-readable title for the diagnostic family.
     pub title: &'static str,
+    /// Default severity label exposed by the diagnostic catalog.
     pub severity: &'static str,
+    /// Compiler or tooling phase that owns this catalog entry.
     pub phase: &'static str,
+    /// One-sentence description of the problem class.
     pub summary: &'static str,
+    /// Longer explanation printed by `incan explain`.
     pub explanation: &'static str,
+    /// Small source or command examples that can produce this diagnostic family.
     pub examples: &'static [&'static str],
+    /// Common root causes shown in text and JSON explain output.
     pub common_causes: &'static [&'static str],
+    /// Suggested remediation steps for this diagnostic family.
     pub fixes: &'static [&'static str],
+    /// Optional documentation URL with deeper guidance.
     pub docs_url: Option<&'static str>,
 }
 
 /// 1-based source position plus original byte offset.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DiagnosticPosition {
+    /// 1-based source line.
     pub line: usize,
+    /// 1-based source column counted in Unicode scalar values.
     pub column: usize,
+    /// Original UTF-8 byte offset into the source text.
     pub offset: usize,
 }
 
 /// Primary diagnostic span.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DiagnosticSpan {
+    /// Source file path used for this diagnostic projection.
     pub file: String,
+    /// Inclusive start position.
     pub start: DiagnosticPosition,
+    /// Exclusive end position.
     pub end: DiagnosticPosition,
 }
 
 /// Machine-readable diagnostic payload.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct StableDiagnostic {
+    /// Stable public diagnostic code selected from the catalog.
     pub code: &'static str,
+    /// Concrete severity for this diagnostic instance.
     pub severity: &'static str,
+    /// Compiler or tooling phase that produced this diagnostic.
     pub phase: DiagnosticPhase,
+    /// User-facing diagnostic message.
     pub message: String,
+    /// Primary source span for editors and structured tooling.
     pub primary_span: DiagnosticSpan,
+    /// Additional explanatory notes carried by the compiler diagnostic.
     pub notes: Vec<String>,
+    /// Suggested fixes or hints carried by the compiler diagnostic.
     pub hints: Vec<String>,
+    /// Related spans reserved for diagnostics that can point at secondary source locations.
     pub related_spans: Vec<DiagnosticSpan>,
+    /// Command users can run to read the catalog explanation for `code`.
     pub explain: String,
 }
 
@@ -98,7 +125,7 @@ const PARSER_SYNTAX: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
         "Check the source around the highlighted span.",
         "Run `incan fmt --check` after the file parses if the intended syntax is valid.",
     ],
-    docs_url: Some("https://dannys-code-corner.github.io/incan/language/reference/syntax/"),
+    docs_url: Some("https://encero-systems.github.io/incan/language/reference/syntax/"),
 };
 
 const TYPECHECK: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
@@ -117,7 +144,7 @@ const TYPECHECK: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
         "Read the message, notes, and hints in the diagnostic payload.",
         "Prefer fixing the source contract rather than adding casts or wrappers that hide the mismatch.",
     ],
-    docs_url: Some("https://dannys-code-corner.github.io/incan/language/reference/types/"),
+    docs_url: Some("https://encero-systems.github.io/incan/language/reference/types/"),
 };
 
 const IMPORT: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
@@ -137,7 +164,7 @@ const IMPORT: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
         "Check the import path and public exports.",
         "For `pub::` imports, build the dependency library and verify `incan.toml` dependencies.",
     ],
-    docs_url: Some("https://dannys-code-corner.github.io/incan/language/reference/modules/"),
+    docs_url: Some("https://encero-systems.github.io/incan/language/reference/modules/"),
 };
 
 const TOOLING: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
@@ -157,7 +184,7 @@ const TOOLING: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
         "Verify the command path and filesystem permissions.",
         "Run `incan tools doctor` for local toolchain problems.",
     ],
-    docs_url: Some("https://dannys-code-corner.github.io/incan/tooling/reference/cli_reference/"),
+    docs_url: Some("https://encero-systems.github.io/incan/tooling/reference/cli_reference/"),
 };
 
 const UNKNOWN: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
@@ -176,7 +203,7 @@ const UNKNOWN: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
         "Check the code printed by `incan check --format json`.",
         "Upgrade the compiler if the code comes from newer documentation.",
     ],
-    docs_url: Some("https://dannys-code-corner.github.io/incan/tooling/reference/cli_reference/"),
+    docs_url: Some("https://encero-systems.github.io/incan/tooling/reference/cli_reference/"),
 };
 
 const CATALOG: &[DiagnosticCatalogEntry] = &[PARSER_SYNTAX, TYPECHECK, IMPORT, TOOLING, UNKNOWN];
@@ -203,6 +230,19 @@ pub fn code_for_error(error: &CompileError, phase: DiagnosticPhase) -> &'static 
             ErrorKind::Type => TYPECHECK.code,
             ErrorKind::Error | ErrorKind::Warning | ErrorKind::Lint => TOOLING.code,
         },
+    }
+}
+
+/// Classify diagnostics that are emitted during typechecking but originate from import declaration spans.
+pub fn phase_for_typecheck_span(program: &Program, span: Span) -> DiagnosticPhase {
+    if program
+        .declarations
+        .iter()
+        .any(|declaration| matches!(declaration.node, Declaration::Import(_)) && spans_overlap(span, declaration.span))
+    {
+        DiagnosticPhase::Import
+    } else {
+        DiagnosticPhase::Typecheck
     }
 }
 
@@ -253,4 +293,47 @@ fn position_for_offset(source: &str, offset: usize) -> DiagnosticPosition {
         }
     }
     DiagnosticPosition { line, column, offset }
+}
+
+/// Return whether two source spans overlap after treating zero-width spans as one-byte spans.
+fn spans_overlap(left: Span, right: Span) -> bool {
+    let left_end = left.end.max(left.start.saturating_add(1));
+    let right_end = right.end.max(right.start.saturating_add(1));
+    left.start < right_end && right.start < left_end
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::ast::{ImportDecl, ImportKind, Spanned, Visibility};
+
+    use super::*;
+
+    #[test]
+    fn typecheck_phase_uses_import_span_for_import_diagnostics() {
+        let program = Program {
+            declarations: vec![
+                Spanned::new(
+                    Declaration::Import(ImportDecl {
+                        visibility: Visibility::Private,
+                        kind: ImportKind::PubLibrary {
+                            library: "missing".to_string(),
+                        },
+                        alias: None,
+                    }),
+                    Span::new(4, 24),
+                ),
+                Spanned::new(Declaration::Docstring("body".to_string()), Span::new(40, 46)),
+            ],
+            ..Program::default()
+        };
+
+        assert_eq!(
+            phase_for_typecheck_span(&program, Span::new(8, 12)),
+            DiagnosticPhase::Import
+        );
+        assert_eq!(
+            phase_for_typecheck_span(&program, Span::new(42, 44)),
+            DiagnosticPhase::Typecheck
+        );
+    }
 }

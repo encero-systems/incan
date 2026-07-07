@@ -219,14 +219,14 @@ jobs:
           echo "macOS test shards passed"
 
   msrv-build:
-    name: MSRV Build (1.92.0)
+    name: MSRV Build (1.93.0)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Install Rust 1.92.0
+      - name: Install Rust 1.93.0
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.92.0
+          toolchain: 1.93.0
           components: clippy
       - name: Install WASI target for vocab desugarers
         run: rustup target add wasm32-wasip1
@@ -241,14 +241,14 @@ jobs:
         run: ${SCCACHE_PATH:-sccache} --show-stats || true
 
   msrv-test-prewarm:
-    name: MSRV Test Cache Warmup (1.92.0)
+    name: MSRV Test Cache Warmup (1.93.0)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Install Rust 1.92.0
+      - name: Install Rust 1.93.0
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.92.0
+          toolchain: 1.93.0
           components: clippy
       - name: Install WASI target for vocab desugarers
         run: rustup target add wasm32-wasip1
@@ -274,7 +274,7 @@ jobs:
         run: ${SCCACHE_PATH:-sccache} --show-stats || true
 
   msrv-test-shards:
-    name: MSRV Test Shard (1.92.0, slice ${{ matrix.partition }}/${{ matrix.total }})
+    name: MSRV Test Shard (1.93.0, slice ${{ matrix.partition }}/${{ matrix.total }})
     runs-on: ubuntu-latest
     needs: msrv-test-prewarm
     strategy:
@@ -284,10 +284,10 @@ jobs:
         total: [5]
     steps:
       - uses: actions/checkout@v5
-      - name: Install Rust 1.92.0
+      - name: Install Rust 1.93.0
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.92.0
+          toolchain: 1.93.0
           components: clippy
       - name: Install WASI target for vocab desugarers
         run: rustup target add wasm32-wasip1
@@ -305,7 +305,7 @@ jobs:
         run: ${SCCACHE_PATH:-sccache} --show-stats || true
 
   msrv:
-    name: MSRV Build/Test (1.92.0)
+    name: MSRV Build/Test (1.93.0)
     runs-on: ubuntu-latest
     needs:
       - msrv-build

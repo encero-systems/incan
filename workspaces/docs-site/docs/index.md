@@ -1,119 +1,275 @@
-# Incan Documentation
+---
+title: Incan
+search:
+  boost: 2
+tags:
+  - programming language
+  - compiler toolchain
+  - readable source
+  - native binaries
+  - rust
+  - python-shaped
+  - ownership planning
+  - duckborrowing
+hide:
+  - toc
+---
 
-[Start here]:start_here/index.md
-[Roadmap]:roadmap.md
-[the Book]:language/tutorials/book/index.md
-New here? Start with: [Start here].
+<!-- markdownlint-disable MD013 MD033 -->
 
-<!-- top level sections -->
-[Tooling]:tooling/index.md
-[Language]:language/index.md
-[Contributing]:contributing/index.md
-[RFCs]:RFCs/index.md
-[Comparisons]:comparisons/index.md
+<div class="inc-home" markdown="1">
 
-## Comparisons
+<section class="inc-hero" aria-labelledby="incan-home-title" markdown="1">
 
-If you are evaluating whether Incan belongs in a project, start with the direct comparisons. They explain where Incan is trying to win, where it loses today, and when Python, Rust, or Python compatibility tools are the better choice.
+<div class="inc-hero__copy" markdown="1">
 
-[Incan vs Python]:comparisons/python.md
-[Incan vs Rust]:comparisons/rust.md
-[Incan vs Python compatibility tools]:comparisons/python_compatibility_tools.md
+<div class="inc-hero__brand">
+<img class="inc-hero__mark" src="shared/incapunk/wordmark_small_001.png" alt="Incan">
+</div>
 
-| Document | Description |
-| --- | --- |
-| [Incan vs Python] | Python-like ergonomics without Python's runtime and deployment model |
-| [Incan vs Rust] | Rust-native output without writing every application layer in Rust |
-| [Incan vs Python compatibility tools] | Why Incan is not RustPython, Codon, Nuitka, or Cython |
+<p class="inc-kicker">Programming language + compiler toolchain</p>
 
-## Tooling & Setup
+<h1 id="incan-home-title"><span>Readable source.</span><span>Native Rust binaries.</span></h1>
 
-<!-- Tooling sub-sections -->
-[Getting Started]:tooling/tutorials/getting_started.md
-[Editor Setup]:tooling/how-to/editor_setup.md
-[Language Server]:tooling/how-to/lsp.md
-[Formatting]:language/reference/code_style.md
-[Testing]:tooling/how-to/testing.md
+<p class="inc-hero__lead">Incan is a statically typed language for clear application code that ships as native Rust binaries. You keep the intent readable; the compiler handles ownership, diagnostics, and the build path.</p>
 
-How to install, configure, and use Incan [Tooling].
+<div class="inc-hero__actions" markdown="1">
+[Try Incan](tooling/tutorials/getting_started.md){ .md-button .md-button--primary }
+[GitHub](https://github.com/encero-systems/incan){ .md-button }
+[Read the Docs](start_here/index.md){ .md-button .inc-button--docs }
+[Duckborrowing →](contributing/explanation/duckborrowing.md){ .inc-hero__text-link }
+</div>
 
-| Document          | Description                                      |
-| ----------------- | ------------------------------------------------ |
-| [Getting Started] | Installation and first steps                     |
-| [Editor Setup]    | IDE configuration and syntax highlighting        |
-| [Language Server] | LSP for diagnostics, hover, and go-to-definition |
-| [Formatting]      | Canonical Incan code style and formatting rules  |
-| [Testing]         | Test runner (`incan test`)                       |
+</div>
 
-## Language Guide
+<div class="inc-hero__flow" aria-label="Compiler flow">
+<div class="inc-flow-step inc-tone-cyan"><img src="shared/incapunk/icons/code.svg" alt=""><strong>Write</strong><span>Readable typed source</span></div>
+<span class="inc-flow-arrow"><img src="shared/incapunk/icons/arrow-right.svg" alt=""></span>
+<div class="inc-flow-step inc-tone-gold"><img src="shared/incapunk/icons/workflow.svg" alt=""><strong>Plan</strong><span>Ownership without ceremony</span></div>
+<span class="inc-flow-arrow"><img src="shared/incapunk/icons/arrow-right.svg" alt=""></span>
+<div class="inc-flow-step inc-tone-cyan"><img src="shared/incapunk/icons/file-code.svg" alt=""><strong>Emit</strong><span>Inspectable Rust</span></div>
+<span class="inc-flow-arrow"><img src="shared/incapunk/icons/arrow-right.svg" alt=""></span>
+<div class="inc-flow-step inc-tone-cyan"><img src="shared/incapunk/icons/shield-check.svg" alt=""><strong>Verify</strong><span>rustc checks the handoff</span></div>
+<span class="inc-flow-arrow"><img src="shared/incapunk/icons/arrow-right.svg" alt=""></span>
+<div class="inc-flow-step inc-tone-gold"><img src="shared/incapunk/icons/rocket.svg" alt=""><strong>Ship</strong><span>Native binary</span></div>
+</div>
 
-<!-- Language sub-sections -->
-[Error Messages]:language/how-to/error_messages.md
-[Error Handling]:language/explanation/error_handling.md
-[File I/O]:language/how-to/file_io.md
-[Async Programming]:language/how-to/async_programming.md
-[Derives & Traits]:language/reference/derives_and_traits.md
-[Testing in Incan]:language/how-to/testing_stdlib.md
-[Scopes & Name Resolution]:language/explanation/scopes_and_name_resolution.md
-[Imports & Modules]:language/explanation/imports_and_modules.md
-[Rust Interop]:language/how-to/rust_interop.md
-[Web Framework]:language/tutorials/web_framework.md
+</section>
 
-How to write Incan code: [Language].
+<section class="inc-section inc-build-strip" aria-label="Build path" markdown="1">
 
-| Document                   | Description                                            |
-| -------------------------- | ------------------------------------------------------ |
-| [the Book]                 | The Incan Book (Walks you through the Basics from a-z) |
-| [Error Messages]           | Understanding and fixing compiler errors               |
-| [Error Handling]           | Result, Option, and the `?` operator                   |
-| [File I/O]                 | Reading, writing files and path handling               |
-| [Async Programming]        | Async/await with Tokio                                 |
-| [Derives & Traits]         | Derive macros and trait system                         |
-| [Testing in Incan]         | Inline `module tests:`, assertions, fixtures, markers  |
-| [Scopes & Name Resolution] | Block scoping, shadowing, and how names are resolved   |
-| [Imports & Modules]        | Module system, imports, and built-in functions         |
-| [Rust Interop]             | Using Rust crates directly from Incan                  |
-| [Web Framework]            | Building web apps with Axum                            |
+<p class="inc-strip-title">Readable source in. Native binaries out.</p>
 
-### Derives Reference
+<div class="inc-build-strip__grid">
+<div class="inc-build-card inc-tone-cyan"><img src="shared/incapunk/icons/terminal.svg" alt=""><strong>Typed by default</strong><span>Types, errors, and mutability stay explicit.</span></div>
+<div class="inc-build-card inc-tone-gold"><img src="shared/incapunk/icons/workflow.svg" alt=""><strong>Ownership planned</strong><span>Compiler-assisted ownership, not runtime guesswork.</span></div>
+<div class="inc-build-card inc-tone-cyan"><img src="shared/incapunk/icons/file-code.svg" alt=""><strong>Rust emitted</strong><span>Generated Rust stays inspectable.</span></div>
+<div class="inc-build-card inc-tone-cyan"><img src="shared/incapunk/icons/shield-check.svg" alt=""><strong>Cargo checked</strong><span>Cargo and rustc keep the build honest.</span></div>
+<div class="inc-build-card inc-tone-gold"><img src="shared/incapunk/icons/rocket.svg" alt=""><strong>Native binary</strong><span>No Python process model at deploy time.</span></div>
+</div>
 
-<!-- language/reference/derives sub-sections -->
-[String Representation]:language/reference/derives/string_representation.md
-[Comparison]:language/reference/derives/comparison.md
-[Copying & Default]:language/reference/derives/copying_default.md
-[Serialization]:language/reference/derives/serialization.md
-[Custom Behavior]:language/reference/derives/custom_behavior.md
+</section>
 
-| Document                | Description                 |
-| ----------------------- | --------------------------- |
-| [String Representation] | Debug and Display           |
-| [Comparison]            | Eq, Ord, Hash               |
-| [Copying & Default]     | Clone, Copy, Default        |
-| [Serialization]         | Serialize, Deserialize      |
-| [Custom Behavior]       | Overriding derived behavior |
+<section class="inc-section inc-section--code" aria-label="Code example" markdown="1">
 
-## RFCs (Request for Comments)
+<div class="inc-code-heading" markdown="1">
 
-Design proposals for upcoming features are recorded in the form of [RFCs].
+<div class="inc-section-intro" markdown="1">
 
---8<-- "_snippets/tables/rfcs_index.md"
+## Incan vs Rust, side by side.
 
-## Compiler & Contributing
+Same intent, same output. The Incan side stays Python-shaped and typed; Rust remains the artifact you can inspect when ownership and native deployment matter.
 
-!!! info "For contributors"
-    Architecture and compiler-internals docs are primarily for contributors. If you’re learning the language, start with the Book and the Language Guide instead of RFCs.
+</div>
 
-Docs for contributors working on the compiler and language evolution:
+<div class="inc-code-proof__checks">
+<span>Clear models</span>
+<span>No borrow ceremony</span>
+<span>Inspectable artifact</span>
+<span>Native path</span>
+</div>
 
-[Compiler Architecture]:contributing/explanation/architecture.md
-[Extending the Language]:contributing/how-to/extending_language.md
-[Contributing Index]:contributing/index.md
+</div>
 
-| Document                 | Description                                                             |
-| ------------------------ | ----------------------------------------------------------------------- |
-| [Roadmap]                | Tracks implementation status and near-term planning                     |
-| [RFCs]                   | Design proposals for upcoming features are recorded in the form of RFCs |
-| [Contributing]           | Contributor documentation landing page                                  |
-| [Compiler Architecture]  | Compilation pipeline, module layout, and internal stages                |
-| [Extending the Language] | When to add builtins vs new syntax; end-to-end checklists               |
-| [Contributing Index]     | Contributor documentation landing page                                  |
+<div class="inc-code-proof" markdown="1">
+
+<div class="inc-code-compare" markdown="1">
+
+<div class="inc-code-pane" markdown="1">
+<p class="inc-code-label">Incan source</p>
+
+```incan
+model User:
+    name: str
+    age: int
+
+def greet_user(user: User) -> str:
+    return f"Hello, {user.name}!"
+
+def main() -> None:
+    user = User(name="Incan", age=42)
+    println(greet_user(user))
+```
+</div>
+
+<div class="inc-code-pane inc-code-pane--rust" markdown="1">
+<p class="inc-code-label">Comparable Rust</p>
+
+```rust
+#[derive(Debug, Clone)]
+struct User {
+    name: String,
+    age: i64,
+}
+
+fn greet_user(user: &User) -> String {
+    format!("Hello, {}!", user.name)
+}
+
+fn main() {
+    let user = User {
+        name: "Incan".to_string(),
+        age: 42,
+    };
+    println!("{}", greet_user(&user));
+}
+```
+</div>
+
+</div>
+
+</div>
+
+</section>
+
+<p class="inc-code-caption">Readable enough for humans. Strict enough for compilers.</p>
+
+<section class="inc-section inc-section--why" aria-label="Why Incan" markdown="1">
+
+<div class="inc-section-title" markdown="1">
+
+## Why Incan?
+
+</div>
+
+<div class="inc-why-grid">
+
+<div class="inc-why-card inc-tone-purple">
+<img src="shared/incapunk/icons/python.svg" alt="">
+<span>Readable application code without Python's runtime model.</span>
+</div>
+
+<div class="inc-why-card inc-tone-gold">
+<img src="shared/incapunk/icons/rust.svg" alt="">
+<span>Native artifacts without hand-writing every ownership path.</span>
+</div>
+
+<div class="inc-why-card inc-tone-cyan">
+<img src="shared/incapunk/icons/code.svg" alt="">
+<span>A smaller surface for application intent, close to Rust semantics.</span>
+</div>
+
+<div class="inc-why-card inc-tone-cyan">
+<img src="shared/incapunk/icons/eye.svg" alt="">
+<span>Generated Rust, diagnostics, and build reports stay inspectable.</span>
+</div>
+
+<div class="inc-why-card inc-tone-gold">
+<img src="shared/incapunk/icons/package.svg" alt="">
+<span>Cargo crates and Rust tooling remain in the deployment path.</span>
+</div>
+
+<div class="inc-why-card inc-tone-pink">
+<img src="shared/incapunk/icons/workflow.svg" alt="">
+<span>Duckborrowing plans the handoff from clear source to Rust ownership.</span>
+<a href="contributing/explanation/duckborrowing/">Learn more</a>
+</div>
+
+</div>
+
+</section>
+
+<section class="inc-brand-line" aria-label="Incan brand line">
+<p><span>You write intent.</span><span>Incan writes ownership.</span></p>
+</section>
+
+<section class="inc-section inc-section--thesis" markdown="1">
+
+<div class="inc-thesis-grid" markdown="1">
+
+<div markdown="1">
+
+## AI makes syntax cheaper. Toolchains matter more.
+
+When source text is cheap, trust moves to the toolchain. Correctness, diagnostics, inspectability, and deployment matter more than syntax.
+
+Incan is built for that shift: a smaller typed language surface with Rust-native artifacts.
+
+</div>
+
+<div class="inc-matters-card">
+<strong>What matters most</strong>
+<ul>
+<li><span>Intent:</span> models, errors, and mutability stay explicit.</li>
+<li><span>Diagnostics:</span> stable checks, explanations, and inspection data.</li>
+<li><span>Inspectability:</span> generated Rust and build reports.</li>
+<li><span>Deployment:</span> native binaries instead of a Python runtime.</li>
+</ul>
+</div>
+
+</div>
+
+</section>
+
+<section class="inc-section inc-section--duck" markdown="1">
+
+<div class="inc-section-intro" markdown="1">
+
+## Duckborrowing in a nutshell.
+
+Incan plans the Rust-facing ownership path. You keep writing clear application code.
+
+</div>
+
+<div class="inc-duck-diagram" aria-label="Duckborrowing flow">
+<div class="inc-duck-step inc-tone-purple"><img src="shared/incapunk/icons/file-code.svg" alt=""><span>Python-shaped source</span></div>
+<span class="inc-duck-arrow"><img src="shared/incapunk/icons/arrow-right.svg" alt=""></span>
+<div class="inc-duck-step inc-tone-gold"><img src="shared/incapunk/icons/workflow.svg" alt=""><span>Ownership planning</span></div>
+<span class="inc-duck-arrow"><img src="shared/incapunk/icons/arrow-right.svg" alt=""></span>
+<div class="inc-duck-step inc-tone-cyan"><img src="shared/incapunk/icons/link.svg" alt=""><span>Borrow</span></div>
+<span class="inc-duck-arrow"><img src="shared/incapunk/icons/arrow-right.svg" alt=""></span>
+<div class="inc-duck-step inc-tone-cyan"><img src="shared/incapunk/icons/arrow-right.svg" alt=""><span>Move</span></div>
+<span class="inc-duck-arrow"><img src="shared/incapunk/icons/arrow-right.svg" alt=""></span>
+<div class="inc-duck-step inc-tone-cyan"><img src="shared/incapunk/icons/copy.svg" alt=""><span>Clone</span></div>
+<span class="inc-duck-arrow"><img src="shared/incapunk/icons/arrow-right.svg" alt=""></span>
+<div class="inc-duck-step inc-tone-cyan"><img src="shared/incapunk/icons/workflow.svg" alt=""><span>Convert</span></div>
+<span class="inc-duck-arrow"><img src="shared/incapunk/icons/arrow-right.svg" alt=""></span>
+<div class="inc-duck-step inc-tone-cyan"><img src="shared/incapunk/icons/database-arrow-right.svg" alt=""><span>Owned storage</span></div>
+<span class="inc-duck-arrow"><img src="shared/incapunk/icons/arrow-right.svg" alt=""></span>
+<div class="inc-duck-step inc-tone-gold"><img src="shared/incapunk/icons/rust.svg" alt=""><span>Generated Rust</span></div>
+</div>
+
+<p class="inc-duck-link"><a href="contributing/explanation/duckborrowing/">Read the Duckborrowing deep dive</a></p>
+
+</section>
+
+<section class="inc-final-cta" markdown="1">
+
+<div class="inc-final-cta__copy" markdown="1">
+
+## Try Incan. Break it. Help shape it.
+
+Incan is beta software. Run it, inspect the generated artifacts, and compare it with Python and Rust on real application code. The project earns trust through feedback.
+
+</div>
+
+<div class="inc-hero__actions" markdown="1">
+[Try Incan](tooling/tutorials/getting_started.md){ .md-button .md-button--primary }
+[GitHub](https://github.com/encero-systems/incan){ .md-button }
+[Read the Docs](start_here/index.md){ .md-button .inc-button--docs }
+[Duckborrowing →](contributing/explanation/duckborrowing.md){ .inc-hero__text-link }
+</div>
+
+</section>
+
+</div>

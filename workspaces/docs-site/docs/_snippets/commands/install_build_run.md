@@ -1,15 +1,15 @@
-=== "Recommended: SDK install"
+=== "Recommended: toolchain install"
 
     ```bash
-    curl -fsSL https://github.com/dannys-code-corner/incan/releases/latest/download/install.sh | sh
+    --8<-- "_snippets/commands/direct_install.sh"
     export PATH="$HOME/.local/bin:$PATH"
     incan --version
     ```
 
     Notes:
 
-    - The SDK installer links `incan` and `incan-lsp` into `~/.local/bin` by default.
-    - Homebrew, npm, and pipx install the same SDK binaries through package-manager adapters.
+    - The toolchain installer links `incan` and `incan-lsp` into `~/.local/bin` by default.
+    - Homebrew, npm, and pipx install the same toolchain binaries through package-manager adapters.
     - If `incan` is not found, make sure `~/.local/bin` is on your `PATH`.
 
 === "Contributor: source checkout"

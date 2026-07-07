@@ -12,7 +12,7 @@
     - RFC 077 (workspace and multi-package projects)
     - RFC 079 (`incan.pub` artifact graph)
     - RFC 080 (AI assets and agent metadata)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/406
+- **Issue:** https://github.com/encero-systems/incan/issues/406
 - **RFC PR:** —
 - **Written against:** v0.3
 - **Shipped in:** —
@@ -46,6 +46,7 @@ RFC 015 already has envs and scripts. RFC 075 lets capabilities advertise toolin
 - Allow packages, capabilities, starters, workspaces, and AI assets to advertise actions without executing them implicitly.
 - Classify action risk for RFC 076 policy.
 - Define action inputs, outputs, required envs, workspace scope, and mutation behavior.
+- Define action capability requirements, optional capability requests, receipt-schema expectations, and dry-run metadata that can be compared with RFC 104 runtime receipts.
 - Provide machine-readable action discovery for CLI, LSP, IDEs, docs tooling, and agents.
 - Leave room for `incan.pub` to index tools and actions as ecosystem artifacts.
 
@@ -94,6 +95,8 @@ incan action run generate-client --dry-run
 ```
 
 The dry run shows the tool source, inputs, outputs, workspace scope, env, mutation risk categories, and policy outcome.
+
+For capability-aware actions, the dry run should also show required capabilities, optional capabilities, expected receipt kinds, redaction-sensitive fields, replay expectations, and whether any capability requirement comes from the action itself, a package descriptor, a capability pack, a tool source, or policy expansion.
 
 ### Running one-off tools
 
@@ -174,6 +177,21 @@ Before running an action, lifecycle tooling must evaluate RFC 076 policy when th
 
 `--yes` may satisfy local confirmation only when policy allows it. It must not satisfy independent approval requirements.
 
+### Capabilities and receipts
+
+Actions must be able to declare static capability expectations compatible with RFC 104. The action model should distinguish:
+
+- required capabilities that must be granted before the action can run in governed mode;
+- optional capabilities that the action may request only on particular paths;
+- package- or tool-provided capability requirements inherited from the selected provider;
+- domain capabilities that explain project-specific authority;
+- host capabilities such as filesystem, environment, process, HTTP, model, or tool authority;
+- expected receipt event kinds and redaction-sensitive attributes where the provider can declare them.
+
+Action metadata does not grant authority. It describes expected authority so lifecycle tooling, policy, CI, LSP, docs, and agents can review the action before it runs. Runtime authority remains governed by RFC 104.
+
+A dry-run or plan for a capability-aware action must include the declared capability requirements, source of each requirement, policy outcome when evaluated, and whether the action is expected to emit a runtime report. After execution, the action's RFC 104 run report should be comparable with the dry-run plan. Undeclared runtime capability use, denied operations, unused broad grants, and redacted receipt attributes should be visible as machine-readable facts rather than only terminal text.
+
 ### Machine-readable discovery
 
 The CLI must expose a machine-readable action list containing:
@@ -183,6 +201,8 @@ The CLI must expose a machine-readable action list containing:
 - provider and source identity
 - execution mode
 - required envs or toolchain constraints
+- required and optional capabilities when known
+- expected receipt event kinds and report behavior when known
 - supported workspace scope
 - inputs and outputs when known
 - mutation categories
@@ -204,6 +224,10 @@ RFC 075 owns how starter and capability mutation plans add, merge, or record act
 ### Relationship to RFC 076
 
 RFC 076 policy evaluates action risk, source identity, mutating behavior, network behavior, model use, and approval requirements.
+
+### Relationship to RFC 104
+
+RFC 104 owns runtime capability enforcement, receipt emission, and run reports. This RFC owns the static action metadata that predicts and explains what authority an action expects before it runs. The two schemas should use compatible action identities, capability identities, risk categories, artifact identities, redaction markers, and replay classifications so dry-runs and actual reports can be compared.
 
 ### Relationship to RFC 077
 
@@ -241,11 +265,12 @@ The recommended implementation shape is to build an action registry from built-i
 ## Layers affected
 
 - **Manifest schema / configuration validation:** projects need typed action metadata, tool source references, execution modes, inputs, outputs, and mutation categories.
-- **CLI / tooling:** commands need action listing, dry-run planning, isolated tool execution, source resolution, and policy gating.
+- **CLI / tooling:** commands need action listing, dry-run planning, isolated tool execution, source resolution, capability preview, receipt expectation display, and policy gating.
 - **Workspace tooling:** actions must support member scope and workspace-level execution.
 - **LSP / IDE tooling:** editor integrations should surface actions, run/debug affordances, policy outcomes, and mutation previews.
 - **Package and catalog integration:** packages and catalogs may advertise tool binaries and action descriptors.
-- **Agentic tooling:** agents may consume action metadata, but action execution remains subject to policy and user approval.
+- **Runtime / reporting:** actions that execute through capability-aware runtimes should produce RFC 104-compatible report identities so declared authority and actual receipts can be compared.
+- **Agentic tooling:** agents may consume action metadata, capability requirements, dry-run plans, and receipt expectations, but action execution remains subject to policy and user approval.
 - **Documentation:** docs must distinguish scripts, actions, tools, project-context execution, and isolated execution.
 
 ## Unresolved questions

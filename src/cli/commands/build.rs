@@ -9,6 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use crate::backend::project::generator::GENERATED_CARGO_TARGET_DIR_ENV;
 use crate::backend::{IrCodegen, ProjectGenerator, RunProfile};
 use crate::cli::{CliError, CliResult, ExitCode};
 use crate::dependency_resolver::{ResolvedDependencies, resolve_dependencies, resolve_reachable_dependencies};
@@ -34,26 +35,32 @@ use super::build_report::{
     artifact_report, cargo_report, dependencies_report, emit_build_report, emit_rust_inspection_report,
     generated_project_report, incan_dependencies_report, interop_report, rust_inspection_report,
 };
+#[cfg(feature = "rust_inspect")]
+use super::common::collect_rust_inspect_query_paths;
 use super::common::{
-    CargoPolicy, ProjectRequirements, build_source_map, cargo_command_flags, collect_modules,
-    collect_project_requirements, collect_rust_dependency_uses, enforce_project_toolchain_constraint,
+    CargoPolicy, INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, ProjectRequirements, build_source_map, cargo_command_flags,
+    collect_modules, collect_project_requirements, collect_rust_dependency_uses, enforce_project_toolchain_constraint,
     format_dependency_error, imported_module_deps_for_with_index, merge_project_requirement_dependencies,
     module_key_index, resolve_project_root, typecheck_modules_with_import_graph, validate_output_dir,
 };
-#[cfg(feature = "rust_inspect")]
-use super::common::{collect_rust_inspect_query_paths, ensure_rust_inspect_workspace, prewarm_rust_inspect_workspace};
 use super::lock::{
     GeneratedLibraryDependencyPreheatRequest, LockResolutionRequest, resolve_lock_payload,
     run_generated_library_dependency_preheat,
 };
+#[cfg(feature = "rust_inspect")]
+use super::lock::{RustInspectWorkspaceRequest, prepare_rust_inspect_workspace};
 use super::vocab_extraction::{PendingDesugarerArtifact, collect_library_vocab_metadata};
 use crate::cli::prelude::ParsedModule;
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect::{InspectError, Inspector, InspectorConfig};
+use sha2::{Digest as _, Sha256};
 
 // ============================================================================
 // Project Preparation (shared between build and run)
 // ============================================================================
+
+const INLINE_COMMAND_PROJECT_PREFIX: &str = "incan_inline_command";
+const INLINE_COMMAND_OUTPUT_PARENT: &str = "target/incan/inline";
 
 /// A prepared Incan project ready to be built or run.
 ///
@@ -74,6 +81,40 @@ struct PreparedProject {
     report: BuildReportDraft,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct BuildCommandOptions {
+    pub cargo_policy: CargoPolicy,
+    pub cargo_features: Vec<String>,
+    pub cargo_no_default_features: bool,
+    pub cargo_all_features: bool,
+    pub generated_cargo_target_dir: Option<PathBuf>,
+}
+
+impl BuildCommandOptions {
+    /// Return the explicit generated Cargo target directory, falling back to the legacy environment default.
+    fn effective_generated_cargo_target_dir(&self) -> Option<PathBuf> {
+        self.generated_cargo_target_dir.clone().or_else(|| {
+            env::var_os(GENERATED_CARGO_TARGET_DIR_ENV)
+                .filter(|raw| !raw.is_empty())
+                .map(PathBuf::from)
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct PrepareProjectOptions<'a> {
+    output_dir: Option<&'a str>,
+    project_name_override: Option<&'a str>,
+    generated_cargo_target_dir: Option<&'a Path>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct InlineCommandProject {
+    source_path: PathBuf,
+    project_name: String,
+    output_dir: String,
+}
+
 /// A prepared library project after Incan validation and Rust source generation, before Cargo build.
 struct PreparedLibraryProject {
     generator: ProjectGenerator,
@@ -90,6 +131,7 @@ struct PreparedLibraryProject {
     cargo_features: CargoFeatureSelection,
     rust_extern_contexts: Vec<RustExternDeclContext>,
     should_preheat_library_dependencies: bool,
+    timings_ms: BTreeMap<String, u64>,
     report: BuildReportDraft,
 }
 
@@ -231,12 +273,59 @@ fn elapsed_ms(start: Instant) -> u64 {
     start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
 }
 
+/// Record one named build phase timing.
+fn record_timing(timings: &mut BTreeMap<String, u64>, name: &str, start: Instant) {
+    timings.insert(name.to_string(), elapsed_ms(start));
+}
+
 /// Print human build progress to stderr when stdout is reserved for a machine-readable report.
 fn print_build_progress(report_options: &BuildReportOptions, message: impl AsRef<str>) {
     if report_options.enabled() {
         eprintln!("{}", message.as_ref());
     } else {
         println!("{}", message.as_ref());
+    }
+}
+
+/// Return the stable cache key used for one wrapped inline command source from one working directory.
+fn inline_command_cache_key(cwd: &Path, wrapped_source: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(cwd.to_string_lossy().as_bytes());
+    hasher.update(b"\0");
+    hasher.update(wrapped_source.as_bytes());
+    let digest = hasher.finalize();
+    hex::encode(&digest[..8])
+}
+
+/// Return the stable generated project identity used for one `incan run -c` source.
+fn inline_command_project_for_cwd(cwd: &Path, wrapped_source: &str) -> InlineCommandProject {
+    let digest = inline_command_cache_key(cwd, wrapped_source);
+    let project_name = format!("{INLINE_COMMAND_PROJECT_PREFIX}_{digest}");
+    let source_path = env::temp_dir().join(&project_name).join("main.incn");
+    let output_dir = format!("{INLINE_COMMAND_OUTPUT_PARENT}/{project_name}");
+    InlineCommandProject {
+        source_path,
+        project_name,
+        output_dir,
+    }
+}
+
+/// Resolve the current invocation's stable inline-command generated project identity.
+fn inline_command_project(wrapped_source: &str) -> CliResult<InlineCommandProject> {
+    let cwd = env::current_dir().map_err(|err| {
+        CliError::failure(format!(
+            "failed to determine current directory for inline command cache: {err}"
+        ))
+    })?;
+    Ok(inline_command_project_for_cwd(&cwd, wrapped_source))
+}
+
+/// Preserve the legacy `run -c` behavior by adding a no-op `main` only when the snippet did not define one.
+fn wrap_inline_command_source(source: &str) -> String {
+    if source.contains("def main") {
+        source.to_string()
+    } else {
+        format!("{source}\n\ndef main() -> Unit:\n  pass\n")
     }
 }
 
@@ -638,6 +727,29 @@ fn prepare_project(
     cargo_no_default_features: bool,
     cargo_all_features: bool,
 ) -> CliResult<PreparedProject> {
+    prepare_project_with_options(
+        file_path,
+        PrepareProjectOptions {
+            output_dir,
+            project_name_override: None,
+            generated_cargo_target_dir: None,
+        },
+        cargo_policy,
+        cargo_features,
+        cargo_no_default_features,
+        cargo_all_features,
+    )
+}
+
+/// Prepare an executable project with optional internal identity overrides for callers that need bounded cache names.
+fn prepare_project_with_options(
+    file_path: &str,
+    options: PrepareProjectOptions<'_>,
+    cargo_policy: &CargoPolicy,
+    cargo_features: Vec<String>,
+    cargo_no_default_features: bool,
+    cargo_all_features: bool,
+) -> CliResult<PreparedProject> {
     let normalized_file_path = if Path::new(file_path).is_absolute() {
         PathBuf::from(file_path)
     } else {
@@ -671,27 +783,24 @@ fn prepare_project(
         .unwrap_or_default();
     let project_requirements = collect_project_requirements(&modules, &library_manifest_index)?;
 
-    // Type check all modules (dependencies + stdlib first), so diagnostics are associated with the correct file.
-    typecheck_modules_with_import_graph(
-        &modules,
-        manifest.as_ref(),
-        &library_manifest_index,
-        #[cfg(feature = "rust_inspect")]
-        None,
-    )?;
-
     // Derive project name (manifest overrides filename)
-    let project_name = manifest
-        .as_ref()
-        .and_then(|m| m.project.as_ref().and_then(|p| p.name.clone()))
+    let project_name = options
+        .project_name_override
+        .map(ToString::to_string)
         .unwrap_or_else(|| {
-            path.file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("incan_project")
-                .to_string()
+            manifest
+                .as_ref()
+                .and_then(|m| m.project.as_ref().and_then(|p| p.name.clone()))
+                .unwrap_or_else(|| {
+                    path.file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("incan_project")
+                        .to_string()
+                })
         });
 
-    let out_dir = output_dir
+    let out_dir = options
+        .output_dir
         .map(|s| s.to_string())
         .unwrap_or_else(|| format!("target/incan/{}", project_name));
 
@@ -711,6 +820,7 @@ fn prepare_project(
     }
     // ---- Setup project generator ----
     let mut generator = ProjectGenerator::new(&out_dir, project_name.as_str(), true);
+    generator.set_cargo_target_dir_override(options.generated_cargo_target_dir.map(Path::to_path_buf));
     generator.set_stdlib_features(project_requirements.stdlib_features.clone());
     generator.set_include_dev_dependencies(false);
     generator.set_rust_edition(
@@ -763,20 +873,36 @@ fn prepare_project(
         rust_inspect_query_paths: &metadata_query_paths,
     })?;
     #[cfg(feature = "rust_inspect")]
-    {
-        let rust_inspect_manifest_dir = ensure_rust_inspect_workspace(
-            &project_root,
-            project_name.as_str(),
-            manifest
+    let rust_inspect_manifest_dir = {
+        let rust_inspect_manifest_dir = prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {
+            project_root: &project_root,
+            project_name: project_name.as_str(),
+            rust_edition: manifest
                 .as_ref()
                 .and_then(|m| m.build.as_ref().and_then(|b| b.rust_edition.clone())),
-            &resolved,
-            &project_requirements,
-            lock_payload.clone(),
-        )?;
-        prewarm_rust_inspect_workspace(&rust_inspect_manifest_dir, &metadata_query_paths)?;
-        codegen.set_rust_inspect_manifest_dir(rust_inspect_manifest_dir);
-    }
+            resolved: &resolved,
+            project_requirements: &project_requirements,
+            lock_payload: lock_payload.clone(),
+            rust_inspect_query_paths: &metadata_query_paths,
+            prepare_when_empty: true,
+        })?
+        .ok_or_else(|| CliError::failure("rust-inspect workspace preparation did not return a manifest directory"))?;
+        codegen.set_rust_inspect_manifest_dir(rust_inspect_manifest_dir.clone());
+        Some(rust_inspect_manifest_dir)
+    };
+
+    // Type check all modules (dependencies + stdlib first), so diagnostics are associated with the correct file.
+    //
+    // This must run after rust-inspect preparation. Direct Rust calls expose their callable signatures through the
+    // prepared metadata workspace; checking before that step degrades those calls to `Unknown` and breaks source-level
+    // constructs such as `?` on Rust `Result<T, E>` returns.
+    typecheck_modules_with_import_graph(
+        &modules,
+        manifest.as_ref(),
+        &library_manifest_index,
+        #[cfg(feature = "rust_inspect")]
+        rust_inspect_manifest_dir.as_deref(),
+    )?;
     generator.set_cargo_lock_payload(lock_payload);
 
     let cargo_flags = cargo_command_flags(cargo_policy, &cargo_features);
@@ -860,21 +986,23 @@ fn prepare_project(
 pub fn build_file(
     file_path: &str,
     output_dir: Option<&String>,
-    cargo_policy: CargoPolicy,
-    cargo_features: Vec<String>,
-    cargo_no_default_features: bool,
-    cargo_all_features: bool,
+    options: BuildCommandOptions,
     report_options: BuildReportOptions,
 ) -> CliResult<ExitCode> {
     let total_start = Instant::now();
     let prepare_start = Instant::now();
-    let prepared = prepare_project(
+    let generated_cargo_target_dir = options.effective_generated_cargo_target_dir();
+    let prepared = prepare_project_with_options(
         file_path,
-        output_dir.map(|s| s.as_str()),
-        &cargo_policy,
-        cargo_features,
-        cargo_no_default_features,
-        cargo_all_features,
+        PrepareProjectOptions {
+            output_dir: output_dir.map(|s| s.as_str()),
+            project_name_override: None,
+            generated_cargo_target_dir: generated_cargo_target_dir.as_deref(),
+        },
+        &options.cargo_policy,
+        options.cargo_features,
+        options.cargo_no_default_features,
+        options.cargo_all_features,
     )?;
     let prepare_ms = elapsed_ms(prepare_start);
 
@@ -905,15 +1033,16 @@ pub fn build_file(
                 ]));
                 emit_build_report(&report, &report_options)?;
                 Ok(ExitCode::SUCCESS)
-            } else if let Some(wrapped) =
-                format_rust_extern_wrapped_diagnostics(&result.stderr, &prepared.rust_extern_contexts)
-            {
-                Err(CliError::failure(format!(
-                    "Build failed.\n\n{}\nRaw cargo/rustc output:\n{}",
-                    wrapped.trim_end(),
-                    result.stderr
-                )))
             } else {
+                if let Some(wrapped) =
+                    format_rust_extern_wrapped_diagnostics(&result.stderr, &prepared.rust_extern_contexts)
+                {
+                    return Err(CliError::failure(format!(
+                        "Build failed.\n\n{}\nRaw cargo/rustc output:\n{}",
+                        wrapped.trim_end(),
+                        result.stderr
+                    )));
+                }
                 Err(CliError::failure(format!("Build failed:\n{}", result.stderr)))
             }
         }
@@ -928,7 +1057,11 @@ fn prepare_library_project(
     cargo_features: Vec<String>,
     cargo_no_default_features: bool,
     cargo_all_features: bool,
+    generated_cargo_target_dir: Option<&Path>,
 ) -> CliResult<PreparedLibraryProject> {
+    let prepare_start = Instant::now();
+    let mut timings_ms = BTreeMap::new();
+    let source_load_start = Instant::now();
     let project_root = resolve_library_project_root(file_path)?;
     let Some(manifest) = ProjectManifest::discover(&project_root).map_err(|e| CliError::failure(e.to_string()))? else {
         return Err(CliError::failure(
@@ -951,7 +1084,9 @@ fn prepare_library_project(
             lib_module.file_path.display()
         )));
     }
+    record_timing(&mut timings_ms, "library_load_sources", source_load_start);
 
+    let requirements_start = Instant::now();
     let declared = manifest.declared_rust_crate_names();
     let library_manifest_index = LibraryManifestIndex::from_project_manifest(&manifest);
     let project_requirements = collect_project_requirements(&modules, &library_manifest_index)?;
@@ -983,7 +1118,9 @@ fn prepare_library_project(
         cargo_all_features,
     }
     .normalized();
+    record_timing(&mut timings_ms, "library_collect_requirements", requirements_start);
 
+    let dependency_start = Instant::now();
     let mut resolved = match resolve_dependencies(Some(&manifest), &inline_imports, true, &cargo_features) {
         Ok(resolved) => resolved,
         Err(errors) => {
@@ -996,11 +1133,13 @@ fn prepare_library_project(
         }
     };
     merge_project_requirement_dependencies(&mut resolved, &project_requirements)?;
+    record_timing(&mut timings_ms, "library_resolve_dependencies", dependency_start);
     #[cfg(feature = "rust_inspect")]
     let metadata_query_paths = collect_library_rust_abi_query_paths(&modules, &rust_extern_contexts);
     #[cfg(not(feature = "rust_inspect"))]
     let metadata_query_paths: Vec<String> = Vec::new();
 
+    let lock_start = Instant::now();
     let lock_payload_for_typecheck = resolve_lock_payload(LockResolutionRequest {
         project_root: &project_root,
         project_name: project_name.as_str(),
@@ -1012,23 +1151,29 @@ fn prepare_library_project(
         #[cfg(feature = "rust_inspect")]
         rust_inspect_query_paths: &metadata_query_paths,
     })?;
+    record_timing(&mut timings_ms, "library_resolve_lock_payload", lock_start);
     let should_preheat_library_dependencies = lock_payload_for_typecheck.is_some()
         && (!resolved.dependencies.is_empty() || !project_requirements.stdlib_features.is_empty());
     let lock_payload_for_preheat = lock_payload_for_typecheck.clone();
     #[cfg(feature = "rust_inspect")]
     let rust_inspect_manifest_dir = {
-        let rust_inspect_manifest_dir = ensure_rust_inspect_workspace(
-            &project_root,
-            project_name.as_str(),
-            manifest.build.as_ref().and_then(|build| build.rust_edition.clone()),
-            &resolved,
-            &project_requirements,
-            lock_payload_for_typecheck.clone(),
-        )?;
-        prewarm_rust_inspect_workspace(&rust_inspect_manifest_dir, &metadata_query_paths)?;
+        let rust_inspect_start = Instant::now();
+        let rust_inspect_manifest_dir = prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {
+            project_root: &project_root,
+            project_name: project_name.as_str(),
+            rust_edition: manifest.build.as_ref().and_then(|build| build.rust_edition.clone()),
+            resolved: &resolved,
+            project_requirements: &project_requirements,
+            lock_payload: lock_payload_for_typecheck.clone(),
+            rust_inspect_query_paths: &metadata_query_paths,
+            prepare_when_empty: true,
+        })?
+        .ok_or_else(|| CliError::failure("rust-inspect workspace preparation did not return a manifest directory"))?;
+        record_timing(&mut timings_ms, "library_rust_inspect_prewarm", rust_inspect_start);
         rust_inspect_manifest_dir
     };
 
+    let typecheck_start = Instant::now();
     let mut all_errors = String::new();
     let mut checked_exports_by_module: HashMap<String, HashMap<String, Vec<CheckedNamedExport>>> = HashMap::new();
     let mut api_metadata_modules = Vec::new();
@@ -1081,7 +1226,9 @@ fn prepare_library_project(
     if !all_errors.is_empty() {
         return Err(CliError::failure(all_errors.trim_end()));
     }
+    record_timing(&mut timings_ms, "library_typecheck_modules", typecheck_start);
 
+    let api_validation_start = Instant::now();
     materialize_api_alias_projections(&mut api_metadata_modules);
 
     for diagnostic in validate_checked_api_docstrings(&api_metadata_modules) {
@@ -1103,7 +1250,9 @@ fn prepare_library_project(
     if !all_errors.is_empty() {
         return Err(CliError::failure(all_errors.trim_end()));
     }
+    record_timing(&mut timings_ms, "library_validate_api_metadata", api_validation_start);
 
+    let export_start = Instant::now();
     let selected_exports = LibraryReexportResolver::new(&checked_exports_by_module)
         .resolve(lib_module)
         .map_err(|errs| {
@@ -1117,7 +1266,9 @@ fn prepare_library_project(
             }
             CliError::failure(msg.trim_end())
         })?;
+    record_timing(&mut timings_ms, "library_resolve_exports", export_start);
 
+    let manifest_start = Instant::now();
     let project_version = manifest
         .project
         .as_ref()
@@ -1144,13 +1295,18 @@ fn prepare_library_project(
     {
         library_manifest.rust_abi = collect_library_rust_abi(&rust_inspect_manifest_dir, &metadata_query_paths)?;
     }
+    record_timing(&mut timings_ms, "library_build_manifest_metadata", manifest_start);
     let mut pending_desugarer_artifact: Option<PendingDesugarerArtifact> = None;
 
-    if let Some(vocab_extraction) = collect_library_vocab_metadata(&manifest, &project_root)? {
+    let vocab_start = Instant::now();
+    if let Some(vocab_extraction) =
+        collect_library_vocab_metadata(&manifest, &project_root, generated_cargo_target_dir)?
+    {
         pending_desugarer_artifact = vocab_extraction.pending_desugarer_artifact;
         library_manifest.vocab = Some(vocab_extraction.payload);
         library_manifest.soft_keywords.activations = vocab_extraction.compatibility_activations;
     }
+    record_timing(&mut timings_ms, "library_collect_vocab_metadata", vocab_start);
 
     let out_dir = project_root.join("target").join("lib");
     std::fs::create_dir_all(&out_dir)
@@ -1172,6 +1328,7 @@ fn prepare_library_project(
         codegen.add_module_with_path_segments(&module.name, &module.ast, module.path_segments.clone());
     }
     let mut generator = ProjectGenerator::new(&out_dir, project_name.as_str(), false);
+    generator.set_cargo_target_dir_override(generated_cargo_target_dir.map(Path::to_path_buf));
     generator.set_stdlib_features(project_requirements.stdlib_features.clone());
     generator.set_include_dev_dependencies(false);
     let rust_edition = manifest.build.as_ref().and_then(|build| build.rust_edition.clone());
@@ -1221,6 +1378,7 @@ fn prepare_library_project(
     generator.set_dependencies(resolved.dependencies);
     generator.set_dev_dependencies(resolved.dev_dependencies);
 
+    let codegen_start = Instant::now();
     if dep_modules.is_empty() {
         let rust_code = codegen
             .try_generate(&lib_module.ast)
@@ -1237,6 +1395,8 @@ fn prepare_library_project(
             .generate_nested(&main_code, &rust_modules)
             .map_err(|e| CliError::failure(format!("Error generating project: {e}")))?;
     }
+    record_timing(&mut timings_ms, "library_generate_rust", codegen_start);
+    record_timing(&mut timings_ms, "library_prepare_total", prepare_start);
 
     Ok(PreparedLibraryProject {
         generator,
@@ -1253,29 +1413,63 @@ fn prepare_library_project(
         cargo_features,
         rust_extern_contexts,
         should_preheat_library_dependencies,
+        timings_ms,
         report: report_draft,
     })
+}
+
+/// Write the `.incnlib` manifest and build-report artifact paths for a prepared library project.
+fn write_library_manifest_artifacts(prepared: &mut PreparedLibraryProject) -> CliResult<()> {
+    prepared
+        .library_manifest
+        .write_to_path(&prepared.manifest_path)
+        .map_err(|err| CliError::failure(format!("failed to write {}: {err}", prepared.manifest_path.display())))?;
+
+    prepared
+        .report
+        .artifacts
+        .push(artifact_report("incan_library_manifest", &prepared.manifest_path));
+    prepared.report.artifacts.push(artifact_report(
+        "generated_cargo_manifest",
+        &prepared.generator.cargo_manifest_path(),
+    ));
+    Ok(())
 }
 
 /// Validate RFC 031 library-mode preconditions.
 pub fn build_library(
     file_path: Option<&str>,
     _output_dir: Option<&String>,
-    cargo_policy: CargoPolicy,
-    cargo_features: Vec<String>,
-    cargo_no_default_features: bool,
-    cargo_all_features: bool,
+    options: BuildCommandOptions,
     report_options: BuildReportOptions,
 ) -> CliResult<ExitCode> {
     let total_start = Instant::now();
+    let generated_cargo_target_dir = options.effective_generated_cargo_target_dir();
     let mut prepared = prepare_library_project(
         file_path,
-        cargo_policy,
-        cargo_features,
-        cargo_no_default_features,
-        cargo_all_features,
+        options.cargo_policy,
+        options.cargo_features,
+        options.cargo_no_default_features,
+        options.cargo_all_features,
+        generated_cargo_target_dir.as_deref(),
     )?;
+    let artifact_only = env::var_os(INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV).is_some();
 
+    if artifact_only {
+        write_library_manifest_artifacts(&mut prepared)?;
+        print_build_progress(&report_options, "✓ Library dependency artifact prepared!");
+        print_build_progress(
+            &report_options,
+            format!("Generated manifest: {}", prepared.manifest_path.display()),
+        );
+        let mut timings_ms = prepared.timings_ms.clone();
+        timings_ms.insert("total".to_string(), elapsed_ms(total_start));
+        let report = prepared.report.finish(timings_ms);
+        emit_build_report(&report, &report_options)?;
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    let preheat_start = Instant::now();
     if prepared.should_preheat_library_dependencies
         && let Some(lock_payload) = prepared.lock_payload.as_deref()
     {
@@ -1292,6 +1486,9 @@ pub fn build_library(
             cargo_lock_payload: lock_payload,
         })?;
     }
+    prepared
+        .timings_ms
+        .insert("library_dependency_preheat".to_string(), elapsed_ms(preheat_start));
 
     let cargo_start = Instant::now();
     let cargo_build_ms = match prepared.generator.build() {
@@ -1316,10 +1513,7 @@ pub fn build_library(
         }
     };
 
-    prepared
-        .library_manifest
-        .write_to_path(&prepared.manifest_path)
-        .map_err(|err| CliError::failure(format!("failed to write {}: {err}", prepared.manifest_path.display())))?;
+    write_library_manifest_artifacts(&mut prepared)?;
 
     print_build_progress(&report_options, "✓ Library build successful!");
     print_build_progress(
@@ -1331,18 +1525,9 @@ pub fn build_library(
         format!("Generated manifest: {}", prepared.manifest_path.display()),
     );
 
-    prepared
-        .report
-        .artifacts
-        .push(artifact_report("incan_library_manifest", &prepared.manifest_path));
-    prepared.report.artifacts.push(artifact_report(
-        "generated_cargo_manifest",
-        &prepared.generator.cargo_manifest_path(),
-    ));
-    let report = prepared.report.finish(BTreeMap::from([
-        ("cargo_build".to_string(), cargo_build_ms),
-        ("total".to_string(), elapsed_ms(total_start)),
-    ]));
+    prepared.timings_ms.insert("cargo_build".to_string(), cargo_build_ms);
+    prepared.timings_ms.insert("total".to_string(), elapsed_ms(total_start));
+    let report = prepared.report.finish(prepared.timings_ms);
     emit_build_report(&report, &report_options)?;
 
     Ok(ExitCode::SUCCESS)
@@ -1358,6 +1543,7 @@ pub fn inspect_rust(path: &Path, lib_mode: bool, format: RustInspectionFormat) -
             Vec::new(),
             false,
             false,
+            None,
         )?;
         rust_inspection_report(
             BuildReportMode::Library,
@@ -1424,7 +1610,7 @@ pub fn run_file(
     cargo_all_features: bool,
     release: bool,
 ) -> CliResult<ExitCode> {
-    let mut prepared = prepare_project(
+    let prepared = prepare_project(
         file_path,
         None,
         &cargo_policy,
@@ -1432,6 +1618,60 @@ pub fn run_file(
         cargo_no_default_features,
         cargo_all_features,
     )?;
+    run_prepared_project(prepared, release)
+}
+
+/// Build and run inline Incan source from `incan run -c`.
+pub fn run_inline_source(
+    source: &str,
+    cargo_policy: CargoPolicy,
+    cargo_features: Vec<String>,
+    cargo_no_default_features: bool,
+    cargo_all_features: bool,
+    release: bool,
+) -> CliResult<ExitCode> {
+    let wrapped_source = wrap_inline_command_source(source);
+    let inline_project = inline_command_project(&wrapped_source)?;
+    let source_path = inline_project.source_path;
+    let source_parent = source_path.parent().ok_or_else(|| {
+        CliError::failure(format!(
+            "failed to determine temporary inline command directory for {}",
+            source_path.display()
+        ))
+    })?;
+    fs::create_dir_all(source_parent).map_err(|err| {
+        CliError::failure(format!(
+            "Error creating temporary inline command directory {}: {err}",
+            source_parent.display()
+        ))
+    })?;
+    fs::write(&source_path, wrapped_source).map_err(|err| {
+        CliError::failure(format!(
+            "Error writing temporary inline command file {}: {err}",
+            source_path.display()
+        ))
+    })?;
+
+    let source_arg = source_path.to_string_lossy().to_string();
+    let result = prepare_project_with_options(
+        &source_arg,
+        PrepareProjectOptions {
+            output_dir: Some(inline_project.output_dir.as_str()),
+            project_name_override: Some(inline_project.project_name.as_str()),
+            generated_cargo_target_dir: None,
+        },
+        &cargo_policy,
+        cargo_features,
+        cargo_no_default_features,
+        cargo_all_features,
+    )
+    .and_then(|prepared| run_prepared_project(prepared, release));
+    let _ = fs::remove_file(&source_path);
+    result
+}
+
+/// Run a prepared generated project with the same stdout, stderr and exit-code handling used by every `incan run` path.
+fn run_prepared_project(mut prepared: PreparedProject, release: bool) -> CliResult<ExitCode> {
     prepared.generator.set_run_profile(if release {
         RunProfile::Release
     } else {
@@ -1498,6 +1738,82 @@ mod tests {
         };
         assert!(rendered.contains("Rust backing item"));
         assert!(rendered.contains("incan_stdlib::testing::fail"));
+    }
+
+    #[test]
+    fn inline_command_project_is_stable_for_same_source_and_working_directory() {
+        let cwd = Path::new("/tmp/incan-inline-cache/project");
+        let source = wrap_inline_command_source("println(\"ok\")");
+        let first = inline_command_project_for_cwd(cwd, &source);
+        let second = inline_command_project_for_cwd(cwd, &source);
+
+        assert_eq!(first, second);
+        assert_eq!(
+            first.source_path.file_name().and_then(|name| name.to_str()),
+            Some("main.incn")
+        );
+        let rendered = first.source_path.to_string_lossy();
+        assert!(
+            rendered.contains("incan_inline_command_"),
+            "inline command temp source should use the stable inline-command prefix: {rendered}"
+        );
+        assert!(
+            !rendered.contains("incan_cmd_"),
+            "inline command temp source must not use timestamped incan_cmd names: {rendered}"
+        );
+        assert!(first.project_name.starts_with("incan_inline_command_"));
+        assert!(
+            first
+                .output_dir
+                .starts_with("target/incan/inline/incan_inline_command_")
+        );
+    }
+
+    #[test]
+    fn inline_command_project_is_partitioned_by_working_directory() {
+        let source = wrap_inline_command_source("println(\"ok\")");
+        let first = inline_command_project_for_cwd(Path::new("/tmp/incan-inline-cache/one"), &source);
+        let second = inline_command_project_for_cwd(Path::new("/tmp/incan-inline-cache/two"), &source);
+
+        assert_ne!(
+            first, second,
+            "different working directories should not race on one inline command temp source"
+        );
+    }
+
+    #[test]
+    fn inline_command_project_is_partitioned_by_source_content() {
+        let cwd = Path::new("/tmp/incan-inline-cache/project");
+        let first = inline_command_project_for_cwd(cwd, &wrap_inline_command_source("println(\"one\")"));
+        let second = inline_command_project_for_cwd(cwd, &wrap_inline_command_source("println(\"two\")"));
+
+        assert_ne!(
+            first, second,
+            "different inline snippets in the same working directory must not race on one generated cargo target"
+        );
+    }
+
+    #[test]
+    fn inline_command_uses_bounded_generated_project_prefixes() {
+        assert_eq!(INLINE_COMMAND_PROJECT_PREFIX, "incan_inline_command");
+        assert_eq!(INLINE_COMMAND_OUTPUT_PARENT, "target/incan/inline");
+    }
+
+    #[test]
+    fn inline_command_source_wrapper_preserves_existing_main() {
+        let source = "def main() -> None:\n    println(\"ok\")\n";
+
+        assert_eq!(wrap_inline_command_source(source), source);
+    }
+
+    #[test]
+    fn inline_command_source_wrapper_adds_stub_main_for_expression_snippets() {
+        let wrapped = wrap_inline_command_source("println(\"ok\")");
+
+        assert!(
+            wrapped.contains("def main() -> Unit:\n  pass"),
+            "inline snippets without a main should preserve existing run -c stub behavior: {wrapped}"
+        );
     }
 
     #[test]
@@ -1855,10 +2171,7 @@ mod tests {
         let exit = build_library(
             Some(lib_path_str),
             None,
-            CargoPolicy::default(),
-            Vec::new(),
-            false,
-            false,
+            BuildCommandOptions::default(),
             BuildReportOptions::default(),
         )?;
         assert_eq!(exit, ExitCode::SUCCESS);
@@ -1927,10 +2240,7 @@ mod tests {
         let exit = build_library(
             Some(lib_path_str),
             None,
-            CargoPolicy::default(),
-            Vec::new(),
-            false,
-            false,
+            BuildCommandOptions::default(),
             BuildReportOptions::default(),
         )?;
         assert_eq!(exit, ExitCode::SUCCESS);

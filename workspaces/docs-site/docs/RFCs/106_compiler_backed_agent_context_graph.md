@@ -55,6 +55,7 @@ Repowise adds a useful adjacent lesson for architecture tooling: structural sour
 - Define a stable graph fact model for Incan packages and workspaces.
 - Expose compiler-backed source, module, declaration, import, public API, reference, call, diagnostic, manifest, and artifact facts where available.
 - Expose Incan-specific body facts such as match dispatch, call sites, reference sites, metadata annotations, and derived architecture signals where available.
+- Expose generated-behavior and resolution facts such as derive applications, decorator applications, vocabulary desugarings, trait adoptions, associated type bindings, type-directed overload selections, ownership and clone planning, and generated artifact relationships where available.
 - Expose optional process-risk facts such as churn, ownership, co-change, coverage, decision staleness, and trend signals when the required local inputs are available.
 - Include provenance, confidence, source span, package identity, module path, and graph-schema version on graph facts.
 - Support strict checked export and tolerant work-in-progress export.
@@ -196,6 +197,14 @@ The graph should support these node kinds as the compiler exposes enough informa
 - `field`
 - `enum_variant`
 - `trait_requirement`
+- `trait_adoption`
+- `associated_type_binding`
+- `derive_application`
+- `decorator_application`
+- `vocab_desugaring`
+- `extension_property`
+- `type_directed_mapping`
+- `ownership_plan`
 - `reference_site`
 - `call_site`
 - `match_dispatch`
@@ -232,6 +241,17 @@ The graph should support these edge kinds when available:
 - `aliases`
 - `overrides`
 - `tests`
+- `explains`
+- `resolves_to`
+- `lowers_to`
+- `selects_overload`
+- `binds_associated_type`
+- `applies_derive`
+- `applies_decorator`
+- `desugars_to`
+- `borrows_as`
+- `clones_for`
+- `moves_to`
 - `generated_from`
 - `materializes`
 - `uses_rust_item`
@@ -272,6 +292,24 @@ Physical file movement should not unnecessarily destroy identity for declaration
 Strict export must fail when the graph would otherwise imply checked semantic facts from an invalid package. Tolerant export may continue after parseable module errors, but it must mark unchecked facts clearly and must not emit checked API members, checked signatures, resolved call edges, or resolved reference edges for modules that failed the required semantic phase.
 
 Diagnostics produced during tolerant export should be emitted as graph records so tools can explain why the graph is partial.
+
+### Generated behavior and resolution facts
+
+The graph should represent user-visible compiler-selected behavior as graph facts when the owning compiler or tooling subsystem can expose them. These records are especially important for agents because they replace guesswork around hidden behavior with source-anchored facts.
+
+Generated behavior records should cover at least these families over time:
+
+- derive applications and the generated protocol behavior they provide;
+- decorator applications, preserved callable identity, and decorator-produced metadata;
+- vocabulary block desugarings and import-scoped extension-property resolution;
+- trait adoption records, generic adoption-family records, and associated type bindings;
+- type-token overload selection and type-directed return mapping;
+- ownership, borrow, move, clone, and materialization plans at checked value-use boundaries where the compiler exposes that decision;
+- generated Rust or future backend artifacts linked back to source declarations, metadata, and diagnostics.
+
+Each generated behavior record must carry provenance and source anchors. It should distinguish source-authored declarations from compiler-provided behavior, package-provided vocabulary descriptors, trait-owned capability families, and backend-generated artifacts. A behavior record may be partial or unsupported in early exports, but it must not masquerade as `compiler_checked` unless the compiler actually validated the relationship.
+
+Explanation-oriented edges such as `explains`, `resolves_to`, `lowers_to`, `selects_overload`, `binds_associated_type`, `desugars_to`, `borrows_as`, `clones_for`, and `moves_to` let a context pack answer why a call, match, derive, trait method, property read, or generated artifact behaves the way it does. These edges are not required for every source construct in the first release, but the schema should reserve the concept so later consumers do not invent parallel explanation formats.
 
 ### LSP and architecture consumers
 
@@ -355,6 +393,8 @@ LSP demonstrates the live editor model: diagnostics, go-to-definition, reference
 Incan can distinguish checked facts from approximate facts. That is the core differentiator. A generic indexer can detect that text looks like a declaration or call; the Incan compiler can know whether a declaration is public, what its checked signature is, what metadata it carries, whether an alias target resolved, whether a stdlib import exists, and which diagnostic invalidated a module.
 
 Incan can also expose body-level facts that are meaningful to the language rather than merely textual. Match dispatch, call sites, reference sites, pattern families, metadata blocks, checked public API members, and stdlib/import relationships are all examples of facts that can be represented directly instead of inferred by a generic code-search system. These facts are especially useful for architecture-advice tooling because they let a rule cite structured evidence rather than a bag of matching lines.
+
+Incan can expose generated behavior without treating generated output as the source of truth. Derives, decorators, vocabulary desugarings, trait resolution, type-directed overload selection, and ownership planning all affect what code means, but users should be able to inspect those decisions through compiler-backed graph facts rather than by reverse-engineering generated Rust.
 
 Incan can also export graph facts for generated or materialized structures. RFC 048 metadata and future artifact metadata allow packages to expose public contracts even when source is generated, embedded, or inspected from a built artifact.
 
@@ -445,6 +485,7 @@ The task-context ranker should start simple: exact identifiers, module/name/doc 
 - **IR Lowering**: lowering does not define the graph, but generated or materialized structures may need source/metadata anchors so tools can connect emitted behavior back to source.
 - **Emission**: generated Rust is not the graph source of truth, but emission may expose artifact metadata that can be linked to source graph identities.
 - **Stdlib / Runtime (`incan_stdlib`)**: stdlib source and manifests should be graphable as ordinary Incan packages, and stdlib builtins should appear as external or stdlib nodes when referenced.
+- **Generated behavior explanation**: derives, decorators, vocabularies, trait resolution, type-directed mappings, ownership plans, and generated artifacts should contribute source-anchored explanation records when available.
 - **Formatter**: no syntax changes are required by this RFC, but compact graph/context output should have deterministic formatting.
 - **LSP / Tooling**: CLI, MCP, editor integrations, graph export, graph stale checks, live graph snapshots, context packing, architecture-advice tooling, risk scoring, and checked metadata/documentation tooling are directly affected.
 - **Packaging / Workspaces**: package identity, workspace roots, lockfiles, generated artifacts, and future registry metadata contribute to graph identity and staleness.

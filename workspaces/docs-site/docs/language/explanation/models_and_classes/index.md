@@ -51,7 +51,7 @@ Next: [Models](models.md) and [Classes](classes.md).
 
 ## Fundamental differences
 
-A `model` and a `class` are not interchangeable. They compile to Rust structs, but they represent **different language concepts**:
+A `model` and a `class` are not interchangeable. In the current backend they lower to Rust structs, but they represent **different language concepts**:
 
 - **Models define data shapes**. They are the canonical representation for schema-like data and are the target for schema-focused features like field metadata and aliases.
 - **Classes define behavior**. They can inherit, override methods, and model stateful objects and services.
@@ -70,7 +70,7 @@ A `model` and a `class` are not interchangeable. They compile to Rust structs, b
 
 
 ??? info "Coming from Rust?"
-    Both `model` and `class` compile to Rust `struct`s + `impl`s. The difference is semantic:
+    In the current backend, both `model` and `class` lower to Rust `struct`s + `impl`s. The difference is semantic:
 
     - `model` = "this is data" (like a plain struct)
     - `class` = "this is an object with behavior" (can add inheritance + trait composition)

@@ -19,7 +19,7 @@
     - RFC 095 (`span` vocabulary blocks)
     - RFC 102 (semantic layer inspection surface)
     - RFC 103 (secret values and redaction-safe values)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/662
+- **Issue:** https://github.com/encero-systems/incan/issues/662
 - **RFC PR:** -
 - **Written against:** v0.3
 - **Shipped in:** —
@@ -63,6 +63,7 @@ The key design constraint is usability. This RFC must not turn ordinary Incan in
 - Define machine-readable run reports that include requested capabilities, granted capabilities, denied operations, emitted receipts, redaction state, and replay limits.
 - Define how domain capabilities may imply or request host capabilities without granting themselves authority.
 - Make receipts consumable by RFC 102 semantic inspection, RFC 078 typed actions, RFC 093 telemetry, RFC 076 policy, CI, LSP, docs tooling, and agents.
+- Align typed action dry-runs and runtime reports so declared capability requirements can be compared with actual receipt emission.
 - Keep ordinary source readable and low ceremony.
 
 ## Non-Goals
@@ -269,6 +270,7 @@ A run report is a machine-readable summary of a run, action, test, or governed e
 - toolchain version;
 - run mode;
 - entrypoint identity;
+- action identity when the run was invoked through a typed action;
 - requested capabilities when available;
 - granted capabilities;
 - denied capability requests;
@@ -280,6 +282,14 @@ A run report is a machine-readable summary of a run, action, test, or governed e
 Reports may include artifact references, span trees, telemetry correlation ids, package versions, lockfile identity, source snapshot identity, and semantic package references.
 
 Reports must not include raw secret values or sensitive payloads unless a separate, explicit reveal policy approves that exposure.
+
+### Typed action alignment
+
+Typed actions from RFC 078 provide the expected authority contract before execution. A typed action may declare required capabilities, optional capabilities, receipt schemas, mutation categories, network or model access, input and output artifacts, replay expectations, and non-plannable behavior. Those declarations are static metadata; they do not grant authority.
+
+When a typed action runs under this RFC, the run report must preserve the action identity and should include enough metadata to compare declared capability requirements with runtime behavior. If the action emits a receipt for a capability that was not declared by the action, package, or selected capability pack, the report should mark the mismatch. If the action declares a required capability that is never requested during a successful run, the report may mark the declaration as unused rather than treating it as an error by default. Policy may choose to reject undeclared capability use, require review for unused broad grants, or allow either case in permissive workflows.
+
+Dry-run output from RFC 078 and run reports from this RFC should use compatible capability identities, action identities, risk categories, redaction markers, artifact identities, and replay classifications. A user, CI job, LSP client, or agent should be able to read the dry-run plan, run the action, and compare the actual receipts without interpreting separate schemas.
 
 ### Replay classification
 
@@ -360,7 +370,7 @@ Static declarations and runtime receipts should be compared where possible. If a
 - **RFC 066 (`std.http`)**: HTTP requests become governed host capabilities with redacted request/response receipts and replay classifications.
 - **RFC 075 (capability packs)**: project capability packs may declare expected package and action capabilities, but they must not grant host authority without runtime policy.
 - **RFC 076 (policy)**: policy consumes capability declarations and receipts, and may approve, deny, or require review for grants and mutations.
-- **RFC 078 (typed actions)**: actions may declare required capabilities and emit action-scoped reports.
+- **RFC 078 (typed actions)**: actions may declare required capabilities, optional capabilities, receipt schemas, artifact effects, and dry-run plans; this RFC defines how runtime receipts and reports confirm, deny, or differ from those declarations.
 - **RFC 089 (`std.environ`)**: environment access becomes a governed and receipted host boundary.
 - **RFC 090 (typed CLI framework)**: CLI commands may declare capability requirements and expose helpful denial diagnostics.
 - **RFC 092 (interactive runtime contracts)**: target manifests may describe host capabilities supported by a runtime target.
@@ -425,7 +435,7 @@ Generated build artifacts and run reports should be ordinary artifacts that RFC 
 - **Typechecker / Semantic metadata**: static capability declarations and action requirements should be exposed as checked metadata where available.
 - **IR Lowering / Backend**: source spans and semantic identities should be preserved well enough for receipts to point back to source and semantic objects.
 - **LSP / Docs tooling**: editors and docs can surface capability declarations, required grants, denial diagnostics, and report artifacts.
-- **Policy / CI / Agents**: policy and automation can consume capability declarations and receipts to decide whether runs, actions, generated artifacts, or proposed changes are acceptable.
+- **Policy / CI / Agents**: policy and automation can consume capability declarations, action dry-runs, receipt schemas, and actual receipts to decide whether runs, actions, generated artifacts, or proposed changes are acceptable.
 
 ## Unresolved questions
 

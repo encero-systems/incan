@@ -1,13 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/dannys-code-corner/incan/releases/latest/download/sdk-manifest.schema.v1.json",
-  "title": "Incan SDK release manifest",
+  "$id": "https://github.com/encero-systems/incan/releases/latest/download/toolchain-manifest.schema.v1.json",
+  "title": "Incan toolchain release manifest",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "sdk_version", "release", "channel", "rust_toolchain", "commands", "hosts"],
+  "required": ["schema_version", "toolchain_version", "release", "channel", "rust_toolchain", "commands", "hosts"],
   "properties": {
     "schema_version": { "const": 1 },
-    "sdk_version": { "type": "string", "minLength": 1 },
+    "toolchain_version": { "type": "string", "minLength": 1 },
     "release": { "type": "string", "minLength": 1 },
     "channel": { "type": "string", "enum": ["stable", "preview", "dev"] },
     "generated_at": { "type": "string" },

@@ -233,8 +233,8 @@ impl<'a> IrEmitter<'a> {
                     IrListEntry::Element(item) => {
                         self.emit_list_literal_item(item, item_target_ty, target_union_qualifier)
                     }
-                    IrListEntry::Spread(_) => Err(EmitError::Unsupported(
-                        "internal error: unexpected list spread in direct-only literal emission".to_string(),
+                    IrListEntry::Spread(_) => Err(EmitError::InternalInvariant(
+                        "unexpected list spread in direct-only literal emission".to_string(),
                     )),
                 })
                 .collect::<Result<_, _>>()?;
@@ -306,8 +306,8 @@ impl<'a> IrEmitter<'a> {
                         )?;
                         Ok(quote! { (#key_tokens, #value_tokens) })
                     }
-                    IrDictEntry::Spread(_) => Err(EmitError::Unsupported(
-                        "internal error: unexpected dict spread in direct-only literal emission".to_string(),
+                    IrDictEntry::Spread(_) => Err(EmitError::InternalInvariant(
+                        "unexpected dict spread in direct-only literal emission".to_string(),
                     )),
                 })
                 .collect::<Result<_, EmitError>>()?;
@@ -1026,7 +1026,7 @@ impl<'a> IrEmitter<'a> {
                 .replace('_', "")
                 .parse::<TokenStream>()
                 .map_err(|err| EmitError::SynParse(format!("invalid integer literal `{repr}`: {err}"))),
-            IrExprKind::Float(n) => Ok(quote! { #n }),
+            IrExprKind::Float(n) => Ok(Literal::f64_unsuffixed(*n).to_token_stream()),
             IrExprKind::Decimal(repr) => Ok(quote! { incan_stdlib::num::Decimal128::from_literal(#repr) }),
             IrExprKind::String(s) => {
                 if matches!(expr.ty, IrType::FrozenStr) {

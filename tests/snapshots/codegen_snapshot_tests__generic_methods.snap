@@ -192,5 +192,5 @@ fn main() {
     let echo_box: EchoBox = EchoBox { marker: 1 };
     let _echoed_bool: bool = echo_box.echo(true);
     let wrapper: Wrapper<i64> = Wrapper(1);
-    let _echoed_float: f64 = wrapper.echo(1.5f64);
+    let _echoed_float: f64 = wrapper.echo(1.5);
 }

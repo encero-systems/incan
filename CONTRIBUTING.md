@@ -14,8 +14,8 @@ Thank you for your interest in contributing to the Incan programming language! T
 1. **Clone the repository**
 
    ```bash
-   git clone https://github.com/dannys-code-corner/incan-programming-language
-   cd incan-programming-language
+   git clone https://github.com/encero-systems/incan
+   cd incan
    ```
 
 2. **Build the project**

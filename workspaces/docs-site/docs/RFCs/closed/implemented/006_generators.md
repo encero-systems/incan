@@ -4,8 +4,8 @@
 - **Created:** 2024-12-10
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 016 (loop and break value), RFC 019 (runner testing), RFC 068 (protocol hooks for core language syntax)
-- **Issue:** https://github.com/dannys-code-corner/incan/issues/324
-- **Follow-up:** RFC 088 (iterator adapter surface), implemented by https://github.com/dannys-code-corner/incan/issues/127
+- **Issue:** https://github.com/encero-systems/incan/issues/324
+- **Follow-up:** RFC 088 (iterator adapter surface), implemented by https://github.com/encero-systems/incan/issues/127
 - **RFC PR:** —
 - **Written against:** v0.1
 - **Shipped in:** v0.3

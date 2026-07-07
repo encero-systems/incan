@@ -16,7 +16,8 @@ def repo_root() -> Path:
 
 
 def pep440_version(version: str) -> str:
-    return version.replace("-dev.", ".dev")
+    normalized = version.replace("-dev.", ".dev")
+    return re.sub(r"-(a|b|rc)(\d+)$", r"\1\2", normalized)
 
 
 def replace_line(path: Path, pattern: str, replacement: str) -> None:
@@ -26,25 +27,25 @@ def replace_line(path: Path, pattern: str, replacement: str) -> None:
 def prepare_package(dist_dir: Path, skip_build: bool = False) -> None:
     root = repo_root()
     package_dir = root / "workspaces/release/pip"
-    version = (dist_dir / "sdk-version.txt").read_text(encoding="utf-8").splitlines()[0].strip()
+    version = (dist_dir / "toolchain-version.txt").read_text(encoding="utf-8").splitlines()[0].strip()
     if not version:
-        raise ValueError(f"empty SDK version in {dist_dir / 'sdk-version.txt'}")
+        raise ValueError(f"empty toolchain version in {dist_dir / 'toolchain-version.txt'}")
 
     stage_dir = dist_dir / "_pip-package"
     shutil.rmtree(stage_dir, ignore_errors=True)
     shutil.copytree(
         package_dir,
         stage_dir,
-        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "prepare_package.py", "publish_package.sh"),
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "prepare_package.py"),
     )
 
-    vendor_dir = stage_dir / "src/incan_sdk/vendor"
+    vendor_dir = stage_dir / "src/incan_toolchain/vendor"
     vendor_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(root / "workspaces/release/install-incan-sdk.sh", vendor_dir / "install-incan-sdk.sh")
+    shutil.copy2(root / "workspaces/release/install-incan.sh", vendor_dir / "install-incan.sh")
 
     package_version = pep440_version(version)
     replace_line(stage_dir / "pyproject.toml", r'^version = ".*"$', f'version = "{package_version}"')
-    replace_line(stage_dir / "src/incan_sdk/__init__.py", r'^__version__ = ".*"$', f'__version__ = "{package_version}"')
+    replace_line(stage_dir / "src/incan_toolchain/__init__.py", r'^__version__ = ".*"$', f'__version__ = "{package_version}"')
 
     if not skip_build:
         subprocess.run(

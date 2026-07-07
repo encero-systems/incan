@@ -10,7 +10,7 @@
     - RFC 035 (First-class named function references)
     - RFC 036 (User-defined decorators)
     - RFC 066 (`std.http` HTTP client surface)
-- **Issue:** [#171](https://github.com/dannys-code-corner/incan/issues/171)
+- **Issue:** [#171](https://github.com/encero-systems/incan/issues/171)
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** —

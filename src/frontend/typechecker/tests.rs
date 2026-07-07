@@ -1283,8 +1283,17 @@ def main(data: bytes) -> None:
 "#;
     let errs = check_str_err(source, "owned bytes should not satisfy an Incan &bytes parameter");
     assert!(
-        errs.iter().any(|err| err.message.contains("Type mismatch")),
-        "expected type mismatch, got {errs:?}"
+        errs.iter().any(|err| err
+            .message
+            .contains("Argument 'data' of 'borrowed' has type mismatch: expected '&bytes', found 'bytes'")),
+        "expected call argument type mismatch, got {errs:?}"
+    );
+    assert!(
+        errs.iter().any(|err| err
+            .notes
+            .iter()
+            .any(|note| note.contains("Parameter 'data' of 'borrowed' is declared as '&bytes'"))),
+        "expected call argument context note, got {errs:?}"
     );
 }
 
@@ -2511,6 +2520,77 @@ def foo() -> int:
 "#;
     let result = check_str(source);
     assert!(result.is_err());
+}
+
+#[test]
+fn test_return_type_mismatch_names_return_context() {
+    let source = r#"
+def foo() -> int:
+  return "hello"
+"#;
+    let errs = check_str_err(source, "expected return type mismatch");
+    assert!(
+        errs.iter().any(|err| err
+            .message
+            .contains("Return type mismatch: expected 'int', found 'str'")),
+        "expected contextual return mismatch, got: {errs:?}"
+    );
+    assert!(
+        errs.iter().any(|err| err
+            .notes
+            .iter()
+            .any(|note| note.contains("return expression must match the function return type 'int'"))),
+        "expected return-context note, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_assignment_type_mismatch_names_binding_context() {
+    let source = r#"
+def main() -> None:
+  annotated: int = "hello"
+"#;
+    let errs = check_str_err(source, "expected assignment type mismatch");
+    assert!(
+        errs.iter().any(|err| {
+            err.message
+                .contains("Assignment to 'annotated' has type mismatch: expected 'int', found 'str'")
+        }),
+        "expected contextual assignment mismatch, got: {errs:?}"
+    );
+    assert!(
+        errs.iter().any(|err| err
+            .notes
+            .iter()
+            .any(|note| note.contains("'annotated' is declared as 'int'"))),
+        "expected assignment-context note, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_call_argument_type_mismatch_names_parameter_context() {
+    let source = r#"
+def takes_int(value: int) -> None:
+  pass
+
+def main() -> None:
+  takes_int("hello")
+"#;
+    let errs = check_str_err(source, "expected call argument type mismatch");
+    assert!(
+        errs.iter().any(|err| {
+            err.message
+                .contains("Argument 'value' of 'takes_int' has type mismatch: expected 'int', found 'str'")
+        }),
+        "expected contextual call argument mismatch, got: {errs:?}"
+    );
+    assert!(
+        errs.iter().any(|err| err
+            .notes
+            .iter()
+            .any(|note| note.contains("Parameter 'value' of 'takes_int' is declared as 'int'"))),
+        "expected call-argument-context note, got: {errs:?}"
+    );
 }
 
 #[test]
@@ -7013,9 +7093,9 @@ model Account:
 "#;
     let errors = check_str_err(source, "expected computed property return mismatch");
     assert!(
-        errors
-            .iter()
-            .any(|error| error.message.contains("Type mismatch: expected 'int', found 'str'")),
+        errors.iter().any(|error| error
+            .message
+            .contains("Return type mismatch: expected 'int', found 'str'")),
         "expected property return mismatch diagnostic, got {errors:?}"
     );
 }
@@ -11112,7 +11192,9 @@ def foo(value: str) -> None:
 "#;
     let errs = check_str_err(source, "runtime str should not typecheck as FrozenStr");
     assert!(
-        errs.iter().any(|err| err.message.contains("Type mismatch")),
+        errs.iter().any(|err| err
+            .message
+            .contains("Argument 'value' of 'accept_frozen' has type mismatch: expected 'FrozenStr', found 'str'")),
         "expected type mismatch for runtime str to FrozenStr, got {errs:?}"
     );
 }
@@ -11128,7 +11210,9 @@ def foo(value: bytes) -> None:
 "#;
     let errs = check_str_err(source, "runtime bytes should not typecheck as FrozenBytes");
     assert!(
-        errs.iter().any(|err| err.message.contains("Type mismatch")),
+        errs.iter().any(|err| err
+            .message
+            .contains("Argument 'value' of 'accept_frozen' has type mismatch: expected 'FrozenBytes', found 'bytes'")),
         "expected type mismatch for runtime bytes to FrozenBytes, got {errs:?}"
     );
 }

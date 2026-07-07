@@ -11,8 +11,7 @@ Incan has two core “string-like” types:
     Method names are intentionally familiar (`upper`, `lower`, `strip`, `split`, `replace`, …), but Incan is statically typed and `contains()` is a method (rather than Python’s `in` operator).
 
 !!! note "Coming from Rust?"
-    Incan hides most ownership/borrowing details. You write `str` and the compiler handles Rust interop details in generated
-    code.
+    Incan hides most ownership/borrowing details. You write `str` and the compiler handles Rust interop details in generated code.
 
 ## Quick reference
 
@@ -196,7 +195,7 @@ def process_binary(data: bytes) -> bytes:
 ```
 
 !!! note "Coming from Python?"
-    Python’s `bytes` is immutable. Incan’s `bytes` currently compiles to Rust `Vec<u8>`, which is mutable.
+    Python’s `bytes` is immutable. Incan’s `bytes` currently lowers to Rust `Vec<u8>`, which is mutable.
 
 ### When to use `bytes` vs `str`
 
@@ -218,5 +217,5 @@ def process_binary(data: bytes) -> bytes:
 - [Examples: Strings][examples-strings] — string method examples
 - [Examples: Bytes I/O][examples-bytes-io] — binary data examples
 
-[examples-strings]: https://github.com/dannys-code-corner/incan/blob/main/examples/simple/strings.incn
-[examples-bytes-io]: https://github.com/dannys-code-corner/incan/blob/main/examples/advanced/bytes_io.incn
+[examples-strings]: https://github.com/encero-systems/incan/blob/main/examples/simple/strings.incn
+[examples-bytes-io]: https://github.com/encero-systems/incan/blob/main/examples/advanced/bytes_io.incn

@@ -1,6 +1,18 @@
+---
+search:
+  boost: 4
+tags:
+  - rust
+  - ownership
+  - cargo
+  - rustc
+  - readable source
+  - application code
+---
+
 # Incan vs Rust
 
-Rust is the right answer when low-level control, performance predictability, and ecosystem maturity matter more than authoring speed. Incan does not replace Rust. It compiles to Rust so that high-level application code can land on the Rust toolchain and ecosystem.
+Rust is the right answer when low-level control, performance predictability, and ecosystem maturity matter more than authoring speed. Incan does not replace Rust. The current beta builds through Cargo/rustc, and the longer-lived product boundary is high-level application code that can produce native artifacts and interoperate with the Rust ecosystem.
 
 Choose Incan when the code is mostly application logic and the Rust version would be more ceremony than signal.
 
@@ -17,7 +29,7 @@ Choose Incan when the code is mostly application logic and the Rust version woul
 - Python-readable business, workflow, data, CLI, and service logic.
 - Strong domain models without Rust-level boilerplate at every call site.
 - Explicit `Result` / `Option` handling without making every application module feel like systems code.
-- Rust interop for the smaller parts of the program that need real Rust.
+- Rust interop for the smaller parts of the program that need real Rust APIs or crates.
 - Faster iteration for teams that like Rust's guarantees but not Rust's surface area for everyday code.
 
 ## The honest tradeoff

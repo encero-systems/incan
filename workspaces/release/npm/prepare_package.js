@@ -31,10 +31,10 @@ const skipPack = args.includes("--skip-pack");
 const packageDir = __dirname;
 const repoRoot = path.resolve(packageDir, "../../..");
 const distDir = path.resolve(process.cwd(), distArg);
-const versionPath = path.join(distDir, "sdk-version.txt");
+const versionPath = path.join(distDir, "toolchain-version.txt");
 const version = fs.readFileSync(versionPath, "utf8").split(/\r?\n/)[0].trim();
 if (!version) {
-  fail(`empty SDK version in ${versionPath}`);
+  fail(`empty toolchain version in ${versionPath}`);
 }
 
 const stageDir = path.join(distDir, "_npm-package");
@@ -46,8 +46,7 @@ fs.cpSync(packageDir, stageDir, {
     return (
       name !== "node_modules" &&
       !source.includes(`${path.sep}node_modules${path.sep}`) &&
-      name !== "prepare_package.js" &&
-      name !== "publish_package.sh"
+      name !== "prepare_package.js"
     );
   },
 });
@@ -55,8 +54,8 @@ fs.cpSync(packageDir, stageDir, {
 const vendorDir = path.join(stageDir, "vendor");
 fs.mkdirSync(vendorDir, { recursive: true });
 fs.copyFileSync(
-  path.join(repoRoot, "workspaces/release/install-incan-sdk.sh"),
-  path.join(vendorDir, "install-incan-sdk.sh"),
+  path.join(repoRoot, "workspaces/release/install-incan.sh"),
+  path.join(vendorDir, "install-incan.sh"),
 );
 
 const packageJsonPath = path.join(stageDir, "package.json");

@@ -1,6 +1,6 @@
 # Web Framework
 
-Incan includes a web framework that compiles to [Axum](https://docs.rs/axum/latest/axum/), giving you Flask/FastAPI-like syntax with native Rust performance.
+Incan includes a web framework that currently lowers to [Axum](https://docs.rs/axum/latest/axum/), giving you Flask/FastAPI-like syntax with a native async server backend.
 
 ## Quick Start
 
@@ -328,14 +328,14 @@ def main() -> None:
 
 ## Performance
 
-Since Incan compiles to Rust/Axum, your web application runs with:
+With the current Rust/Axum-backed path, your web application runs with:
 
-- **Native performance** — no interpreter overhead
-- **Zero-cost async** — Tokio's efficient async runtime
+- **Native server path** — no Python interpreter process in the request path
+- **Tokio-backed async** — an efficient async runtime without Python event-loop compatibility claims
 - **No garbage collector** — predictable latency
 - **Low memory usage** — Rust's ownership model
 
-This makes Incan ideal for high-performance APIs and microservices.
+That makes Incan a reasonable fit for API and microservice code where Python-readable source and a native async server backend both matter.
 
 ## See Also
 

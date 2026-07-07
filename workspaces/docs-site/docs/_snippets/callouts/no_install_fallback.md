@@ -1,5 +1,5 @@
 !!! note "Contributor source-build fallback"
-    If you are working from a compiler checkout instead of an SDK install, you can run the repository-built binary directly:
+    If you are working from a compiler checkout instead of a toolchain install, you can run the repository-built binary directly:
 
     - from the repository root:
 

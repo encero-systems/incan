@@ -2,7 +2,7 @@
 
 Rust is an excellent systems language. Many projects should use Rust directly.
 
-Incan is a different tradeoff: it lets you write **Python-shaped application code** while still producing a **typed, compiled** result. Rust is the target and escape hatch, not the primary authoring experience.
+Incan is a different tradeoff: it lets you write **Python-shaped application code** while still producing a **typed, compiled** result. Rust is the current backend and a key interop boundary, not the primary authoring experience.
 
 A practical observation behind Incan is that many “Python projects” already depend on Rust/C backends for performance (especially in AI/data tooling). Incan makes that bridge a first-class experience instead of an ad-hoc stack of bindings, glue code, and deployment workarounds.
 
@@ -21,13 +21,13 @@ Choose Incan when you want:
 
 - a simpler authoring experience (Python-like syntax) with strong, explicit types
 - strong structure for “application code” without writing Rust everywhere
-- Cargo + Rust crates as the implementation target and escape hatch, not the primary authoring language
-- less time spent on ownership/lifetime “plumbing” for everyday app code (Incan uses safe ownership defaults and emits Rust that satisfies the borrow checker)
+- Cargo + Rust crates as the current implementation path and escape hatch, not the primary authoring language
+- less time spent on ownership/lifetime “plumbing” for everyday app code (Incan uses safe ownership defaults and the current backend emits Rust that satisfies the borrow checker)
 
 ## Tradeoffs and boundaries to keep in mind
 
 - Incan is in Beta; expect evolution, especially in tooling and ecosystem interop.
-- The compiler pipeline is effectively “two-step” (Incan → Rust → machine code). In practice, that usually means **seconds**, not minutes, but it is still a tradeoff.
+- The current compiler pipeline is effectively two-step: Incan source through the Rust backend to machine code. In practice, that usually means **seconds**, not minutes, but it is still a tradeoff.
 - Rust interop is powerful but comes with contracts (dependency policy, type mapping). Today, interop prefers **owned** types; borrowing/lifetime-heavy Rust APIs may not map cleanly yet.
 
 See also:
