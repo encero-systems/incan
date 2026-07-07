@@ -6194,7 +6194,8 @@
 incan<span class="w"> </span>--version
 </code></pre></div>
 <p>The direct installer is the same toolchain release path and is useful in shell scripts, CI images, and environments where you do not want another package manager involved:</p>
-<div class="language-bash highlight"><pre><span></span><code>curl<span class="w"> </span>-fsSL<span class="w"> </span>https://github.com/encero-systems/incan/releases/latest/download/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>sh
+<div class="language-bash highlight"><pre><span></span><code>curl<span class="w"> </span>-fsSL<span class="w"> </span>https://github.com/encero-systems/incan/releases/latest/download/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>bash
+
 <span class="nb">export</span><span class="w"> </span><span class="nv">PATH</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$HOME</span><span class="s2">/.local/bin:</span><span class="nv">$PATH</span><span class="s2">&quot;</span>
 incan<span class="w"> </span>--version
 </code></pre></div>

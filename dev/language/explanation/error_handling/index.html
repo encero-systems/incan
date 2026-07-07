@@ -6427,8 +6427,7 @@
 <details class="info">
 <summary>Coming from TS/JS?</summary>
 <p>In JS/TS, <code>try/catch</code> works, but failures are often effectively “untyped” at the boundary (anything can be thrown, and caught values are frequently <code>unknown</code>).</p>
-<p>In Incan, fallibility is explicit in the return type, and you handle it with <code>Result</code> + <code>match</code> (or propagate it with
-<code>?</code>).</p>
+<p>In Incan, fallibility is explicit in the return type, and you handle it with <code>Result</code> + <code>match</code> (or propagate it with <code>?</code>).</p>
 <p><strong>JS/TS <code>try/catch</code> → Incan <code>Result</code></strong>:</p>
 <div class="language-ts highlight"><pre><span></span><code><span class="k">async</span><span class="w"> </span><span class="kd">function</span><span class="w"> </span><span class="nx">loadConfig</span><span class="p">(</span><span class="nx">path</span><span class="o">:</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="o">:</span><span class="w"> </span><span class="nb">Promise</span><span class="o">&lt;</span><span class="nx">Config</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
 <span class="w">  </span><span class="k">try</span><span class="w"> </span><span class="p">{</span>
