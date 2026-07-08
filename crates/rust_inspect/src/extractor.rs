@@ -6,7 +6,8 @@ use incan_core::interop::{
     RustFieldInfo, RustFunctionSig, RustImplementedTrait, RustItemKind, RustItemMetadata, RustMethodSig,
     RustModuleChild, RustModuleChildKind, RustModuleInfo, RustParam, RustTraitAssoc, RustTraitInfo, RustTypeInfo,
     RustTypeShape, RustTypeShapePathFallback, RustVariantInfo, RustVisibility, parse_rust_type_shape_text,
-    render_rust_type_shape, strip_rust_borrow_lifetimes,
+    render_rust_type_shape, rust_display_is_callable_bound, rust_source_callable_bound_for_type_param,
+    strip_rust_borrow_lifetimes,
 };
 use ra_ap_hir::{
     Adt, AssocItem, Crate, DisplayTarget, Enum, FieldSource, Function, HasSource, HasVisibility, HirDisplay, Impl,
@@ -242,6 +243,26 @@ fn source_type_shape(text: &str, crate_name: &str, module: Module, db: &RootData
     )
 }
 
+/// Detect a source-level borrow annotation and return whether it is mutable plus the inner type text.
+fn source_borrow_kind(text: &str) -> Option<(bool, &str)> {
+    let after_amp = text.trim().strip_prefix('&')?.trim_start();
+    let after_lifetime = if let Some(rest) = after_amp.strip_prefix('\'') {
+        let end = rest
+            .char_indices()
+            .find_map(|(idx, ch)| (!(ch == '_' || ch.is_ascii_alphanumeric())).then_some(idx))
+            .unwrap_or(rest.len());
+        rest[end..].trim_start()
+    } else {
+        after_amp
+    };
+    if let Some(rest) = after_lifetime.strip_prefix("mut")
+        && rest.chars().next().is_none_or(char::is_whitespace)
+    {
+        return Some((true, rest.trim_start()));
+    }
+    Some((false, after_lifetime))
+}
+
 fn source_field_type_shape(field: &ra_ap_hir::Field, db: &RootDatabase, crate_name: &str) -> Option<RustTypeShape> {
     let source = field.source(db)?;
     let text = match source.value {
@@ -404,6 +425,48 @@ fn source_function_return_type_display(f: Function, db: &RootDatabase) -> Option
     })
 }
 
+/// Render source type text in the same canonical display form used by extracted function metadata.
+fn source_function_type_display(f: Function, text: &str, db: &RootDatabase) -> Option<String> {
+    if let Some(display) = borrowed_builtin_source_display(text) {
+        return Some(display);
+    }
+    if let Some((is_mut, inner)) = source_borrow_kind(text) {
+        let inner = source_function_type_display(f, inner, db)?;
+        return Some(if is_mut {
+            format!("&mut {inner}")
+        } else {
+            format!("&{inner}")
+        });
+    }
+    if let Some(imported_display) = canonicalize_imported_single_segment_type_display(text, f, db) {
+        return Some(imported_display);
+    }
+    let module = f.module(db);
+    let crate_name = module
+        .krate(db)
+        .display_name(db)
+        .map(|name| name.canonical_name().as_str().to_owned())?;
+    let shape = source_type_shape(text, crate_name.as_str(), module, db);
+    if let Some(display) = exact_numeric_boundary_display(text) {
+        return Some(display);
+    }
+    if matches!(shape, RustTypeShape::TypeParam(_))
+        && let Some(imported_display) = canonicalize_imported_single_segment_type_display(text, f, db)
+    {
+        return Some(imported_display);
+    }
+    let rendered = match shape {
+        RustTypeShape::Unknown => normalize_display_path(text),
+        other => render_rust_type_shape(&other),
+    };
+    if rendered.contains('?')
+        && let Some(imported_display) = canonicalize_imported_single_segment_type_display(text, f, db)
+    {
+        return Some(imported_display);
+    }
+    Some(rendered)
+}
+
 /// Return the written RHS of a Rust `type` alias when available.
 ///
 /// HIR type displays may erase callable trait-object arguments inside aliases to `_`. The source RHS is the
@@ -521,7 +584,7 @@ fn type_shape_contains_unknown(shape: &RustTypeShape) -> bool {
 /// rust-analyzer sometimes degrades borrowed parameter displays to `&?` even when the written source still carries a
 /// concrete imported or local pointee type. When that happens, the source annotation is the more faithful contract and
 /// should drive metadata so downstream typechecking/codegen can keep the concrete borrow boundary.
-fn source_function_param_type_display(f: Function, param: &ra_ap_hir::Param<'_>, db: &RootDatabase) -> Option<String> {
+fn source_function_param_type_text(f: Function, param: &ra_ap_hir::Param<'_>, db: &RootDatabase) -> Option<String> {
     let source = f.source(db)?;
     let param_list = source.value.param_list()?;
     let self_offset = usize::from(param_list.self_param().is_some());
@@ -529,37 +592,21 @@ fn source_function_param_type_display(f: Function, param: &ra_ap_hir::Param<'_>,
         return None;
     }
     let source_param = param_list.params().nth(param.index() - self_offset)?;
-    let text = source_param.ty()?.to_string();
-    if let Some(display) = borrowed_builtin_source_display(text.as_str()) {
+    source_param.ty().map(|ty| ty.to_string())
+}
+
+/// Resolve a function parameter's source annotation or callable generic bound into a canonical display string.
+fn source_function_param_type_display(f: Function, param: &ra_ap_hir::Param<'_>, db: &RootDatabase) -> Option<String> {
+    let text = source_function_param_type_text(f, param, db)?;
+    let source = f.source(db)?;
+    if let Some(display) = rust_source_callable_bound_for_type_param(
+        source.value.syntax().text().to_string().as_str(),
+        text.as_str(),
+        |ty| source_function_type_display(f, ty, db),
+    ) {
         return Some(display);
     }
-    if let Some(imported_display) = canonicalize_imported_single_segment_type_display(text.as_str(), f, db) {
-        return Some(imported_display);
-    }
-    let module = f.module(db);
-    let crate_name = module
-        .krate(db)
-        .display_name(db)
-        .map(|name| name.canonical_name().as_str().to_owned())?;
-    let shape = source_type_shape(text.as_str(), crate_name.as_str(), module, db);
-    if let Some(display) = exact_numeric_boundary_display(text.as_str()) {
-        return Some(display);
-    }
-    if matches!(shape, RustTypeShape::TypeParam(_))
-        && let Some(imported_display) = canonicalize_imported_single_segment_type_display(text.as_str(), f, db)
-    {
-        return Some(imported_display);
-    }
-    let rendered = match shape {
-        RustTypeShape::Unknown => normalize_display_path(text.as_str()),
-        other => render_rust_type_shape(&other),
-    };
-    if rendered.contains('?')
-        && let Some(imported_display) = canonicalize_imported_single_segment_type_display(text.as_str(), f, db)
-    {
-        return Some(imported_display);
-    }
-    Some(rendered)
+    source_function_type_display(f, text.as_str(), db)
 }
 
 /// Extract a Rust function signature from inspection metadata.
@@ -570,15 +617,16 @@ fn extract_function_sig(f: Function, db: &RootDatabase, dt: DisplayTarget) -> Ru
         .map(|p| {
             let shape = rust_type_shape(p.ty(), db, dt);
             let mut type_display = function_sig_type_display(p.ty(), db, dt);
-            if (type_shape_contains_unknown(&shape)
-                || p.ty().contains_unknown()
-                || type_display.contains('?')
-                || source_function_param_type_display(f, &p, db).is_some_and(|source_type_display| {
-                    source_type_display.starts_with('&') && !type_display.starts_with('&')
-                }))
-                && let Some(source_type_display) = source_function_param_type_display(f, &p, db)
-            {
-                type_display = source_type_display;
+            if let Some(source_type_display) = source_function_param_type_display(f, &p, db) {
+                let source_is_callable_bound = rust_display_is_callable_bound(source_type_display.as_str());
+                if source_is_callable_bound
+                    || type_shape_contains_unknown(&shape)
+                    || p.ty().contains_unknown()
+                    || type_display.contains('?')
+                    || (source_type_display.starts_with('&') && !type_display.starts_with('&'))
+                {
+                    type_display = source_type_display;
+                }
             }
             RustParam {
                 name: p.name(db).map(|n| n.as_str().to_owned()),
@@ -1147,6 +1195,41 @@ impl Codec {
             .find(|method| method.name == "decode")
             .ok_or_else(|| std::io::Error::other("expected decode metadata"))?;
         assert_eq!(decode.signature.params[1].type_display, "&[u8]");
+        Ok(())
+    }
+
+    #[test]
+    fn function_metadata_applies_inline_source_callable_bound_display() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        fs::create_dir_all(tmp.path().join("src"))?;
+        fs::write(
+            tmp.path().join("Cargo.toml"),
+            r#"[package]
+name = "demo_callback_probe"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )?;
+        fs::write(
+            tmp.path().join("src/lib.rs"),
+            r#"pub struct Data;
+pub struct OutputCallbackInfo;
+
+pub fn run_inline<D: FnMut(&mut Data, &OutputCallbackInfo) + Send + 'static>(callback: D) {
+    let _ = callback;
+}
+"#,
+        )?;
+
+        let workspace = RustWorkspace::load(tmp.path(), &|_| ())?;
+        let metadata = extract_rust_item(&workspace, "demo_callback_probe::run_inline")?;
+        let RustItemKind::Function(sig) = metadata.kind else {
+            return Err(std::io::Error::other("expected function metadata").into());
+        };
+        assert_eq!(
+            sig.params[0].type_display,
+            "impl FnMut(&mut demo_callback_probe::Data, &demo_callback_probe::OutputCallbackInfo)"
+        );
         Ok(())
     }
 }

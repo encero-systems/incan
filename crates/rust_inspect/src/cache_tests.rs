@@ -510,7 +510,7 @@ fn dependency_source_metadata_resolves_public_reexported_functions_and_aliases_w
     )?;
     fs::write(
         dep.join("src").join("lib.rs"),
-        "pub use function::ScalarFunctionImplementation;\npub use udf::create_udf;\npub mod async_api;\npub mod catalog;\npub mod datasource;\npub mod execution;\npub mod expr_fn { pub use super::math::expr_fn::*; }\npub mod frame;\npub mod frame_ext;\npub mod function;\npub mod math;\npub mod table;\npub mod types;\npub mod udf;\n",
+        "pub use function::ScalarFunctionImplementation;\npub use udf::create_udf;\npub mod async_api;\npub mod audio;\npub mod catalog;\npub mod datasource;\npub mod execution;\npub mod expr_fn { pub use super::math::expr_fn::*; }\npub mod frame;\npub mod frame_ext;\npub mod function;\npub mod math;\npub mod table;\npub mod types;\npub mod udf;\n",
     )?;
     fs::write(
         dep.join("src").join("catalog.rs"),
@@ -579,6 +579,46 @@ pub mod expr_fn {
     fs::write(
         dep.join("src").join("async_api").join("plan.rs"),
         "use datafusion_expr::Expr;\n\npub async fn load_plan() -> Result<Expr, String> { todo!() }\n",
+    )?;
+    fs::write(
+        dep.join("src").join("audio.rs"),
+        r#"
+pub struct Data;
+pub struct OutputCallbackInfo;
+pub struct Device;
+
+impl Device {
+    /// Build an output stream from generic Rust callback bounds.
+    pub fn build_output_stream_raw<D, E>(
+        &self,
+        mut data_callback: D,
+        mut error_callback: E,
+    ) where
+        D: FnMut(&mut Data, &OutputCallbackInfo) + Send + 'static,
+        E: FnMut(String),
+    {
+        let mut data = Data;
+        let info = OutputCallbackInfo;
+        data_callback(&mut data, &info);
+        error_callback("boom".to_string());
+    }
+
+    /// Build an output stream from inline generic Rust callback bounds.
+    pub fn build_output_stream_inline<
+        D: FnMut(&mut Data, &OutputCallbackInfo) + Send + 'static,
+        E: FnMut(String),
+    >(
+        &self,
+        mut data_callback: D,
+        mut error_callback: E,
+    ) {
+        let mut data = Data;
+        let info = OutputCallbackInfo;
+        data_callback(&mut data, &info);
+        error_callback("boom".to_string());
+    }
+}
+"#,
     )?;
     fs::write(
         dep.join("src").join("function.rs"),
@@ -721,6 +761,37 @@ impl NestedFrame {
     assert_eq!(
         sig.return_type,
         "Result<public_api::logical_expr::Expr, String>"
+    );
+
+    let device = cache.get_or_extract(&root, "source_dep::audio::Device", &|_| ())?;
+    let RustItemKind::Type(type_info) = &device.kind else {
+        return Err("expected source dependency Device metadata".into());
+    };
+    let build_output = type_info
+        .methods
+        .iter()
+        .find(|method| method.name == "build_output_stream_raw")
+        .ok_or("expected build_output_stream_raw method metadata")?;
+    assert_eq!(
+        build_output.signature.params[1].type_display,
+        "impl FnMut(&mut source_dep::audio::Data, &source_dep::audio::OutputCallbackInfo)"
+    );
+    assert_eq!(
+        build_output.signature.params[2].type_display,
+        "impl FnMut(String)"
+    );
+    let build_output_inline = type_info
+        .methods
+        .iter()
+        .find(|method| method.name == "build_output_stream_inline")
+        .ok_or("expected build_output_stream_inline method metadata")?;
+    assert_eq!(
+        build_output_inline.signature.params[1].type_display,
+        "impl FnMut(&mut source_dep::audio::Data, &source_dep::audio::OutputCallbackInfo)"
+    );
+    assert_eq!(
+        build_output_inline.signature.params[2].type_display,
+        "impl FnMut(String)"
     );
 
     let alias = cache.get_or_extract(&root, "source_dep::ScalarFunctionImplementation", &|_| ())?;
