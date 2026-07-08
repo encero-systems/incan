@@ -162,6 +162,63 @@ def main() -> None:
     Ok(())
 }
 
+#[test]
+fn run_std_environ_try_from_typed_accessors_issue557() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "std_environ_typed_accessors", "")?;
+    fs::write(
+        &main_path,
+        r#"from std.environ import EnvironError, get_as
+from std.traits.convert import TryFrom
+
+
+model EnvPort with TryFrom[str]:
+  value: int
+
+  @classmethod
+  def try_from(cls, value: str) -> Result[Self, str]:
+    port = int(value)
+    if port < 1 or port > 65535:
+      return Err("port out of range")
+    return Ok(EnvPort(value=port))
+
+
+def print_port(label: str, result: Result[Option[EnvPort], EnvironError]) -> None:
+  match result:
+    Ok(value) =>
+      match value:
+        Some(port) => println(f"{label}:{port.value}")
+        None => println(f"{label}:missing")
+    Err(err) => println(f"{label}:{err.kind_name()}:{err.key}")
+
+
+def main() -> None:
+  print_port("present", get_as[EnvPort]("INCAN_ENVIRON_PORT"))
+  print_port("missing", get_as[EnvPort]("INCAN_ENVIRON_MISSING_PORT"))
+  print_port("invalid", get_as[EnvPort]("INCAN_ENVIRON_PORT_BAD"))
+  print_port("empty", get_as[EnvPort](""))
+"#,
+    )?;
+
+    let check_output = run_incan(tmp.path(), &["check", main_path.to_str().ok_or("non-utf8 main path")?])?;
+    assert_success(&check_output, "incan check for std.environ typed accessors");
+
+    let run_output = run_incan_with_env_and_removed(
+        tmp.path(),
+        &["run", main_path.to_str().ok_or("non-utf8 main path")?],
+        &[("INCAN_ENVIRON_PORT", "5432"), ("INCAN_ENVIRON_PORT_BAD", "70000")],
+        &["INCAN_ENVIRON_MISSING_PORT"],
+    )?;
+    assert_success(&run_output, "incan run for std.environ typed accessors");
+
+    assert_eq!(
+        String::from_utf8(run_output.stdout)?,
+        "present:5432\nmissing:missing\ninvalid:invalid_value:INCAN_ENVIRON_PORT_BAD\nempty:invalid_key:\n",
+    );
+
+    Ok(())
+}
+
 fn assert_codegraph_v04_record_contract(records: &[serde_json::Value]) {
     assert!(!records.is_empty(), "codegraph export should include a header record");
     assert_eq!(records[0]["record"], serde_json::json!("header"));
