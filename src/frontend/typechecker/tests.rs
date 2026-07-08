@@ -8156,6 +8156,62 @@ model BoxedValue[T] with OrderedCollection:
 }
 
 #[test]
+fn test_trait_typed_receiver_exposes_trait_and_supertrait_methods_issue817() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait DataSet[T]:
+  def filter(self) -> Self: ...
+
+trait BoundedDataSet[T] with DataSet[T]:
+  def limit(self, n: int) -> Self: ...
+
+trait UnboundedDataSet[T] with DataSet[T]:
+  pass
+
+model Event:
+  id: int
+
+def valid_root_call(events: DataSet[Event]) -> DataSet[Event]:
+  return events.filter()
+
+def valid_subtrait_call(events: BoundedDataSet[Event]) -> BoundedDataSet[Event]:
+  return events.limit(10)
+
+def valid_subtrait_supertrait_call(events: UnboundedDataSet[Event]) -> UnboundedDataSet[Event]:
+  return events.filter()
+"#;
+
+    check_str(source)
+}
+
+#[test]
+fn test_trait_typed_receiver_rejects_subtrait_only_method_issue817() {
+    let source = r#"
+trait DataSet[T]:
+  def filter(self) -> Self: ...
+
+trait BoundedDataSet[T] with DataSet[T]:
+  def limit(self, n: int) -> Self: ...
+
+model Event:
+  id: int
+
+def invalid_root_call(events: DataSet[Event]) -> DataSet[Event]:
+  return events.limit(10)
+"#;
+
+    let errs = check_str_err(
+        source,
+        "trait-typed receiver should not expose methods declared only on narrower subtraits",
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("DataSet[Event]") && e.message.contains("limit")),
+        "expected missing method diagnostic for subtrait-only method, got {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn test_types_compatible_named_concrete_rejects_mismatched_generic_trait_annotation() -> Result<(), Vec<CompileError>> {
     let source = r#"
 trait Boxed[T]:
