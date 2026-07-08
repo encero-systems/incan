@@ -4,6 +4,24 @@ const fs = require("fs");
 const path = require("path");
 const childProcess = require("child_process");
 
+const HOST_PACKAGES = {
+  "x86_64-unknown-linux-gnu": {
+    packageName: "@incan/toolchain-linux-x64",
+    os: "linux",
+    arch: "x64",
+  },
+  "x86_64-apple-darwin": {
+    packageName: "@incan/toolchain-darwin-x64",
+    os: "darwin",
+    arch: "x64",
+  },
+  "aarch64-apple-darwin": {
+    packageName: "@incan/toolchain-darwin-arm64",
+    os: "darwin",
+    arch: "arm64",
+  },
+};
+
 function packageRoot() {
   return path.resolve(__dirname, "..");
 }
@@ -14,6 +32,39 @@ function toolchainHome() {
 
 function binDir() {
   return process.env.INCAN_NPM_BIN_DIR || path.join(packageRoot(), ".incan", "bin");
+}
+
+function hostTarget() {
+  if (process.env.INCAN_NPM_HOST_TARGET) {
+    return process.env.INCAN_NPM_HOST_TARGET;
+  }
+  for (const [target, config] of Object.entries(HOST_PACKAGES)) {
+    if (process.platform === config.os && process.arch === config.arch) {
+      return target;
+    }
+  }
+  return `${process.arch}-${process.platform}`;
+}
+
+function supportedTargets() {
+  return Object.keys(HOST_PACKAGES).join(", ");
+}
+
+function platformPackageRoot(target) {
+  const config = HOST_PACKAGES[target];
+  if (!config) {
+    throw new Error(`unsupported npm toolchain target: ${target}; supported targets: ${supportedTargets()}`);
+  }
+  try {
+    return path.dirname(require.resolve(`${config.packageName}/package.json`, { paths: [packageRoot()] }));
+  } catch (error) {
+    if (error && error.code === "MODULE_NOT_FOUND") {
+      throw new Error(
+        `missing npm toolchain package ${config.packageName} for ${target}; reinstall @incan/toolchain or install ${config.packageName}`,
+      );
+    }
+    throw error;
+  }
 }
 
 function packageVersion() {
@@ -72,21 +123,25 @@ function runInstaller(args, options = {}) {
 }
 
 function commandPath(command) {
-  return path.join(binDir(), command);
-}
-
-function ensureCommand(command) {
-  if (!fs.existsSync(commandPath(command))) {
-    const status = runInstaller([]);
-    if (status !== 0) {
-      process.exit(status);
-    }
+  if (process.env.INCAN_NPM_TOOLCHAIN_DIR) {
+    return path.join(process.env.INCAN_NPM_TOOLCHAIN_DIR, "bin", command);
   }
+  return path.join(platformPackageRoot(hostTarget()), "toolchain", "bin", command);
 }
 
 function runCommand(command, args) {
-  ensureCommand(command);
-  const child = childProcess.spawn(commandPath(command), args, {
+  let executable;
+  try {
+    executable = commandPath(command);
+  } catch (error) {
+    console.error(error.message);
+    process.exit(1);
+  }
+  if (!fs.existsSync(executable)) {
+    console.error(`missing ${command} binary in npm toolchain package: ${executable}`);
+    process.exit(1);
+  }
+  const child = childProcess.spawn(executable, args, {
     stdio: "inherit",
     env: process.env,
   });

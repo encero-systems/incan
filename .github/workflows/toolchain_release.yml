@@ -121,6 +121,7 @@ jobs:
             dist/toolchain/toolchain-manifest.schema.v1.json
             dist/toolchain/install.sh
             dist/toolchain/incan.rb
+            dist/toolchain/toolchain-version.txt
             dist/toolchain/incan-toolchain-*.tgz
             dist/toolchain/incan-*.whl
             dist/toolchain/incan-[0-9]*.tar.gz
@@ -166,7 +167,7 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
-      - name: Publish npm installer package
+      - name: Publish npm toolchain packages
         shell: bash
         run: |
           set -euo pipefail
@@ -174,7 +175,11 @@ jobs:
           if [[ "${GITHUB_REF_NAME}" == *-* ]]; then
             npm_tag="rc"
           fi
-          npm publish dist/toolchain/incan-toolchain-*.tgz --access public --provenance --tag "$npm_tag"
+          version="$(sed -n '1p' dist/toolchain/toolchain-version.txt | tr -d '\r\n')"
+          for platform in linux-x64 darwin-x64 darwin-arm64; do
+            npm publish "dist/toolchain/incan-toolchain-${platform}-${version}.tgz" --access public --provenance --tag "$npm_tag"
+          done
+          npm publish "dist/toolchain/incan-toolchain-${version}.tgz" --access public --provenance --tag "$npm_tag"
 
   publish-pypi:
     name: Publish Python installer package

@@ -4,7 +4,7 @@ This page is a routing guide for TypeScript and JavaScript developers evaluating
 
 ## Install first
 
-If you already use Node-based tooling, install the npm adapter. It installs command shims, resolves the same verified Incan toolchain archive used by the direct installer, and provisions the Rust backend when needed:
+If you already use Node-based tooling, install the npm adapter. It installs command shims plus a host-specific optional platform package for the same prebuilt Incan toolchain payloads used by the release installers, without running an npm lifecycle script:
 
 ```bash
 npm install -g @incan/toolchain
@@ -12,7 +12,7 @@ incan --version
 incan-lsp --version
 ```
 
-The direct installer is the same release path without npm in the middle, which is useful for shell scripts, CI images, and environments where you want explicit control over the toolchain manifest:
+The npm path exposes `incan` and `incan-lsp` immediately, but it does not run rustup during installation. Make sure Rust and `wasm32-wasip1` are available before building projects, or use the direct installer when you want Rust provisioning and explicit control over the toolchain manifest:
 
 ```bash
 --8<-- "_snippets/commands/direct_install.sh"

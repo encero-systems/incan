@@ -184,6 +184,45 @@ fn write_fixture_toolchain_commands(root: &Path) -> Result<(PathBuf, PathBuf), B
     Ok((incan, incan_lsp))
 }
 
+const NPM_PLATFORM_TARGETS: [(&str, &str, &str, &str); 3] = [
+    ("x86_64-unknown-linux-gnu", "@incan/toolchain-linux-x64", "linux", "x64"),
+    ("x86_64-apple-darwin", "@incan/toolchain-darwin-x64", "darwin", "x64"),
+    (
+        "aarch64-apple-darwin",
+        "@incan/toolchain-darwin-arm64",
+        "darwin",
+        "arm64",
+    ),
+];
+
+fn npm_platform_package_dir(dist: &Path, target: &str) -> PathBuf {
+    dist.join("_npm-platform-packages").join(target)
+}
+
+fn current_npm_host_target() -> Option<&'static str> {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("linux", "x86_64") => Some("x86_64-unknown-linux-gnu"),
+        ("macos", "x86_64") => Some("x86_64-apple-darwin"),
+        ("macos", "aarch64") => Some("aarch64-apple-darwin"),
+        _ => None,
+    }
+}
+
+fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    fs::create_dir_all(destination)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir_recursive(&source_path, &destination_path)?;
+        } else {
+            fs::copy(&source_path, &destination_path)?;
+        }
+    }
+    Ok(())
+}
+
 fn package_fixture_archive(
     root: &Path,
     target: &str,
@@ -205,6 +244,17 @@ fn package_fixture_archive(
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+    Ok(())
+}
+
+fn package_all_npm_fixture_archives(
+    dist: &Path,
+    incan: &Path,
+    incan_lsp: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for (target, _, _, _) in NPM_PLATFORM_TARGETS {
+        package_fixture_archive(dist, target, incan, incan_lsp)?;
+    }
     Ok(())
 }
 
@@ -406,7 +456,11 @@ fn package_prepare_scripts_stage_versions_and_shared_installer() -> Result<(), B
     let tmp = tempfile::tempdir()?;
     let dist = tmp.path().join("toolchain");
     fs::create_dir_all(&dist)?;
-    fs::write(dist.join("toolchain-version.txt"), "0.4.0-dev.6\n")?;
+    let (incan, incan_lsp) = write_fixture_toolchain_commands(tmp.path())?;
+    package_all_npm_fixture_archives(&dist, &incan, &incan_lsp)?;
+    let npm_version = fs::read_to_string(dist.join("toolchain-version.txt"))?
+        .trim()
+        .to_string();
 
     let npm_output = Command::new("node")
         .arg(npm_prepare_package_script())
@@ -419,13 +473,52 @@ fn package_prepare_scripts_stage_versions_and_shared_installer() -> Result<(), B
         String::from_utf8_lossy(&npm_output.stdout),
         String::from_utf8_lossy(&npm_output.stderr)
     );
-    let npm_package = fs::read_to_string(dist.join("_npm-package/package.json"))?;
-    assert!(npm_package.contains(r#""version": "0.4.0-dev.6""#));
-    assert!(npm_package.contains(r#""homepage": "https://incan.io""#));
-    assert!(npm_package.contains(r#""README.md""#));
+    let npm_package: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(dist.join("_npm-package/package.json"))?)?;
+    assert_eq!(npm_package["version"], npm_version);
+    assert_eq!(npm_package["homepage"], "https://incan.io");
+    assert!(
+        npm_package["files"]
+            .as_array()
+            .ok_or("npm files field must be an array")?
+            .iter()
+            .any(|entry| entry == "README.md")
+    );
+    assert!(
+        npm_package
+            .get("scripts")
+            .and_then(|scripts| scripts.get("postinstall"))
+            .is_none(),
+        "default npm package must not declare postinstall"
+    );
+    let optional_dependencies = npm_package["optionalDependencies"]
+        .as_object()
+        .ok_or("npm optionalDependencies must be an object")?;
+    for (target, package_name, os, cpu) in NPM_PLATFORM_TARGETS {
+        assert_eq!(
+            optional_dependencies
+                .get(package_name)
+                .and_then(serde_json::Value::as_str),
+            Some(npm_version.as_str()),
+            "top-level npm package must depend on {package_name}"
+        );
+
+        let platform_dir = npm_platform_package_dir(&dist, target);
+        let platform_package: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(platform_dir.join("package.json"))?)?;
+        assert_eq!(platform_package["name"], package_name);
+        assert_eq!(platform_package["version"], npm_version);
+        assert_eq!(platform_package["os"], serde_json::json!([os]));
+        assert_eq!(platform_package["cpu"], serde_json::json!([cpu]));
+        assert!(platform_dir.join("toolchain/bin/incan").exists());
+        assert!(platform_dir.join("toolchain/bin/incan-lsp").exists());
+        assert!(platform_dir.join("toolchain/stdlib/testing.incn").exists());
+        assert!(platform_dir.join("toolchain/crates/Cargo.toml").exists());
+    }
     assert!(fs::read_to_string(dist.join("_npm-package/README.md"))?.contains("https://incan.io"));
     assert!(dist.join("_npm-package/vendor/install-incan.sh").exists());
 
+    fs::write(dist.join("toolchain-version.txt"), "0.4.0-dev.6\n")?;
     let pip_output = Command::new("python3")
         .arg(pip_prepare_package_script())
         .arg(&dist)
@@ -467,6 +560,100 @@ fn package_prepare_scripts_stage_versions_and_shared_installer() -> Result<(), B
         fs::read_to_string(dist.join("_pip-package/src/incan_toolchain/__init__.py"))?
             .contains(r#"__version__ = "0.4.0rc1""#)
     );
+    Ok(())
+}
+
+#[test]
+fn npm_command_wrappers_run_platform_package_without_installer() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let dist = tmp.path().join("toolchain");
+    let (incan, incan_lsp) = write_fixture_toolchain_commands(tmp.path())?;
+    package_all_npm_fixture_archives(&dist, &incan, &incan_lsp)?;
+
+    let npm_output = Command::new("node")
+        .arg(npm_prepare_package_script())
+        .arg(&dist)
+        .arg("--skip-pack")
+        .output()?;
+    assert!(
+        npm_output.status.success(),
+        "npm package preparation failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&npm_output.stdout),
+        String::from_utf8_lossy(&npm_output.stderr)
+    );
+
+    let package_root = dist.join("_npm-package");
+    let node_modules_scope = package_root.join("node_modules/@incan");
+    copy_dir_recursive(
+        &npm_platform_package_dir(&dist, "x86_64-unknown-linux-gnu"),
+        &node_modules_scope.join("toolchain-linux-x64"),
+    )?;
+    fs::remove_file(package_root.join("vendor/install-incan.sh"))?;
+
+    let incan_output = Command::new("node")
+        .arg(package_root.join("bin/incan.js"))
+        .env("INCAN_NPM_HOST_TARGET", "x86_64-unknown-linux-gnu")
+        .output()?;
+    assert!(
+        incan_output.status.success(),
+        "incan npm shim failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&incan_output.stdout),
+        String::from_utf8_lossy(&incan_output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&incan_output.stdout), "incan fixture\n");
+
+    let incan_lsp_output = Command::new("node")
+        .arg(package_root.join("bin/incan-lsp.js"))
+        .arg("--help")
+        .env("INCAN_NPM_HOST_TARGET", "x86_64-unknown-linux-gnu")
+        .output()?;
+    assert!(
+        incan_lsp_output.status.success(),
+        "incan-lsp npm shim failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&incan_lsp_output.stdout),
+        String::from_utf8_lossy(&incan_lsp_output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&incan_lsp_output.stdout), "incan-lsp fixture\n");
+    Ok(())
+}
+
+#[test]
+fn npm_command_wrappers_report_unsupported_platforms() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let dist = tmp.path().join("toolchain");
+    let (incan, incan_lsp) = write_fixture_toolchain_commands(tmp.path())?;
+    package_all_npm_fixture_archives(&dist, &incan, &incan_lsp)?;
+
+    let npm_output = Command::new("node")
+        .arg(npm_prepare_package_script())
+        .arg(&dist)
+        .arg("--skip-pack")
+        .output()?;
+    assert!(
+        npm_output.status.success(),
+        "npm package preparation failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&npm_output.stdout),
+        String::from_utf8_lossy(&npm_output.stderr)
+    );
+
+    let package_root = dist.join("_npm-package");
+    fs::remove_file(package_root.join("vendor/install-incan.sh"))?;
+
+    let output = Command::new("node")
+        .arg(package_root.join("bin/incan.js"))
+        .env("INCAN_NPM_HOST_TARGET", "sparc64-sun-solaris")
+        .output()?;
+    assert!(
+        !output.status.success(),
+        "unsupported npm platform should fail\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("unsupported npm toolchain target: sparc64-sun-solaris"));
+    assert!(stderr.contains("x86_64-unknown-linux-gnu"));
+    assert!(stderr.contains("x86_64-apple-darwin"));
+    assert!(stderr.contains("aarch64-apple-darwin"));
     Ok(())
 }
 
@@ -671,14 +858,14 @@ fn homebrew_formula_is_rendered_from_the_toolchain_manifest() -> Result<(), Box<
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let checksum = fs::read_to_string(dist.join("incan-v0.5.0-dev.0-x86_64-unknown-linux-gnu.tar.gz.sha256"))?
+    let checksum = fs::read_to_string(dist.join("incan-v0.5.0-dev.1-x86_64-unknown-linux-gnu.tar.gz.sha256"))?
         .trim()
         .to_string();
     let formula = fs::read_to_string(dist.join("incan.rb"))?;
-    assert!(formula.contains(r#"version "0.5.0-dev.0""#));
-    assert!(formula.contains("Homebrew installs the prebuilt Incan commands and bundled stdlib sources"));
+    assert!(formula.contains(r#"version "0.5.0-dev.1""#));
+    assert!(formula.contains("npm and Homebrew install prebuilt Incan commands"));
     assert!(formula.contains(
-        r#"url "https://github.com/encero-systems/incan/releases/download/v0.5.0-dev.0/incan-v0.5.0-dev.0-x86_64-unknown-linux-gnu.tar.gz""#
+        r#"url "https://github.com/encero-systems/incan/releases/download/v0.5.0-dev.1/incan-v0.5.0-dev.1-x86_64-unknown-linux-gnu.tar.gz""#
     ));
     assert!(formula.contains(&format!(r#"sha256 "{checksum}""#)));
     assert!(formula.contains("def staged_files"));
@@ -772,6 +959,33 @@ fn homebrew_smoke_preserves_existing_platform_archives() -> Result<(), Box<dyn s
             "checksum sidecar changed for {target}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn npm_smoke_installs_platform_package_without_lifecycle_scripts() -> Result<(), Box<dyn std::error::Error>> {
+    let Some(host_target) = current_npm_host_target() else {
+        return Ok(());
+    };
+    let tmp = tempfile::tempdir()?;
+    let dist = tmp.path().join("toolchain");
+    let (incan, incan_lsp) = write_fixture_toolchain_commands(tmp.path())?;
+    package_all_npm_fixture_archives(&dist, &incan, &incan_lsp)?;
+
+    let output = Command::new("bash")
+        .arg(toolchain_local_smoke_script())
+        .arg("npm")
+        .current_dir(repo_root())
+        .env("TOOLCHAIN_DIST", &dist)
+        .env("TOOLCHAIN_HOST_TARGET", host_target)
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "npm smoke failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     Ok(())
 }
 
