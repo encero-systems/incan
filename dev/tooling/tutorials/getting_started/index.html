@@ -6284,7 +6284,7 @@
 <span class="nb">export</span><span class="w"> </span><span class="nv">PATH</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$HOME</span><span class="s2">/.local/bin:</span><span class="nv">$PATH</span><span class="s2">&quot;</span>
 incan<span class="w"> </span>--version
 </code></pre></div>
-<p>You can also install through Homebrew, npm, or pipx; those package-manager channels use the same GitHub Release manifest and verified toolchain archives as the shell installer. npm and pipx route through the shared installer and can provision Rust automatically. Homebrew installs the prebuilt command binaries from the Encero tap and expects Rust to be managed separately.</p>
+<p>You can also install through Homebrew, npm, or pipx; those package-manager channels use the same GitHub Release payloads as the shell installer. pipx routes through the shared installer and can provision Rust automatically. npm installs a host-specific optional platform package without running lifecycle scripts, and Homebrew installs the prebuilt command binaries from the Encero tap; both npm and Homebrew expect Rust to be managed separately.</p>
 <div class="language-bash highlight"><pre><span></span><code>brew<span class="w"> </span>tap<span class="w"> </span>encero-systems/tap
 brew<span class="w"> </span>install<span class="w"> </span>incan
 </code></pre></div>

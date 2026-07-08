@@ -6258,12 +6258,12 @@
 <h1 id="coming-from-typescript-or-javascript">Coming from TypeScript or JavaScript<a class="headerlink" href="#coming-from-typescript-or-javascript" title="Permanent link">&para;</a></h1>
 <p>This page is a routing guide for TypeScript and JavaScript developers evaluating Incan for application code, command-line tools, services, and typed domain packages.</p>
 <h2 id="install-first">Install first<a class="headerlink" href="#install-first" title="Permanent link">&para;</a></h2>
-<p>If you already use Node-based tooling, install the npm adapter. It installs command shims, resolves the same verified Incan toolchain archive used by the direct installer, and provisions the Rust backend when needed:</p>
+<p>If you already use Node-based tooling, install the npm adapter. It installs command shims plus a host-specific optional platform package for the same prebuilt Incan toolchain payloads used by the release installers, without running an npm lifecycle script:</p>
 <div class="language-bash highlight"><pre><span></span><code>npm<span class="w"> </span>install<span class="w"> </span>-g<span class="w"> </span>@incan/toolchain
 incan<span class="w"> </span>--version
 incan-lsp<span class="w"> </span>--version
 </code></pre></div>
-<p>The direct installer is the same release path without npm in the middle, which is useful for shell scripts, CI images, and environments where you want explicit control over the toolchain manifest:</p>
+<p>The npm path exposes <code>incan</code> and <code>incan-lsp</code> immediately, but it does not run rustup during installation. Make sure Rust and <code>wasm32-wasip1</code> are available before building projects, or use the direct installer when you want Rust provisioning and explicit control over the toolchain manifest:</p>
 <div class="language-bash highlight"><pre><span></span><code>curl<span class="w"> </span>-fsSL<span class="w"> </span>https://github.com/encero-systems/incan/releases/latest/download/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>bash
 
 <span class="nb">export</span><span class="w"> </span><span class="nv">PATH</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$HOME</span><span class="s2">/.local/bin:</span><span class="nv">$PATH</span><span class="s2">&quot;</span>
