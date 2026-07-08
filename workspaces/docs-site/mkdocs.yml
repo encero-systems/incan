@@ -301,6 +301,7 @@ nav:
           - Backend behavior inventory: contributing/reference/backend_behavior_inventory.md
           - Generated Rust stdlib coverage: contributing/reference/generated_rust_stdlib_coverage.md
           - Hees.ai v0.5 dependency inventory: contributing/reference/hees_ai_v05_dependency_inventory.md
+          - Hees.ai v0.5 installed-SDK validation: contributing/reference/hees_ai_v05_sdk_validation.md
           - Rust-source backend deprecation policy: contributing/reference/rust_source_backend_deprecation.md
       - RFCs: RFCs/index.md
   - Release notes:

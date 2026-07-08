@@ -2,7 +2,7 @@
 
 This inventory seeds issue [#651](https://github.com/encero-systems/incan/issues/651). It keeps the Hees.ai proof lane constrained: Hees.ai may validate Incan compiler, stdlib, runtime, and tooling direction, but it must not quietly turn the 0.5 milestone into broad product scope.
 
-Status: seed inventory. It maps known proof-lane needs from [#549](https://github.com/encero-systems/incan/issues/549) and [#552](https://github.com/encero-systems/incan/issues/552) to provider lanes and guardrails.
+Status: seed inventory. It maps known proof-lane needs from [#549](https://github.com/encero-systems/incan/issues/549) and [#552](https://github.com/encero-systems/incan/issues/552) to provider lanes and guardrails. The concrete installed-SDK command contract for #552 lives in [Hees.ai v0.5 installed-SDK validation](hees_ai_v05_sdk_validation.md).
 
 ## Categories
 
@@ -43,7 +43,7 @@ Use these anchors before creating new proof-only machinery:
 
 | Hees.ai need | Classification | Provider issue or source | Notes |
 | --- | --- | --- | --- |
-| Installed-command validation path. | Existing 0.4 tooling / Hees.ai validation. | [#552](https://github.com/encero-systems/incan/issues/552). | The proof should prefer installed `incan` commands and report local-only assumptions as blockers. |
+| Installed-command validation path. | Existing 0.4 tooling / Hees.ai validation. | [#552](https://github.com/encero-systems/incan/issues/552), [installed-SDK validation](hees_ai_v05_sdk_validation.md). | The proof should prefer installed `incan` commands and report local-only assumptions as blockers. |
 | Governed workbench demo scenario. | Hees.ai-only product behavior with Incan validation hooks. | [#549](https://github.com/encero-systems/incan/issues/549). | Keep scenario copy, policy content, and product UX outside Incan compiler scope. |
 | Stable compiler-owned identities for evidence. | 0.5 backend foundation. | [#648](https://github.com/encero-systems/incan/issues/648), [#650](https://github.com/encero-systems/incan/issues/650). | Needed if proof artifacts cite source declarations/calls beyond text spans. |
 | Backend-neutral type/runtime facts. | 0.5 backend foundation. | [#649](https://github.com/encero-systems/incan/issues/649). | Needed if proof artifacts explain type or runtime obligations in Incan terms. |
@@ -79,6 +79,6 @@ These belong outside Incan 0.5 unless separately approved:
 ## Next inventory actions
 
 1. Freeze the #549 scenario transcript/artifact list before implementing dependencies.
-2. Run the #552 installed-SDK path and record exact blockers.
+2. Run the #552 [installed-SDK validation path](hees_ai_v05_sdk_validation.md) and record exact blockers.
 3. For every blocker, decide whether it is existing 0.4 tooling, 0.5 backend foundation, 0.5 stdlib/runtime, temporary shim, or Hees.ai-only.
 4. Reject any product need that cannot explain how it validates Incan itself.

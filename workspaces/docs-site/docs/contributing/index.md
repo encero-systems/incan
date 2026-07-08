@@ -31,6 +31,7 @@ If you’re new, start with:
 - [Layering rules](explanation/layering.md) — dependency boundaries and guardrails
 - [Generated Rust stdlib coverage](reference/generated_rust_stdlib_coverage.md) — generated-Rust coverage inventory for stdlib modules
 - [Hees.ai v0.5 dependency inventory](reference/hees_ai_v05_dependency_inventory.md) — proof-lane dependency map and scope guardrails
+- [Hees.ai v0.5 installed-SDK validation](reference/hees_ai_v05_sdk_validation.md) — command contract and blocker routing for #552
 - [Rust-source backend deprecation policy](reference/rust_source_backend_deprecation.md) — compatibility rules while semantic authority moves out of generated Rust
 
 ## Design (RFCs and roadmap)

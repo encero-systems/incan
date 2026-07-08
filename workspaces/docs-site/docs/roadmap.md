@@ -116,6 +116,7 @@ Core tracking issues:
 - [#282](https://github.com/encero-systems/incan/issues/282): backend orchestration migration scaffolding.
 - [#224](https://github.com/encero-systems/incan/issues/224): `CompilationSession` semantic database transition.
 - [#549](https://github.com/encero-systems/incan/issues/549): Hees.ai governed workbench demo.
+- [#552](https://github.com/encero-systems/incan/issues/552): Hees.ai installed-SDK validation path.
 - [#651](https://github.com/encero-systems/incan/issues/651): Hees.ai dependency inventory and guardrails.
 - [#405](https://github.com/encero-systems/incan/issues/405): RFC 077 workspace and multi-package project foundations.
 - [#829](https://github.com/encero-systems/incan/issues/829): crash-safe local publication and file coordination ([RFC 112](RFCs/closed/implemented/112_crash_safe_publication_and_file_coordination.md), implemented in [#833](https://github.com/encero-systems/incan/pull/833)).
@@ -125,6 +126,7 @@ Phase-0 references:
 - [Backend behavior inventory](contributing/reference/backend_behavior_inventory.md) seeds #646 with behavior categories, evidence lanes, hosted-runtime assumptions, and the current Rust interop bug cluster.
 - [Rust-source backend deprecation policy](contributing/reference/rust_source_backend_deprecation.md) seeds #647 with rules for compatibility fixes while semantic authority moves toward backend-neutral facts.
 - [Hees.ai v0.5 dependency inventory](contributing/reference/hees_ai_v05_dependency_inventory.md) seeds #651 with proof-lane dependencies, shim rules, and product-scope guardrails.
+- [Hees.ai v0.5 installed-SDK validation](contributing/reference/hees_ai_v05_sdk_validation.md) seeds #552 with the command contract, blocker categories, and public-doc rules for the constrained proof path.
 
 Allowed stdlib work includes `std.http`, `std.ci`, CLI framework, `std.archive`, `std.process`, `std.web` lifecycle, `std.environ`, package-level timezones, fallible reader chunk streams, and selected stdlib compilation/source-authored behavior work.
 
