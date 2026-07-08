@@ -2341,6 +2341,38 @@ def main() -> None:
     }
 
     #[test]
+    fn normal_codegen_emits_value_reflection_for_optional_scalar_fields() {
+        let code = generate(
+            r#"
+model ProbeRow:
+  label: str
+  optional_label: Option[str]
+
+def main() -> None:
+  row = ProbeRow(label="paid", optional_label=None)
+  _ = row
+  print("ok")
+"#,
+        );
+        let compact = code.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+
+        assert!(
+            code.contains("impl incan_stdlib::reflection::HasFieldValueReflection for ProbeRow"),
+            "{code}"
+        );
+        assert!(
+            compact.contains("\"optional_label\"=>{Some(match&self.optional_label"),
+            "{code}"
+        );
+        assert!(
+            compact
+                .contains("match&self.optional_label{Some(value)=>format!(\"{}\",value),None=>\"None\".to_string(),}"),
+            "{code}"
+        );
+        assert_no_generated_unused_lint_allows(&code);
+    }
+
+    #[test]
     fn normal_codegen_expects_unread_private_fields_when_value_reflection_is_not_emitted() {
         let code = generate(
             r#"

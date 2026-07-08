@@ -347,11 +347,28 @@ impl<'a> IrEmitter<'a> {
     /// Emit the string value used by generic field-value reflection for one concrete field.
     fn field_reflection_string_expr(field: &StructField) -> TokenStream {
         let field_ident = format_ident!("{}", field.name);
-        quote! { format!("{}", self.#field_ident) }
+        match &field.ty {
+            IrType::Option(inner) if Self::field_type_supports_scalar_value_reflection(inner) => quote! {
+                match &self.#field_ident {
+                    Some(value) => format!("{}", value),
+                    None => "None".to_string(),
+                }
+            },
+            _ => quote! { format!("{}", self.#field_ident) },
+        }
     }
 
     /// Return whether generic field-value reflection can stringify this type without extra Rust trait bounds.
     fn field_type_supports_value_reflection(ty: &IrType) -> bool {
+        if Self::field_type_supports_scalar_value_reflection(ty) {
+            return true;
+        }
+
+        matches!(ty, IrType::Option(inner) if Self::field_type_supports_scalar_value_reflection(inner))
+    }
+
+    /// Return whether a scalar field type can be reflected through Rust's built-in Display implementations.
+    fn field_type_supports_scalar_value_reflection(ty: &IrType) -> bool {
         matches!(
             ty,
             IrType::Bool
