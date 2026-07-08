@@ -4,7 +4,7 @@
       "path": "crates/incan_core/src/interop/coercions.rs",
       "category": "registry-backed Rust-boundary coercion policy",
       "expected_count": 39,
-      "expected_fingerprint": "0x631ac11a12a89439"
+      "expected_fingerprint": "0x309683062c796469"
     },
     {
       "path": "crates/incan_core/src/interop/extension_traits.rs",

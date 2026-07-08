@@ -1037,6 +1037,13 @@ mod validate_rust_function_call_tests {
     }
 
     #[test]
+    fn rust_arg_boundary_accepts_pointer_sized_numeric_identity() {
+        let checker = TypeChecker::new();
+        assert!(checker.rust_arg_matches_boundary(&ResolvedType::Numeric(NumericTypeId::ISize), "isize"));
+        assert!(checker.rust_arg_matches_boundary(&ResolvedType::Numeric(NumericTypeId::USize), "usize"));
+    }
+
+    #[test]
     fn rust_arg_boundary_rejects_exact_width_numeric_narrowing() {
         let checker = TypeChecker::new();
         let arg_ty = ResolvedType::Numeric(NumericTypeId::I16);
