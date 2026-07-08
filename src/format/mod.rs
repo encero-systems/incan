@@ -1704,6 +1704,18 @@ const B: int = 2
 "#;
         let formatted = format_source(source)?;
         assert_eq!(formatted, source);
+
+        let methods_only = r#"""Module docstring."""
+
+
+enum Marker:
+    """Marker enum docstring."""
+
+    def label(self) -> str:
+        return "marker"
+"#;
+        let formatted = format_source(methods_only)?;
+        assert_eq!(formatted, methods_only);
         Ok(())
     }
 
@@ -1775,6 +1787,30 @@ const B: int = 2
         let source = r#"pub class LazyFrame:
     _cursor: int
     pub schema: str
+"#;
+        let formatted = format_source(source)?;
+        assert_eq!(formatted, source);
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_preserves_rust_module_and_enum_methods() -> Result<(), FormatError> {
+        let source = r#""""Runtime module docstring."""
+
+rust.module("incan_stdlib::environ")
+
+from std.traits.error import Error
+
+
+pub enum EnvironErrorKind(str):
+    """Stable categories for environment read failures."""
+
+    Missing = "missing"
+    Other = "other"
+
+    def as_str(self) -> str:
+        """Return the stable error category spelling."""
+        return self.value()
 "#;
         let formatted = format_source(source)?;
         assert_eq!(formatted, source);

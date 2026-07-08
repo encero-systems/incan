@@ -339,6 +339,13 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         typechecker_only: false,
     },
     StdlibNamespace {
+        name: "environ",
+        feature: None,
+        extra_crate_deps: &[],
+        submodules: &[],
+        typechecker_only: false,
+    },
+    StdlibNamespace {
         name: "async",
         feature: Some("async"),
         extra_crate_deps: &[],
@@ -777,6 +784,7 @@ mod tests {
         assert!(is_known_stdlib_module(&segs(&["std", "serde", "json"])));
         assert!(is_known_stdlib_module(&segs(&["std", "reflection"])));
         assert!(is_known_stdlib_module(&segs(&["std", "result"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "environ"])));
         assert!(is_known_stdlib_module(&segs(&["std", "fs"])));
         assert!(is_known_stdlib_module(&segs(&["std", "datetime"])));
         assert!(is_known_stdlib_module(&segs(&["std", "datetime", "runtime"])));
@@ -891,6 +899,10 @@ mod tests {
         assert_eq!(
             stdlib_stub_path(&segs(&["std", "io"])),
             Some("stdlib/io.incn".to_string())
+        );
+        assert_eq!(
+            stdlib_stub_path(&segs(&["std", "environ"])),
+            Some("stdlib/environ.incn".to_string())
         );
         assert_eq!(
             stdlib_stub_path(&segs(&["std", "encoding"])),

@@ -43,6 +43,7 @@ pub enum FeatureId {
     StdGraph,
     StdFs,
     StdIo,
+    StdEnviron,
     StdJson,
     StdTempfile,
     StdDatetime,
@@ -759,6 +760,26 @@ pub const FEATURES: &[FeatureDescriptor] = &[
         references: links![
             ("std.io", "stdlib/io.md"),
             ("Release 0.3", "../../release_notes/0_3.md"),
+        ],
+    },
+    FeatureDescriptor {
+        id: FeatureId::StdEnviron,
+        name: "`std.environ` runtime environment access",
+        category: FeatureCategory::Stdlib,
+        since: Since(0, 5),
+        introduced_in_rfc: RFC::_089,
+        stability: Stability::Stable,
+        activation: "Import from `std.environ`.",
+        summary: "`std.environ` provides read-only current-process Unicode environment reads through required, optional, and defaulted string helpers.",
+        canonical_forms: &[
+            "from std.environ import get, get_optional, get_or",
+            "token = get(\"API_TOKEN\")?",
+            "mode = get_or(\"APP_MODE\", \"dev\")",
+        ],
+        prefer_over: "Direct `rust::std::env` imports or shell glue for ordinary runtime environment reads.",
+        references: links![
+            ("std.environ", "stdlib/environ.md"),
+            ("RFC 089", "../../RFCs/089_std_environ.md"),
         ],
     },
     FeatureDescriptor {

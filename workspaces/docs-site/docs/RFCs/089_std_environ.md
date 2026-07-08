@@ -9,7 +9,7 @@
     - RFC 063 (`std.process` process spawning and command execution)
     - RFC 067 (`std.ci` deterministic CI and automation scripting primitives)
     - RFC 070 (Result combinators)
-- **Issue:** —
+- **Issue:** https://github.com/encero-systems/incan/issues/557
 - **RFC PR:** —
 - **Written against:** v0.3
 - **Shipped in:** —

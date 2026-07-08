@@ -1,0 +1,136 @@
+"""
+Runtime access to current-process environment variables.
+
+`std.environ` is deliberately small and read-only. Use `get()` when a variable is required, `get_optional()` when
+absence is meaningful, and `get_or()` when a string default should handle absence. The module reports missing required
+values without including observed environment values in error details.
+"""
+
+rust.module("incan_stdlib::environ")
+
+from std.traits.error import Error
+
+
+pub enum EnvironErrorKind(str):
+    """Stable categories for environment read failures."""
+
+    Missing = "missing"
+    InvalidKey = "invalid_key"
+    NotUnicode = "not_unicode"
+    Other = "other"
+
+    def as_str(self) -> str:
+        """Return the stable error category spelling."""
+        return self.value()
+
+
+@derive(Clone)
+pub model EnvironError with Error:
+    """
+    Error returned by required `std.environ` reads.
+
+    `detail` never includes the observed environment value. Branch on `kind()` or `kind_name()` when callers need a
+    stable category.
+    """
+
+    pub _kind: EnvironErrorKind = EnvironErrorKind.Other
+    pub _kind_name: str = EnvironErrorKind.Other.as_str()
+    pub key: str
+    pub detail: str
+
+    @staticmethod
+    def from_kind(kind: EnvironErrorKind, key: str, detail: str) -> Self:
+        """Build an environment error from a stable category."""
+        return EnvironError(_kind=kind, _kind_name=kind.as_str(), key=key, detail=detail)
+
+    @staticmethod
+    def missing(key: str) -> Self:
+        """Build the standard missing-variable error."""
+        return EnvironError.from_kind(EnvironErrorKind.Missing, key, f"environment variable `{key}` is not set")
+
+    @staticmethod
+    def invalid_key(key: str) -> Self:
+        """Build the standard invalid-key error."""
+        return EnvironError.from_kind(EnvironErrorKind.InvalidKey, key, "environment variable key must not be empty")
+
+    @staticmethod
+    def not_unicode(key: str) -> Self:
+        """Build the standard non-Unicode-value error."""
+        return EnvironError.from_kind(
+            EnvironErrorKind.NotUnicode,
+            key,
+            f"environment variable `{key}` cannot be represented as Unicode text",
+        )
+
+    def kind(self) -> EnvironErrorKind:
+        """Return the typed stable error category."""
+        return self._kind
+
+    def kind_name(self) -> str:
+        """Return the stable error category spelling."""
+        return self._kind_name
+
+    def message(self) -> str:
+        """Return the human-readable error detail."""
+        return self.detail
+
+
+@rust.extern
+def _get_raw(key: str) -> Result[str, str]:
+    """
+    Read a raw current-process environment value through the Rust host boundary.
+
+    Returns:
+        `Ok(value)` for a present Unicode value, or `Err(kind)` with a stable error category string. The Rust side
+        never returns the observed environment value in an error.
+    """
+    pass
+
+
+pub def get(key: str) -> Result[str, EnvironError]:
+    """
+    Return a required current-process environment variable.
+
+    Returns:
+        `Ok(value)` when `key` is present and Unicode, or `Err(EnvironError)` for missing, invalid, or non-Unicode
+        variables.
+    """
+    match _get_raw(key):
+        Ok(value) => return Ok(value)
+        Err(kind) => return Err(_error_from_raw_kind(key, kind))
+
+
+pub def get_optional(key: str) -> Option[str]:
+    """
+    Return an optional current-process environment variable.
+
+    Returns:
+        `Some(value)` when `key` is present and Unicode. Returns `None` for missing, invalid-key, or non-Unicode
+        reads. Use `get()` when callers need the precise error category.
+    """
+    match _get_raw(key):
+        Ok(value) => return Some(value)
+        Err(_) => return None
+
+
+pub def get_or(key: str, default: str) -> str:
+    """
+    Return a current-process environment variable or a string default.
+
+    Returns:
+        The present Unicode value for `key`, or `default` when no Unicode value is available.
+    """
+    match get_optional(key):
+        Some(value) => return value
+        None => return default
+
+
+def _error_from_raw_kind(key: str, kind: str) -> EnvironError:
+    """Convert a stable Rust-side error category into the public `EnvironError` model."""
+    if kind == "missing":
+        return EnvironError.missing(key)
+    elif kind == "invalid_key":
+        return EnvironError.invalid_key(key)
+    elif kind == "not_unicode":
+        return EnvironError.not_unicode(key)
+    return EnvironError.from_kind(EnvironErrorKind.Other, key, f"environment variable `{key}` could not be read")

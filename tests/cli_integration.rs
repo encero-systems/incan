@@ -19,15 +19,45 @@ fn incan_binary() -> PathBuf {
 }
 
 fn run_incan(current_dir: &Path, args: &[&str]) -> Result<Output, Box<dyn std::error::Error>> {
-    Ok(Command::new(incan_binary())
+    run_incan_with_env(current_dir, args, &[])
+}
+
+fn run_incan_with_env(
+    current_dir: &Path,
+    args: &[&str],
+    envs: &[(&str, &str)],
+) -> Result<Output, Box<dyn std::error::Error>> {
+    run_incan_with_env_and_removed(current_dir, args, envs, &[])
+}
+
+fn run_incan_with_env_and_removed(
+    current_dir: &Path,
+    args: &[&str],
+    envs: &[(&str, &str)],
+    removed_envs: &[&str],
+) -> Result<Output, Box<dyn std::error::Error>> {
+    let mut command = Command::new(incan_binary());
+    for key in removed_envs {
+        command.env_remove(key);
+    }
+    Ok(command
         .args(args)
         .current_dir(current_dir)
         .env("CARGO_NET_OFFLINE", "true")
         .env("INCAN_NO_BANNER", "1")
         .env(
+            "INCAN_STDLIB",
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib/stdlib"),
+        )
+        .env(
+            "INCAN_STDLIB_DIR",
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib/stdlib"),
+        )
+        .env(
             "INCAN_GENERATED_CARGO_TARGET_DIR",
             Path::new(env!("CARGO_MANIFEST_DIR")).join("target/incan_generated_shared_target"),
         )
+        .envs(envs.iter().copied())
         .output()?)
 }
 
@@ -86,6 +116,50 @@ fn parse_jsonl_stdout(output: &Output) -> Result<Vec<serde_json::Value>, Box<dyn
         .filter(|line| !line.trim().is_empty())
         .map(|line| Ok(serde_json::from_str(line)?))
         .collect()
+}
+
+#[test]
+fn run_std_environ_string_accessors_issue557() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "std_environ_string_accessors", "")?;
+    fs::write(
+        &main_path,
+        r#"from std.environ import get, get_optional, get_or
+
+def main() -> None:
+  match get("INCAN_ENVIRON_PRESENT"):
+    Ok(value) => println(value)
+    Err(err) => println(err.kind_name())
+  match get("INCAN_ENVIRON_MISSING_TEST"):
+    Ok(value) => println(value)
+    Err(err) => println(f"{err.kind_name()}:{err.key}")
+  match get_optional("INCAN_ENVIRON_MISSING_TEST"):
+    Some(value) => println(value)
+    None => println("optional-missing")
+  println(get_or("INCAN_ENVIRON_MISSING_TEST", "fallback"))
+  match get(""):
+    Ok(value) => println(value)
+    Err(err) => println(err.kind_name())
+"#,
+    )?;
+
+    let check_output = run_incan(tmp.path(), &["check", main_path.to_str().ok_or("non-utf8 main path")?])?;
+    assert_success(&check_output, "incan check for std.environ string accessors");
+
+    let run_output = run_incan_with_env_and_removed(
+        tmp.path(),
+        &["run", main_path.to_str().ok_or("non-utf8 main path")?],
+        &[("INCAN_ENVIRON_PRESENT", "present-value")],
+        &["INCAN_ENVIRON_MISSING_TEST"],
+    )?;
+    assert_success(&run_output, "incan run for std.environ string accessors");
+
+    assert_eq!(
+        String::from_utf8(run_output.stdout)?,
+        "present-value\nmissing:INCAN_ENVIRON_MISSING_TEST\noptional-missing\nfallback\ninvalid_key\n",
+    );
+
+    Ok(())
 }
 
 fn assert_codegraph_v04_record_contract(records: &[serde_json::Value]) {

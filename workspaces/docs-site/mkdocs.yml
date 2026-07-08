@@ -178,6 +178,7 @@ nav:
               - std.derives.*: language/reference/stdlib/derives.md
               - std.datetime: language/reference/stdlib/datetime.md
               - std.encoding: language/reference/stdlib/encoding.md
+              - std.environ: language/reference/stdlib/environ.md
               - std.fs: language/reference/stdlib/fs.md
               - std.graph: language/reference/stdlib/graph.md
               - std.hash: language/reference/stdlib/hash.md

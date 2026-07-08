@@ -580,7 +580,7 @@ impl Formatter {
 
         if let Some(docstring) = &en.docstring {
             self.format_docstring(docstring);
-            if !en.variants.is_empty() {
+            if !en.variants.is_empty() || !en.variant_aliases.is_empty() || !en.methods.is_empty() {
                 self.writer.newline();
             }
         }
@@ -592,7 +592,10 @@ impl Formatter {
             self.format_enum_variant_alias(&alias.node);
         }
 
-        if en.variants.is_empty() && en.variant_aliases.is_empty() {
+        let seen_member_before_methods = !en.variants.is_empty() || !en.variant_aliases.is_empty();
+        self.format_methods_with_spacing(&en.methods, seen_member_before_methods);
+
+        if en.variants.is_empty() && en.variant_aliases.is_empty() && en.methods.is_empty() {
             if en.docstring.is_some() {
                 self.writer.newline();
             }
