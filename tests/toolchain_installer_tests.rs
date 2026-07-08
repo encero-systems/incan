@@ -858,14 +858,14 @@ fn homebrew_formula_is_rendered_from_the_toolchain_manifest() -> Result<(), Box<
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let checksum = fs::read_to_string(dist.join("incan-v0.5.0-dev.3-x86_64-unknown-linux-gnu.tar.gz.sha256"))?
+    let checksum = fs::read_to_string(dist.join("incan-v0.5.0-dev.4-x86_64-unknown-linux-gnu.tar.gz.sha256"))?
         .trim()
         .to_string();
     let formula = fs::read_to_string(dist.join("incan.rb"))?;
-    assert!(formula.contains(r#"version "0.5.0-dev.3""#));
+    assert!(formula.contains(r#"version "0.5.0-dev.4""#));
     assert!(formula.contains("npm and Homebrew install prebuilt Incan commands"));
     assert!(formula.contains(
-        r#"url "https://github.com/encero-systems/incan/releases/download/v0.5.0-dev.3/incan-v0.5.0-dev.3-x86_64-unknown-linux-gnu.tar.gz""#
+        r#"url "https://github.com/encero-systems/incan/releases/download/v0.5.0-dev.4/incan-v0.5.0-dev.4-x86_64-unknown-linux-gnu.tar.gz""#
     ));
     assert!(formula.contains(&format!(r#"sha256 "{checksum}""#)));
     assert!(formula.contains("def staged_files"));

@@ -76,11 +76,12 @@ One-shot namespace helpers that are infallible raise `ValueError` for the same v
 
 ## Boundaries
 
-`std.hash` does not provide password hashing, keyed MACs, signatures, authenticated encryption, CRC, or Adler checksums. Those require separate APIs because their security and compatibility contracts are different from ordinary byte hashing.
+`std.hash` does not provide password hashing, keyed MACs, signatures, authenticated encryption, CRC, or Adler checksums. Those require separate APIs because their security and compatibility contracts are different from ordinary byte hashing. Use [`std.checksum`](checksum.md) for CRC32 compatibility checksums.
 
 ## See also
 
 - [Hashing data](../../how-to/hashing_data.md)
+- [`std.checksum` reference](checksum.md)
 - [`std.encoding` reference](encoding.md)
 - [`std.io` reference](io.md)
 - [`std.fs` reference](fs.md)
