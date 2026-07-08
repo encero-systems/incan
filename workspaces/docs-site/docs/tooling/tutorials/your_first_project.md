@@ -94,7 +94,7 @@ version = "0.1.0"
 description = "A small greeting command"
 license = "MIT"
 readme = "README.md"
-requires-incan = ">=0.4.0,<0.5.0"
+requires-incan = ">=0.5.0-0,<0.6.0"
 
 [project.scripts]
 main = "src/main.incn"

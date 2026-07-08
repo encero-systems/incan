@@ -1,0 +1,105 @@
+# Backend behavior inventory
+
+This inventory seeds issue [#646](https://github.com/encero-systems/incan/issues/646). It exists so backend replacement work can preserve supported behavior intentionally, retire accidental behavior deliberately, and stop treating generated Rust snapshots as the only source of truth.
+
+Status: seed inventory for the 0.5 backend-foundation lane. It is not a freeze of every pre-1.0 behavior.
+
+## Categories
+
+| Category                     | Meaning                                                                                                                  | Migration decision                                                                                          |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| Supported language contract  | Behavior documented or intentionally exposed as source-level Incan semantics.                                            | Preserve through stable IDs, semantic facts, HIR, Body IR, diagnostics, or authored user docs.              |
+| Stdlib/runtime behavior      | Behavior owned by `crates/incan_stdlib`, `crates/incan_core`, or `.incn` stdlib source.                                  | Preserve as stdlib/runtime contract, and record runtime-service requirements explicitly.                    |
+| Rust interop behavior        | Behavior that crosses `rust::` imports, rust-inspect metadata, Rust callable boundaries, or generated Cargo projects.    | Preserve where documented, but move identity, call planning, and coercion decisions out of emitter guesses. |
+| Generated-artifact behavior  | Behavior visible mainly through generated Rust shape, generated Cargo manifests, or `target/incan/**` layout.            | Keep useful inspection, but replace semantic authority with HIR/facts/ABI metadata.                         |
+| Diagnostic behavior          | Error/warning codes, spans, JSON schema facts, and text diagnostics.                                                     | Preserve user-facing clarity; move expected/actual/source facts into stable diagnostics when possible.      |
+| Accidental accepted behavior | Behavior accepted because a parser/typechecker/lowering path happens to allow it without a documented contract.          | Either document and test it as supported or reject it with a clear diagnostic.                              |
+| Bug-compatible behavior      | Behavior preserved only because current users may rely on a workaround or because fixing it requires a larger migration. | Track the owning issue and removal condition; do not promote it to architecture.                            |
+
+## Evidence lanes
+
+Use more than one lane when a behavior can cross boundaries.
+
+| Lane                            | Evidence examples                                                             | What it proves                                                                              |
+| ------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Direct parser/typechecker tests | `src/frontend/**` unit tests, diagnostics tests, parser snapshots.            | Source acceptance/rejection and diagnostic shape.                                           |
+| Codegen snapshots               | `tests/codegen_snapshot_tests.rs`, `tests/snapshots/**`.                      | Current generated Rust shape and emitter obligations.                                       |
+| Generated-project runs          | Integration tests, stdlib runtime tests, smoke tests.                         | Rust compile/runtime behavior, generated Cargo/project layout, runtime helper availability. |
+| Package/import boundaries       | Package consumer fixtures, facade/reexport tests, checked API metadata tests. | Public identity, imports, aliases, defaults, and dependency-owned type behavior.            |
+| Vocab/test-batch lanes          | Vocab desugarer tests, formatter/test-runner activation paths.                | File-scoped activation and generated helper behavior outside ordinary direct builds.        |
+| Downstream proof lanes          | InQL or Hees.ai acceptance runs when the surface is exercised there.          | Cross-repo behavior and installed-SDK assumptions that synthetic fixtures may miss.         |
+
+## Representative repo anchors
+
+These are starting points for reviewers. They are not exhaustive, and new backend work should add tighter tests when a behavior lacks a direct anchor.
+
+| Boundary                                          | Existing anchors                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Parser, syntax, and diagnostics                   | `crates/incan_syntax/src/parser/tests.rs`, `tests/fixtures/valid/**`, `tests/fixtures/invalid/**`, `tests/construction_diagnostics_tests.rs`, `tests/cli_integration.rs`, `src/cli/commands/diagnostics.rs`.                                                                                                                                                                                                       |
+| Code generation snapshots                         | `tests/codegen_snapshot_tests.rs`, `tests/codegen_snapshots/**`, `tests/snapshots/codegen_snapshot_tests__*.snap`.                                                                                                                                                                                                                                                                                                 |
+| Generated projects and public artifacts           | `tests/generated_rust_artifact_tests.rs`, `tests/generated_rust_audit_tests.rs`, `tests/generated_rust_callability_artifact_tests.rs`, `tests/generated_rust_native_consumer_tests.rs`, `tests/fixtures/generated_rust_artifacts/**`, `tests/fixtures/generated_rust_callability/**`, `tests/fixtures/generated_rust_native_consumer/**`.                                                                          |
+| Package, import, facade, and checked API identity | `tests/fixtures/boundary_parity/README.md`, `tests/generated_rust_callability_artifact_tests.rs`, `workspaces/docs-site/docs/tooling/reference/checked_api_metadata.md`.                                                                                                                                                                                                                                           |
+| Stdlib and runtime surface                        | `tests/stdlib_generated_rust_snapshot_tests.rs`, `tests/std_encoding_algorithm_modules.rs`, `tests/fixtures/valid/std_*_surface.incn`, `workspaces/docs-site/docs/contributing/reference/generated_rust_stdlib_coverage.md`.                                                                                                                                                                                       |
+| Rust interop                                      | `tests/codegen_snapshots/rfc041_rust_coercions.incn`, `tests/codegen_snapshots/rfc041_interop_into_via.incn`, `tests/codegen_snapshots/rust_interop_associated_functions.incn`, `tests/codegen_snapshots/rust_interop_field_access.incn`, `tests/codegen_snapshots/rfc043_imported_trait_associated_type.incn`, `examples/pro/rust_interop_pro.incn`, `workspaces/docs-site/docs/language/how-to/rust_interop.md`. |
+| Vocab and desugaring                              | `tests/vocab_guardrails.rs`, `tests/codegen_snapshots/vocab_block_desugaring.incn`, `tests/codegen_snapshots/vocab_helper_backed_desugaring.incn`, `examples/pro/vocab_studiokit/**`, `examples/pro/vocab_querykit/**`, `examples/pro/vocab_routekit/**`.                                                                                                                                                          |
+| Inspection and reports                            | `workspaces/docs-site/docs/tooling/reference/codegraph_inspection.md`, `workspaces/docs-site/docs/tooling/reference/checked_api_metadata.md`, `workspaces/docs-site/docs/language/reference/feature_inventory.md`.                                                                                                                                                                                                 |
+
+## 0.5 foundation artifacts
+
+The first backend-foundation artifacts are compiler-facing. They make current frontend decisions inspectable without changing the Rust-source backend yet.
+
+| Artifact                 | Purpose                                                                                               | Current boundary                                                                                                                            |
+| ------------------------ | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CompilerNodeId`         | Stable compiler-owned identity for modules, declarations, expressions, statements, locals, and types. | IDs are semantic, not emitted Rust paths. Early expression IDs can still be span-based until richer HIR exists.                             |
+| `SemanticFactStore`      | Deterministic store for facts about compiler-owned subjects.                                          | Carries type facts and source-target facts today; runtime, diagnostic, and backend-obligation fact families remain future expansion points. |
+| `IncanType`              | Backend-neutral type vocabulary independent of Rust spelling.                                         | Used for semantic type facts and ABI v0 hooks; it is compiler-facing and not a stable public ABI.                                           |
+| ABI v0 type facts        | Conservative ownership, representation, and reserved runtime/target slots for semantic types.         | Records unknowns explicitly; it does not promise layout or target compatibility yet.                                                        |
+| `HirModule`              | Declaration-level HIR v0 with source spans and optional type-fact subjects.                           | Body, statement, expression, and ownership HIR are later slices.                                                                            |
+| `SemanticModuleSnapshot` | Bundled HIR plus semantic facts for one module.                                                       | Intended for inspection and future middle-end handoff fixtures before backend cutover.                                                      |
+
+## Seed behavior matrix
+
+| Behavior                                                                                   | Category                                                   | Current evidence                                                        | Migration owner                                        | Decision                                                                                                                               |
+| ------------------------------------------------------------------------------------------ | ---------------------------------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Source syntax accepted/rejected by parser and lexer.                                       | Supported language contract / accidental behavior.         | Parser tests, formatter tests, language reference.                      | Stable IDs, HIR v0.                                    | Preserve documented syntax; add diagnostics for accidental accepted syntax before backend cutover.                                     |
+| Typechecker overload, trait, callable, union, and generic decisions.                       | Supported language contract.                               | Typechecker tests, checked API metadata tests, package fixtures.        | Semantic facts database, `IncanType`, HIR v0.          | Preserve decisions as frontend-owned facts instead of re-deriving them in lowering/emission.                                           |
+| Ownership and duckborrowing decisions for calls, returns, matches, and interop boundaries. | Supported language contract / generated-artifact behavior. | Codegen snapshots, generated-project runs, issue-specific regressions.  | Duckborrower facts, Body IR.                           | Preserve intended source semantics; avoid adding local `.clone()`, `.into()`, or `.as_ref()` emitter patches without a migration note. |
+| Generated Rust layout for user projects.                                                   | Generated-artifact behavior.                               | Generated Rust snapshots, CLI build/report tests.                       | Backend preparation and artifact plan.                 | Keep inspectable layout, but do not define source semantics by emitted Rust shape.                                                     |
+| `__incan_std` source materialization into generated consumers.                             | Stdlib/runtime behavior / generated-artifact behavior.     | Generated stdlib coverage inventory, issue #544.                        | Compiled stdlib artifact / `incnlib` path.             | Treat current materialization as bootstrap behavior to inventory, not the long-term package boundary.                                  |
+| CLI diagnostics and machine-readable reports.                                              | Diagnostic behavior.                                       | CLI integration tests, release 0.4 docs, JSON output tests.             | Diagnostics schema and semantic facts.                 | Preserve schema compatibility where documented; add richer stable facts without binding to generated Rust internals.                   |
+| Rust method/associated function call planning.                                             | Rust interop behavior.                                     | Rust interop codegen snapshots, rust-inspect metadata tests, #803-#806. | Semantic facts, call planning, Rust boundary metadata. | Preserve documented interop; move receiver/type-arg/coercion identity out of emitter-only heuristics.                                  |
+| Vocab-generated helper calls.                                                              | Supported language contract / vocab behavior.              | Vocab tests and package consumer fixtures.                              | Stable IDs, HIR, semantic facts.                       | Preserve helper identity and public API metadata across desugarer output.                                                              |
+
+## Hosted-runtime assumptions
+
+The current backend and stdlib assume a hosted Rust `std` environment in many places. Future restricted or freestanding targets should consume these facts from inventory and metadata rather than rediscovering them through failed builds.
+
+| Assumption                         | Current examples                                                                   | Future owner                                                   |
+| ---------------------------------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| Filesystem access                  | `std.fs`, toolchain cache, generated project emission, diagnostics source loading. | Runtime-service metadata, target profiles.                     |
+| Process/environment access         | CLI commands, toolchain installer, `std.environ` candidate work, release scripts.  | Runtime-service metadata, issue #557 / future target profiles. |
+| Default allocator                  | Collections, strings, generated project runtime, many stdlib helpers.              | ABI v0 hooks, `IncanType`, future allocator policy.            |
+| Panic behavior                     | Generated panic hooks, test runner, runtime helper failures.                       | ABI v0 hooks, panic-strategy metadata.                         |
+| Threads/async runtime              | LSP, async stdlib, task/channel/sync helpers.                                      | Runtime-service metadata, std.async contracts.                 |
+| Native target availability         | Toolchain installer, generated Cargo projects, rust-inspect workspaces.            | SDK/toolchain metadata, target profiles.                       |
+| Rust stdlib and third-party crates | `rust::` imports, stdlib runtime facades, generated Cargo manifests.               | Rust interop metadata, package/dependency facts.               |
+
+## Rust interop bug classification
+
+| Issue                                                      | Current behavior                                                                                          | Likely owning boundary                                                                     | Phase-0 decision                                                                                                          |
+| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| [#803](https://github.com/encero-systems/incan/issues/803) | `usize` can mismatch against `usize` in a heavier `rubato` repro.                                         | Rust type identity/canonicalization, metadata provenance, generated-project type planning. | Keep as 0.5 interop inventory evidence; minimize after #801/#802/#806 state is settled.                                   |
+| [#804](https://github.com/encero-systems/incan/issues/804) | `Into`-bound method calls can insert `.into()` and make Rust inference ambiguous.                         | Rust boundary coercion and generic method call planning.                                   | Treat `.into()` insertion as semantic call planning, not an emitter convenience.                                          |
+| [#805](https://github.com/encero-systems/incan/issues/805) | By-value Incan callback annotations can satisfy typecheck but fail Rust `FnMut(&mut T, &U)` expectations. | Rust callable adaptation, borrowed callback signature modeling, diagnostics.               | Needs design before implementation; current behavior is bug-compatible only.                                              |
+| [#806](https://github.com/encero-systems/incan/issues/806) | Receiver-side generic constructor turbofish was accepted and emitted incorrectly before PR #807.          | Rust associated-call planning and receiver type identity.                                  | PR #807 fixed emitted shape, but the issue remains open; follow-up should confirm closeout or add diagnostic-policy work. |
+
+## Review use
+
+For backend-foundation work, reviewers should ask:
+
+1. Is this behavior documented, tested, and intentionally supported?
+2. Which evidence lane proves it outside the local file path?
+3. Does the change add semantic authority to old Rust-source lowering/emission?
+4. If old backend compatibility is touched, where is the migration note?
+5. Which stable ID, semantic fact, HIR, Body IR, ABI metadata, runtime-service fact, or diagnostic should own the behavior next?
+6. Is there a concrete existing anchor above, or does the change need a new focused fixture?

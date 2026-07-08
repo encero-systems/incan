@@ -116,6 +116,12 @@ Core tracking issues:
 - [#549](https://github.com/encero-systems/incan/issues/549): Hees.ai governed workbench demo.
 - [#651](https://github.com/encero-systems/incan/issues/651): Hees.ai dependency inventory and guardrails.
 
+Phase-0 references:
+
+- [Backend behavior inventory](contributing/reference/backend_behavior_inventory.md) seeds #646 with behavior categories, evidence lanes, hosted-runtime assumptions, and the current Rust interop bug cluster.
+- [Rust-source backend deprecation policy](contributing/reference/rust_source_backend_deprecation.md) seeds #647 with rules for compatibility fixes while semantic authority moves toward backend-neutral facts.
+- [Hees.ai v0.5 dependency inventory](contributing/reference/hees_ai_v05_dependency_inventory.md) seeds #651 with proof-lane dependencies, shim rules, and product-scope guardrails.
+
 Allowed stdlib work includes `std.http`, `std.ci`, CLI framework, `std.archive`, `std.process`, `std.web` lifecycle, `std.environ`, package-level timezones, fallible reader chunk streams, and selected stdlib compilation/source-authored behavior work.
 
 ### 0.6 Release: backend cutover

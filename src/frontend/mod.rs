@@ -17,6 +17,7 @@ pub mod api_metadata;
 pub(crate) mod ast_walk;
 pub mod contract_metadata;
 pub mod decorator_resolution;
+pub mod hir;
 pub mod library_exports;
 pub mod library_manifest_index;
 pub mod module;
