@@ -56,6 +56,21 @@ impl incan_stdlib::reflection::HasTypeFieldMetadata for LazyFrame {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
+impl incan_stdlib::reflection::HasFieldValueReflection for LazyFrame {
+    fn __field_value__(&self, name: &str) -> Option<String> {
+        match name {
+            "_cursor" => Some(format!("{}", self._cursor)),
+            "schema" => Some(format!("{}", self.schema)),
+            _ => None,
+        }
+    }
+    fn __field_items__(&self) -> Vec<(String, String)> {
+        vec![
+            ("_cursor".to_string(), format!("{}", self._cursor)), ("schema".to_string(),
+            format!("{}", self.schema))
+        ]
+    }
+}
 impl LazyFrame {
     pub fn cursor(&self) -> i64 {
         return self._cursor;

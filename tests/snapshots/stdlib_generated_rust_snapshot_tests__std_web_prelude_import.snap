@@ -18,7 +18,6 @@ pub use crate::__incan_std::web::route;
 pub use crate::__incan_std::web::GET;
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Search {
-    #[expect(dead_code, reason = "retained for Incan private field semantics")]
     q: String,
 }
 impl incan_stdlib::reflection::HasClassName for Search {
@@ -54,6 +53,17 @@ impl incan_stdlib::reflection::HasTypeFieldMetadata for Search {
             },
         ];
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
+}
+impl incan_stdlib::reflection::HasFieldValueReflection for Search {
+    fn __field_value__(&self, name: &str) -> Option<String> {
+        match name {
+            "q" => Some(format!("{}", self.q)),
+            _ => None,
+        }
+    }
+    fn __field_items__(&self) -> Vec<(String, String)> {
+        vec![("q".to_string(), format!("{}", self.q))]
     }
 }
 #[incan_web_macros::route("/snapshot/{id}", method = "GET")]

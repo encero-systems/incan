@@ -1895,6 +1895,9 @@ fn reflection_magic_trait_bound(method: &str) -> Option<&'static str> {
     match magic_methods::from_str(method) {
         Some(magic_methods::MagicMethodId::ClassName) => Some(tb::INCAN_CLASS_NAME),
         Some(magic_methods::MagicMethodId::Fields) => Some(tb::INCAN_FIELD_METADATA),
+        Some(magic_methods::MagicMethodId::FieldValue | magic_methods::MagicMethodId::FieldItems) => {
+            Some(tb::INCAN_FIELD_VALUE_REFLECTION)
+        }
         _ => None,
     }
 }
@@ -3040,7 +3043,7 @@ fn propagate_transitive_bounds(
 mod tests {
     use super::*;
     use crate::backend::ir::decl::{FunctionParam, IrDecl, IrDeclKind, IrImpl, Visibility};
-    use crate::backend::ir::expr::{FormatStyle, IrCallArgKind, MethodCallArgPolicy, VarAccess};
+    use crate::backend::ir::expr::{FormatStyle, IrCallArgKind, Literal, MethodCallArgPolicy, VarAccess};
     use crate::backend::ir::{FunctionRegistry, FunctionSignature, Mutability, TypedExpr};
 
     fn function(name: &str, type_params: Vec<IrTypeParam>) -> IrFunction {
@@ -3144,6 +3147,76 @@ mod tests {
         assert!(
             impl_block.methods[0].type_params.is_empty(),
             "impl-owner generics must stay on the impl header, not the method signature"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn generic_value_field_reflection_methods_infer_field_value_bound() -> Result<(), Box<dyn std::error::Error>> {
+        let generic_receiver = || {
+            Box::new(TypedExpr::new(
+                IrExprKind::Var {
+                    name: "value".to_string(),
+                    access: VarAccess::Read,
+                    ref_kind: VarRefKind::Value,
+                },
+                IrType::Generic("T".to_string()),
+            ))
+        };
+        let mut func = function("reflect_values", vec![IrTypeParam::bare("T")]);
+        func.body = vec![
+            IrStmt::new(IrStmtKind::Expr(TypedExpr::new(
+                IrExprKind::MethodCall {
+                    receiver: generic_receiver(),
+                    method: "__field_value__".to_string(),
+                    dispatch: None,
+                    type_args: Vec::new(),
+                    args: vec![IrCallArg {
+                        name: None,
+                        kind: IrCallArgKind::Positional,
+                        expr: TypedExpr::new(
+                            IrExprKind::Literal(Literal::StaticStr("name".to_string())),
+                            IrType::StaticStr,
+                        ),
+                    }],
+                    callable_signature: None,
+                    arg_policy: MethodCallArgPolicy::Default,
+                },
+                IrType::Option(Box::new(IrType::String)),
+            ))),
+            IrStmt::new(IrStmtKind::Expr(TypedExpr::new(
+                IrExprKind::MethodCall {
+                    receiver: generic_receiver(),
+                    method: "__field_items__".to_string(),
+                    dispatch: None,
+                    type_args: Vec::new(),
+                    args: Vec::new(),
+                    callable_signature: None,
+                    arg_policy: MethodCallArgPolicy::Default,
+                },
+                IrType::List(Box::new(IrType::Tuple(vec![IrType::String, IrType::String]))),
+            ))),
+        ];
+        let mut program = program(vec![func]);
+
+        infer_trait_bounds(&mut program);
+
+        let decl = program
+            .declarations
+            .first()
+            .ok_or_else(|| std::io::Error::other("expected function declaration"))?;
+        let IrDecl {
+            kind: IrDeclKind::Function(func),
+            ..
+        } = decl
+        else {
+            return Err(std::io::Error::other("expected function declaration").into());
+        };
+        let bounds = &func.type_params[0].bounds;
+        assert_eq!(
+            bounds,
+            &[IrTraitBound::simple(tb::INCAN_FIELD_VALUE_REFLECTION)],
+            "generic field value reflection should infer only the field-value reflection bound, got {bounds:?}"
         );
         Ok(())
     }

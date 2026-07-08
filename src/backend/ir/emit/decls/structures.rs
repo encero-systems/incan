@@ -5,7 +5,10 @@ use quote::{format_ident, quote};
 
 use incan_core::lang::derives::{self, DeriveId};
 
-use super::super::super::decl::{IrEnum, IrEnumValue, IrEnumValueType, IrStruct, VariantFields};
+use super::super::super::decl::{
+    IrEnum, IrEnumValue, IrEnumValueType, IrStruct, IrTypeParam, StructField, VariantFields,
+};
+use super::super::super::types::IrType;
 use super::super::{EmitError, IrEmitter};
 
 const SERDE_SERIALIZE_DERIVE: &str = "serde::Serialize";
@@ -82,6 +85,7 @@ impl<'a> IrEmitter<'a> {
         let generics = self.emit_type_params(&s.type_params);
         let generics_bare = self.emit_type_params_bare(&s.type_params);
         let reflection_impls = self.emit_struct_reflection_trait_impls(s)?;
+        let field_value_reflection_reads_fields = Self::struct_emits_field_value_reflection(s);
 
         if is_tuple_struct {
             let tuple_fields: Vec<TokenStream> = s
@@ -90,7 +94,11 @@ impl<'a> IrEmitter<'a> {
                 .map(|f| {
                     let fty = self.emit_type(&f.ty);
                     let fvis = self.emit_visibility(&f.visibility);
-                    let dead_code_expect = self.private_field_dead_code_expect(&s.name, &f.name, &f.visibility);
+                    let dead_code_expect = if field_value_reflection_reads_fields {
+                        quote! {}
+                    } else {
+                        self.private_field_dead_code_expect(&s.name, &f.name, &f.visibility)
+                    };
                     quote! { #dead_code_expect #fvis #fty }
                 })
                 .collect();
@@ -120,7 +128,11 @@ impl<'a> IrEmitter<'a> {
                     let fname = format_ident!("{}", &f.name);
                     let fty = self.emit_type(&f.ty);
                     let fvis = self.emit_visibility(&f.visibility);
-                    let dead_code_expect = self.private_field_dead_code_expect(&s.name, &f.name, &f.visibility);
+                    let dead_code_expect = if field_value_reflection_reads_fields {
+                        quote! {}
+                    } else {
+                        self.private_field_dead_code_expect(&s.name, &f.name, &f.visibility)
+                    };
                     let serde_attr = if has_serde {
                         f.alias
                             .as_ref()
@@ -231,10 +243,127 @@ impl<'a> IrEmitter<'a> {
             quote! {}
         };
 
+        let field_value_reflection_impl = if Self::struct_emits_field_value_reflection(s) {
+            let mut value_arms = Vec::new();
+            let mut items = Vec::new();
+            for field in &s.fields {
+                let value = Self::field_reflection_string_expr(field);
+                let mut keys = vec![field.name.clone()];
+                if let Some(alias) = &field.alias
+                    && alias != &field.name
+                {
+                    keys.push(alias.clone());
+                }
+                for lookup_key in keys {
+                    value_arms.push(quote! { #lookup_key => Some(#value) });
+                }
+
+                let field_name = field.name.as_str();
+                items.push(quote! { (#field_name.to_string(), #value) });
+            }
+
+            quote! {
+                impl #generics incan_stdlib::reflection::HasFieldValueReflection for #name #generics_bare {
+                    fn __field_value__(&self, name: &str) -> Option<String> {
+                        match name {
+                            #(#value_arms,)*
+                            _ => None,
+                        }
+                    }
+
+                    fn __field_items__(&self) -> Vec<(String, String)> {
+                        vec![#(#items),*]
+                    }
+                }
+            }
+        } else {
+            quote! {}
+        };
+
         Ok(quote! {
             #class_name_impl
             #field_metadata_impl
+            #field_value_reflection_impl
         })
+    }
+
+    /// Return whether this struct can emit the generic value-level field reflection trait.
+    fn struct_emits_field_value_reflection(s: &IrStruct) -> bool {
+        let is_tuple_struct =
+            !s.fields.is_empty() && s.fields.iter().all(|f| f.name.chars().all(|c| c.is_ascii_digit()));
+        !is_tuple_struct
+            && s.derives.iter().any(|derive| derive == derives::FIELD_INFO_DERIVE_NAME)
+            && !s
+                .fields
+                .iter()
+                .any(|field| Self::field_type_mentions_type_param(&field.ty, &s.type_params))
+            && s.fields
+                .iter()
+                .all(|field| Self::field_type_supports_value_reflection(&field.ty))
+    }
+
+    /// Return whether a field type mentions one of the owning struct's type parameters.
+    fn field_type_mentions_type_param(ty: &IrType, type_params: &[IrTypeParam]) -> bool {
+        let is_type_param = |name: &str| type_params.iter().any(|param| param.name == name);
+        match ty {
+            IrType::Generic(name) | IrType::Struct(name) | IrType::Enum(name) | IrType::Trait(name) => {
+                is_type_param(name)
+            }
+            IrType::NamedGeneric(name, args) => {
+                is_type_param(name)
+                    || args
+                        .iter()
+                        .any(|arg| Self::field_type_mentions_type_param(arg, type_params))
+            }
+            IrType::List(inner)
+            | IrType::Set(inner)
+            | IrType::Option(inner)
+            | IrType::Ref(inner)
+            | IrType::RefMut(inner)
+            | IrType::TypeToken(inner) => Self::field_type_mentions_type_param(inner, type_params),
+            IrType::Dict(key, value) | IrType::Result(key, value) => {
+                Self::field_type_mentions_type_param(key, type_params)
+                    || Self::field_type_mentions_type_param(value, type_params)
+            }
+            IrType::Tuple(items) => items
+                .iter()
+                .any(|item| Self::field_type_mentions_type_param(item, type_params)),
+            IrType::Function { params, ret } => {
+                params
+                    .iter()
+                    .any(|param| Self::field_type_mentions_type_param(param, type_params))
+                    || Self::field_type_mentions_type_param(ret, type_params)
+            }
+            IrType::ExternalUnion { union, .. } => Self::field_type_mentions_type_param(union, type_params),
+            IrType::ImplTrait(bound) => bound
+                .type_args
+                .iter()
+                .chain(bound.assoc_types.iter().map(|(_, ty)| ty))
+                .any(|arg| Self::field_type_mentions_type_param(arg, type_params)),
+            _ => false,
+        }
+    }
+
+    /// Emit the string value used by generic field-value reflection for one concrete field.
+    fn field_reflection_string_expr(field: &StructField) -> TokenStream {
+        let field_ident = format_ident!("{}", field.name);
+        quote! { format!("{}", self.#field_ident) }
+    }
+
+    /// Return whether generic field-value reflection can stringify this type without extra Rust trait bounds.
+    fn field_type_supports_value_reflection(ty: &IrType) -> bool {
+        matches!(
+            ty,
+            IrType::Bool
+                | IrType::Int
+                | IrType::Float
+                | IrType::Numeric(_)
+                | IrType::Decimal { .. }
+                | IrType::String
+                | IrType::StaticStr
+                | IrType::FrozenStr
+                | IrType::StrRef
+        )
     }
 
     /// Emit a Rust enum definition plus shared and value-enum-specific helper implementations.

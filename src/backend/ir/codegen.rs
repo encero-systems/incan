@@ -2310,7 +2310,7 @@ def main() -> None:
     }
 
     #[test]
-    fn normal_codegen_expects_only_unread_private_model_fields() {
+    fn normal_codegen_omits_dead_code_expect_for_generated_field_reflection_reads() {
         let code = generate(
             r#"
 model User:
@@ -2325,8 +2325,65 @@ def main() -> None:
 
         assert!(code.contains("name: String"), "{code}");
         assert!(
+            code.contains("impl incan_stdlib::reflection::HasFieldValueReflection for User"),
+            "{code}"
+        );
+        assert!(code.contains("\"age\" => Some(format!(\"{}\", self.age))"), "{code}");
+        assert!(
+            !code.contains("#[expect(dead_code"),
+            "fields read by generated value reflection should not carry dead-code expectations:\n{code}"
+        );
+        assert!(
+            !code.contains("#[allow(dead_code"),
+            "fields read by generated value reflection should not carry dead-code allows:\n{code}"
+        );
+        assert_no_generated_unused_lint_allows(&code);
+    }
+
+    #[test]
+    fn normal_codegen_expects_unread_private_fields_when_value_reflection_is_not_emitted() {
+        let code = generate(
+            r#"
+model Box[T]:
+  value: T
+
+def main() -> None:
+  let box = Box[int](value=42)
+  print("ok")
+"#,
+        );
+
+        assert!(
             code.contains(
-                "#[expect(dead_code, reason = \"retained for Incan private field semantics\")]\n    age: i64"
+                "#[expect(dead_code, reason = \"retained for Incan private field semantics\")]\n    value: T"
+            ),
+            "{code}"
+        );
+        assert!(!code.contains("HasFieldValueReflection for Box"), "{code}");
+        assert_no_generated_unused_lint_allows(&code);
+    }
+
+    #[test]
+    fn normal_codegen_skips_value_reflection_for_non_scalar_fields() {
+        let code = generate(
+            r#"
+model Batch:
+  values: list[int]
+
+def main() -> None:
+  let batch = Batch(values=[1, 2, 3])
+  _ = batch
+  print("ok")
+"#,
+        );
+
+        assert!(
+            !code.contains("impl incan_stdlib::reflection::HasFieldValueReflection for Batch"),
+            "{code}"
+        );
+        assert!(
+            code.contains(
+                "#[expect(dead_code, reason = \"retained for Incan private field semantics\")]\n    values: Vec<i64>"
             ),
             "{code}"
         );

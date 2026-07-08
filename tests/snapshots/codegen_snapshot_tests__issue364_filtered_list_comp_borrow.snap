@@ -56,6 +56,21 @@ impl incan_stdlib::reflection::HasTypeFieldMetadata for StoredNode {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
+impl incan_stdlib::reflection::HasFieldValueReflection for StoredNode {
+    fn __field_value__(&self, name: &str) -> Option<String> {
+        match name {
+            "store_id_raw" => Some(format!("{}", self.store_id_raw)),
+            "node" => Some(format!("{}", self.node)),
+            _ => None,
+        }
+    }
+    fn __field_items__(&self) -> Vec<(String, String)> {
+        vec![
+            ("store_id_raw".to_string(), format!("{}", self.store_id_raw)), ("node"
+            .to_string(), format!("{}", self.node))
+        ]
+    }
+}
 fn store_nodes(store_id: i64, stored_nodes: Vec<StoredNode>) -> Vec<String> {
     return (stored_nodes)
         .iter()

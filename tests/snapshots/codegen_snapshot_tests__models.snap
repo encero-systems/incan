@@ -12,7 +12,6 @@ pub use crate::__incan_std::serde::json;
 struct User {
     name: String,
     age: i64,
-    #[expect(dead_code, reason = "retained for Incan private field semantics")]
     email: String,
 }
 impl incan_stdlib::reflection::HasClassName for User {
@@ -68,12 +67,26 @@ impl incan_stdlib::reflection::HasTypeFieldMetadata for User {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
+impl incan_stdlib::reflection::HasFieldValueReflection for User {
+    fn __field_value__(&self, name: &str) -> Option<String> {
+        match name {
+            "name" => Some(format!("{}", self.name)),
+            "age" => Some(format!("{}", self.age)),
+            "email" => Some(format!("{}", self.email)),
+            _ => None,
+        }
+    }
+    fn __field_items__(&self) -> Vec<(String, String)> {
+        vec![
+            ("name".to_string(), format!("{}", self.name)), ("age".to_string(),
+            format!("{}", self.age)), ("email".to_string(), format!("{}", self.email))
+        ]
+    }
+}
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Product {
     id: i64,
-    #[expect(dead_code, reason = "retained for Incan private field semantics")]
     name: String,
-    #[expect(dead_code, reason = "retained for Incan private field semantics")]
     price: f64,
 }
 impl incan_stdlib::reflection::HasClassName for Product {
@@ -129,12 +142,26 @@ impl incan_stdlib::reflection::HasTypeFieldMetadata for Product {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
+impl incan_stdlib::reflection::HasFieldValueReflection for Product {
+    fn __field_value__(&self, name: &str) -> Option<String> {
+        match name {
+            "id" => Some(format!("{}", self.id)),
+            "name" => Some(format!("{}", self.name)),
+            "price" => Some(format!("{}", self.price)),
+            _ => None,
+        }
+    }
+    fn __field_items__(&self) -> Vec<(String, String)> {
+        vec![
+            ("id".to_string(), format!("{}", self.id)), ("name".to_string(),
+            format!("{}", self.name)), ("price".to_string(), format!("{}", self.price))
+        ]
+    }
+}
 #[derive(Clone, Debug, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Config {
-    #[expect(dead_code, reason = "retained for Incan private field semantics")]
     host: String,
     port: i64,
-    #[expect(dead_code, reason = "retained for Incan private field semantics")]
     timeout: i64,
 }
 impl incan_stdlib::reflection::HasClassName for Config {
@@ -188,6 +215,23 @@ impl incan_stdlib::reflection::HasTypeFieldMetadata for Config {
             },
         ];
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
+}
+impl incan_stdlib::reflection::HasFieldValueReflection for Config {
+    fn __field_value__(&self, name: &str) -> Option<String> {
+        match name {
+            "host" => Some(format!("{}", self.host)),
+            "port" => Some(format!("{}", self.port)),
+            "timeout" => Some(format!("{}", self.timeout)),
+            _ => None,
+        }
+    }
+    fn __field_items__(&self) -> Vec<(String, String)> {
+        vec![
+            ("host".to_string(), format!("{}", self.host)), ("port".to_string(),
+            format!("{}", self.port)), ("timeout".to_string(), format!("{}", self
+            .timeout))
+        ]
     }
 }
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
@@ -315,10 +359,8 @@ impl incan_stdlib::reflection::HasTypeFieldMetadata for StudentData {
 }
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Address {
-    #[expect(dead_code, reason = "retained for Incan private field semantics")]
     street: String,
     city: String,
-    #[expect(dead_code, reason = "retained for Incan private field semantics")]
     zipcode: String,
 }
 impl incan_stdlib::reflection::HasClassName for Address {
@@ -372,6 +414,23 @@ impl incan_stdlib::reflection::HasTypeFieldMetadata for Address {
             },
         ];
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
+}
+impl incan_stdlib::reflection::HasFieldValueReflection for Address {
+    fn __field_value__(&self, name: &str) -> Option<String> {
+        match name {
+            "street" => Some(format!("{}", self.street)),
+            "city" => Some(format!("{}", self.city)),
+            "zipcode" => Some(format!("{}", self.zipcode)),
+            _ => None,
+        }
+    }
+    fn __field_items__(&self) -> Vec<(String, String)> {
+        vec![
+            ("street".to_string(), format!("{}", self.street)), ("city".to_string(),
+            format!("{}", self.city)), ("zipcode".to_string(), format!("{}", self
+            .zipcode))
+        ]
     }
 }
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
@@ -481,6 +540,21 @@ impl incan_stdlib::reflection::HasTypeFieldMetadata for Coordinate {
             },
         ];
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
+}
+impl incan_stdlib::reflection::HasFieldValueReflection for Coordinate {
+    fn __field_value__(&self, name: &str) -> Option<String> {
+        match name {
+            "latitude" => Some(format!("{}", self.latitude)),
+            "longitude" => Some(format!("{}", self.longitude)),
+            _ => None,
+        }
+    }
+    fn __field_items__(&self) -> Vec<(String, String)> {
+        vec![
+            ("latitude".to_string(), format!("{}", self.latitude)), ("longitude"
+            .to_string(), format!("{}", self.longitude))
+        ]
     }
 }
 fn create_coordinate(lat: f64, lon: f64) -> Coordinate {

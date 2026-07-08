@@ -142,6 +142,7 @@ pub mod rust {
     // Compiler-provided Incan reflection capabilities
     pub const INCAN_CLASS_NAME: &str = "incan_stdlib::reflection::HasClassName";
     pub const INCAN_FIELD_METADATA: &str = "incan_stdlib::reflection::HasFieldMetadata";
+    pub const INCAN_FIELD_VALUE_REFLECTION: &str = "incan_stdlib::reflection::HasFieldValueReflection";
     pub const INCAN_TYPE_CLASS_NAME: &str = "incan_stdlib::reflection::HasTypeClassName";
     pub const INCAN_TYPE_FIELD_METADATA: &str = "incan_stdlib::reflection::HasTypeFieldMetadata";
 }

@@ -32,7 +32,6 @@ pub(crate) fn __incan_init_module_statics() {
 }
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Counter {
-    #[expect(dead_code, reason = "retained for Incan private field semantics")]
     value: i64,
 }
 impl incan_stdlib::reflection::HasClassName for Counter {
@@ -68,6 +67,17 @@ impl incan_stdlib::reflection::HasTypeFieldMetadata for Counter {
             },
         ];
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
+}
+impl incan_stdlib::reflection::HasFieldValueReflection for Counter {
+    fn __field_value__(&self, name: &str) -> Option<String> {
+        match name {
+            "value" => Some(format!("{}", self.value)),
+            _ => None,
+        }
+    }
+    fn __field_items__(&self) -> Vec<(String, String)> {
+        vec![("value".to_string(), format!("{}", self.value))]
     }
 }
 static __INCAN_DECORATED_COUNTER_BUMP: std::sync::LazyLock<

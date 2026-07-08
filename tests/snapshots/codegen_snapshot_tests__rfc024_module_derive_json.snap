@@ -18,7 +18,6 @@ pub use crate::__incan_std::serde::json;
     incan_derive::IncanClass
 )]
 struct Payload {
-    #[expect(dead_code, reason = "retained for Incan private field semantics")]
     value: i64,
 }
 impl incan_stdlib::reflection::HasClassName for Payload {
@@ -54,6 +53,17 @@ impl incan_stdlib::reflection::HasTypeFieldMetadata for Payload {
             },
         ];
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
+}
+impl incan_stdlib::reflection::HasFieldValueReflection for Payload {
+    fn __field_value__(&self, name: &str) -> Option<String> {
+        match name {
+            "value" => Some(format!("{}", self.value)),
+            _ => None,
+        }
+    }
+    fn __field_items__(&self) -> Vec<(String, String)> {
+        vec![("value".to_string(), format!("{}", self.value))]
     }
 }
 impl json::Serialize for Payload {
