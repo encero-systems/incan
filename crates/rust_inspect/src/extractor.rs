@@ -6,7 +6,8 @@ use incan_core::interop::{
     RustFieldInfo, RustFunctionSig, RustImplementedTrait, RustItemKind, RustItemMetadata, RustMethodSig,
     RustModuleChild, RustModuleChildKind, RustModuleInfo, RustParam, RustTraitAssoc, RustTraitInfo, RustTypeInfo,
     RustTypeShape, RustTypeShapePathFallback, RustVariantInfo, RustVisibility, parse_rust_type_shape_text,
-    render_rust_type_shape, split_top_level_rust_args, strip_rust_borrow_lifetimes,
+    render_rust_type_shape, rust_display_is_callable_bound, rust_source_callable_bound_for_type_param,
+    strip_rust_borrow_lifetimes,
 };
 use ra_ap_hir::{
     Adt, AssocItem, Crate, DisplayTarget, Enum, FieldSource, Function, HasSource, HasVisibility, HirDisplay, Impl,
@@ -49,13 +50,6 @@ fn display_looks_like_type_param(display: &str) -> bool {
         && !display.contains("::")
         && !display.contains(['<', '>', '(', ')', '[', ']', '&', ' '])
         && display.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-}
-
-/// Return a simple generic type-parameter identifier written in source.
-fn simple_type_param_name(text: &str) -> Option<&str> {
-    let trimmed = text.trim();
-    (display_looks_like_type_param(trimmed) && trimmed.chars().next().is_some_and(|ch| ch.is_ascii_uppercase()))
-        .then_some(trimmed)
 }
 
 fn module_path_segments(module: Module, db: &RootDatabase) -> Vec<String> {
@@ -585,164 +579,6 @@ fn type_shape_contains_unknown(shape: &RustTypeShape) -> bool {
     }
 }
 
-/// Return the matching `>` for a source generic list whose opening `<` is at `open_idx`.
-fn matching_angle_end(text: &str, open_idx: usize) -> Option<usize> {
-    let mut angle = 0usize;
-    let mut paren = 0usize;
-    let mut bracket = 0usize;
-    for (idx, ch) in text[open_idx..].char_indices() {
-        match ch {
-            '<' if paren == 0 && bracket == 0 => angle += 1,
-            '>' if paren == 0 && bracket == 0 => {
-                angle = angle.checked_sub(1)?;
-                if angle == 0 {
-                    return Some(open_idx + idx);
-                }
-            }
-            '(' => paren += 1,
-            ')' => paren = paren.saturating_sub(1),
-            '[' => bracket += 1,
-            ']' => bracket = bracket.saturating_sub(1),
-            _ => {}
-        }
-    }
-    None
-}
-
-/// Return the matching `)` for a source paren whose opening `(` is at `open_idx`.
-fn matching_paren_end(text: &str, open_idx: usize) -> Option<usize> {
-    let mut depth = 0usize;
-    for (idx, ch) in text[open_idx..].char_indices() {
-        match ch {
-            '(' => depth += 1,
-            ')' => {
-                depth = depth.checked_sub(1)?;
-                if depth == 0 {
-                    return Some(open_idx + idx);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-/// Split top-level Rust trait bounds joined with `+`.
-fn split_top_level_rust_bounds(text: &str) -> Vec<&str> {
-    let mut bounds = Vec::new();
-    let mut start = 0usize;
-    let mut angle = 0usize;
-    let mut paren = 0usize;
-    let mut bracket = 0usize;
-    for (idx, ch) in text.char_indices() {
-        match ch {
-            '<' => angle += 1,
-            '>' => angle = angle.saturating_sub(1),
-            '(' => paren += 1,
-            ')' => paren = paren.saturating_sub(1),
-            '[' => bracket += 1,
-            ']' => bracket = bracket.saturating_sub(1),
-            '+' if angle == 0 && paren == 0 && bracket == 0 => {
-                let bound = text[start..idx].trim();
-                if !bound.is_empty() {
-                    bounds.push(bound);
-                }
-                start = idx + ch.len_utf8();
-            }
-            _ => {}
-        }
-    }
-    let tail = text[start..].trim();
-    if !tail.is_empty() {
-        bounds.push(tail);
-    }
-    bounds
-}
-
-/// Normalize one `Fn*` bound while preserving Rust callable-bound syntax for downstream consumers.
-fn source_callable_bound_display<F>(bound: &str, mut normalize_type: F) -> Option<String>
-where
-    F: FnMut(&str) -> Option<String>,
-{
-    let bound = bound.trim();
-    let (name, after_name) = ["FnOnce", "FnMut", "Fn"]
-        .into_iter()
-        .find_map(|name| bound.strip_prefix(name).map(|rest| (name, rest.trim_start())))?;
-    if !after_name.starts_with('(') {
-        return None;
-    }
-    let args_end = matching_paren_end(after_name, 0)?;
-    let args_inner = &after_name[1..args_end];
-    let mut args = Vec::new();
-    for arg in split_top_level_rust_args(args_inner) {
-        args.push(normalize_type(arg)?);
-    }
-    let after_args = after_name[args_end + 1..].trim_start();
-    let ret = if let Some(ret) = after_args.strip_prefix("->") {
-        Some(normalize_type(
-            split_top_level_rust_bounds(ret).first().copied().unwrap_or(ret),
-        )?)
-    } else {
-        None
-    };
-    Some(match ret {
-        Some(ret) => format!("impl {name}({}) -> {ret}", args.join(", ")),
-        None => format!("impl {name}({})", args.join(", ")),
-    })
-}
-
-/// Return a source function's callable `Fn*` bound for a generic parameter, if one is declared.
-fn source_callable_bound_for_type_param<F>(
-    function_source: &str,
-    type_param: &str,
-    mut normalize_type: F,
-) -> Option<String>
-where
-    F: FnMut(&str) -> Option<String>,
-{
-    let type_param = simple_type_param_name(type_param)?;
-    let params_start = function_source.find('(').unwrap_or(function_source.len());
-    let before_params = &function_source[..params_start];
-    if let Some(generic_start) = before_params.find('<')
-        && let Some(generic_end) = matching_angle_end(before_params, generic_start)
-    {
-        for generic in split_top_level_rust_args(&before_params[generic_start + 1..generic_end]) {
-            let Some((name, bounds)) = generic.split_once(':') else {
-                continue;
-            };
-            if name.trim() == type_param {
-                for bound in split_top_level_rust_bounds(bounds) {
-                    if let Some(display) = source_callable_bound_display(bound, &mut normalize_type) {
-                        return Some(display);
-                    }
-                }
-            }
-        }
-    }
-
-    let params_end = function_source
-        .find('(')
-        .and_then(|idx| matching_paren_end(function_source, idx))
-        .unwrap_or(params_start);
-    let header_tail = &function_source[params_end + 1..];
-    let header_end = header_tail.find(['{', ';']).unwrap_or(header_tail.len());
-    let header_tail = &header_tail[..header_end];
-    let where_idx = header_tail.find("where")?;
-    for predicate in split_top_level_rust_args(&header_tail[where_idx + "where".len()..]) {
-        let Some((name, bounds)) = predicate.split_once(':') else {
-            continue;
-        };
-        if name.trim() == type_param {
-            for bound in split_top_level_rust_bounds(bounds) {
-                if let Some(display) = source_callable_bound_display(bound, &mut normalize_type) {
-                    return Some(display);
-                }
-            }
-        }
-    }
-    None
-}
-
 /// Resolve a function parameter's declared source annotation into a canonical display string.
 ///
 /// rust-analyzer sometimes degrades borrowed parameter displays to `&?` even when the written source still carries a
@@ -763,11 +599,11 @@ fn source_function_param_type_text(f: Function, param: &ra_ap_hir::Param<'_>, db
 fn source_function_param_type_display(f: Function, param: &ra_ap_hir::Param<'_>, db: &RootDatabase) -> Option<String> {
     let text = source_function_param_type_text(f, param, db)?;
     let source = f.source(db)?;
-    if let Some(display) =
-        source_callable_bound_for_type_param(source.value.syntax().text().to_string().as_str(), text.as_str(), |ty| {
-            source_function_type_display(f, ty, db)
-        })
-    {
+    if let Some(display) = rust_source_callable_bound_for_type_param(
+        source.value.syntax().text().to_string().as_str(),
+        text.as_str(),
+        |ty| source_function_type_display(f, ty, db),
+    ) {
         return Some(display);
     }
     source_function_type_display(f, text.as_str(), db)
@@ -781,15 +617,16 @@ fn extract_function_sig(f: Function, db: &RootDatabase, dt: DisplayTarget) -> Ru
         .map(|p| {
             let shape = rust_type_shape(p.ty(), db, dt);
             let mut type_display = function_sig_type_display(p.ty(), db, dt);
-            if (type_shape_contains_unknown(&shape)
-                || p.ty().contains_unknown()
-                || type_display.contains('?')
-                || source_function_param_type_display(f, &p, db).is_some_and(|source_type_display| {
-                    source_type_display.starts_with('&') && !type_display.starts_with('&')
-                }))
-                && let Some(source_type_display) = source_function_param_type_display(f, &p, db)
-            {
-                type_display = source_type_display;
+            if let Some(source_type_display) = source_function_param_type_display(f, &p, db) {
+                let source_is_callable_bound = rust_display_is_callable_bound(source_type_display.as_str());
+                if source_is_callable_bound
+                    || type_shape_contains_unknown(&shape)
+                    || p.ty().contains_unknown()
+                    || type_display.contains('?')
+                    || (source_type_display.starts_with('&') && !type_display.starts_with('&'))
+                {
+                    type_display = source_type_display;
+                }
             }
             RustParam {
                 name: p.name(db).map(|n| n.as_str().to_owned()),
@@ -1358,6 +1195,41 @@ impl Codec {
             .find(|method| method.name == "decode")
             .ok_or_else(|| std::io::Error::other("expected decode metadata"))?;
         assert_eq!(decode.signature.params[1].type_display, "&[u8]");
+        Ok(())
+    }
+
+    #[test]
+    fn function_metadata_applies_inline_source_callable_bound_display() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        fs::create_dir_all(tmp.path().join("src"))?;
+        fs::write(
+            tmp.path().join("Cargo.toml"),
+            r#"[package]
+name = "demo_callback_probe"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )?;
+        fs::write(
+            tmp.path().join("src/lib.rs"),
+            r#"pub struct Data;
+pub struct OutputCallbackInfo;
+
+pub fn run_inline<D: FnMut(&mut Data, &OutputCallbackInfo) + Send + 'static>(callback: D) {
+    let _ = callback;
+}
+"#,
+        )?;
+
+        let workspace = RustWorkspace::load(tmp.path(), &|_| ())?;
+        let metadata = extract_rust_item(&workspace, "demo_callback_probe::run_inline")?;
+        let RustItemKind::Function(sig) = metadata.kind else {
+            return Err(std::io::Error::other("expected function metadata").into());
+        };
+        assert_eq!(
+            sig.params[0].type_display,
+            "impl FnMut(&mut demo_callback_probe::Data, &demo_callback_probe::OutputCallbackInfo)"
+        );
         Ok(())
     }
 }

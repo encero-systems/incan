@@ -602,6 +602,21 @@ impl Device {
         data_callback(&mut data, &info);
         error_callback("boom".to_string());
     }
+
+    /// Build an output stream from inline generic Rust callback bounds.
+    pub fn build_output_stream_inline<
+        D: FnMut(&mut Data, &OutputCallbackInfo) + Send + 'static,
+        E: FnMut(String),
+    >(
+        &self,
+        mut data_callback: D,
+        mut error_callback: E,
+    ) {
+        let mut data = Data;
+        let info = OutputCallbackInfo;
+        data_callback(&mut data, &info);
+        error_callback("boom".to_string());
+    }
 }
 "#,
     )?;
@@ -763,6 +778,19 @@ impl NestedFrame {
     );
     assert_eq!(
         build_output.signature.params[2].type_display,
+        "impl FnMut(String)"
+    );
+    let build_output_inline = type_info
+        .methods
+        .iter()
+        .find(|method| method.name == "build_output_stream_inline")
+        .ok_or("expected build_output_stream_inline method metadata")?;
+    assert_eq!(
+        build_output_inline.signature.params[1].type_display,
+        "impl FnMut(&mut source_dep::audio::Data, &source_dep::audio::OutputCallbackInfo)"
+    );
+    assert_eq!(
+        build_output_inline.signature.params[2].type_display,
         "impl FnMut(String)"
     );
 
