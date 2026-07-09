@@ -485,6 +485,17 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         typechecker_only: false,
     },
     StdlibNamespace {
+        name: "checksum",
+        feature: None,
+        extra_crate_deps: &[StdlibExtraCrateDep {
+            crate_name: "crc32fast",
+            source: StdlibExtraCrateSource::Version("1"),
+            features: &[],
+        }],
+        submodules: &[],
+        typechecker_only: false,
+    },
+    StdlibNamespace {
         name: "hash",
         feature: None,
         extra_crate_deps: &[
@@ -804,6 +815,7 @@ mod tests {
         assert!(is_known_stdlib_module(&segs(&["std", "encoding", "base85"])));
         assert!(is_known_stdlib_module(&segs(&["std", "encoding", "base58"])));
         assert!(is_known_stdlib_module(&segs(&["std", "encoding", "bech32"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "checksum"])));
         assert!(is_known_stdlib_module(&segs(&["std", "hash"])));
         assert!(is_known_stdlib_module(&segs(&["std", "compression"])));
         assert!(is_known_stdlib_module(&segs(&["std", "compression", "_core"])));
@@ -903,6 +915,10 @@ mod tests {
         assert_eq!(
             stdlib_stub_path(&segs(&["std", "hash"])),
             Some("stdlib/hash/prelude.incn".to_string())
+        );
+        assert_eq!(
+            stdlib_stub_path(&segs(&["std", "checksum"])),
+            Some("stdlib/checksum.incn".to_string())
         );
         assert_eq!(
             stdlib_stub_path(&segs(&["std", "compression"])),
@@ -1088,6 +1104,7 @@ mod tests {
         let serde_ns = find_namespace("serde");
         let json_ns = find_namespace(STDLIB_JSON);
         let hash_ns = find_namespace("hash");
+        let checksum_ns = find_namespace("checksum");
         let datetime_ns = find_namespace("datetime");
         let collections_ns = find_namespace("collections");
         let compression_ns = find_namespace("compression");
@@ -1147,6 +1164,13 @@ mod tests {
         assert_eq!(hash_ns.map(|ns| ns.submodules.contains(&"_core")), Some(true));
         assert_eq!(hash_ns.map(|ns| ns.submodules.contains(&"_streaming")), Some(true));
         assert_eq!(hash_ns.map(|ns| ns.typechecker_only), Some(false));
+        assert_eq!(checksum_ns.map(|ns| ns.feature), Some(None));
+        assert_eq!(
+            checksum_ns.map(|ns| ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>()),
+            Some(vec!["crc32fast"])
+        );
+        assert_eq!(checksum_ns.map(|ns| ns.submodules.is_empty()), Some(true));
+        assert_eq!(checksum_ns.map(|ns| ns.typechecker_only), Some(false));
         assert_eq!(compression_ns.map(|ns| ns.feature), Some(None));
         assert_eq!(compression_ns.map(|ns| ns.submodules.contains(&"_core")), Some(true));
         assert_eq!(compression_ns.map(|ns| ns.submodules.contains(&"_auto")), Some(true));

@@ -14,6 +14,7 @@ use std::time::{Duration, Instant, SystemTime};
 use sha2::{Digest, Sha256};
 
 use crate::backend::ProjectGenerator;
+use crate::backend::project::generator::GENERATED_CARGO_TARGET_DIR_ENV;
 use crate::cli::prelude::ParsedModule;
 use crate::cli::{CliError, CliResult, ExitCode};
 use crate::dependency_resolver::{InlineRustImport, ResolvedDependencies, resolve_reachable_dependencies};
@@ -477,8 +478,30 @@ fn parse_isolated_test_target_env(raw: Option<&str>) -> bool {
     matches!(raw.map(str::trim), Some("1" | "true" | "yes" | "on"))
 }
 
-/// Return the target directory that lock dependency preheat should populate for generated tests.
-fn lock_dependency_preheat_target_dir(project_root: &Path) -> PathBuf {
+/// Resolve a caller-provided Cargo target directory relative to the current directory.
+fn resolve_cargo_target_dir_override(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        return path.to_path_buf();
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        return cwd.join(path);
+    }
+    path.to_path_buf()
+}
+
+/// Choose the Cargo target directory for generated dependency preheat builds.
+fn lock_dependency_preheat_target_dir_with_overrides(
+    project_root: &Path,
+    shared_test_target: Option<&Path>,
+    generated_target: Option<&Path>,
+    use_isolated_test_target: bool,
+) -> PathBuf {
+    if let Some(shared_test_target) = shared_test_target {
+        return resolve_cargo_target_dir_override(shared_test_target);
+    }
+    if let Some(generated_target) = generated_target {
+        return resolve_cargo_target_dir_override(generated_target);
+    }
     let absolute_project_root = if project_root.is_absolute() {
         project_root.to_path_buf()
     } else if let Ok(cwd) = std::env::current_dir() {
@@ -487,11 +510,29 @@ fn lock_dependency_preheat_target_dir(project_root: &Path) -> PathBuf {
         project_root.to_path_buf()
     };
 
-    if parse_isolated_test_target_env(std::env::var("INCAN_TEST_ISOLATED_TARGET_DIR").ok().as_deref()) {
+    if use_isolated_test_target {
         absolute_project_root.join("target").join("incan_test_runner")
     } else {
         absolute_project_root.join("target")
     }
+}
+
+/// Return the target directory that lock dependency preheat should populate for generated tests.
+fn lock_dependency_preheat_target_dir(project_root: &Path) -> PathBuf {
+    let shared_test_target = std::env::var_os("INCAN_TEST_SHARED_TARGET_DIR")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
+    let generated_target = std::env::var_os(GENERATED_CARGO_TARGET_DIR_ENV)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
+    let use_isolated_test_target =
+        parse_isolated_test_target_env(std::env::var("INCAN_TEST_ISOLATED_TARGET_DIR").ok().as_deref());
+    lock_dependency_preheat_target_dir_with_overrides(
+        project_root,
+        shared_test_target.as_deref(),
+        generated_target.as_deref(),
+        use_isolated_test_target,
+    )
 }
 
 /// Return the age after which an abandoned dependency-preheat lock may be reclaimed.
@@ -1162,6 +1203,33 @@ mod tests {
 
         assert_ne!(first, second);
         let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn lock_dependency_preheat_target_dir_honors_shared_overrides() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = tempfile::tempdir()?;
+        let project_root = temp_dir.path().join("project");
+        let shared_target = temp_dir.path().join("shared-test-target");
+        let generated_target = temp_dir.path().join("generated-target");
+
+        assert_eq!(
+            lock_dependency_preheat_target_dir_with_overrides(
+                &project_root,
+                Some(&shared_target),
+                Some(&generated_target),
+                false,
+            ),
+            shared_target
+        );
+        assert_eq!(
+            lock_dependency_preheat_target_dir_with_overrides(&project_root, None, Some(&generated_target), false),
+            generated_target
+        );
+        assert_eq!(
+            lock_dependency_preheat_target_dir_with_overrides(&project_root, None, None, true),
+            project_root.join("target").join("incan_test_runner")
+        );
         Ok(())
     }
 

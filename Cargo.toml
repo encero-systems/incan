@@ -23,7 +23,7 @@ resolver = "2"
 ra_ap_proc_macro_api = { path = "crates/third_party/ra_ap_proc_macro_api" }
 
 [workspace.package]
-version = "0.5.0-dev.3"
+version = "0.5.0-dev.4"
 description = "The Incan programming language compiler"
 edition = "2024"
 rust-version = "1.93"
@@ -120,6 +120,8 @@ zstd = "0.13"
 bzip2 = "0.6"
 xz2 = "0.1"
 snap = "1"
+# Runtime crate used by std.checksum generated-project offline smoke tests.
+crc32fast = "1"
 # Runtime crates used by std.hash generated-project offline smoke tests.
 blake2 = "0.10"
 blake3 = "1"

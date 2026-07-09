@@ -13,6 +13,7 @@ use std::sync::{LazyLock, Mutex};
 #[cfg(feature = "rust_inspect")]
 use crate::backend::ProjectGenerator;
 use crate::backend::ir::detect_serde_non_import_usage;
+use crate::backend::project::generator::GENERATED_CARGO_TARGET_DIR_ENV;
 use crate::cli::prelude::ParsedModule;
 use crate::cli::{CliError, CliResult};
 use crate::dependency_resolver::ResolvedDependencies;
@@ -460,7 +461,14 @@ fn parser_only_library_manifest_entry(
         .unwrap_or_else(|| "0.1.0".to_string());
     let mut manifest = LibraryManifest::new(project_name.clone(), project_version);
 
-    if let Some(vocab_extraction) = collect_library_vocab_metadata_for_parser(&dependency_manifest, &project_root)? {
+    let generated_cargo_target_dir = env::var_os(GENERATED_CARGO_TARGET_DIR_ENV)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
+    if let Some(vocab_extraction) = collect_library_vocab_metadata_for_parser(
+        &dependency_manifest,
+        &project_root,
+        generated_cargo_target_dir.as_deref(),
+    )? {
         manifest.vocab = Some(vocab_extraction.payload);
         manifest.soft_keywords.activations = vocab_extraction.compatibility_activations;
     }
