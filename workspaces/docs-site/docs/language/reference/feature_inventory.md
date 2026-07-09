@@ -57,6 +57,7 @@ Use it when deciding whether code should use an existing Incan surface before ad
 | `std.datetime` temporal values | Stdlib | 0.3 | Import from `std.datetime` modules or prelude. | `Date.utc_today()`<br>`DateTime.utc_now()`<br>`TimeDelta(days=1)` | Temporal APIs cover runtime timing, civil dates/times, fixed offsets, parsing/formatting, intervals, and calendar arithmetic. | Raw strings or integer timestamps inside code that has date/time semantics. | [std.datetime](stdlib/datetime.md), [Dates and times](../tutorials/dates_and_times.md), [Dates and times how-to](../how-to/dates_and_times.md) |
 | `std.telemetry.core` data model | Stdlib | 0.3 | Import from `std.telemetry.core` or the `std.telemetry` prelude. | `from std.telemetry.core import TelemetryValue, Attributes`<br>`TelemetryValue.string("ready")`<br>`Attributes.from_string_fields(fields)` | Telemetry core provides structured values, attributes, resources, scopes, and trace context identifiers without configuring providers or exporters. | Stringifying structured observability fields before they reach logging or telemetry boundaries. | [std.logging](stdlib/logging.md), [Release 0.3](../../release_notes/0_3.md) |
 | `std.logging` structured logging | Stdlib | 0.3 | Import from `std.logging`; ambient `log` is available for the current module logger. | `from std.logging import Level, basic_config`<br>`log.info("started", fields={"component": "worker"})` | Structured logging includes levels, named loggers, bound fields, formatting, JSON rendering, and telemetry values. | Printing diagnostic strings or routing ordinary application logging through custom Rust shims. | [std.logging](stdlib/logging.md), [Release 0.3](../../release_notes/0_3.md) |
+| `std.checksum` CRC32 helpers | Stdlib | 0.5 | Import from `std.checksum`. | `from std.checksum import crc32`<br>`crc32.value(b"abc")`<br>`crc32.digest(b"abc")`<br>`h = crc32.new()` | `std.checksum` exposes CRC32 value, digest-byte, and incremental helpers for compatibility and accidental-corruption checks, separate from `std.hash` hashing contracts. | Project-local Rust shims or `std.hash` helpers when a protocol explicitly requires CRC32 checksum semantics. | [std.checksum](stdlib/checksum.md), [Hashing data](../how-to/hashing_data.md), [RFC 065 checksum boundary](../../RFCs/closed/implemented/065_std_hash.md#checksum-boundary), [Release 0.5](../../release_notes/0_5.md) |
 | Testing assertions and markers | Testing | 0.3 | Use `assert` directly; import marker/helper APIs from `std.testing`. | `assert value == expected`<br>`assert call() raises ValueError`<br>`@parametrize("case", cases)` | Tests can use language assertions, raises checks, helper assertions, fixtures, parametrization, and marker decorators. | Ad hoc panic helpers or external test metadata formats for ordinary Incan tests. | [std.testing](stdlib/testing.md), [Testing how-to](../how-to/testing_stdlib.md), [Release 0.3](../../release_notes/0_3.md) |
 | `incan test` runner | Testing | 0.3 | Run `incan test`. | `module tests:`<br>`incan test --list`<br>`incan test --format json --junit report.xml` | The runner owns discovery, inline test modules, stable ids, selection, fixtures, parametrization, reporting, shuffling, and scheduling. | Project-local scripts that duplicate core test discovery and reporting behavior. | [Tooling: testing](../../tooling/how-to/testing.md), [std.testing](stdlib/testing.md), [Release 0.3](../../release_notes/0_3.md) |
 | Async and await | Async | 0.2 | Import `std.async` or one of its submodules. | `from std.async.time import sleep`<br>`async def main() -> None:`<br>`await sleep(1)` | `async` and `await` are import-activated soft-keyword surfaces backed by `std.async` modules. | Threading async behavior through synchronous wrappers or relying on pre-0.2 ambient async syntax. | [Async programming](../how-to/async_programming.md), [std.async](stdlib/async.md), [Release 0.2](../../release_notes/0_2.md) |
@@ -799,6 +800,26 @@ Canonical forms:
 
 - `from std.logging import Level, basic_config`
 - `log.info("started", fields={"component": "worker"})`
+
+### `std.checksum` CRC32 helpers
+
+- **Id:** `StdChecksum`
+- **Category:** `Stdlib`
+- **Since:** `0.5`
+- **RFC:** `RFC 065`
+- **Stability:** `Stable`
+- **Activation:** Import from `std.checksum`.
+- **Use instead of:** Project-local Rust shims or `std.hash` helpers when a protocol explicitly requires CRC32 checksum semantics.
+- **References:** [std.checksum](stdlib/checksum.md), [Hashing data](../how-to/hashing_data.md), [RFC 065 checksum boundary](../../RFCs/closed/implemented/065_std_hash.md#checksum-boundary), [Release 0.5](../../release_notes/0_5.md)
+
+`std.checksum` exposes CRC32 value, digest-byte, and incremental helpers for compatibility and accidental-corruption checks, separate from `std.hash` hashing contracts.
+
+Canonical forms:
+
+- `from std.checksum import crc32`
+- `crc32.value(b"abc")`
+- `crc32.digest(b"abc")`
+- `h = crc32.new()`
 
 ### Testing assertions and markers
 

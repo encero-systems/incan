@@ -166,6 +166,9 @@ pub const RFC_057: RfcId = "RFC 057";
 /// RFC 058 — std.datetime.
 pub const RFC_058: RfcId = "RFC 058";
 
+/// RFC 065 — std.hash.
+pub const RFC_065: RfcId = "RFC 065";
+
 /// RFC 068 — protocol hooks for core syntax.
 pub const RFC_068: RfcId = "RFC 068";
 
@@ -303,6 +306,8 @@ impl RFC {
     pub const _057: RfcId = RFC_057;
     /// RFC 058 — std.datetime.
     pub const _058: RfcId = RFC_058;
+    /// RFC 065 — std.hash.
+    pub const _065: RfcId = RFC_065;
     /// RFC 068 — protocol hooks for core syntax.
     pub const _068: RfcId = RFC_068;
     /// RFC 069 — `list.repeat` helper for fixed-length initialization.

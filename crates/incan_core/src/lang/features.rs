@@ -48,6 +48,7 @@ pub enum FeatureId {
     StdDatetime,
     StdTelemetryCore,
     StdLogging,
+    StdChecksum,
     TestingAssertions,
     TestRunner,
     AsyncAwait,
@@ -857,6 +858,32 @@ pub const FEATURES: &[FeatureDescriptor] = &[
         references: links![
             ("std.logging", "stdlib/logging.md"),
             ("Release 0.3", "../../release_notes/0_3.md"),
+        ],
+    },
+    FeatureDescriptor {
+        id: FeatureId::StdChecksum,
+        name: "`std.checksum` CRC32 helpers",
+        category: FeatureCategory::Stdlib,
+        since: Since(0, 5),
+        introduced_in_rfc: RFC::_065,
+        stability: Stability::Stable,
+        activation: "Import from `std.checksum`.",
+        summary: "`std.checksum` exposes CRC32 value, digest-byte, and incremental helpers for compatibility and accidental-corruption checks, separate from `std.hash` hashing contracts.",
+        canonical_forms: &[
+            "from std.checksum import crc32",
+            "crc32.value(b\"abc\")",
+            "crc32.digest(b\"abc\")",
+            "h = crc32.new()",
+        ],
+        prefer_over: "Project-local Rust shims or `std.hash` helpers when a protocol explicitly requires CRC32 checksum semantics.",
+        references: links![
+            ("std.checksum", "stdlib/checksum.md"),
+            ("Hashing data", "../how-to/hashing_data.md"),
+            (
+                "RFC 065 checksum boundary",
+                "../../RFCs/closed/implemented/065_std_hash.md#checksum-boundary"
+            ),
+            ("Release 0.5", "../../release_notes/0_5.md"),
         ],
     },
     FeatureDescriptor {
