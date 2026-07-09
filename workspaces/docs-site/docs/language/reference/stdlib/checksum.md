@@ -10,7 +10,7 @@ from std.checksum import crc32
 
 ## CRC32
 
-The initial `std.checksum` surface exposes the IEEE CRC-32 algorithm through the `crc32` namespace.
+`std.checksum` exposes the IEEE CRC-32 algorithm through the `crc32` namespace.
 
 | API | Returns | Description |
 | --- | --- | --- |
