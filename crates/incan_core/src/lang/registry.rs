@@ -166,6 +166,18 @@ pub const RFC_057: RfcId = "RFC 057";
 /// RFC 058 — std.datetime.
 pub const RFC_058: RfcId = "RFC 058";
 
+/// RFC 059 — std.regex.
+pub const RFC_059: RfcId = "RFC 059";
+
+/// RFC 060 — std.uuid.
+pub const RFC_060: RfcId = "RFC 060";
+
+/// RFC 061 — std.compression.
+pub const RFC_061: RfcId = "RFC 061";
+
+/// RFC 064 — std.encoding.
+pub const RFC_064: RfcId = "RFC 064";
+
 /// RFC 065 — std.hash.
 pub const RFC_065: RfcId = "RFC 065";
 
@@ -306,6 +318,14 @@ impl RFC {
     pub const _057: RfcId = RFC_057;
     /// RFC 058 — std.datetime.
     pub const _058: RfcId = RFC_058;
+    /// RFC 059 — std.regex.
+    pub const _059: RfcId = RFC_059;
+    /// RFC 060 — std.uuid.
+    pub const _060: RfcId = RFC_060;
+    /// RFC 061 — std.compression.
+    pub const _061: RfcId = RFC_061;
+    /// RFC 064 — std.encoding.
+    pub const _064: RfcId = RFC_064;
     /// RFC 065 — std.hash.
     pub const _065: RfcId = RFC_065;
     /// RFC 068 — protocol hooks for core syntax.
