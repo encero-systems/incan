@@ -45,12 +45,12 @@ pub trait HasFieldMetadata {
 ///
 /// Concrete model and class values keep their compiler-generated typed `__field_value__()` and `__field_items__()`
 /// inherent methods. This trait is the erased generic capability used when source calls those helpers through a type
-/// parameter such as `T`.
+/// parameter such as `T`, following the same generated field-overlay surface.
 pub trait HasFieldValueReflection {
-    /// Return a public field value by canonical field name or model alias.
+    /// Return a reflected field value by canonical field name or model alias.
     fn __field_value__(&self, name: &str) -> Option<String>;
 
-    /// Return public field name/value pairs in declaration order.
+    /// Return reflected field name/value pairs in declaration order.
     fn __field_items__(&self) -> Vec<(String, String)>;
 }
 
