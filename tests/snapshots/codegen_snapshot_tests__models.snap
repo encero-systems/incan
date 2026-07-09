@@ -236,11 +236,8 @@ impl incan_stdlib::reflection::HasFieldValueReflection for Config {
 }
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct OptionalData {
-    #[expect(dead_code, reason = "retained for Incan private field semantics")]
     required: String,
-    #[expect(dead_code, reason = "retained for Incan private field semantics")]
     optional: Option<String>,
-    #[expect(dead_code, reason = "retained for Incan private field semantics")]
     maybe_number: Option<i64>,
 }
 impl incan_stdlib::reflection::HasClassName for OptionalData {
@@ -294,6 +291,39 @@ impl incan_stdlib::reflection::HasTypeFieldMetadata for OptionalData {
             },
         ];
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
+}
+impl incan_stdlib::reflection::HasFieldValueReflection for OptionalData {
+    fn __field_value__(&self, name: &str) -> Option<String> {
+        match name {
+            "required" => Some(format!("{}", self.required)),
+            "optional" => {
+                Some(
+                    match &self.optional {
+                        Some(value) => format!("{}", value),
+                        None => "None".to_string(),
+                    },
+                )
+            }
+            "maybe_number" => {
+                Some(
+                    match &self.maybe_number {
+                        Some(value) => format!("{}", value),
+                        None => "None".to_string(),
+                    },
+                )
+            }
+            _ => None,
+        }
+    }
+    fn __field_items__(&self) -> Vec<(String, String)> {
+        vec![
+            ("required".to_string(), format!("{}", self.required)), ("optional"
+            .to_string(), match & self.optional { Some(value) => format!("{}", value),
+            None => "None".to_string(), }), ("maybe_number".to_string(), match & self
+            .maybe_number { Some(value) => format!("{}", value), None => "None"
+            .to_string(), })
+        ]
     }
 }
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
