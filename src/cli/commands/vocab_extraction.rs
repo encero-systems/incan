@@ -85,8 +85,14 @@ pub(crate) fn collect_library_vocab_metadata(
 pub(crate) fn collect_library_vocab_metadata_for_parser(
     manifest: &ProjectManifest,
     project_root: &Path,
+    generated_cargo_target_dir: Option<&Path>,
 ) -> CliResult<Option<LibraryVocabExtraction>> {
-    collect_library_vocab_metadata_with_mode(manifest, project_root, None, VocabExtractionMode::ParserOnly)
+    collect_library_vocab_metadata_with_mode(
+        manifest,
+        project_root,
+        generated_cargo_target_dir,
+        VocabExtractionMode::ParserOnly,
+    )
 }
 
 /// Collect vocab companion metadata using either full package artifacts or parser-only source metadata.
@@ -129,7 +135,8 @@ fn collect_library_vocab_metadata_with_mode(
     let metadata = if let Some(cached) = cached.as_ref() {
         cached.metadata.clone()
     } else {
-        extract_vocab_metadata_from_library_entrypoint(&companion_crate_root, &package_name)?
+        let extraction_target_dir = cache_context.cache_dir.join("target");
+        extract_vocab_metadata_from_library_entrypoint(&companion_crate_root, &package_name, &extraction_target_dir)?
     };
     ensure_supported_vocab_metadata_version(&metadata, &companion_crate_root)?;
     let mut pending_desugarer_artifact = cached
@@ -573,9 +580,11 @@ fn parse_installed_rust_targets(stdout: &str) -> HashSet<String> {
         .collect()
 }
 
+/// Run the vocab extraction helper against a companion crate entrypoint.
 fn extract_vocab_metadata_from_library_entrypoint(
     companion_crate_root: &Path,
     package_name: &str,
+    target_dir: &Path,
 ) -> CliResult<incan_vocab::VocabMetadata> {
     let extraction_dir = create_extraction_workspace_dir()?;
     let helper_root = extraction_dir.join("runner");
@@ -593,6 +602,7 @@ fn extract_vocab_metadata_from_library_entrypoint(
         .arg("--quiet")
         .arg("--manifest-path")
         .arg(helper_root.join("Cargo.toml"))
+        .env("CARGO_TARGET_DIR", target_dir)
         .output()
         .map_err(|err| CliError::failure(format!("failed to run vocab extraction helper: {err}")))?;
 
@@ -1036,7 +1046,11 @@ mod tests {
     fn extract_vocab_metadata_from_library_entrypoint_parses_valid_payload() -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
         let crate_root = write_vocab_companion_crate(temp.path(), "vocab_companion", "widgets_vocab_companion")?;
-        let parsed = extract_vocab_metadata_from_library_entrypoint(&crate_root, "widgets_vocab_companion")?;
+        let parsed = extract_vocab_metadata_from_library_entrypoint(
+            &crate_root,
+            "widgets_vocab_companion",
+            &temp.path().join("extraction-target"),
+        )?;
         assert_eq!(parsed.keyword_registrations.len(), 1);
         assert_eq!(
             parsed.keyword_registrations[0].activation,
@@ -1169,6 +1183,10 @@ mod tests {
         assert!(
             cache_context.cache_dir.join(VOCAB_COMPANION_CACHE_FILE).is_file(),
             "expected vocab companion cache metadata to be written"
+        );
+        assert!(
+            cache_context.cache_dir.join("target").is_dir(),
+            "expected vocab companion extraction to place Cargo artifacts under the cache target"
         );
         let cached = read_cached_vocab_companion(&cache_context)?.ok_or("expected readable vocab companion cache")?;
         assert_eq!(cached.metadata.keyword_registrations.len(), 1);
