@@ -12,7 +12,7 @@ export PATH="$HOME/.local/bin:$PATH"
 incan --version
 ```
 
-You can also install through Homebrew, npm, or pipx; those package-manager channels use the same GitHub Release manifest and verified toolchain archives as the shell installer. npm and pipx route through the shared installer and can provision Rust automatically. Homebrew installs the prebuilt command binaries from the Encero tap and expects Rust to be managed separately.
+You can also install through Homebrew, npm, or pipx; those package-manager channels use the same GitHub Release payloads as the shell installer. pipx routes through the shared installer and can provision Rust automatically. npm installs a host-specific optional platform package without running lifecycle scripts, and Homebrew installs the prebuilt command binaries from the Encero tap; both npm and Homebrew expect Rust to be managed separately.
 
 ```bash
 brew tap encero-systems/tap

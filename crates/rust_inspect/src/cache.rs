@@ -16,7 +16,8 @@ use std::time::Instant;
 use incan_core::interop::{
     RustFieldInfo, RustFunctionSig, RustItemKind, RustItemMetadata, RustMethodSig, RustParam, RustTraitAssoc,
     RustTraitInfo, RustTypeInfo, RustTypeMetadataCompleteness, RustTypeShape, RustTypeShapePathFallback,
-    RustVariantInfo, RustVisibility, parse_rust_type_shape_text, split_top_level_rust_args,
+    RustVariantInfo, RustVisibility, parse_rust_type_shape_text, rust_source_callable_bound_for_type_param,
+    split_top_level_rust_args,
 };
 use incan_core::lang::types::collections::{self, CollectionTypeId};
 use ra_ap_syntax::{
@@ -1854,6 +1855,7 @@ fn source_function_metadata(
     }
     let name = generated_source_name(function.name()?.to_string().as_str());
     let definition = ctx.definition_path(name.as_str());
+    let function_source = function.syntax().text().to_string();
     let params = function
         .param_list()
         .map(|param_list| {
@@ -1864,10 +1866,13 @@ fn source_function_metadata(
                     let name = param
                         .pat()
                         .map(|pat| pat.syntax().text().to_string().trim().to_string());
-                    Some(RustParam {
-                        name,
-                        type_display: ctx.type_display(ty.syntax().text().to_string().as_str()),
-                    })
+                    let raw_ty = ty.syntax().text().to_string();
+                    let type_display =
+                        rust_source_callable_bound_for_type_param(function_source.as_str(), raw_ty.as_str(), |inner| {
+                            Some(ctx.type_display(inner))
+                        })
+                        .unwrap_or_else(|| ctx.type_display(raw_ty.as_str()));
+                    Some(RustParam { name, type_display })
                 })
                 .collect::<Vec<_>>()
         })
@@ -1896,6 +1901,7 @@ fn source_function_signature(
     ctx: &SourceMetadataContext<'_>,
     receiver_type: Option<&str>,
 ) -> RustFunctionSig {
+    let function_source = function.syntax().text().to_string();
     let params = function
         .param_list()
         .map(|param_list| {
@@ -1910,10 +1916,13 @@ fn source_function_signature(
                     let name = param
                         .pat()
                         .map(|pat| pat.syntax().text().to_string().trim().to_string());
-                    Some(RustParam {
-                        name,
-                        type_display: ctx.type_display(ty.syntax().text().to_string().as_str()),
-                    })
+                    let raw_ty = ty.syntax().text().to_string();
+                    let type_display =
+                        rust_source_callable_bound_for_type_param(function_source.as_str(), raw_ty.as_str(), |inner| {
+                            Some(ctx.type_display(inner))
+                        })
+                        .unwrap_or_else(|| ctx.type_display(raw_ty.as_str()));
+                    Some(RustParam { name, type_display })
                 }))
                 .collect::<Vec<_>>()
         })

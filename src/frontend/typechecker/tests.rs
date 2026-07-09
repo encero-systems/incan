@@ -3181,6 +3181,27 @@ fn test_resolved_param_type_from_builtin_borrowed_displays_preserves_ref_payload
 }
 
 #[test]
+fn test_resolved_param_type_from_rust_callable_bound_preserves_callback_borrows() {
+    let checker = TypeChecker::new();
+    assert_eq!(
+        checker.resolved_param_type_from_rust_display(
+            "impl FnMut(&mut demo::Data, &demo::OutputCallbackInfo) -> () + Send + 'static",
+        ),
+        ResolvedType::Function(
+            vec![
+                CallableParam::positional(ResolvedType::RefMut(Box::new(ResolvedType::RustPath(
+                    "demo::Data".to_string()
+                )))),
+                CallableParam::positional(ResolvedType::Ref(Box::new(ResolvedType::RustPath(
+                    "demo::OutputCallbackInfo".to_string()
+                )))),
+            ],
+            Box::new(ResolvedType::Unit),
+        )
+    );
+}
+
+#[test]
 fn test_rust_owner_path_expands_crate_relative_signature_displays() {
     let checker = TypeChecker::new();
     assert_eq!(
@@ -3260,6 +3281,36 @@ fn test_types_compatible_refmut_is_assignable_to_ref_but_not_reverse() {
     assert!(
         !checker.types_compatible(&immutable, &mutable),
         "immutable borrow must not satisfy mutable borrow expectations"
+    );
+}
+
+#[test]
+fn test_types_compatible_function_params_require_exact_borrow_shape() {
+    let checker = TypeChecker::new();
+    let data = ResolvedType::RustPath("demo::Data".to_string());
+    let info = ResolvedType::RustPath("demo::OutputCallbackInfo".to_string());
+    let by_value_callback = ResolvedType::Function(
+        vec![
+            CallableParam::positional(data.clone()),
+            CallableParam::positional(info.clone()),
+        ],
+        Box::new(ResolvedType::Unit),
+    );
+    let borrowed_callback = ResolvedType::Function(
+        vec![
+            CallableParam::positional(ResolvedType::RefMut(Box::new(data))),
+            CallableParam::positional(ResolvedType::Ref(Box::new(info))),
+        ],
+        Box::new(ResolvedType::Unit),
+    );
+
+    assert!(
+        !checker.types_compatible(&by_value_callback, &borrowed_callback),
+        "by-value function parameters must not satisfy borrowed Rust callback parameters"
+    );
+    assert!(
+        checker.types_compatible(&borrowed_callback, &borrowed_callback),
+        "exact borrowed callback parameter shape should remain compatible"
     );
 }
 

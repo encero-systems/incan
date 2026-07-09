@@ -385,6 +385,7 @@ impl<'a> IrEmitter<'a> {
                 in_return,
             },
             ValueUseSite::ExternalCallArg { .. } => ValueUseSite::ExternalCallArg { target_ty },
+            ValueUseSite::ExternalInferredGenericArg { .. } => ValueUseSite::ExternalInferredGenericArg { target_ty },
             ValueUseSite::StructField { .. } => ValueUseSite::StructField { target_ty },
             ValueUseSite::CollectionElement { .. } => ValueUseSite::CollectionElement { target_ty },
             ValueUseSite::Assignment { .. } => ValueUseSite::Assignment { target_ty },
@@ -1697,6 +1698,156 @@ mod tests {
         assert!(
             !rendered.contains("FileDescriptorSet :: decode (& cursor)"),
             "generic by-value Rust method params must not borrow the argument, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn external_rust_method_generic_string_arg_keeps_inferable_shape() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let tokenizer_ty = IrType::Struct("tokenizers::Tokenizer".to_string());
+        let encoding_ty = IrType::Struct("tokenizers::Encoding".to_string());
+        let error_ty = IrType::Struct("tokenizers::Error".to_string());
+        let encode_signature = FunctionSignature {
+            params: vec![
+                FunctionParam {
+                    name: "sequence".to_string(),
+                    ty: IrType::Generic("E".to_string()),
+                    mutability: Mutability::Immutable,
+                    is_self: false,
+                    kind: crate::frontend::ast::ParamKind::Normal,
+                    default: None,
+                },
+                FunctionParam {
+                    name: "add_special_tokens".to_string(),
+                    ty: IrType::Bool,
+                    mutability: Mutability::Immutable,
+                    is_self: false,
+                    kind: crate::frontend::ast::ParamKind::Normal,
+                    default: None,
+                },
+            ],
+            return_type: IrType::Result(Box::new(encoding_ty), Box::new(error_ty)),
+        };
+        let expr = TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "tokenizer".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    tokenizer_ty,
+                )),
+                method: "encode".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: vec![
+                    IrCallArg {
+                        name: None,
+                        kind: IrCallArgKind::Positional,
+                        expr: TypedExpr::new(IrExprKind::String("hello world".to_string()), IrType::String),
+                    },
+                    IrCallArg {
+                        name: None,
+                        kind: IrCallArgKind::Positional,
+                        expr: TypedExpr::new(IrExprKind::Bool(false), IrType::Bool),
+                    },
+                ],
+                callable_signature: Some(encode_signature),
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            IrType::Result(
+                Box::new(IrType::Struct("tokenizers::Encoding".to_string())),
+                Box::new(IrType::Struct("tokenizers::Error".to_string())),
+            ),
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains("tokenizer . encode (\"hello world\" , false)"),
+            "unresolved Rust method generics should infer from the direct string literal shape, got `{rendered}`"
+        );
+        assert!(
+            !rendered.contains("\"hello world\" . into ()"),
+            "unresolved Rust method generics must not force an ambiguous `.into()` around string literals, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn external_rust_method_explicit_generic_string_arg_keeps_turbofish() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let tokenizer_ty = IrType::Struct("tokenizers::Tokenizer".to_string());
+        let expr = TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "tokenizer".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    tokenizer_ty,
+                )),
+                method: "encode".to_string(),
+                dispatch: None,
+                type_args: vec![IrType::String],
+                args: vec![
+                    IrCallArg {
+                        name: None,
+                        kind: IrCallArgKind::Positional,
+                        expr: TypedExpr::new(IrExprKind::String("hello world".to_string()), IrType::String),
+                    },
+                    IrCallArg {
+                        name: None,
+                        kind: IrCallArgKind::Positional,
+                        expr: TypedExpr::new(IrExprKind::Bool(false), IrType::Bool),
+                    },
+                ],
+                callable_signature: Some(FunctionSignature {
+                    params: vec![
+                        FunctionParam {
+                            name: "sequence".to_string(),
+                            ty: IrType::Generic("E".to_string()),
+                            mutability: Mutability::Immutable,
+                            is_self: false,
+                            kind: crate::frontend::ast::ParamKind::Normal,
+                            default: None,
+                        },
+                        FunctionParam {
+                            name: "add_special_tokens".to_string(),
+                            ty: IrType::Bool,
+                            mutability: Mutability::Immutable,
+                            is_self: false,
+                            kind: crate::frontend::ast::ParamKind::Normal,
+                            default: None,
+                        },
+                    ],
+                    return_type: IrType::Result(
+                        Box::new(IrType::Struct("tokenizers::Encoding".to_string())),
+                        Box::new(IrType::Struct("tokenizers::Error".to_string())),
+                    ),
+                }),
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            IrType::Result(
+                Box::new(IrType::Struct("tokenizers::Encoding".to_string())),
+                Box::new(IrType::Struct("tokenizers::Error".to_string())),
+            ),
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains("tokenizer . encode :: < String >"),
+            "explicit Incan method type args must still emit a Rust turbofish, got `{rendered}`"
         );
         Ok(())
     }

@@ -65,33 +65,15 @@ archive_path() {
   printf '%s/incan-%s-%s.tar.gz\n' "$dist_dir" "$(toolchain_release)" "$host_target"
 }
 
-local_manifest_path() {
-  printf '%s/manifest.local.%s.json\n' "$dist_dir" "$host_target"
-}
-
-write_local_manifest() {
-  require_command python3
-  local source_manifest="$1"
-  local output_manifest="$2"
-  local archive
-  archive="$(archive_path)"
-  python3 - "$source_manifest" "$output_manifest" "$host_target" "$archive" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-source_manifest = Path(sys.argv[1])
-output_manifest = Path(sys.argv[2])
-target = sys.argv[3]
-archive = Path(sys.argv[4]).resolve()
-
-payload = json.loads(source_manifest.read_text(encoding="utf-8"))
-try:
-    payload["hosts"][target]["archive_url"] = archive.as_uri()
-except KeyError as exc:
-    raise SystemExit(f"manifest is missing host {target}: {exc}") from exc
-output_manifest.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-PY
+npm_platform_package_path() {
+  local platform
+  case "$host_target" in
+    x86_64-unknown-linux-gnu) platform="linux-x64" ;;
+    x86_64-apple-darwin) platform="darwin-x64" ;;
+    aarch64-apple-darwin) platform="darwin-arm64" ;;
+    *) fail "unsupported npm platform smoke target: ${host_target}" ;;
+  esac
+  printf '%s/incan-toolchain-%s-%s.tgz\n' "$dist_dir" "$platform" "$(toolchain_version)"
 }
 
 require_archive() {
@@ -157,21 +139,21 @@ smoke_npm() {
   require_command node
   require_command npm
   require_archive
-  [ -f "${dist_dir}/manifest.json" ] || fail "missing manifest: ${dist_dir}/manifest.json; run make toolchain-release-assets first"
-  local local_manifest
-  local_manifest="$(local_manifest_path)"
-  write_local_manifest "${dist_dir}/manifest.json" "$local_manifest"
   npm_config_cache="${dist_dir}/npm-cache" \
     npm_config_logs_dir="${dist_dir}/npm-logs" \
     node "${root}/workspaces/release/npm/prepare_package.js" "$dist_dir"
   local npm_home="${dist_dir}/npm-home"
+  local platform_package
+  platform_package="$(npm_platform_package_path)"
+  [ -f "$platform_package" ] || fail "missing npm platform package: ${platform_package}"
   rm -rf "$npm_home"
   mkdir -p "$npm_home"
-  INCAN_TOOLCHAIN_MANIFEST="$local_manifest" \
-    npm_config_cache="${dist_dir}/npm-cache" \
+  npm_config_cache="${dist_dir}/npm-cache" \
     npm_config_logs_dir="${dist_dir}/npm-logs" \
-    npm_config_foreground_scripts=true \
-    npm install -g "${dist_dir}/incan-toolchain-$(toolchain_version).tgz" --prefix "$npm_home"
+    npm_config_ignore_scripts=true \
+    npm_config_audit=false \
+    npm_config_fund=false \
+    npm install -g --offline --omit=optional --ignore-scripts "$platform_package" "${dist_dir}/incan-toolchain-$(toolchain_version).tgz" --prefix "$npm_home"
   "${npm_home}/bin/incan" --version
   "${npm_home}/bin/incan-lsp" --help >/dev/null
 }

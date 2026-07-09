@@ -17,6 +17,7 @@ use super::conversions::{
 };
 use super::decl::FunctionParam;
 use super::expr::{IrExpr, IrExprKind, MethodCallArgPolicy, VarAccess, VarRefKind};
+use super::reference_shape::expr_has_rust_reference_shape;
 use super::types::IrType;
 
 /// A typed sink/source boundary that needs an ownership/coercion decision.
@@ -41,6 +42,15 @@ pub enum ValueUseSite<'a> {
     /// use `.into()` rather than forcing Incan-owned `String` storage.
     ExternalCallArg {
         /// The external parameter type when Rust inspection provided one.
+        target_ty: Option<&'a IrType>,
+    },
+    /// Argument passed to an external Rust callable whose parameter is an unresolved method-level generic.
+    ///
+    /// Rust can often infer an `E: Into<_>` parameter from the original argument shape. For string-like arguments,
+    /// emitting `"literal".into()` removes that evidence and leaves `E` unconstrained, so method emission selects this
+    /// use site only when no explicit call-site type arguments were provided.
+    ExternalInferredGenericArg {
+        /// The unresolved external parameter type.
         target_ty: Option<&'a IrType>,
     },
     /// Value stored into a generated struct field.
@@ -180,6 +190,9 @@ pub fn plan_value_use(expr: &IrExpr, site: ValueUseSite<'_>) -> OwnershipPlan {
         ValueUseSite::ExternalCallArg { target_ty } => {
             determine_conversion(expr, target_ty, ConversionContext::ExternalFunctionArg)
         }
+        ValueUseSite::ExternalInferredGenericArg { target_ty } => {
+            determine_external_inferred_generic_arg_conversion(expr, target_ty)
+        }
         ValueUseSite::StructField { target_ty } => {
             determine_conversion(expr, target_ty, ConversionContext::StructField)
         }
@@ -214,6 +227,7 @@ pub fn value_use_site_target_ty<'a>(site: ValueUseSite<'a>) -> Option<&'a IrType
     match site {
         ValueUseSite::IncanCallArg { target_ty, .. }
         | ValueUseSite::ExternalCallArg { target_ty }
+        | ValueUseSite::ExternalInferredGenericArg { target_ty }
         | ValueUseSite::StructField { target_ty }
         | ValueUseSite::CollectionElement { target_ty }
         | ValueUseSite::Assignment { target_ty }
@@ -348,6 +362,43 @@ impl ArgumentPassingPlan {
     /// value.
     pub fn apply_after_value_plan(&self, tokens: TokenStream) -> TokenStream {
         self.passing.apply(self.value.apply_after_value_plan(tokens))
+    }
+}
+
+/// Choose the value conversion for an unresolved external Rust generic argument that should infer from its source.
+///
+/// This intentionally differs from the broad external-call policy: metadata-free Rust string arguments use `.into()`
+/// because the target may be a crate-owned string type, but an inspected method parameter like `E: Into<_>` needs the
+/// original string shape so Rust can infer `E`. Non-moved owned strings still clone to preserve Incan value semantics.
+fn determine_external_inferred_generic_arg_conversion(expr: &IrExpr, target_ty: Option<&IrType>) -> OwnershipPlan {
+    if !matches!(target_ty, Some(IrType::Generic(_))) {
+        return determine_conversion(expr, target_ty, ConversionContext::ExternalFunctionArg);
+    }
+
+    match &expr.kind {
+        IrExprKind::String(_) | IrExprKind::Literal(super::expr::Literal::StaticStr(_)) => OwnershipPlan::None,
+        IrExprKind::StaticRead { .. } if matches!(expr.ty, IrType::StaticStr | IrType::StrRef | IrType::FrozenStr) => {
+            OwnershipPlan::None
+        }
+        IrExprKind::Var { .. } if matches!(expr.ty, IrType::StaticStr | IrType::StrRef | IrType::FrozenStr) => {
+            OwnershipPlan::None
+        }
+        IrExprKind::Var { access, .. } if matches!(expr.ty, IrType::String) => {
+            if expr_has_rust_reference_shape(expr) || matches!(access, VarAccess::Move) {
+                OwnershipPlan::None
+            } else {
+                OwnershipPlan::Clone
+            }
+        }
+        IrExprKind::Field { .. } if matches!(expr.ty, IrType::String) => {
+            if expr_has_rust_reference_shape(expr) {
+                OwnershipPlan::None
+            } else {
+                OwnershipPlan::Clone
+            }
+        }
+        _ if matches!(expr.ty, IrType::String) => OwnershipPlan::None,
+        _ => determine_conversion(expr, target_ty, ConversionContext::ExternalFunctionArg),
     }
 }
 
@@ -902,6 +953,62 @@ mod tests {
         );
         assert_eq!(render(plan.apply_full(quote! { thing })), "&thing");
         assert_eq!(render(plan.apply_after_value_plan(quote! { &thing })), "&thing");
+    }
+
+    #[test]
+    fn argument_plan_external_inferred_generic_string_literal_stays_direct() {
+        let expr = IrExpr::new(IrExprKind::String("x".to_string()), IrType::String);
+        let target = IrType::Generic("E".to_string());
+        let plan = ArgumentPassingPlan::for_use_site(
+            &expr,
+            ValueUseSite::ExternalInferredGenericArg {
+                target_ty: Some(&target),
+            },
+        );
+
+        assert_eq!(render(plan.apply_full(quote! { "x" })), "\"x\"");
+    }
+
+    #[test]
+    fn argument_plan_external_inferred_generic_read_string_clones() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "text".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::String,
+        );
+        let target = IrType::Generic("E".to_string());
+        let plan = ArgumentPassingPlan::for_use_site(
+            &expr,
+            ValueUseSite::ExternalInferredGenericArg {
+                target_ty: Some(&target),
+            },
+        );
+
+        assert_eq!(render(plan.apply_full(quote! { text })), "text.clone()");
+    }
+
+    #[test]
+    fn argument_plan_external_inferred_generic_moved_string_stays_direct() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "text".to_string(),
+                access: VarAccess::Move,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::String,
+        );
+        let target = IrType::Generic("E".to_string());
+        let plan = ArgumentPassingPlan::for_use_site(
+            &expr,
+            ValueUseSite::ExternalInferredGenericArg {
+                target_ty: Some(&target),
+            },
+        );
+
+        assert_eq!(render(plan.apply_full(quote! { text })), "text");
     }
 
     #[test]

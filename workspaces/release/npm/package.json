@@ -1,7 +1,7 @@
 {
   "name": "@incan/toolchain",
   "version": "0.4.0",
-  "description": "Thin installer package for the Incan toolchain",
+  "description": "Command shims for the Incan toolchain",
   "license": "Apache-2.0",
   "homepage": "https://incan.io",
   "repository": {
@@ -13,8 +13,10 @@
     "incan-lsp": "bin/incan-lsp.js",
     "install-incan": "bin/install-incan.js"
   },
-  "scripts": {
-    "postinstall": "node bin/install-incan.js --package-install"
+  "optionalDependencies": {
+    "@incan/toolchain-linux-x64": "0.4.0",
+    "@incan/toolchain-darwin-x64": "0.4.0",
+    "@incan/toolchain-darwin-arm64": "0.4.0"
   },
   "files": [
     "README.md",
