@@ -61,7 +61,7 @@ impl<'a> IrEmitter<'a> {
     ///   appears on the assignment LHS.
     pub(in super::super) fn emit_lvalue_expr(&self, expr: &TypedExpr) -> Result<TokenStream, EmitError> {
         match &expr.kind {
-            IrExprKind::Var { name, access: _, .. } => {
+            IrExprKind::Var { name, .. } => {
                 let n = Self::rust_ident(name);
                 Ok(quote! { #n })
             }

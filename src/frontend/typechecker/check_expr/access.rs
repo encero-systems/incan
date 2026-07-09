@@ -2491,13 +2491,12 @@ impl TypeChecker {
                         score += self.type_match_score(arg_ty, &param.ty);
                         normal_bound[positional_index] = true;
                         positional_index += 1;
-                    } else if let Some(param) = rest_positional {
+                    } else {
+                        let param = rest_positional?;
                         if !self.types_compatible(arg_ty, &param.ty) {
                             return None;
                         }
                         score += self.type_match_score(arg_ty, &param.ty);
-                    } else {
-                        return None;
                     }
                 }
                 CallArg::Named(name, _) => {
@@ -2517,13 +2516,12 @@ impl TypeChecker {
                         }
                         score += self.type_match_score(arg_ty, &param.ty);
                         normal_bound[normal_idx] = true;
-                    } else if let Some(param) = rest_keyword {
+                    } else {
+                        let param = rest_keyword?;
                         if !self.types_compatible(arg_ty, &param.ty) {
                             return None;
                         }
                         score += self.type_match_score(arg_ty, &param.ty);
-                    } else {
-                        return None;
                     }
                 }
                 CallArg::PositionalUnpack(_) | CallArg::KeywordUnpack(_) => return Some(score),
