@@ -6640,9 +6640,9 @@
 <tbody>
 <tr>
 <td><a href="https://github.com/encero-systems/incan/issues/803">#803</a></td>
-<td><code>usize</code> can mismatch against <code>usize</code> in a heavier <code>rubato</code> repro.</td>
-<td>Rust type identity/canonicalization, metadata provenance, generated-project type planning.</td>
-<td>Keep as 0.5 interop inventory evidence; minimize after #801/#802/#806 state is settled.</td>
+<td>Fixed: same-spelling pointer-sized numeric boundary types such as <code>usize</code> and <code>isize</code> are exact matches, while platform-dependent widening remains rejected.</td>
+<td>Rust boundary coercion matrix, metadata provenance, generated-project type planning.</td>
+<td>Keep as 0.5 interop inventory evidence; regression coverage belongs at both the shared coercion matrix and frontend Rust-boundary matcher.</td>
 </tr>
 <tr>
 <td><a href="https://github.com/encero-systems/incan/issues/804">#804</a></td>
