@@ -2594,6 +2594,8 @@
       
         
       
+        
+      
     
     
       
@@ -2668,6 +2670,27 @@
   
   <span class="md-ellipsis">
     std.collections
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/stdlib/checksum/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.checksum
   </span>
   
 
@@ -5885,6 +5908,8 @@
       
         
       
+        
+      
     
     
       
@@ -5924,6 +5949,27 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../release_notes/0_5/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.5
+  </span>
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -6340,7 +6386,7 @@
 </tr>
 </tbody>
 </table>
-<p>Do not use <code>sha1</code> or <code>md5</code> for collision-resistant security decisions. Do not use <code>std.hash</code> for password hashing, keyed MACs, signatures, authenticated encryption, CRC, or Adler checksums.</p>
+<p>Do not use <code>sha1</code> or <code>md5</code> for collision-resistant security decisions. Do not use <code>std.hash</code> for password hashing, keyed MACs, signatures, authenticated encryption, CRC, or Adler checksums. Use <a href="../../reference/stdlib/checksum/"><code>std.checksum</code></a> when a protocol or file format requires CRC32.</p>
 <h2 id="hash-bytes-in-one-call">Hash bytes in one call<a class="headerlink" href="#hash-bytes-in-one-call" title="Permanent link">&para;</a></h2>
 <p>Use one-shot helpers when the payload is already in memory:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.encoding</span><span class="w"> </span><span class="kn">import</span> <span class="nb">hex</span>
@@ -6423,6 +6469,7 @@
 <h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../../reference/stdlib/hash/"><code>std.hash</code> reference</a></li>
+<li><a href="../../reference/stdlib/checksum/"><code>std.checksum</code> reference</a></li>
 <li><a href="../../reference/stdlib/encoding/"><code>std.encoding</code> reference</a></li>
 <li><a href="../../reference/stdlib/io/"><code>std.io</code> reference</a></li>
 <li><a href="../../reference/stdlib/fs/"><code>std.fs</code> reference</a></li>
