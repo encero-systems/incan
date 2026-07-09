@@ -73,7 +73,6 @@ impl Root for Thing {
 }
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Row {
-    #[expect(dead_code, reason = "retained for Incan private field semantics")]
     id: i64,
 }
 impl incan_stdlib::reflection::HasClassName for Row {
