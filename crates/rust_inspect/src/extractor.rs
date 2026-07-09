@@ -128,10 +128,9 @@ fn borrowed_builtin_source_display(text: &str) -> Option<String> {
     let normalized = normalize_source_type_text(text);
     let (prefix, inner) = if let Some(inner) = normalized.strip_prefix("&mut") {
         ("&mut", inner)
-    } else if let Some(inner) = normalized.strip_prefix('&') {
-        ("&", inner)
     } else {
-        return None;
+        let inner = normalized.strip_prefix('&')?;
+        ("&", inner)
     };
     match inner {
         "str"

@@ -83,7 +83,7 @@ Use this checklist when reviewing compiler/backend changes during 0.5:
 
 | Issue | Backend policy lesson |
 | --- | --- |
-| [#803](https://github.com/encero-systems/incan/issues/803) | Rust type identity must not depend on string-equivalent emitted Rust spellings. `usize` versus `usize` points to canonical identity/facts, not formatting. |
+| [#803](https://github.com/encero-systems/incan/issues/803) | Rust type identity must not depend on emitted Rust formatting. The `usize` identity fix lives in the boundary coercion matrix, with generated-project verification as the parity check. |
 | [#804](https://github.com/encero-systems/incan/issues/804) | `.into()` insertion is semantic call planning. It should be owned by Rust-boundary compatibility facts, not by a local emitter convenience. |
 | [#805](https://github.com/encero-systems/incan/issues/805) | Callback adaptation needs explicit callable and borrowed-parameter facts. Accepting source callbacks by value and hoping Rust rejects them is not a diagnostic strategy. |
 | [#806](https://github.com/encero-systems/incan/issues/806) | Receiver-side type arguments and method-level type arguments must be distinguished before emission. The emitter can realize the plan, but it should not invent it. |
