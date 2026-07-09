@@ -4,6 +4,7 @@ use proc_macro2::{Ident, Literal, TokenStream};
 use quote::{format_ident, quote};
 
 use incan_core::lang::derives::{self, DeriveId};
+use incan_core::lang::surface::constructors::{self, ConstructorId};
 
 use super::super::super::decl::{
     IrEnum, IrEnumValue, IrEnumValueType, IrStruct, IrTypeParam, StructField, VariantFields,
@@ -347,11 +348,12 @@ impl<'a> IrEmitter<'a> {
     /// Emit the string value used by generic field-value reflection for one concrete field.
     fn field_reflection_string_expr(field: &StructField) -> TokenStream {
         let field_ident = format_ident!("{}", field.name);
+        let none = constructors::as_str(ConstructorId::None);
         match &field.ty {
             IrType::Option(inner) if Self::field_type_supports_scalar_value_reflection(inner) => quote! {
                 match &self.#field_ident {
                     Some(value) => format!("{}", value),
-                    None => "None".to_string(),
+                    None => #none.to_string(),
                 }
             },
             _ => quote! { format!("{}", self.#field_ident) },
