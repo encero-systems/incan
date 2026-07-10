@@ -37,6 +37,16 @@ impl incan_stdlib::reflection::HasTypeFieldMetadata for Boxed {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
+impl incan_stdlib::reflection::HasFieldValueReflection for Boxed {
+    fn __field_value__(&self, name: &str) -> Option<String> {
+        match name {
+            _ => None,
+        }
+    }
+    fn __field_items__(&self) -> Vec<(String, String)> {
+        vec![]
+    }
+}
 impl Boxed {
     pub fn pick<T>(&self, value: T) -> T {
         return value;

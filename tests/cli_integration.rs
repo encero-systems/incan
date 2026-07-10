@@ -3930,6 +3930,138 @@ def main() -> None:
 }
 
 #[test]
+fn run_generic_value_field_reflection_calls_issue819() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "generic_value_field_reflection_issue819", "")?;
+    fs::write(
+        &main_path,
+        r#"model Row:
+    id: int
+    status: str
+    paid: bool
+
+
+def summarize_lookup[T](rows: list[T]) -> str:
+    mut parts: list[str] = []
+    if len(rows) == 0:
+        return ",".join(parts)
+    for field in T.__fields__():
+        match rows[0].__field_value__(str(field.wire_name)):
+            Some(value) =>
+                parts.append(f"{field.wire_name}={value}")
+            None =>
+                parts.append(f"{field.wire_name}=<missing>")
+    return "|".join(parts)
+
+
+def summarize_items[T](rows: list[T]) -> str:
+    mut parts: list[str] = []
+    if len(rows) == 0:
+        return ",".join(parts)
+    for name, value in rows[0].__field_items__():
+        parts.append(f"{name}={value}")
+    return "|".join(parts)
+
+
+def main() -> None:
+    rows = [Row(id=1, status="paid", paid=true)]
+    println(summarize_lookup[Row](rows))
+    println(summarize_items[Row](rows))
+"#,
+    )?;
+
+    let check_output = run_incan(
+        tmp.path(),
+        &["--check", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(
+        &check_output,
+        "incan --check for generic value field reflection issue819",
+    );
+
+    let run_output = run_incan(
+        tmp.path(),
+        &["run", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(&run_output, "incan run for generic value field reflection issue819");
+    let stdout = String::from_utf8_lossy(&run_output.stdout);
+    let lines = stdout.lines().collect::<Vec<_>>();
+    assert_eq!(
+        lines,
+        vec!["id=1|status=paid|paid=true", "id=1|status=paid|paid=true"],
+        "unexpected generic value reflection output:\n{stdout}"
+    );
+    Ok(())
+}
+
+#[test]
+fn run_optional_scalar_generic_value_reflection_issue819() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(
+        tmp.path(),
+        "generic_value_field_reflection_optional_scalar_issue819",
+        "",
+    )?;
+    fs::write(
+        &main_path,
+        r#"model ProbeRow:
+    id: int
+    score: float
+    active: bool
+    label: str
+    optional_label: Option[str]
+
+
+def show_items[T](row: T) -> None:
+    for name, value in row.__field_items__():
+        println(f"{name}={value}")
+
+
+def main() -> None:
+    show_items[ProbeRow](ProbeRow(id=7, score=3.5, active=true, label="paid", optional_label=None))
+    show_items[ProbeRow](ProbeRow(id=8, score=4.25, active=false, label="late", optional_label=Some("x")))
+"#,
+    )?;
+
+    let check_output = run_incan(
+        tmp.path(),
+        &["--check", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(
+        &check_output,
+        "incan --check for optional generic value field reflection issue819",
+    );
+
+    let run_output = run_incan(
+        tmp.path(),
+        &["run", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(
+        &run_output,
+        "incan run for optional generic value field reflection issue819",
+    );
+    let stdout = String::from_utf8_lossy(&run_output.stdout);
+    let lines = stdout.lines().collect::<Vec<_>>();
+    assert_eq!(
+        lines,
+        vec![
+            "id=7",
+            "score=3.5",
+            "active=true",
+            "label=paid",
+            "optional_label=None",
+            "id=8",
+            "score=4.25",
+            "active=false",
+            "label=late",
+            "optional_label=x",
+        ],
+        "unexpected optional generic value reflection output:\n{stdout}"
+    );
+    Ok(())
+}
+
+#[test]
 fn run_primitive_type_parameter_class_names_issue750() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "primitive_type_parameter_names_issue750", "")?;

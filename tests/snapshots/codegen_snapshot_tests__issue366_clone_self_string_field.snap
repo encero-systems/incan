@@ -56,6 +56,21 @@ impl incan_stdlib::reflection::HasTypeFieldMetadata for ActiveRegistration {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
+impl incan_stdlib::reflection::HasFieldValueReflection for ActiveRegistration {
+    fn __field_value__(&self, name: &str) -> Option<String> {
+        match name {
+            "logical_name" => Some(format!("{}", self.logical_name)),
+            "rank" => Some(format!("{}", self.rank)),
+            _ => None,
+        }
+    }
+    fn __field_items__(&self) -> Vec<(String, String)> {
+        vec![
+            ("logical_name".to_string(), format!("{}", self.logical_name)), ("rank"
+            .to_string(), format!("{}", self.rank))
+        ]
+    }
+}
 impl ActiveRegistration {
     pub fn clone(&self) -> Self {
         return ActiveRegistration {

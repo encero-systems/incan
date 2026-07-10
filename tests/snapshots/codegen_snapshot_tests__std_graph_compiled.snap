@@ -102,6 +102,17 @@ impl incan_stdlib::reflection::HasTypeFieldMetadata for GraphError {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
+impl incan_stdlib::reflection::HasFieldValueReflection for GraphError {
+    fn __field_value__(&self, name: &str) -> Option<String> {
+        match name {
+            "detail" => Some(format!("{}", self.detail)),
+            _ => None,
+        }
+    }
+    fn __field_items__(&self) -> Vec<(String, String)> {
+        vec![("detail".to_string(), format!("{}", self.detail))]
+    }
+}
 impl GraphError {
     pub fn message(&self) -> String {
         return self.detail.clone();

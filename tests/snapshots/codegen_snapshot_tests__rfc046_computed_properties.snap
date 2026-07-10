@@ -49,6 +49,17 @@ impl incan_stdlib::reflection::HasTypeFieldMetadata for Money {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
+impl incan_stdlib::reflection::HasFieldValueReflection for Money {
+    fn __field_value__(&self, name: &str) -> Option<String> {
+        match name {
+            "cents" => Some(format!("{}", self.cents)),
+            _ => None,
+        }
+    }
+    fn __field_items__(&self) -> Vec<(String, String)> {
+        vec![("cents".to_string(), format!("{}", self.cents))]
+    }
+}
 impl Money {
     pub fn dollars(&self) -> i64 {
         return self.cents + 1;

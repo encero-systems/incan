@@ -5942,6 +5942,12 @@ def reflected_field_count[T](value: T) -> int:
 
 def reflected_class_name[T](value: T) -> str:
   return value.__class_name__()
+
+def reflected_field_value[T](value: T) -> Option[str]:
+  return value.__field_value__("name")
+
+def reflected_field_items[T](value: T) -> list[tuple[str, str]]:
+  return value.__field_items__()
 "#;
     let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
     let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
@@ -5967,6 +5973,34 @@ def reflected_class_name[T](value: T) -> str:
             )
         }),
         "expected generic __fields__() to resolve to FrozenList[FieldInfo], got {:?}",
+        info.expressions.expr_types
+    );
+    assert!(
+        info.expressions.expr_types.values().any(|ty| {
+            matches!(
+                ty,
+                ResolvedType::Generic(name, args)
+                    if collection_types::from_str(name.as_str()) == Some(CollectionTypeId::Option)
+                        && matches!(args.as_slice(), [ResolvedType::Str])
+            )
+        }),
+        "expected generic __field_value__() to resolve to Option[str], got {:?}",
+        info.expressions.expr_types
+    );
+    assert!(
+        info.expressions.expr_types.values().any(|ty| {
+            matches!(
+                ty,
+                ResolvedType::Generic(name, args)
+                    if collection_types::from_str(name.as_str()) == Some(CollectionTypeId::List)
+                        && matches!(
+                            args.as_slice(),
+                            [ResolvedType::Tuple(items)]
+                                if matches!(items.as_slice(), [ResolvedType::Str, ResolvedType::Str])
+                        )
+            )
+        }),
+        "expected generic __field_items__() to resolve to list[tuple[str, str]], got {:?}",
         info.expressions.expr_types
     );
     Ok(())

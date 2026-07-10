@@ -1361,6 +1361,10 @@ impl TypeChecker {
             Some(magic_methods::MagicMethodId::Fields) => Some(ResolvedType::FrozenList(Box::new(
                 ResolvedType::Named(surface_types::as_str(SurfaceTypeId::FieldInfo).to_string()),
             ))),
+            Some(magic_methods::MagicMethodId::FieldValue) => Some(option_ty(ResolvedType::Str)),
+            Some(magic_methods::MagicMethodId::FieldItems) => {
+                Some(list_ty(ResolvedType::Tuple(vec![ResolvedType::Str, ResolvedType::Str])))
+            }
             _ => None,
         }
     }
@@ -3978,7 +3982,10 @@ impl TypeChecker {
         if let Some(id) = magic_methods::from_str(method)
             && !matches!(
                 id,
-                magic_methods::MagicMethodId::ClassName | magic_methods::MagicMethodId::Fields
+                magic_methods::MagicMethodId::ClassName
+                    | magic_methods::MagicMethodId::Fields
+                    | magic_methods::MagicMethodId::FieldValue
+                    | magic_methods::MagicMethodId::FieldItems
             )
         {
             return ResolvedType::Unknown;

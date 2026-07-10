@@ -462,7 +462,7 @@ impl<'a> IrEmitter<'a> {
         }
 
         Ok(Some(quote! {
-            /// Return a public field value by canonical field name or model alias.
+            /// Return a reflected field value by canonical field name or model alias.
             pub fn __field_value__(&self, name: String) -> Option<#value_ty_tokens> {
                 match name.as_str() {
                     #(#arms,)*
@@ -498,7 +498,7 @@ impl<'a> IrEmitter<'a> {
         }
 
         Ok(Some(quote! {
-            /// Return public field name/value pairs in declaration order.
+            /// Return reflected field name/value pairs in declaration order.
             pub fn __field_items__(&self) -> Vec<(String, #value_ty_tokens)> {
                 vec![#(#items),*]
             }

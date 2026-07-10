@@ -61,6 +61,17 @@ impl incan_stdlib::reflection::HasTypeFieldMetadata for Thing {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
+impl incan_stdlib::reflection::HasFieldValueReflection for Thing {
+    fn __field_value__(&self, name: &str) -> Option<String> {
+        match name {
+            "x" => Some(format!("{}", self.x)),
+            _ => None,
+        }
+    }
+    fn __field_items__(&self) -> Vec<(String, String)> {
+        vec![("x".to_string(), format!("{}", self.x))]
+    }
+}
 impl Mid for Thing {
     fn mid_id(&self) -> i64 {
         return self.x + 1;
@@ -108,6 +119,17 @@ impl incan_stdlib::reflection::HasTypeFieldMetadata for Row {
             },
         ];
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
+}
+impl incan_stdlib::reflection::HasFieldValueReflection for Row {
+    fn __field_value__(&self, name: &str) -> Option<String> {
+        match name {
+            "id" => Some(format!("{}", self.id)),
+            _ => None,
+        }
+    }
+    fn __field_items__(&self) -> Vec<(String, String)> {
+        vec![("id".to_string(), format!("{}", self.id))]
     }
 }
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]

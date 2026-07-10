@@ -56,6 +56,21 @@ impl incan_stdlib::reflection::HasTypeFieldMetadata for Point {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
+impl incan_stdlib::reflection::HasFieldValueReflection for Point {
+    fn __field_value__(&self, name: &str) -> Option<String> {
+        match name {
+            "x" => Some(format!("{}", self.x)),
+            "y" => Some(format!("{}", self.y)),
+            _ => None,
+        }
+    }
+    fn __field_items__(&self) -> Vec<(String, String)> {
+        vec![
+            ("x".to_string(), format!("{}", self.x)), ("y".to_string(), format!("{}",
+            self.y))
+        ]
+    }
+}
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Rectangle {
     pub width: i64,
@@ -105,6 +120,21 @@ impl incan_stdlib::reflection::HasTypeFieldMetadata for Rectangle {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
+impl incan_stdlib::reflection::HasFieldValueReflection for Rectangle {
+    fn __field_value__(&self, name: &str) -> Option<String> {
+        match name {
+            "width" => Some(format!("{}", self.width)),
+            "height" => Some(format!("{}", self.height)),
+            _ => None,
+        }
+    }
+    fn __field_items__(&self) -> Vec<(String, String)> {
+        vec![
+            ("width".to_string(), format!("{}", self.width)), ("height".to_string(),
+            format!("{}", self.height))
+        ]
+    }
+}
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Circle {
     radius: f64,
@@ -142,6 +172,17 @@ impl incan_stdlib::reflection::HasTypeFieldMetadata for Circle {
             },
         ];
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
+}
+impl incan_stdlib::reflection::HasFieldValueReflection for Circle {
+    fn __field_value__(&self, name: &str) -> Option<String> {
+        match name {
+            "radius" => Some(format!("{}", self.radius)),
+            _ => None,
+        }
+    }
+    fn __field_items__(&self) -> Vec<(String, String)> {
+        vec![("radius".to_string(), format!("{}", self.radius))]
     }
 }
 impl Circle {
@@ -189,6 +230,17 @@ impl incan_stdlib::reflection::HasTypeFieldMetadata for Counter {
             },
         ];
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
+}
+impl incan_stdlib::reflection::HasFieldValueReflection for Counter {
+    fn __field_value__(&self, name: &str) -> Option<String> {
+        match name {
+            "count" => Some(format!("{}", self.count)),
+            _ => None,
+        }
+    }
+    fn __field_items__(&self) -> Vec<(String, String)> {
+        vec![("count".to_string(), format!("{}", self.count))]
     }
 }
 impl Counter {
@@ -257,7 +309,6 @@ impl Stack {
 }
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Calculator {
-    #[expect(dead_code, reason = "retained for Incan private field semantics")]
     name: String,
 }
 impl incan_stdlib::reflection::HasClassName for Calculator {
@@ -295,6 +346,17 @@ impl incan_stdlib::reflection::HasTypeFieldMetadata for Calculator {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
+impl incan_stdlib::reflection::HasFieldValueReflection for Calculator {
+    fn __field_value__(&self, name: &str) -> Option<String> {
+        match name {
+            "name" => Some(format!("{}", self.name)),
+            _ => None,
+        }
+    }
+    fn __field_items__(&self) -> Vec<(String, String)> {
+        vec![("name".to_string(), format!("{}", self.name))]
+    }
+}
 impl Calculator {
     pub fn add(&self, a: i64, b: i64) -> i64 {
         return a + b;
@@ -303,7 +365,6 @@ impl Calculator {
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Person {
     name: String,
-    #[expect(dead_code, reason = "retained for Incan private field semantics")]
     age: i64,
 }
 impl incan_stdlib::reflection::HasClassName for Person {
@@ -348,6 +409,21 @@ impl incan_stdlib::reflection::HasTypeFieldMetadata for Person {
             },
         ];
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
+}
+impl incan_stdlib::reflection::HasFieldValueReflection for Person {
+    fn __field_value__(&self, name: &str) -> Option<String> {
+        match name {
+            "name" => Some(format!("{}", self.name)),
+            "age" => Some(format!("{}", self.age)),
+            _ => None,
+        }
+    }
+    fn __field_items__(&self) -> Vec<(String, String)> {
+        vec![
+            ("name".to_string(), format!("{}", self.name)), ("age".to_string(),
+            format!("{}", self.age))
+        ]
     }
 }
 impl Person {

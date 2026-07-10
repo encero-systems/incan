@@ -56,6 +56,17 @@ impl incan_stdlib::reflection::HasTypeFieldMetadata for PayloadKey {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
+impl incan_stdlib::reflection::HasFieldValueReflection for PayloadKey {
+    fn __field_value__(&self, name: &str) -> Option<String> {
+        match name {
+            "value" => Some(format!("{}", self.value)),
+            _ => None,
+        }
+    }
+    fn __field_items__(&self) -> Vec<(String, String)> {
+        vec![("value".to_string(), format!("{}", self.value))]
+    }
+}
 impl PayloadKey {
     /// Returns field metadata for this type.
     pub fn __fields__(
