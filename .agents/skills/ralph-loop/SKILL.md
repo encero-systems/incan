@@ -21,6 +21,8 @@ Keep `orchestrate-parallel-work` generic. Use this skill as the opinionated wrap
 - Do not let workers assume Incan cannot express something. Before choosing Rust/backend fallback or narrowing a design, workers must inspect current `.incn` precedents, parser/typechecker/codegen tests, or run a small probe and record the specific capability evidence.
 - Every implementation must land in a fresh worktree rooted under `/Users/danny/Development/encero/tmp` so VS Code picks it up; do not implement in `/tmp` or in the main repo checkout.
 - Treat each slice as a managed work packet with durable state on disk, not as a chat thread that has to remember its own scope.
+- Treat loop identity as durable state too. A resumed loop must prove that persisted state matches the current user request before using it to choose work.
+- Treat cross-repo consumer work as a verification lane unless the user explicitly puts that repository's implementation work in scope.
 - Require every worker to plan, implement, verify, review, and fix within its owned slice.
 - Consolidate accepted worker output onto the orchestrator branch before any commit, push, or PR work. Worker worktrees are temporary execution sandboxes, not final publication branches.
 - Retire worker worktrees after their `done` output has been integrated and verified unless the orchestrator records a concrete reason to keep one.
@@ -45,6 +47,42 @@ Important:
 - Review findings that are simple defects belong in **Act -> fix**.
 - Evidence that the slice or integration output does not satisfy the intended scope belongs in **Act -> re-plan**.
 - Do not treat “missing promised behavior” as just another lint item. That is a planning/state problem first.
+
+## Scope and state isolation
+
+Every Ralph loop must have a persisted loop identity before workers are spawned or resumed. Record it in the orchestrator overview and use it to filter durable state:
+
+- `loop_id`: stable slug for this run, usually `<repo>-<issue-or-rfc-or-milestone>-<short-purpose>`
+- target repository or repositories
+- primary implementation repository
+- base branch or resolved starting commit
+- issue/RFC/milestone allowlist
+- explicit non-goals
+- permitted downstream or consumer verification lanes
+- whether cross-repo implementation is allowed
+
+Use `STATE_ROOT` to mean the active loop's state directory. For new loops, prefer a namespaced root:
+
+```text
+.agents/state/ralph-loop/<loop-id>/
+```
+
+Legacy top-level state such as `.agents/state/ralph-loop/slices.json` may be read for migration or handoff, but must not silently drive a new loop unless its recorded loop identity matches the current request.
+
+On every resume, stop-hook continuation, compaction, or long-running restart:
+
+1. Re-read the latest user instruction.
+2. Re-read `STATE_ROOT/overview.md`, `STATE_ROOT/slices.json`, and `.agents/state/review-report.md`.
+3. Compare persisted loop identity to the latest user instruction.
+4. Classify each slice as:
+   - `in_scope`: same loop identity and allowed implementation repo
+   - `verification_lane`: downstream/consumer repo explicitly named as validation only
+   - `out_of_scope`: different repo, issue, milestone, branch, or objective
+5. Schedule only `in_scope` implementation slices.
+
+Out-of-scope or historical slices may be cited as background evidence, but they must not be advanced, committed, pushed, or turned into PRs from the current loop. If the user wants to pick them up, start or resume a separate Ralph loop with its own loop identity.
+
+Consumer repositories such as InQL may be used to reproduce, verify, or acceptance-test an Incan compiler/runtime change only when listed as a verification lane. Adding product features, docs CI, repo automation, or cleanup in that consumer repo is a separate implementation loop unless the user explicitly asks for it.
 
 ## When not to use this skill
 
@@ -82,14 +120,20 @@ Do not quietly force an RFC past open design questions. Stop and ask the user.
 Restate the requested end-state before starting execution. Confirm:
 
 - target repository or repositories
+- primary implementation repository
 - issue / RFC / branch context
+- milestone allowlist, if milestone-driven
 - explicit goals
 - explicit non-goals
+- downstream repositories that are verification lanes only
+- cross-repo implementation permission, if any
 - whether the task is RFC-wide or only a subset of RFC phases
 - whether commit / push / PR creation were requested
 - whether the user wants Codex subagents or an external backend such as OpenCode
 
 If scope is ambiguous, stop and ask a short numbered list of missing decisions.
+
+After confirming scope, write the loop identity into `STATE_ROOT/overview.md` before creating or resuming slices. If existing durable state lacks a matching loop identity, do not continue it as part of this loop.
 
 ### 2. Pick the execution backend
 
@@ -117,17 +161,17 @@ Create:
 - one orchestrator worktree for final integration
 - one clean worker worktree per implementation slice
 
-Create durable slice state under each worktree:
+Create durable slice state under each worktree. The paths below are relative to `STATE_ROOT`; for new loops `STATE_ROOT` should normally be `.agents/state/ralph-loop/<loop-id>`:
 
-- `.agents/state/ralph-loop/overview.md` for orchestrator-wide state
-- `.agents/state/ralph-loop/STEERING.md` for operator overrides, urgency changes, and mid-run guidance
-- `.agents/state/ralph-loop/slices.json` for the orchestrator-owned slice registry
-- `.agents/state/ralph-loop/<slice-id>/scope.md`
-- `.agents/state/ralph-loop/<slice-id>/plan.md`
-- `.agents/state/ralph-loop/<slice-id>/tasks.json`
-- `.agents/state/ralph-loop/<slice-id>/tasks.md`
-- `.agents/state/ralph-loop/<slice-id>/status.md`
-- `.agents/state/ralph-loop/<slice-id>/handoff.md`
+- `overview.md` for orchestrator-wide state, including loop identity and scope boundaries
+- `STEERING.md` for operator overrides, urgency changes, and mid-run guidance
+- `slices.json` for the orchestrator-owned slice registry
+- `<slice-id>/scope.md`
+- `<slice-id>/plan.md`
+- `<slice-id>/tasks.json`
+- `<slice-id>/tasks.md`
+- `<slice-id>/status.md`
+- `<slice-id>/handoff.md`
 
 Treat the slice folder as the source of truth for that slice. Do not rely on memory or only on conversational context.
 
@@ -149,7 +193,7 @@ Before spawning workers, identify:
 - whether the task is on a `-dev.N` line and therefore needs a version bump
 - the authored user-facing docs that must be updated if the change is user-visible
 
-For milestone, RFC-wide, or compiler-boundary work, also write an `## Acceptance Contract` section into `.agents/state/ralph-loop/overview.md` before implementation starts. Include:
+For milestone, RFC-wide, or compiler-boundary work, also write an `## Acceptance Contract` section into `STATE_ROOT/overview.md` before implementation starts. Include:
 
 - the local/direct behavior that must work,
 - import, reexport/facade, package-consumer, test-batch, dependency, vocab, or generated-Rust boundaries that can observe the behavior,
@@ -223,7 +267,10 @@ The orchestrator should maintain `slices.json` with entries like:
 ```json
 [
   {
+    "loop_id": "incan-557-std-environ",
     "slice_id": "lifecycle-env",
+    "repo": "encero-systems/incan",
+    "scope_role": "implementation",
     "owner": "<worker name or id>",
     "worktree": "/Users/danny/Development/encero/tmp/...",
     "status": "doing",
@@ -232,15 +279,20 @@ The orchestrator should maintain `slices.json` with entries like:
 ]
 ```
 
+Use `scope_role: "verification"` for downstream acceptance lanes. Verification slices may run checks and collect evidence, but they must not mutate consumer product code unless the loop identity explicitly allows cross-repo implementation.
+
 ### 5. Give each worker a strict end-to-end contract
 
 Each worker must own a non-overlapping slice with:
 
+- loop identity
+- repository and scope role (`implementation` or `verification`)
 - exact goal
 - owned files or directories
 - explicit non-goals
+- forbidden repositories or paths
 - dedicated worktree path under `/Users/danny/Development/encero/tmp`
-- dedicated slice folder under `.agents/state/ralph-loop/<slice-id>/`
+- dedicated slice folder under `STATE_ROOT/<slice-id>/`
 - verification command
 - expected result format
 
@@ -277,7 +329,7 @@ Each worker must perform this loop inside its slice:
    or report a concrete blocker with its classification.
 
 The slice's `.agents/state/review-report.md` must be kept current throughout this loop.
-The slice folder under `.agents/state/ralph-loop/<slice-id>/` must also stay current throughout this loop.
+The slice folder under `STATE_ROOT/<slice-id>/` must also stay current throughout this loop.
 
 Allowed slice states:
 
@@ -309,7 +361,8 @@ The orchestrator must:
 
 - inspect each worker result and changed-file list
 - inspect each worker slice folder, not just the final prose summary
-- inspect `slices.json` and ensure every slice has an honest terminal or active state
+- inspect `slices.json` and ensure every in-scope slice has an honest terminal or active state
+- ignore or migrate historical slices whose `loop_id`, repo, branch, issue, milestone, or scope role does not match the current loop identity
 - reconcile naming, docs, tests, and architectural seams across slices
 - ensure user-facing docs were updated for user-visible behavior, not only RFC text or release notes
 - verify the repo version baseline again before finish and bump `-dev.N` by one at minimum for implementation work on the active dev line
@@ -318,7 +371,7 @@ The orchestrator must:
 - retire each completed worker worktree after its accepted work is present in the orchestrator worktree and the integrated verification gate has passed
 - run the repo-level gate
 - run **Plan -> Do -> Check -> Act** on the integrated result:
-  - **Plan**: confirm the combined slice outputs still satisfy the original end-state and create/update orchestrator task state in `.agents/state/ralph-loop/overview.md`
+  - **Plan**: confirm the combined slice outputs still satisfy the original end-state and create/update orchestrator task state in `STATE_ROOT/overview.md`
   - **Do**: integrate the accepted worker results
   - **Check**: run verification, `review-incan-source-quality` for touched `.incn` source, plus `review` or `review-orchestrate` on the integrated result
   - **Act**: run `fix` on actionable in-scope findings, or go back to planning if integration review shows that the original requested scope is still not satisfied
@@ -326,7 +379,7 @@ The orchestrator must:
 - repeat until no actionable integrated items remain and the original scope is honestly satisfied
 
 The orchestrator worktree's `.agents/state/review-report.md` is the integration source of truth.
-The orchestrator's `.agents/state/ralph-loop/overview.md` is the integration state source of truth.
+The orchestrator's `STATE_ROOT/overview.md` is the integration state source of truth.
 
 Worker cleanup is part of integration, not optional closeout. For every slice marked `done`:
 
@@ -340,6 +393,8 @@ Worker cleanup is part of integration, not optional closeout. For every slice ma
 Do not force-remove a worker worktree with unknown or unintegrated changes. Do not push while accepted slice work exists only in a worker worktree or worker branch.
 
 `STEERING.md` must be checked at the start of every major iteration. If it changes the priority, scope, or urgency of the work, the orchestrator must update `slices.json`, affected `scope.md` / `tasks.json`, and continue from the new direction rather than pretending the original ordering still applies.
+
+If `STEERING.md` or a resume hook mentions slices from another loop identity, treat them as out of scope until the user explicitly says to resume that separate loop.
 
 Do not stop at "worker green." Cross-slice regressions and consistency problems belong to the orchestrator.
 
@@ -415,13 +470,17 @@ Do not recurse `ralph-loop` indefinitely. A child loop is a phase owner, not ano
 - [ ] If the input was an RFC, child loops were derived from implementation phases or checklist groups
 - [ ] Child loops did not spawn further `ralph-loop` children
 - [ ] Scope was restated and confirmed before execution
+- [ ] Loop identity was written before workers were spawned or resumed
+- [ ] Existing durable state was filtered by loop identity before choosing work
 - [ ] Backend choice was explicit
 - [ ] RFC lifecycle state and implementation plan/checklist were confirmed before coding started
 - [ ] Every implementation worker had a clean worktree and non-overlapping ownership
 - [ ] Every implementation worktree lived under `/Users/danny/Development/encero/tmp`
-- [ ] Every slice had a durable folder under `.agents/state/ralph-loop/<slice-id>/`
-- [ ] The orchestrator maintained `.agents/state/ralph-loop/slices.json`
-- [ ] The orchestrator checked `.agents/state/ralph-loop/STEERING.md` at each major iteration
+- [ ] Every slice had a durable folder under `STATE_ROOT/<slice-id>/`
+- [ ] The orchestrator maintained `STATE_ROOT/slices.json`
+- [ ] Every `slices.json` entry has `loop_id`, `repo`, and `scope_role`
+- [ ] Consumer/downstream repositories were used only as verification lanes unless explicitly allowed for implementation
+- [ ] The orchestrator checked `STATE_ROOT/STEERING.md` at each major iteration
 - [ ] Every slice kept explicit `scope.md`, `plan.md`, `tasks.json`, `tasks.md`, `status.md`, and `handoff.md`
 - [ ] Docs/version baseline was established from repo source-of-truth metadata before implementation
 - [ ] Incan-language/stdlib slices recorded capability evidence before ruling out Incan-native implementation
@@ -435,7 +494,7 @@ Do not recurse `ralph-loop` indefinitely. A child loop is a phase owner, not ano
 - [ ] Every worker maintained `.agents/state/review-report.md` in its worktree
 - [ ] Every worker or orchestrator touching `.incn` source ran `review-incan-source-quality`
 - [ ] The orchestrator maintained `.agents/state/review-report.md` in the integration worktree
-- [ ] The orchestrator maintained `.agents/state/ralph-loop/overview.md`
+- [ ] The orchestrator maintained `STATE_ROOT/overview.md`
 - [ ] User-visible behavior changes updated authored user docs, not only RFCs/release notes
 - [ ] Active dev version was re-checked and bumped by one dev increment at minimum for implementation work
 - [ ] Child loops did not draft PRs or final commit artifacts of their own
