@@ -910,16 +910,44 @@ impl<'a> IrCodegen<'a> {
     /// `GenerationError::Emission` if IR emission fails.
     pub fn try_generate_module(&mut self, module_name: &str, program: &Program) -> Result<String, GenerationError> {
         let dependency_modules = self.dependency_modules.clone();
+        let deps: Vec<(&str, &Program)> = dependency_modules.iter().map(|(name, ast, _)| (*name, *ast)).collect();
+        let global_aliases = collect_model_field_aliases(program, &deps);
+        let module_metadata = dependency_modules
+            .iter()
+            .find(|(name, ast, _)| *name == module_name && std::ptr::eq(*ast, program));
+        let module_key = module_metadata
+            .map(|(name, _, path_segments)| Self::dependency_module_key(name, path_segments))
+            .unwrap_or_else(|| module_name.to_string());
+        let module_path_segments = module_metadata.and_then(|(_, _, path_segments)| path_segments.clone());
+        let module_type_info = {
+            use crate::frontend::typechecker::TypeChecker;
+            let mut tc = TypeChecker::new();
+            self.configure_typechecker(&mut tc);
+            let typecheck_deps =
+                Self::imported_dependency_modules_for_program(program, &dependency_modules, Some(&module_key));
+            let result = match tc.check_with_imports_allow_private(program, &typecheck_deps) {
+                Ok(()) => tc.type_info().clone(),
+                Err(errs) => return Err(Self::typecheck_errors_for_module(&module_key, errs)),
+            };
+            self.capture_typechecker_stdlib_cache(&tc);
+            result
+        };
         // Use the IR pipeline for module generation too
-        let mut lowering = AstLowering::new();
+        let mut lowering = AstLowering::new_with_type_info(module_type_info);
         self.configure_lowering(&mut lowering);
         lowering.set_current_source_module_name(
-            program
-                .source_path
-                .as_deref()
-                .and_then(crate::frontend::module::logical_module_name_from_source_path),
+            module_path_segments
+                .clone()
+                .map(|segments| segments.join("."))
+                .or_else(|| {
+                    program
+                        .source_path
+                        .as_deref()
+                        .and_then(crate::frontend::module::logical_module_name_from_source_path)
+                }),
         );
         lowering.seed_dependency_trait_decls(&dependency_modules);
+        lowering.seed_struct_field_aliases(global_aliases.clone());
         let mut ir_program = lowering.lower_program(program)?;
 
         // RFC 023: Infer trait bounds for generic functions.
@@ -929,7 +957,21 @@ impl<'a> IrCodegen<'a> {
             if dep_name == module_name {
                 continue;
             }
-            let mut dep_lowering = AstLowering::new();
+            let dep_type_info = {
+                use crate::frontend::typechecker::TypeChecker;
+                let mut tc = TypeChecker::new();
+                self.configure_typechecker(&mut tc);
+                let dep_key = Self::dependency_module_key(dep_name, &dep_path_segments);
+                let typecheck_deps =
+                    Self::imported_dependency_modules_for_program(dep_ast, &dependency_modules, Some(&dep_key));
+                let result = match tc.check_with_imports_allow_private(dep_ast, &typecheck_deps) {
+                    Ok(()) => tc.type_info().clone(),
+                    Err(errs) => return Err(Self::typecheck_errors_for_module(&dep_key, errs)),
+                };
+                self.capture_typechecker_stdlib_cache(&tc);
+                result
+            };
+            let mut dep_lowering = AstLowering::new_with_type_info(dep_type_info);
             self.configure_lowering(&mut dep_lowering);
             dep_lowering.set_current_source_module_name(
                 dep_path_segments
@@ -943,6 +985,7 @@ impl<'a> IrCodegen<'a> {
                     }),
             );
             dep_lowering.seed_dependency_trait_decls(&dependency_modules);
+            dep_lowering.seed_struct_field_aliases(global_aliases.clone());
             let mut dep_ir = dep_lowering.lower_program(dep_ast)?;
             super::trait_bound_inference::infer_trait_bounds(&mut dep_ir);
             dependency_ir_programs.push(dep_ir);
@@ -2636,6 +2679,36 @@ impl RequestBuilder {
     }
 
     #[cfg(feature = "rust_inspect")]
+    fn write_message_trait_probe_crate(root: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+        fs::create_dir_all(root.join("src"))?;
+        fs::write(
+            root.join("Cargo.toml"),
+            r#"[package]
+name = "message_probe"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )?;
+        fs::write(
+            root.join("src").join("lib.rs"),
+            r#"
+pub struct Packet;
+
+pub trait Message {
+    fn encode_to_vec(&self) -> Vec<u8>;
+}
+
+impl Message for Packet {
+    fn encode_to_vec(&self) -> Vec<u8> {
+        vec![1, 2, 3]
+    }
+}
+"#,
+        )?;
+        Ok(())
+    }
+
+    #[cfg(feature = "rust_inspect")]
     fn prewarm_metadata(manifest_dir: &std::path::Path, paths: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
         let inspector =
             crate::rust_inspect::Inspector::new(crate::rust_inspect::InspectorConfig::new(manifest_dir.to_path_buf()));
@@ -4225,6 +4298,34 @@ pub async def run(state: State, plan: Plan) -> None:
         assert!(
             worker_code.contains("consume(&state, &plan).await"),
             "expected borrowed async rust free-function args in generated nested module; got:\n{worker_code}"
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn test_try_generate_module_keeps_root_rust_trait_import_issue827() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        write_message_trait_probe_crate(tmp.path())?;
+
+        let worker_module = parse_program(
+            r#"
+from rust::message_probe import Message, Packet
+
+pub def encode_packet(packet: Packet) -> None:
+  _ = packet.encode_to_vec()
+"#,
+        );
+        let mut codegen = IrCodegen::new();
+        codegen.set_rust_inspect_manifest_dir(tmp.path().to_path_buf());
+        codegen.add_module("worker", &worker_module);
+
+        let code = must_ok(codegen.try_generate_module("worker", &worker_module));
+
+        assert!(
+            code.contains("use ::message_probe::{Message, Packet};")
+                || (code.contains("use ::message_probe::Message;") && code.contains("use ::message_probe::Packet;")),
+            "expected module generation to preserve root Rust trait import needed by encode_to_vec(); got:\n{code}"
         );
         Ok(())
     }
