@@ -468,6 +468,7 @@ fn write_back_callable_bounds(program: &mut IrProgram, function_bounds: &mut Has
     }
 }
 
+/// Merge inferred bounds into an existing type parameter while preserving stable bound identity.
 fn merge_inferred_bounds(target: &mut IrTypeParam, source: &IrTypeParam) {
     target.bounds.extend(source.bounds.iter().cloned());
     target.bounds = deduplicate_bounds(std::mem::take(&mut target.bounds));
