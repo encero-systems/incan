@@ -414,8 +414,8 @@ fn collect_current_callable_signature_maps(
 /// Write propagated bounds back into the program's callable declarations.
 ///
 /// Free functions and trait methods own their own type parameters, so their inferred signature can be replaced
-/// directly. Impl methods borrow the impl block's generic parameter list, so method-level propagation is merged back
-/// into `impl_block.type_params` instead of replacing each method signature independently.
+/// directly. Impl methods can see both owner-level and method-owned type parameters, so each inferred bound is merged
+/// into the matching owner or method parameter instead of replacing either signature wholesale.
 fn write_back_callable_bounds(program: &mut IrProgram, function_bounds: &mut HashMap<String, Vec<IrTypeParam>>) {
     for decl in &mut program.declarations {
         match &mut decl.kind {

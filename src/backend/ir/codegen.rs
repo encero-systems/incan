@@ -906,8 +906,8 @@ impl<'a> IrCodegen<'a> {
     ///
     /// ## Errors
     ///
-    /// Returns `GenerationError::Lowering` if AST lowering fails, or
-    /// `GenerationError::Emission` if IR emission fails.
+    /// Returns `GenerationError::TypeCheck` if module typechecking fails, `GenerationError::Lowering` if AST lowering
+    /// fails, or `GenerationError::Emission` if IR emission fails.
     pub fn try_generate_module(&mut self, module_name: &str, program: &Program) -> Result<String, GenerationError> {
         let dependency_modules = self.dependency_modules.clone();
         let deps: Vec<(&str, &Program)> = dependency_modules.iter().map(|(name, ast, _)| (*name, *ast)).collect();
@@ -2678,6 +2678,7 @@ impl RequestBuilder {
         Ok(tmp)
     }
 
+    /// Write the tiny Rust crate used to prove root trait imports remain in scope during direct module generation.
     #[cfg(feature = "rust_inspect")]
     fn write_message_trait_probe_crate(root: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
         fs::create_dir_all(root.join("src"))?;
