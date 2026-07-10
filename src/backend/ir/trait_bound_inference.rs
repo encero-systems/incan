@@ -433,27 +433,44 @@ fn write_back_callable_bounds(program: &mut IrProgram, function_bounds: &mut Has
                 }
             }
             IrDeclKind::Impl(impl_block) => {
-                let mut merged = impl_block.type_params.clone();
-                for (index, method) in impl_block.methods.iter().enumerate() {
+                let target_type = impl_block.target_type.clone();
+                let trait_name = impl_block.trait_name.clone();
+                let owner_type_params = &mut impl_block.type_params;
+                let methods = &mut impl_block.methods;
+                for (index, method) in methods.iter_mut().enumerate() {
                     let key = format!(
                         "impl:{}:{}:{}:{}",
-                        impl_block.target_type,
-                        impl_block.trait_name.as_deref().unwrap_or("<inherent>"),
+                        target_type,
+                        trait_name.as_deref().unwrap_or("<inherent>"),
                         index,
                         method.name
                     );
                     if let Some(inferred) = function_bounds.remove(&key) {
-                        for (target, source) in merged.iter_mut().zip(inferred.iter()) {
-                            target.bounds.extend(source.bounds.iter().cloned());
-                            target.bounds = deduplicate_bounds(std::mem::take(&mut target.bounds));
+                        for source in inferred.iter() {
+                            if let Some(target) = owner_type_params
+                                .iter_mut()
+                                .find(|type_param| type_param.name == source.name)
+                            {
+                                merge_inferred_bounds(target, source);
+                            } else if let Some(target) = method
+                                .type_params
+                                .iter_mut()
+                                .find(|type_param| type_param.name == source.name)
+                            {
+                                merge_inferred_bounds(target, source);
+                            }
                         }
                     }
                 }
-                impl_block.type_params = merged;
             }
             _ => {}
         }
     }
+}
+
+fn merge_inferred_bounds(target: &mut IrTypeParam, source: &IrTypeParam) {
+    target.bounds.extend(source.bounds.iter().cloned());
+    target.bounds = deduplicate_bounds(std::mem::take(&mut target.bounds));
 }
 
 /// Collect owner type parameters that participate in a derived `Clone` implementation.

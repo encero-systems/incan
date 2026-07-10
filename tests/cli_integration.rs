@@ -4062,6 +4062,66 @@ def main() -> None:
 }
 
 #[test]
+fn run_generic_value_reflection_in_method_owned_type_parameter_issue819() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(
+        tmp.path(),
+        "generic_value_reflection_method_owned_type_parameter_issue819",
+        "",
+    )?;
+    fs::write(
+        &main_path,
+        r#"model ProbeRow:
+    id: int
+    label: str
+
+
+class InlineSession:
+    def reflected_summary[T](self, rows: list[T]) -> str:
+        mut names: list[str] = []
+        for field in T.__fields__():
+            names.append(str(field.wire_name))
+        if len(rows) == 0:
+            return f"{T.__class_name__()}:{','.join(names)}:<empty>"
+        match rows[0].__field_value__("label"):
+            Some(value) => return f"{T.__class_name__()}:{','.join(names)}:{value}"
+            None => return f"{T.__class_name__()}:{','.join(names)}:<missing>"
+
+
+def main() -> None:
+    session = InlineSession()
+    println(session.reflected_summary[ProbeRow]([ProbeRow(id=7, label="paid")]))
+"#,
+    )?;
+
+    let check_output = run_incan(
+        tmp.path(),
+        &["--check", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(
+        &check_output,
+        "incan --check for method-owned generic value reflection issue819",
+    );
+
+    let run_output = run_incan(
+        tmp.path(),
+        &["run", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(
+        &run_output,
+        "incan run for method-owned generic value reflection issue819",
+    );
+    let stdout = String::from_utf8_lossy(&run_output.stdout);
+    let lines = stdout.lines().collect::<Vec<_>>();
+    assert_eq!(
+        lines,
+        vec!["ProbeRow:id,label:paid"],
+        "unexpected method-owned generic value reflection output:\n{stdout}"
+    );
+    Ok(())
+}
+
+#[test]
 fn run_primitive_type_parameter_class_names_issue750() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "primitive_type_parameter_names_issue750", "")?;
