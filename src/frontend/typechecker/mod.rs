@@ -952,6 +952,103 @@ impl TypeChecker {
         Some((false, after_amp))
     }
 
+    /// Remove trailing callable marker bounds such as `+ Send + Sync` from a Rust callable-bound display.
+    fn trim_top_level_rust_bound_suffix(text: &str) -> &str {
+        let mut angle = 0usize;
+        let mut paren = 0usize;
+        let mut bracket = 0usize;
+        for (idx, ch) in text.char_indices() {
+            match ch {
+                '<' => angle += 1,
+                '>' => angle = angle.saturating_sub(1),
+                '(' => paren += 1,
+                ')' => paren = paren.saturating_sub(1),
+                '[' => bracket += 1,
+                ']' => bracket = bracket.saturating_sub(1),
+                '+' if angle == 0 && paren == 0 && bracket == 0 => return text[..idx].trim(),
+                _ => {}
+            }
+        }
+        text.trim()
+    }
+
+    /// Return the body of a Rust callable bound display such as `impl FnMut(A) -> B`.
+    fn rust_callable_bound_body(display: &str) -> Option<&str> {
+        let trimmed = Self::trim_top_level_rust_bound_suffix(display.trim());
+        for prefix in ["impl ", "dyn "] {
+            if let Some(rest) = trimmed.strip_prefix(prefix)
+                && matches!(rest, r if r.starts_with("Fn") || r.starts_with("std::ops::Fn") || r.starts_with("core::ops::Fn"))
+            {
+                return Some(rest.trim());
+            }
+        }
+        for compact_prefix in ["impl", "dyn"] {
+            if let Some(rest) = trimmed.strip_prefix(compact_prefix)
+                && matches!(rest, r if r.starts_with("Fn") || r.starts_with("std::ops::Fn") || r.starts_with("core::ops::Fn"))
+            {
+                return Some(rest.trim());
+            }
+        }
+        if trimmed.starts_with("Fn") || trimmed.starts_with("std::ops::Fn") || trimmed.starts_with("core::ops::Fn") {
+            Some(trimmed)
+        } else {
+            None
+        }
+    }
+
+    /// Return the byte index of the matching close paren for an opening paren at the start of `text`.
+    fn rust_callable_args_end(text: &str) -> Option<usize> {
+        let mut depth = 0usize;
+        for (idx, ch) in text.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth = depth.checked_sub(1)?;
+                    if depth == 0 {
+                        return Some(idx);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// Resolve a Rust callable bound display into an Incan function type.
+    ///
+    /// Rust generic callback parameters often surface as `impl FnMut(&mut T, &U)` or through a generic bound that is
+    /// normalized to that display. Treating those as ordinary type variables lets by-value Incan function values reach
+    /// rustc and fail there. This resolver preserves the callback input borrow shape so the frontend can reject
+    /// incompatible named callbacks before emission.
+    fn resolved_function_type_from_rust_callable_bound_display(&self, rust_ty: &str) -> Option<ResolvedType> {
+        let body = Self::rust_callable_bound_body(rust_ty)?;
+        let body = body
+            .strip_prefix("std::ops::")
+            .or_else(|| body.strip_prefix("core::ops::"))
+            .unwrap_or(body);
+        let after_name = ["FnOnce", "FnMut", "Fn"]
+            .into_iter()
+            .find_map(|name| body.strip_prefix(name))?
+            .trim_start();
+        if !after_name.starts_with('(') {
+            return None;
+        }
+        let args_end = Self::rust_callable_args_end(after_name)?;
+        let args_inner = &after_name[1..args_end];
+        let params = Self::split_top_level_generic_args(args_inner)
+            .into_iter()
+            .map(|arg| CallableParam::positional(self.resolved_param_type_from_rust_display(arg)))
+            .collect::<Vec<_>>();
+        let after_args = after_name[args_end + 1..].trim_start();
+        let ret = if let Some(ret_display) = after_args.strip_prefix("->") {
+            let ret_display = Self::trim_top_level_rust_bound_suffix(ret_display);
+            self.resolved_type_from_rust_display(ret_display)
+        } else {
+            ResolvedType::Unit
+        };
+        Some(ResolvedType::Function(params, Box::new(ret)))
+    }
+
     /// Remove Rust lifetime labels that decorate borrowed display types.
     ///
     /// rust-analyzer commonly prints borrowed method parameters as `&'h str` or `&'a [u8]`. The typechecker only needs
@@ -1135,6 +1232,9 @@ impl TypeChecker {
         let trimmed = rust_ty.trim();
         let display = Self::rust_display_without_lifetimes(trimmed);
         let normalized = display.replace(' ', "");
+        if let Some(callable) = self.resolved_function_type_from_rust_callable_bound_display(display.as_str()) {
+            return callable;
+        }
         if let Some(Symbol {
             kind: SymbolKind::RustItem(info),
             ..
@@ -1261,6 +1361,9 @@ impl TypeChecker {
         let trimmed = rust_ty.trim();
         let display = Self::rust_display_without_lifetimes(trimmed);
         let normalized = display.replace(' ', "");
+        if let Some(callable) = self.resolved_function_type_from_rust_callable_bound_display(display.as_str()) {
+            return callable;
+        }
         if let Some(name) = Self::rust_display_type_var_name(normalized.as_str()) {
             return ResolvedType::TypeVar(name.to_string());
         }
@@ -1312,6 +1415,9 @@ impl TypeChecker {
         let trimmed = rust_ty.trim();
         let display = Self::rust_display_without_lifetimes(trimmed);
         let normalized = display.replace(' ', "");
+        if let Some(callable) = self.resolved_function_type_from_rust_callable_bound_display(display.as_str()) {
+            return callable;
+        }
         if let Some((is_mut, inner)) = Self::rust_display_borrow_kind(display.as_str()) {
             let inner_normalized = Self::compact_rust_display(inner);
             let inner_ty = match inner {
@@ -4471,6 +4577,8 @@ impl TypeChecker {
         match (actual, expected) {
             (ResolvedType::Unknown, _) | (_, ResolvedType::Unknown) => true,
             (ResolvedType::TypeVar(_), _) | (_, ResolvedType::TypeVar(_)) => true,
+            (actual, _) if self.is_generic_placeholder_type(actual) => true,
+            (_, expected) if self.is_generic_placeholder_type(expected) => true,
             (ResolvedType::CallSiteInfer, _) | (_, ResolvedType::CallSiteInfer) => true,
             (ResolvedType::TypeToken(actual_inner), ResolvedType::TypeToken(expected_inner)) => {
                 self.types_compatible(actual_inner, expected_inner)
@@ -4800,7 +4908,7 @@ impl TypeChecker {
                     && p1
                         .iter()
                         .zip(p2.iter())
-                        .all(|(t1, t2)| t1.kind == t2.kind && self.types_compatible(&t1.ty, &t2.ty))
+                        .all(|(t1, t2)| t1.kind == t2.kind && self.callable_param_types_compatible(&t1.ty, &t2.ty))
                     && self.types_compatible(r1, r2)
             }
             (ResolvedType::Tuple(e1), ResolvedType::Tuple(e2)) => {
@@ -4811,6 +4919,23 @@ impl TypeChecker {
             // Incan/Rust-typed expressions stay checkable (RFC 005/041 permissive model).
             (ResolvedType::RustPath(_), _) | (_, ResolvedType::RustPath(_)) => true,
             _ => false,
+        }
+    }
+
+    /// Function parameters must preserve borrow shape exactly.
+    ///
+    /// Ordinary value compatibility is intentionally permissive at Rust boundaries, but callback signatures are called
+    /// by Rust with a fixed argument ABI. A function that takes `T` or `&T` is not a valid substitute for one that Rust
+    /// will call as `FnMut(&mut T)`.
+    fn callable_param_types_compatible(&self, actual: &ResolvedType, expected: &ResolvedType) -> bool {
+        match (actual, expected) {
+            (ResolvedType::Ref(actual_inner), ResolvedType::Ref(expected_inner))
+            | (ResolvedType::RefMut(actual_inner), ResolvedType::RefMut(expected_inner)) => {
+                self.types_compatible(actual_inner, expected_inner)
+            }
+            (ResolvedType::Ref(_) | ResolvedType::RefMut(_), _)
+            | (_, ResolvedType::Ref(_) | ResolvedType::RefMut(_)) => false,
+            _ => self.types_compatible(actual, expected),
         }
     }
 }

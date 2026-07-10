@@ -8,7 +8,8 @@
 
 // Re-export runtime traits and helpers
 pub use crate::reflection::{
-    FieldInfo, HasClassName, HasFieldInfo, HasFieldMetadata, HasTypeClassName, HasTypeFieldMetadata,
+    FieldInfo, HasClassName, HasFieldInfo, HasFieldMetadata, HasFieldValueReflection, HasTypeClassName,
+    HasTypeFieldMetadata,
 };
 // frozen runtime types for consts (RFC 008)
 pub use crate::frozen::{FrozenBytes, FrozenDict, FrozenList, FrozenSet, FrozenStr};

@@ -41,6 +41,19 @@ pub trait HasFieldMetadata {
     fn __fields__(&self) -> FrozenList<FieldInfo>;
 }
 
+/// Provides value-level field reflection for generic Incan row helpers.
+///
+/// Concrete model and class values keep their compiler-generated typed `__field_value__()` and `__field_items__()`
+/// inherent methods. This trait is the erased generic capability used when source calls those helpers through a type
+/// parameter such as `T`, following the same generated field-overlay surface.
+pub trait HasFieldValueReflection {
+    /// Return a reflected field value by canonical field name or model alias.
+    fn __field_value__(&self, name: &str) -> Option<String>;
+
+    /// Return reflected field name/value pairs in declaration order.
+    fn __field_items__(&self) -> Vec<(String, String)>;
+}
+
 /// Provides type-level field metadata for generated models and classes.
 ///
 /// The compiler uses this trait for generic schema helpers that reflect on an explicit type argument, for example

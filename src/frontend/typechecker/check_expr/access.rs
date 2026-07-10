@@ -1361,6 +1361,10 @@ impl TypeChecker {
             Some(magic_methods::MagicMethodId::Fields) => Some(ResolvedType::FrozenList(Box::new(
                 ResolvedType::Named(surface_types::as_str(SurfaceTypeId::FieldInfo).to_string()),
             ))),
+            Some(magic_methods::MagicMethodId::FieldValue) => Some(option_ty(ResolvedType::Str)),
+            Some(magic_methods::MagicMethodId::FieldItems) => {
+                Some(list_ty(ResolvedType::Tuple(vec![ResolvedType::Str, ResolvedType::Str])))
+            }
             _ => None,
         }
     }
@@ -2491,13 +2495,12 @@ impl TypeChecker {
                         score += self.type_match_score(arg_ty, &param.ty);
                         normal_bound[positional_index] = true;
                         positional_index += 1;
-                    } else if let Some(param) = rest_positional {
+                    } else {
+                        let param = rest_positional?;
                         if !self.types_compatible(arg_ty, &param.ty) {
                             return None;
                         }
                         score += self.type_match_score(arg_ty, &param.ty);
-                    } else {
-                        return None;
                     }
                 }
                 CallArg::Named(name, _) => {
@@ -2517,13 +2520,12 @@ impl TypeChecker {
                         }
                         score += self.type_match_score(arg_ty, &param.ty);
                         normal_bound[normal_idx] = true;
-                    } else if let Some(param) = rest_keyword {
+                    } else {
+                        let param = rest_keyword?;
                         if !self.types_compatible(arg_ty, &param.ty) {
                             return None;
                         }
                         score += self.type_match_score(arg_ty, &param.ty);
-                    } else {
-                        return None;
                     }
                 }
                 CallArg::PositionalUnpack(_) | CallArg::KeywordUnpack(_) => return Some(score),
@@ -2622,6 +2624,49 @@ impl TypeChecker {
         self.resolve_method_overload(
             method,
             &candidates,
+            explicit_type_args,
+            args,
+            arg_types,
+            call_site_span,
+            receiver_ty,
+            expected_return_ty,
+        )
+    }
+
+    /// Resolve a method call whose receiver is explicitly typed as a trait.
+    ///
+    /// Trait annotations expose only the annotated trait and its supertraits. They must not fall through to the
+    /// permissive external-generic path, because that would let root-trait values call methods declared only on
+    /// narrower subtraits.
+    #[allow(clippy::too_many_arguments)]
+    fn resolve_trait_receiver_method(
+        &mut self,
+        receiver_ty: &ResolvedType,
+        method: &str,
+        explicit_type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+        call_site_span: Span,
+        expected_return_ty: Option<&ResolvedType>,
+    ) -> Option<ResolvedType> {
+        let (trait_name, trait_args) = match receiver_ty {
+            ResolvedType::Named(name) => (name.as_str(), Vec::new()),
+            ResolvedType::Generic(name, args) => (name.as_str(), args.clone()),
+            _ => return None,
+        };
+        self.lookup_semantic_trait_info(trait_name)?;
+
+        let adoption = TypeBoundInfo {
+            name: trait_name.to_string(),
+            source_name: None,
+            type_args: trait_args,
+            module_path: None,
+        };
+        self.resolve_named_method(
+            &std::collections::HashMap::new(),
+            None,
+            Some(std::slice::from_ref(&adoption)),
+            method,
             explicit_type_args,
             args,
             arg_types,
@@ -3711,6 +3756,27 @@ impl TypeChecker {
             return ret;
         }
 
+        let trait_receiver_name = match &base_ty {
+            ResolvedType::Named(name) | ResolvedType::Generic(name, _) => Some(name.as_str()),
+            _ => None,
+        };
+        if trait_receiver_name.is_some_and(|name| self.lookup_semantic_trait_info(name).is_some()) {
+            if let Some(ret) = self.resolve_trait_receiver_method(
+                &base_ty,
+                method,
+                type_args,
+                args,
+                &arg_types,
+                span,
+                expected_return_ty,
+            ) {
+                return ret;
+            }
+            self.errors
+                .push(errors::missing_method(&base_ty.to_string(), method, span));
+            return ResolvedType::Unknown;
+        }
+
         if let ResolvedType::Generic(type_name, _type_args) = &base_ty
             && let Some(type_info) = self.lookup_semantic_type_info(type_name).cloned()
         {
@@ -3916,7 +3982,10 @@ impl TypeChecker {
         if let Some(id) = magic_methods::from_str(method)
             && !matches!(
                 id,
-                magic_methods::MagicMethodId::ClassName | magic_methods::MagicMethodId::Fields
+                magic_methods::MagicMethodId::ClassName
+                    | magic_methods::MagicMethodId::Fields
+                    | magic_methods::MagicMethodId::FieldValue
+                    | magic_methods::MagicMethodId::FieldItems
             )
         {
             return ResolvedType::Unknown;

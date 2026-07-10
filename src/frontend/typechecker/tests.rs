@@ -3181,6 +3181,27 @@ fn test_resolved_param_type_from_builtin_borrowed_displays_preserves_ref_payload
 }
 
 #[test]
+fn test_resolved_param_type_from_rust_callable_bound_preserves_callback_borrows() {
+    let checker = TypeChecker::new();
+    assert_eq!(
+        checker.resolved_param_type_from_rust_display(
+            "impl FnMut(&mut demo::Data, &demo::OutputCallbackInfo) -> () + Send + 'static",
+        ),
+        ResolvedType::Function(
+            vec![
+                CallableParam::positional(ResolvedType::RefMut(Box::new(ResolvedType::RustPath(
+                    "demo::Data".to_string()
+                )))),
+                CallableParam::positional(ResolvedType::Ref(Box::new(ResolvedType::RustPath(
+                    "demo::OutputCallbackInfo".to_string()
+                )))),
+            ],
+            Box::new(ResolvedType::Unit),
+        )
+    );
+}
+
+#[test]
 fn test_rust_owner_path_expands_crate_relative_signature_displays() {
     let checker = TypeChecker::new();
     assert_eq!(
@@ -3260,6 +3281,36 @@ fn test_types_compatible_refmut_is_assignable_to_ref_but_not_reverse() {
     assert!(
         !checker.types_compatible(&immutable, &mutable),
         "immutable borrow must not satisfy mutable borrow expectations"
+    );
+}
+
+#[test]
+fn test_types_compatible_function_params_require_exact_borrow_shape() {
+    let checker = TypeChecker::new();
+    let data = ResolvedType::RustPath("demo::Data".to_string());
+    let info = ResolvedType::RustPath("demo::OutputCallbackInfo".to_string());
+    let by_value_callback = ResolvedType::Function(
+        vec![
+            CallableParam::positional(data.clone()),
+            CallableParam::positional(info.clone()),
+        ],
+        Box::new(ResolvedType::Unit),
+    );
+    let borrowed_callback = ResolvedType::Function(
+        vec![
+            CallableParam::positional(ResolvedType::RefMut(Box::new(data))),
+            CallableParam::positional(ResolvedType::Ref(Box::new(info))),
+        ],
+        Box::new(ResolvedType::Unit),
+    );
+
+    assert!(
+        !checker.types_compatible(&by_value_callback, &borrowed_callback),
+        "by-value function parameters must not satisfy borrowed Rust callback parameters"
+    );
+    assert!(
+        checker.types_compatible(&borrowed_callback, &borrowed_callback),
+        "exact borrowed callback parameter shape should remain compatible"
     );
 }
 
@@ -5891,6 +5942,12 @@ def reflected_field_count[T](value: T) -> int:
 
 def reflected_class_name[T](value: T) -> str:
   return value.__class_name__()
+
+def reflected_field_value[T](value: T) -> Option[str]:
+  return value.__field_value__("name")
+
+def reflected_field_items[T](value: T) -> list[tuple[str, str]]:
+  return value.__field_items__()
 "#;
     let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
     let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
@@ -5916,6 +5973,34 @@ def reflected_class_name[T](value: T) -> str:
             )
         }),
         "expected generic __fields__() to resolve to FrozenList[FieldInfo], got {:?}",
+        info.expressions.expr_types
+    );
+    assert!(
+        info.expressions.expr_types.values().any(|ty| {
+            matches!(
+                ty,
+                ResolvedType::Generic(name, args)
+                    if collection_types::from_str(name.as_str()) == Some(CollectionTypeId::Option)
+                        && matches!(args.as_slice(), [ResolvedType::Str])
+            )
+        }),
+        "expected generic __field_value__() to resolve to Option[str], got {:?}",
+        info.expressions.expr_types
+    );
+    assert!(
+        info.expressions.expr_types.values().any(|ty| {
+            matches!(
+                ty,
+                ResolvedType::Generic(name, args)
+                    if collection_types::from_str(name.as_str()) == Some(CollectionTypeId::List)
+                        && matches!(
+                            args.as_slice(),
+                            [ResolvedType::Tuple(items)]
+                                if matches!(items.as_slice(), [ResolvedType::Str, ResolvedType::Str])
+                        )
+            )
+        }),
+        "expected generic __field_items__() to resolve to list[tuple[str, str]], got {:?}",
         info.expressions.expr_types
     );
     Ok(())
@@ -8102,6 +8187,62 @@ model BoxedValue[T] with OrderedCollection:
         "Generic adopters should satisfy transitive generic supertrait annotations with substituted args"
     );
     Ok(())
+}
+
+#[test]
+fn test_trait_typed_receiver_exposes_trait_and_supertrait_methods_issue817() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait DataSet[T]:
+  def filter(self) -> Self: ...
+
+trait BoundedDataSet[T] with DataSet[T]:
+  def limit(self, n: int) -> Self: ...
+
+trait UnboundedDataSet[T] with DataSet[T]:
+  pass
+
+model Event:
+  id: int
+
+def valid_root_call(events: DataSet[Event]) -> DataSet[Event]:
+  return events.filter()
+
+def valid_subtrait_call(events: BoundedDataSet[Event]) -> BoundedDataSet[Event]:
+  return events.limit(10)
+
+def valid_subtrait_supertrait_call(events: UnboundedDataSet[Event]) -> UnboundedDataSet[Event]:
+  return events.filter()
+"#;
+
+    check_str(source)
+}
+
+#[test]
+fn test_trait_typed_receiver_rejects_subtrait_only_method_issue817() {
+    let source = r#"
+trait DataSet[T]:
+  def filter(self) -> Self: ...
+
+trait BoundedDataSet[T] with DataSet[T]:
+  def limit(self, n: int) -> Self: ...
+
+model Event:
+  id: int
+
+def invalid_root_call(events: DataSet[Event]) -> DataSet[Event]:
+  return events.limit(10)
+"#;
+
+    let errs = check_str_err(
+        source,
+        "trait-typed receiver should not expose methods declared only on narrower subtraits",
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("DataSet[Event]") && e.message.contains("limit")),
+        "expected missing method diagnostic for subtrait-only method, got {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
 }
 
 #[test]

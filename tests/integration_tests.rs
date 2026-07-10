@@ -3516,6 +3516,49 @@ def main() -> None:
     }
 
     #[test]
+    fn test_std_checksum_compile_and_run_crc32_vectors() -> Result<(), Box<dyn std::error::Error>> {
+        // Keep std.checksum's generated-project dependency in the root Cargo graph so CI fetches it before this smoke
+        // runs the generated project under CARGO_NET_OFFLINE.
+        assert_eq!(crc32fast::hash(b"abc"), 891568578);
+
+        let source = r#"
+from std.checksum import crc32
+
+def main() -> None:
+    println(crc32.value(b"abc") == 891568578)
+    println(crc32.digest(b"abc") == b"\x35\x24\x41\xc2")
+
+    mut h = crc32.new()
+    h.update(b"a")
+    h.update(b"bc")
+    println(h.finalize_u32() == crc32.value(b"abc"))
+
+    mut bytes = crc32.new()
+    bytes.update(b"abc")
+    println(bytes.finalize_bytes() == crc32.digest(b"abc"))
+"#;
+        let output = incan_command()
+            .args(["run", "-c", source])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "incan run std.checksum smoke failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines = stdout.lines().collect::<Vec<_>>();
+        assert_eq!(
+            lines,
+            vec!["true", "true", "true", "true"],
+            "unexpected std.checksum output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_std_io_compile_and_run_bytesio_core_and_numeric_helpers() -> Result<(), Box<dyn std::error::Error>> {
         // Keep std.io's generated-project dependency in the root Cargo graph so CI fetches it before this smoke runs
         // the generated project under CARGO_NET_OFFLINE.

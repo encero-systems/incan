@@ -32,7 +32,7 @@ incan --version
 incan-lsp --version
 ```
 
-Package-manager installs use the same toolchain archive contract while fitting into the command manager you already use:
+Package-manager installs use the same release archive payloads while fitting into the command manager you already use:
 
 ```bash
 brew tap encero-systems/tap
@@ -41,9 +41,11 @@ npm install -g @incan/toolchain
 pipx install incan
 ```
 
-Use Homebrew when you want native macOS or Linux command management and already have Rust managed separately. The generated release formula is published through the Encero tap, while the release asset remains the source used to update that formula. Use npm when you want the toolchain command shims available through Node-based tooling, editors, or CI images. Use `pipx` for Python-oriented environments; plain `pip install --user incan` also works, but `pipx` keeps the command package isolated from project environments.
+Use Homebrew when you want native macOS or Linux command management and already have Rust managed separately. The generated release formula is published through the Encero tap, while the release asset remains the source used to update that formula. Use npm when you want the toolchain command shims available through Node-based tooling, editors, or CI images without an install-time lifecycle script. Use `pipx` for Python-oriented environments; plain `pip install --user incan` also works, but `pipx` keeps the command package isolated from project environments.
 
-The npm and pip packages install the toolchain into a package-local cache on first install or first command use, then delegate to the real `incan` and `incan-lsp` binaries from the verified toolchain archive. They route through the same installer, so they also provision Rust unless you pass `--skip-rust` through `install-incan` or set `INCAN_SKIP_RUST_INSTALL=1`. Set `INCAN_TOOLCHAIN_MANIFEST` to pin a manifest, or use the direct `install.sh --manifest <URL|PATH>` path when you need fully explicit release control.
+The npm package installs `@incan/toolchain` plus a host-specific optional platform package and then runs the packaged `incan` and `incan-lsp` binaries directly. It does not run `postinstall`, download archives during npm install, or provision Rust automatically. Make sure `rustup`, `cargo`, `rustc`, and `wasm32-wasip1` are available before building projects from an npm-installed toolchain.
+
+The direct installer and pipx package route through the shared installer, so they can provision Rust unless you pass `--skip-rust` through `install-incan` or set `INCAN_SKIP_RUST_INSTALL=1`. Set `INCAN_TOOLCHAIN_MANIFEST` to pin a manifest, or use the direct `install.sh --manifest <URL|PATH>` path when you need fully explicit release control.
 
 Rust users can also install from Git through Cargo, which compiles the release source instead of downloading a prebuilt toolchain archive:
 

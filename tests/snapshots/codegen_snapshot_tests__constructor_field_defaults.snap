@@ -11,7 +11,6 @@ incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 struct Settings {
     theme: String,
     font_size: i64,
-    #[expect(dead_code, reason = "retained for Incan private field semantics")]
     auto_save: bool,
 }
 impl incan_stdlib::reflection::HasClassName for Settings {
@@ -65,6 +64,23 @@ impl incan_stdlib::reflection::HasTypeFieldMetadata for Settings {
             },
         ];
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
+}
+impl incan_stdlib::reflection::HasFieldValueReflection for Settings {
+    fn __field_value__(&self, name: &str) -> Option<String> {
+        match name {
+            "theme" => Some(format!("{}", self.theme)),
+            "font_size" => Some(format!("{}", self.font_size)),
+            "auto_save" => Some(format!("{}", self.auto_save)),
+            _ => None,
+        }
+    }
+    fn __field_items__(&self) -> Vec<(String, String)> {
+        vec![
+            ("theme".to_string(), format!("{}", self.theme)), ("font_size".to_string(),
+            format!("{}", self.font_size)), ("auto_save".to_string(), format!("{}", self
+            .auto_save))
+        ]
     }
 }
 fn main() {

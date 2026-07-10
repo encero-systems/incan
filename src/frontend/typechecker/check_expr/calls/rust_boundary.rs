@@ -338,6 +338,13 @@ impl TypeChecker {
     fn rust_arg_boundary_match(&self, arg_ty: &ResolvedType, rust_param_ty: &str) -> RustArgBoundaryMatch {
         let display = Self::rust_display_without_lifetimes(rust_param_ty);
         let normalized = display.replace(' ', "");
+        if let Some(target_ty) = self.resolved_function_type_from_rust_callable_bound_display(display.as_str()) {
+            return if self.types_compatible(arg_ty, &target_ty) {
+                RustArgBoundaryMatch::Exact
+            } else {
+                RustArgBoundaryMatch::NoMatch
+            };
+        }
         if Self::rust_display_type_var_name(normalized.as_str()).is_some() {
             return RustArgBoundaryMatch::Exact;
         }
@@ -780,7 +787,9 @@ impl TypeChecker {
 mod validate_rust_function_call_tests {
     use super::TypeChecker;
     use crate::frontend::ast::{CallArg, Expr, IntLiteral, Literal, Span, Spanned};
-    use crate::frontend::symbols::{NewtypeInfo, ResolvedType, Symbol, SymbolKind, TypeInfo, VariableInfo};
+    use crate::frontend::symbols::{
+        CallableParam, NewtypeInfo, ResolvedType, ScopeKind, Symbol, SymbolKind, TypeInfo, VariableInfo,
+    };
     use incan_core::interop::{RustFunctionSig, RustParam};
     use incan_core::lang::types::numerics::NumericTypeId;
     use std::collections::HashMap;
@@ -846,6 +855,134 @@ mod validate_rust_function_call_tests {
                     && e.message.contains("got 1")
             }),
             "expected builtin_arity for 0-param Rust call with 1 arg, errors={:?}",
+            checker.errors
+        );
+    }
+
+    #[test]
+    fn rust_callable_bound_rejects_by_value_function_for_borrowed_fnmut() {
+        let mut checker = TypeChecker::new();
+        let span = Span::new(10, 22);
+        let data = ResolvedType::RustPath("demo::Data".to_string());
+        let info = ResolvedType::RustPath("demo::OutputCallbackInfo".to_string());
+        checker.symbols.define(Symbol {
+            name: "write_output".to_string(),
+            kind: SymbolKind::Variable(VariableInfo {
+                ty: ResolvedType::Function(
+                    vec![CallableParam::positional(data), CallableParam::positional(info)],
+                    Box::new(ResolvedType::Unit),
+                ),
+                is_mutable: false,
+                is_used: false,
+            }),
+            span,
+            scope: 0,
+        });
+        let arg_expr = Spanned::new(Expr::Ident("write_output".to_string()), span);
+        let args = [CallArg::Positional(arg_expr)];
+        let sig = RustFunctionSig {
+            params: vec![RustParam {
+                name: Some("callback".to_string()),
+                type_display: "impl FnMut(&mut demo::Data, &demo::OutputCallbackInfo)".to_string(),
+            }],
+            return_type: "()".to_string(),
+            is_async: false,
+            is_unsafe: false,
+        };
+
+        let _ = checker.validate_rust_function_call("rust::demo::use_callback", &sig, &args, span);
+
+        assert!(
+            checker.errors.iter().any(|error| {
+                error.message.contains("FnMut")
+                    || (error.message.contains("&mut demo::Data") && error.message.contains("demo::OutputCallbackInfo"))
+            }),
+            "expected a borrowed callback diagnostic before codegen, got {:?}",
+            checker.errors
+        );
+    }
+
+    #[test]
+    fn rust_callable_bound_accepts_exact_borrowed_fnmut_function() {
+        let mut checker = TypeChecker::new();
+        let span = Span::new(10, 22);
+        let data = ResolvedType::RustPath("demo::Data".to_string());
+        let info = ResolvedType::RustPath("demo::OutputCallbackInfo".to_string());
+        checker.symbols.define(Symbol {
+            name: "write_output".to_string(),
+            kind: SymbolKind::Variable(VariableInfo {
+                ty: ResolvedType::Function(
+                    vec![
+                        CallableParam::positional(ResolvedType::RefMut(Box::new(data))),
+                        CallableParam::positional(ResolvedType::Ref(Box::new(info))),
+                    ],
+                    Box::new(ResolvedType::Unit),
+                ),
+                is_mutable: false,
+                is_used: false,
+            }),
+            span,
+            scope: 0,
+        });
+        let arg_expr = Spanned::new(Expr::Ident("write_output".to_string()), span);
+        let args = [CallArg::Positional(arg_expr)];
+        let sig = RustFunctionSig {
+            params: vec![RustParam {
+                name: Some("callback".to_string()),
+                type_display: "impl FnMut(&mut demo::Data, &demo::OutputCallbackInfo)".to_string(),
+            }],
+            return_type: "()".to_string(),
+            is_async: false,
+            is_unsafe: false,
+        };
+
+        let _ = checker.validate_rust_function_call("rust::demo::use_callback", &sig, &args, span);
+
+        assert!(
+            checker.errors.is_empty(),
+            "exact borrowed Rust callback should typecheck, got {:?}",
+            checker.errors
+        );
+    }
+
+    #[test]
+    fn rust_callable_bound_accepts_generic_placeholder_callback_arg() {
+        let mut checker = TypeChecker::new();
+        let span = Span::new(10, 22);
+        checker.symbols.enter_scope(ScopeKind::Function);
+        checker.symbols.define(Symbol {
+            name: "TaskFn".to_string(),
+            kind: SymbolKind::Type(TypeInfo::Builtin),
+            span,
+            scope: 1,
+        });
+        checker.symbols.define(Symbol {
+            name: "task".to_string(),
+            kind: SymbolKind::Variable(VariableInfo {
+                ty: ResolvedType::Named("TaskFn".to_string()),
+                is_mutable: false,
+                is_used: false,
+            }),
+            span,
+            scope: 1,
+        });
+        let arg_expr = Spanned::new(Expr::Ident("task".to_string()), span);
+        let args = [CallArg::Positional(arg_expr)];
+        let sig = RustFunctionSig {
+            params: vec![RustParam {
+                name: Some("task".to_string()),
+                type_display: "impl FnOnce() -> T".to_string(),
+            }],
+            return_type: "()".to_string(),
+            is_async: false,
+            is_unsafe: false,
+        };
+
+        let _ = checker.validate_rust_function_call("rust::demo::spawn_blocking", &sig, &args, span);
+
+        assert!(
+            checker.errors.is_empty(),
+            "generic placeholder callbacks should keep satisfying generic Rust callable bounds, got {:?}",
             checker.errors
         );
     }
@@ -1034,6 +1171,13 @@ mod validate_rust_function_call_tests {
         let checker = TypeChecker::new();
         let arg_ty = ResolvedType::Numeric(NumericTypeId::I16);
         assert!(checker.rust_arg_matches_boundary(&arg_ty, "i64"));
+    }
+
+    #[test]
+    fn rust_arg_boundary_accepts_pointer_sized_numeric_identity() {
+        let checker = TypeChecker::new();
+        assert!(checker.rust_arg_matches_boundary(&ResolvedType::Numeric(NumericTypeId::ISize), "isize"));
+        assert!(checker.rust_arg_matches_boundary(&ResolvedType::Numeric(NumericTypeId::USize), "usize"));
     }
 
     #[test]

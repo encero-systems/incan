@@ -1,7 +1,6 @@
 # `std.environ`
 
-`std.environ` reads current-process environment variables at runtime. The current surface is read-only and centered on
-Unicode string reads:
+`std.environ` reads current-process environment variables at runtime. The current surface is read-only and centered on Unicode string reads:
 
 ```incan
 from std.environ import get, get_optional, get_or, get_as
@@ -16,14 +15,11 @@ region = get_or("APP_REGION", "eu-west-1")
 
 `get(key: str) -> Result[str, EnvironError]` returns a required Unicode value or an `EnvironError`.
 
-`get_optional(key: str) -> Option[str]` returns `Some(value)` for a present Unicode value and `None` otherwise. Use
-`get()` when code needs to distinguish missing variables from invalid keys or non-Unicode host values.
+`get_optional(key: str) -> Option[str]` returns `Some(value)` for a present Unicode value and `None` otherwise. Use `get()` when code needs to distinguish missing variables from invalid keys or non-Unicode host values.
 
 `get_or(key: str, default: str) -> str` returns the present Unicode value or `default`.
 
-`get_as[T with TryFrom[str]](key: str) -> Result[Option[T], EnvironError]` reads a Unicode value and converts it through
-the target type's `TryFrom[str]` implementation. It returns `Ok(None)` when the key is absent and `Err(EnvironError)`
-when the key is invalid, the host value is not Unicode, or the target conversion rejects the present value.
+`get_as[T with TryFrom[str]](key: str) -> Result[Option[T], EnvironError]` reads a Unicode value and converts it through the target type's `TryFrom[str]` implementation. It returns `Ok(None)` when the key is absent and `Err(EnvironError)` when the key is invalid, the host value is not Unicode, or the target conversion rejects the present value.
 
 ```incan
 from std.environ import get_as
@@ -57,6 +53,4 @@ Error details include the key name where useful, but never include the observed 
 
 ## Scope
 
-The current `get_as` surface is trait-based. It supports targets that explicitly implement `TryFrom[str]`; it does not
-yet provide the full RFC 089 primitive parsing and defaulted overload surface such as `get_as[int]("PORT", default=8080)`.
-Bytes-oriented access and current-process environment mutation are also outside the current surface.
+The current `get_as` surface is trait-based. It supports targets that explicitly implement `TryFrom[str]`; it does not yet provide the full RFC 089 primitive parsing and defaulted overload surface such as `get_as[int]("PORT", default=8080)`. Bytes-oriented access and current-process environment mutation are also outside the current surface.

@@ -11,7 +11,7 @@ Use `std.hash` when a program needs deterministic byte digests, file fingerprint
 | Variable-length extendable output           | `shake128` or `shake256`                               |
 | Fast non-security partitioning or bucketing | `xxh3_64`, `xxh3_128`, `xxh64`, or `xxh32`             |
 
-Do not use `sha1` or `md5` for collision-resistant security decisions. Do not use `std.hash` for password hashing, keyed MACs, signatures, authenticated encryption, CRC, or Adler checksums.
+Do not use `sha1` or `md5` for collision-resistant security decisions. Do not use `std.hash` for password hashing, keyed MACs, signatures, authenticated encryption, CRC, or Adler checksums. Use [`std.checksum`](../reference/stdlib/checksum.md) when a protocol or file format requires CRC32.
 
 ## Hash bytes in one call
 
@@ -132,6 +132,7 @@ Common error categories include `unknown_algorithm`, `unsupported_width`, `inval
 ## See also
 
 - [`std.hash` reference](../reference/stdlib/hash.md)
+- [`std.checksum` reference](../reference/stdlib/checksum.md)
 - [`std.encoding` reference](../reference/stdlib/encoding.md)
 - [`std.io` reference](../reference/stdlib/io.md)
 - [`std.fs` reference](../reference/stdlib/fs.md)

@@ -48,16 +48,24 @@ Use it when deciding whether code should use an existing Incan surface before ad
 | Rust trait adoption from Incan | Interop | 0.3 | Import the Rust trait metadata and adopt with `with TraitName`. | `type UserId = rusttype i64 with Display:`<br>`def fmt(self, f: Formatter) for Display -> Result[None, FmtError]:`<br>`type Output for Add[int] = UserId` | Newtype and rusttype declarations can author Rust trait impls with Incan adoption syntax. | Writing Rust-shaped `impl Trait for Type` concepts in comments or custom backend code. | [Rust interop](../how-to/rust_interop.md), [Derives and traits](derives_and_traits.md), [Release 0.3](../../release_notes/0_3.md) |
 | Targeted generated-Rust lint suppression | Interop | 0.3 | Use `@rust.allow(...)` on supported declarations. | `@rust.allow("dead_code")`<br>`def helper() -> None:` | Generated Rust can receive narrow lint suppressions on individual items when source semantics require them. | Project-wide lint disables or broad generated-Rust allowance groups. | [Rust interop](../how-to/rust_interop.md#targeted-generated-rust-lint-suppression), [Release 0.3](../../release_notes/0_3.md) |
 | Scoped DSL surfaces | Syntax | 0.3 | Import a vocab package that publishes scoped surface descriptors. | `query:`<br>`.field`<br>`\|>`<br>`sum(value)` | Library vocab crates can activate declaration, clause, glyph, leading-dot, and scoped symbol syntax inside their own DSL blocks. | Global parser changes for syntax that only belongs to one imported DSL. | [Authoring vocab crates](../../contributing/how-to/authoring_vocab_crates.md), [Release 0.3](../../release_notes/0_3.md) |
+| `std.web` hosted web framework | Stdlib | 0.2 | Import from `std.web` or submodules such as `std.web.routing`. | `from std.web.routing import route`<br>`from std.web.response import Json`<br>`@route("/health")` | `std.web` provides hosted web app, routing, request, response, and macro surfaces with compiler-activated web runtime dependencies. | Compiler-special-cased web wrappers or direct Axum wiring for ordinary hosted Incan web apps. | [Imports and modules](imports_and_modules.md), [Web framework tutorial](../tutorials/web_framework.md), [Release 0.2](../../release_notes/0_2.md) |
+| `std.math` numeric helpers | Stdlib | 0.2 | Import `std.math`. | `import std.math`<br>`math.sqrt(9.0)`<br>`math.gcd(12, 18)`<br>`math.is_float_like("1.25e3")` | `std.math` provides mathematical constants, integer gcd/lcm helpers, floating-point functions, and numeric-string shape checks. | Direct Rust math imports or project-local numeric string probes for ordinary numeric helper calls. | [std.math](stdlib/math.md), [Release 0.2](../../release_notes/0_2.md) |
 | `std.collections` specialized containers | Stdlib | 0.3 | Import from `std.collections`. | `from std.collections import Deque, Counter, PriorityQueue`<br>`queue = Deque[int]()` | Specialized containers cover deque, counter, default dict, ordered/sorted maps and sets, chain maps, and priority queues. | Encoding specialized container behavior in plain `list`, `dict`, or `set` plus ad hoc helpers. | [std.collections](stdlib/collections.md), [Choosing collections](../how-to/choosing_collections.md), [Release 0.3](../../release_notes/0_3.md) |
 | `std.graph` directed graph types | Stdlib | 0.3 | Import from `std.graph`. | `from std.graph import DiGraph, Dag`<br>`graph = DiGraph[Task]()` | Graph types provide stable node/edge ids, DAG invariants, adjacency queries, traversal, and topological ordering. | Hand-rolled adjacency maps for ordinary dependency, plan, or workflow graphs. | [std.graph](stdlib/graph.md), [Release 0.3](../../release_notes/0_3.md) |
 | `std.fs` filesystem APIs | Stdlib | 0.3 | Import from `std.fs` or submodules such as `std.fs.path`. | `from std.fs import Path`<br>`Path("data").join("orders.csv")` | Path-centric filesystem APIs cover paths, files, metadata, traversal, globbing, copy/move/delete, and durability syncs. | One-off Rust filesystem wrappers for ordinary path and file work. | [std.fs](stdlib/fs.md), [File IO](../how-to/file_io.md), [Release 0.3](../../release_notes/0_3.md) |
 | `std.io` in-memory binary streams | Stdlib | 0.3 | Import from `std.io`. | `from std.io import BytesIO, Endian`<br>`stream.write(value, Endian.Little)` | Binary stream APIs cover `BytesIO`, endian-aware reads/writes, cursor helpers, delimiter operations, and buffer extraction. | Byte-twiddling helpers with unclear endian or cursor semantics. | [std.io](stdlib/io.md), [Release 0.3](../../release_notes/0_3.md) |
-| `std.environ` runtime environment access | Stdlib | 0.5 | Import from `std.environ`. | `from std.environ import get, get_optional, get_or, get_as`<br>`token = get("API_TOKEN")?`<br>`port = get_as[Port]("PORT")?` | `std.environ` provides read-only current-process Unicode environment reads through required, optional, and defaulted string helpers, plus trait-based typed reads through `TryFrom[str]`. | Direct `rust::std::env` imports or shell glue for ordinary runtime environment reads. | [std.environ](stdlib/environ.md), [RFC 089](../../RFCs/089_std_environ.md) |
+| `std.regex` safe-default regular expressions | Stdlib | 0.3 | Import from `std.regex`. | `from std.regex import Regex`<br>`regex = Regex(r"\w+")?`<br>`regex.find_iter(text)` | `std.regex` provides compiled regular expressions, match spans, captures, splitting, and replacement through the predictable stdlib regex engine. | Ad hoc string scans or direct Rust regex interop when the safe default stdlib engine is sufficient. | [std.regex](stdlib/regex.md), [Regular expressions](../how-to/regular_expressions.md), [RFC 059](../../RFCs/closed/implemented/059_std_regex.md), [Release 0.3](../../release_notes/0_3.md) |
+| `std.uuid` UUID values | Stdlib | 0.3 | Import from `std.uuid`. | `from std.uuid import UUID`<br>`UUID.parse("550e8400-e29b-41d4-a716-446655440000")?`<br>`UUID.v7()?` | `std.uuid` provides RFC 9562 UUID parsing, formatting, generation, byte and integer conversion, version inspection, and standard namespace constants. | Loose UUID strings, byte arrays, or project-local UUID wrappers when UUID semantics belong in the type. | [std.uuid](stdlib/uuid.md), [Working with UUIDs](../how-to/working_with_uuids.md), [RFC 060](../../RFCs/closed/implemented/060_std_uuid.md), [Release 0.3](../../release_notes/0_3.md) |
+| `std.compression` codec workflows | Stdlib | 0.3 | Import from `std.compression` or one of its codec namespaces. | `from std.compression import gzip, decompress_auto`<br>`gzip.compress(payload)?`<br>`zstd.decompress_stream(source, target)?` | `std.compression` provides codec-explicit compression and decompression for byte payloads, streams, and file handles, with explicit decompression autodetection. | Backend-crate compression wrappers, implicit codec guesses, or ad hoc byte transforms for standard compression formats. | [std.compression](stdlib/compression.md), [Compress and decompress data](../how-to/compression.md), [RFC 061](../../RFCs/closed/implemented/061_std_compression.md), [Release 0.3](../../release_notes/0_3.md) |
+| `std.encoding` binary-text encodings | Stdlib | 0.3 | Import from `std.encoding`. | `from std.encoding import base64, hex`<br>`base64.urlsafe_b64encode(payload)`<br>`hex.decode(text)?` | `std.encoding` provides explicit binary-to-text encoding and strict decoding helpers for hex, base32, base58, base64, base85, and Bech32 formats. | Project-local encoding wrappers, hidden alphabet flags, or guessing formats from payload shape. | [std.encoding](stdlib/encoding.md), [Binary-text encoding](../how-to/binary_text_encoding.md), [RFC 064](../../RFCs/closed/implemented/064_std_encoding.md), [Release 0.3](../../release_notes/0_3.md) |
+| `std.hash` hashing primitives | Stdlib | 0.3 | Import from `std.hash`. | `from std.hash import sha256, file_digest`<br>`sha256.digest(payload)`<br>`xxh3_64.new()` | `std.hash` provides deterministic byte, file, reader, and incremental hashing through explicit cryptographic, compatibility, and non-cryptographic algorithm namespaces. | Ad hoc hashing shims, hidden default algorithms, or `std.checksum` when the caller needs hash rather than checksum semantics. | [std.hash](stdlib/hash.md), [Hashing data](../how-to/hashing_data.md), [RFC 065](../../RFCs/closed/implemented/065_std_hash.md), [Release 0.3](../../release_notes/0_3.md) |
+| `std.environ` runtime environment access | Stdlib | 0.5 | Import from `std.environ`. | `from std.environ import get, get_optional, get_or, get_as`<br>`token = get("API_TOKEN")?`<br>`port = get_as[Port]("PORT")?` | `std.environ` provides read-only current-process Unicode environment reads through required, optional, and defaulted string helpers, plus trait-based typed reads through `TryFrom[str]`. | Direct `rust::std::env` imports or shell glue for ordinary runtime environment reads. | [std.environ](stdlib/environ.md), [RFC 089](../../RFCs/089_std_environ.md), [Release 0.5](../../release_notes/0_5.md) |
 | `std.json` dynamic JSON values | Stdlib | 0.3 | Import from `std.json`. | `from std.json import JsonValue`<br>`JsonValue.parse(source)`<br>`value["key"]`<br>`value[0]` | `JsonValue` provides dynamic parse-inspect-transform JSON workflows with checked optional indexing, explicit shape inspection, mutation helpers, traversal, and typed-model interop. | Ad hoc dictionaries or over-modeled schemas for payloads whose shape is intentionally open. | [std.json](stdlib/json.md), [Derives: Serialization](derives/serialization.md), [Release 0.3](../../release_notes/0_3.md) |
 | `std.tempfile` temporary resources | Stdlib | 0.3 | Import from `std.tempfile`. | `NamedTemporaryFile.try_new()`<br>`TemporaryDirectory.try_new()`<br>`tmp.persist()` | Temporary files and directories are explicit resources with cleanup and persist semantics. | Manual random path generation or unchecked cleanup around temporary files. | [std.tempfile](stdlib/tempfile.md), [Release 0.3](../../release_notes/0_3.md) |
 | `std.datetime` temporal values | Stdlib | 0.3 | Import from `std.datetime` modules or prelude. | `Date.utc_today()`<br>`DateTime.utc_now()`<br>`TimeDelta(days=1)` | Temporal APIs cover runtime timing, civil dates/times, fixed offsets, parsing/formatting, intervals, and calendar arithmetic. | Raw strings or integer timestamps inside code that has date/time semantics. | [std.datetime](stdlib/datetime.md), [Dates and times](../tutorials/dates_and_times.md), [Dates and times how-to](../how-to/dates_and_times.md) |
 | `std.telemetry.core` data model | Stdlib | 0.3 | Import from `std.telemetry.core` or the `std.telemetry` prelude. | `from std.telemetry.core import TelemetryValue, Attributes`<br>`TelemetryValue.string("ready")`<br>`Attributes.from_string_fields(fields)` | Telemetry core provides structured values, attributes, resources, scopes, and trace context identifiers without configuring providers or exporters. | Stringifying structured observability fields before they reach logging or telemetry boundaries. | [std.logging](stdlib/logging.md), [Release 0.3](../../release_notes/0_3.md) |
 | `std.logging` structured logging | Stdlib | 0.3 | Import from `std.logging`; ambient `log` is available for the current module logger. | `from std.logging import Level, basic_config`<br>`log.info("started", fields={"component": "worker"})` | Structured logging includes levels, named loggers, bound fields, formatting, JSON rendering, and telemetry values. | Printing diagnostic strings or routing ordinary application logging through custom Rust shims. | [std.logging](stdlib/logging.md), [Release 0.3](../../release_notes/0_3.md) |
+| `std.checksum` CRC32 helpers | Stdlib | 0.5 | Import from `std.checksum`. | `from std.checksum import crc32`<br>`crc32.value(b"abc")`<br>`crc32.digest(b"abc")`<br>`h = crc32.new()` | `std.checksum` exposes CRC32 value, digest-byte, and incremental helpers for compatibility and accidental-corruption checks, separate from `std.hash` hashing contracts. | Project-local Rust shims or `std.hash` helpers when a protocol explicitly requires CRC32 checksum semantics. | [std.checksum](stdlib/checksum.md), [Hashing data](../how-to/hashing_data.md), [RFC 065 checksum boundary](../../RFCs/closed/implemented/065_std_hash.md#checksum-boundary), [Release 0.5](../../release_notes/0_5.md) |
 | Testing assertions and markers | Testing | 0.3 | Use `assert` directly; import marker/helper APIs from `std.testing`. | `assert value == expected`<br>`assert call() raises ValueError`<br>`@parametrize("case", cases)` | Tests can use language assertions, raises checks, helper assertions, fixtures, parametrization, and marker decorators. | Ad hoc panic helpers or external test metadata formats for ordinary Incan tests. | [std.testing](stdlib/testing.md), [Testing how-to](../how-to/testing_stdlib.md), [Release 0.3](../../release_notes/0_3.md) |
 | `incan test` runner | Testing | 0.3 | Run `incan test`. | `module tests:`<br>`incan test --list`<br>`incan test --format json --junit report.xml` | The runner owns discovery, inline test modules, stable ids, selection, fixtures, parametrization, reporting, shuffling, and scheduling. | Project-local scripts that duplicate core test discovery and reporting behavior. | [Tooling: testing](../../tooling/how-to/testing.md), [std.testing](stdlib/testing.md), [Release 0.3](../../release_notes/0_3.md) |
 | Async and await | Async | 0.2 | Import `std.async` or one of its submodules. | `from std.async.time import sleep`<br>`async def main() -> None:`<br>`await sleep(1)` | `async` and `await` are import-activated soft-keyword surfaces backed by `std.async` modules. | Threading async behavior through synchronous wrappers or relying on pre-0.2 ambient async syntax. | [Async programming](../how-to/async_programming.md), [std.async](stdlib/async.md), [Release 0.2](../../release_notes/0_2.md) |
@@ -634,6 +642,45 @@ Canonical forms:
 - `|>`
 - `sum(value)`
 
+### `std.web` hosted web framework
+
+- **Id:** `StdWeb`
+- **Category:** `Stdlib`
+- **Since:** `0.2`
+- **RFC:** `RFC 023`
+- **Stability:** `Stable`
+- **Activation:** Import from `std.web` or submodules such as `std.web.routing`.
+- **Use instead of:** Compiler-special-cased web wrappers or direct Axum wiring for ordinary hosted Incan web apps.
+- **References:** [Imports and modules](imports_and_modules.md), [Web framework tutorial](../tutorials/web_framework.md), [Release 0.2](../../release_notes/0_2.md)
+
+`std.web` provides hosted web app, routing, request, response, and macro surfaces with compiler-activated web runtime dependencies.
+
+Canonical forms:
+
+- `from std.web.routing import route`
+- `from std.web.response import Json`
+- `@route("/health")`
+
+### `std.math` numeric helpers
+
+- **Id:** `StdMath`
+- **Category:** `Stdlib`
+- **Since:** `0.2`
+- **RFC:** `RFC 022`
+- **Stability:** `Stable`
+- **Activation:** Import `std.math`.
+- **Use instead of:** Direct Rust math imports or project-local numeric string probes for ordinary numeric helper calls.
+- **References:** [std.math](stdlib/math.md), [Release 0.2](../../release_notes/0_2.md)
+
+`std.math` provides mathematical constants, integer gcd/lcm helpers, floating-point functions, and numeric-string shape checks.
+
+Canonical forms:
+
+- `import std.math`
+- `math.sqrt(9.0)`
+- `math.gcd(12, 18)`
+- `math.is_float_like("1.25e3")`
+
 ### `std.collections` specialized containers
 
 - **Id:** `StdCollections`
@@ -706,6 +753,101 @@ Canonical forms:
 - `from std.io import BytesIO, Endian`
 - `stream.write(value, Endian.Little)`
 
+### `std.regex` safe-default regular expressions
+
+- **Id:** `StdRegex`
+- **Category:** `Stdlib`
+- **Since:** `0.3`
+- **RFC:** `RFC 059`
+- **Stability:** `Stable`
+- **Activation:** Import from `std.regex`.
+- **Use instead of:** Ad hoc string scans or direct Rust regex interop when the safe default stdlib engine is sufficient.
+- **References:** [std.regex](stdlib/regex.md), [Regular expressions](../how-to/regular_expressions.md), [RFC 059](../../RFCs/closed/implemented/059_std_regex.md), [Release 0.3](../../release_notes/0_3.md)
+
+`std.regex` provides compiled regular expressions, match spans, captures, splitting, and replacement through the predictable stdlib regex engine.
+
+Canonical forms:
+
+- `from std.regex import Regex`
+- `regex = Regex(r"\w+")?`
+- `regex.find_iter(text)`
+
+### `std.uuid` UUID values
+
+- **Id:** `StdUuid`
+- **Category:** `Stdlib`
+- **Since:** `0.3`
+- **RFC:** `RFC 060`
+- **Stability:** `Stable`
+- **Activation:** Import from `std.uuid`.
+- **Use instead of:** Loose UUID strings, byte arrays, or project-local UUID wrappers when UUID semantics belong in the type.
+- **References:** [std.uuid](stdlib/uuid.md), [Working with UUIDs](../how-to/working_with_uuids.md), [RFC 060](../../RFCs/closed/implemented/060_std_uuid.md), [Release 0.3](../../release_notes/0_3.md)
+
+`std.uuid` provides RFC 9562 UUID parsing, formatting, generation, byte and integer conversion, version inspection, and standard namespace constants.
+
+Canonical forms:
+
+- `from std.uuid import UUID`
+- `UUID.parse("550e8400-e29b-41d4-a716-446655440000")?`
+- `UUID.v7()?`
+
+### `std.compression` codec workflows
+
+- **Id:** `StdCompression`
+- **Category:** `Stdlib`
+- **Since:** `0.3`
+- **RFC:** `RFC 061`
+- **Stability:** `Stable`
+- **Activation:** Import from `std.compression` or one of its codec namespaces.
+- **Use instead of:** Backend-crate compression wrappers, implicit codec guesses, or ad hoc byte transforms for standard compression formats.
+- **References:** [std.compression](stdlib/compression.md), [Compress and decompress data](../how-to/compression.md), [RFC 061](../../RFCs/closed/implemented/061_std_compression.md), [Release 0.3](../../release_notes/0_3.md)
+
+`std.compression` provides codec-explicit compression and decompression for byte payloads, streams, and file handles, with explicit decompression autodetection.
+
+Canonical forms:
+
+- `from std.compression import gzip, decompress_auto`
+- `gzip.compress(payload)?`
+- `zstd.decompress_stream(source, target)?`
+
+### `std.encoding` binary-text encodings
+
+- **Id:** `StdEncoding`
+- **Category:** `Stdlib`
+- **Since:** `0.3`
+- **RFC:** `RFC 064`
+- **Stability:** `Stable`
+- **Activation:** Import from `std.encoding`.
+- **Use instead of:** Project-local encoding wrappers, hidden alphabet flags, or guessing formats from payload shape.
+- **References:** [std.encoding](stdlib/encoding.md), [Binary-text encoding](../how-to/binary_text_encoding.md), [RFC 064](../../RFCs/closed/implemented/064_std_encoding.md), [Release 0.3](../../release_notes/0_3.md)
+
+`std.encoding` provides explicit binary-to-text encoding and strict decoding helpers for hex, base32, base58, base64, base85, and Bech32 formats.
+
+Canonical forms:
+
+- `from std.encoding import base64, hex`
+- `base64.urlsafe_b64encode(payload)`
+- `hex.decode(text)?`
+
+### `std.hash` hashing primitives
+
+- **Id:** `StdHash`
+- **Category:** `Stdlib`
+- **Since:** `0.3`
+- **RFC:** `RFC 065`
+- **Stability:** `Stable`
+- **Activation:** Import from `std.hash`.
+- **Use instead of:** Ad hoc hashing shims, hidden default algorithms, or `std.checksum` when the caller needs hash rather than checksum semantics.
+- **References:** [std.hash](stdlib/hash.md), [Hashing data](../how-to/hashing_data.md), [RFC 065](../../RFCs/closed/implemented/065_std_hash.md), [Release 0.3](../../release_notes/0_3.md)
+
+`std.hash` provides deterministic byte, file, reader, and incremental hashing through explicit cryptographic, compatibility, and non-cryptographic algorithm namespaces.
+
+Canonical forms:
+
+- `from std.hash import sha256, file_digest`
+- `sha256.digest(payload)`
+- `xxh3_64.new()`
+
 ### `std.environ` runtime environment access
 
 - **Id:** `StdEnviron`
@@ -715,16 +857,14 @@ Canonical forms:
 - **Stability:** `Stable`
 - **Activation:** Import from `std.environ`.
 - **Use instead of:** Direct `rust::std::env` imports or shell glue for ordinary runtime environment reads.
-- **References:** [std.environ](stdlib/environ.md), [RFC 089](../../RFCs/089_std_environ.md)
+- **References:** [std.environ](stdlib/environ.md), [RFC 089](../../RFCs/089_std_environ.md), [Release 0.5](../../release_notes/0_5.md)
 
-`std.environ` provides read-only current-process Unicode environment reads through required, optional, and defaulted string
-helpers, plus trait-based typed reads through `TryFrom[str]`.
+`std.environ` provides read-only current-process Unicode environment reads through required, optional, and defaulted string helpers, plus trait-based typed reads through `TryFrom[str]`.
 
 Canonical forms:
 
 - `from std.environ import get, get_optional, get_or, get_as`
 - `token = get("API_TOKEN")?`
-- `mode = get_or("APP_MODE", "dev")`
 - `port = get_as[Port]("PORT")?`
 
 ### `std.json` dynamic JSON values
@@ -821,6 +961,26 @@ Canonical forms:
 
 - `from std.logging import Level, basic_config`
 - `log.info("started", fields={"component": "worker"})`
+
+### `std.checksum` CRC32 helpers
+
+- **Id:** `StdChecksum`
+- **Category:** `Stdlib`
+- **Since:** `0.5`
+- **RFC:** `RFC 065`
+- **Stability:** `Stable`
+- **Activation:** Import from `std.checksum`.
+- **Use instead of:** Project-local Rust shims or `std.hash` helpers when a protocol explicitly requires CRC32 checksum semantics.
+- **References:** [std.checksum](stdlib/checksum.md), [Hashing data](../how-to/hashing_data.md), [RFC 065 checksum boundary](../../RFCs/closed/implemented/065_std_hash.md#checksum-boundary), [Release 0.5](../../release_notes/0_5.md)
+
+`std.checksum` exposes CRC32 value, digest-byte, and incremental helpers for compatibility and accidental-corruption checks, separate from `std.hash` hashing contracts.
+
+Canonical forms:
+
+- `from std.checksum import crc32`
+- `crc32.value(b"abc")`
+- `crc32.digest(b"abc")`
+- `h = crc32.new()`
 
 ### Testing assertions and markers
 

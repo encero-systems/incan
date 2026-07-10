@@ -184,6 +184,21 @@ impl incan_stdlib::reflection::HasTypeFieldMetadata for UuidError {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
+impl incan_stdlib::reflection::HasFieldValueReflection for UuidError {
+    fn __field_value__(&self, name: &str) -> Option<String> {
+        match name {
+            "kind" => Some(format!("{}", self.kind)),
+            "detail" => Some(format!("{}", self.detail)),
+            _ => None,
+        }
+    }
+    fn __field_items__(&self) -> Vec<(String, String)> {
+        vec![
+            ("kind".to_string(), format!("{}", self.kind)), ("detail".to_string(),
+            format!("{}", self.detail))
+        ]
+    }
+}
 impl UuidError {
     /// Return the human-readable error detail.
     ///
@@ -628,6 +643,17 @@ impl incan_stdlib::reflection::HasTypeFieldMetadata for _UuidText {
             },
         ];
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
+}
+impl incan_stdlib::reflection::HasFieldValueReflection for _UuidText {
+    fn __field_value__(&self, name: &str) -> Option<String> {
+        match name {
+            "text" => Some(format!("{}", self.text)),
+            _ => None,
+        }
+    }
+    fn __field_items__(&self) -> Vec<(String, String)> {
+        vec![("text".to_string(), format!("{}", self.text))]
     }
 }
 impl _UuidText {

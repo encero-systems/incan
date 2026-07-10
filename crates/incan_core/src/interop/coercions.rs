@@ -82,9 +82,9 @@ fn admitted_scalar_coercion(incan_type: &str, rust_target: &str) -> Option<Coerc
     }
 }
 
-/// Return whether `name` is an exact-width Rust/Incan numeric spelling with no alias expansion needed.
+/// Return whether `name` is a Rust/Incan numeric spelling that is exact when source and target text match.
 fn is_exact_numeric_spelling(name: &str) -> bool {
-    numeric_rank(name).is_some() || matches!(name, "f32" | "f64")
+    numeric_rank(name).is_some() || matches!(name, "isize" | "usize" | "f32" | "f64")
 }
 
 /// Return whether an exact numeric scalar can flow to the Rust boundary without value loss.
@@ -372,6 +372,10 @@ mod tests {
         assert_eq!(admitted_builtin_coercion("i16", "i64"), Some(CoercionPolicy::Lossless));
         assert_eq!(admitted_builtin_coercion("u8", "i16"), Some(CoercionPolicy::Lossless));
         assert_eq!(admitted_builtin_coercion("i16", "u32"), None);
+        assert_eq!(admitted_builtin_coercion("isize", "isize"), Some(CoercionPolicy::Exact));
+        assert_eq!(admitted_builtin_coercion("usize", "usize"), Some(CoercionPolicy::Exact));
+        assert_eq!(admitted_builtin_coercion("usize", "u64"), None);
+        assert_eq!(admitted_builtin_coercion("u32", "usize"), None);
         assert_eq!(admitted_builtin_coercion("str", "&str"), Some(CoercionPolicy::Borrow));
         assert_eq!(
             admitted_builtin_coercion("str", "&String"),

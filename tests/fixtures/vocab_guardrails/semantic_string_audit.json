@@ -4,7 +4,7 @@
       "path": "crates/incan_core/src/interop/coercions.rs",
       "category": "registry-backed Rust-boundary coercion policy",
       "expected_count": 39,
-      "expected_fingerprint": "0x631ac11a12a89439"
+      "expected_fingerprint": "0x309683062c796469"
     },
     {
       "path": "crates/incan_core/src/interop/extension_traits.rs",
@@ -27,8 +27,8 @@
     {
       "path": "crates/rust_inspect/src/cache_tests.rs",
       "category": "rust-inspect generated enum metadata regression assertions",
-      "expected_count": 14,
-      "expected_fingerprint": "0x2136b9af70108159"
+      "expected_count": 16,
+      "expected_fingerprint": "0x6868ad0500373ab2"
     },
     {
       "path": "crates/rust_inspect/src/cache_timing.rs",
@@ -333,8 +333,8 @@
     {
       "path": "src/frontend/typechecker/mod.rs",
       "category": "Rust display type parsing and stdlib derive compatibility",
-      "expected_count": 34,
-      "expected_fingerprint": "0xa66345b30dd9c215"
+      "expected_count": 36,
+      "expected_fingerprint": "0x83c71e98845e3793"
     },
     {
       "path": "src/frontend/typechecker/stdlib_loader.rs",

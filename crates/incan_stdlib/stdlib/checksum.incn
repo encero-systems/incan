@@ -1,0 +1,89 @@
+"""
+Non-security checksum helpers for interoperability and file/container formats.
+
+`std.checksum` is separate from `std.hash` because CRC-style algorithms have compatibility and accidental-corruption
+contracts, not collision-resistant security contracts.
+"""
+
+from rust::crc32fast import Hasher as Crc32Hasher, hash as crc32_hash
+
+
+pub class Crc32:
+    """
+    Incremental IEEE CRC-32 hasher.
+
+    `finalize_u32()` snapshots the current checksum integer. `finalize_bytes()` renders that value as four bytes in
+    big-endian/network byte order so byte output matches common protocol and file-format spelling.
+    """
+
+    handle: Crc32Hasher
+
+    def update(mut self, chunk: bytes) -> None:
+        """
+        Feed one byte chunk into the checksum state.
+        """
+        self.handle.update(chunk.as_slice())
+
+    def finalize_u32(self) -> u32:
+        """
+        Return the CRC32 value for all chunks fed so far.
+
+        The Rust `crc32fast` finalizer consumes its handle. Cloning here makes the Incan method a snapshot finalizer so
+        callers can ask for integer and byte output from the same source-level hasher.
+        """
+        return self.handle.clone().finalize()
+
+    def finalize_bytes(self) -> bytes:
+        """
+        Return the CRC32 value as four big-endian bytes.
+        """
+        return _u32_to_be_bytes(self.finalize_u32())
+
+
+@rust.allow("non_camel_case_types")
+pub class crc32:
+    """
+    IEEE CRC-32 namespace with one-shot and incremental helpers.
+    """
+
+    @staticmethod
+    def value(data: bytes) -> u32:
+        """
+        Compute the CRC32 value for `data`.
+        """
+        return crc32_hash(data.as_slice())
+
+    @staticmethod
+    def digest(data: bytes) -> bytes:
+        """
+        Compute the CRC32 digest bytes for `data` in big-endian/network byte order.
+        """
+        return _u32_to_be_bytes(crc32.value(data))
+
+    @staticmethod
+    def new() -> Crc32:
+        """
+        Create a fresh incremental CRC32 hasher.
+        """
+        return Crc32(handle=Crc32Hasher.new())
+
+
+def _u32_to_be_bytes(value: u32) -> bytes:
+    """
+    Encode a 32-bit integer as big-endian bytes in Incan source.
+    """
+    number = int(value)
+    mut out: list[u8] = []
+    _append_byte(out, (number // 16777216) % 256)
+    _append_byte(out, (number // 65536) % 256)
+    _append_byte(out, (number // 256) % 256)
+    _append_byte(out, number % 256)
+    return out
+
+
+def _append_byte(mut out: list[u8], value: int) -> None:
+    """
+    Append one low byte after explicit wrapping conversion to `u8`.
+    """
+    byte: u8 = value.wrapping_resize()
+    out.append(byte)

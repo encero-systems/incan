@@ -111,6 +111,34 @@ impl incan_stdlib::reflection::HasTypeFieldMetadata for IoError {
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
+impl incan_stdlib::reflection::HasFieldValueReflection for IoError {
+    fn __field_value__(&self, name: &str) -> Option<String> {
+        match name {
+            "kind" => Some(format!("{}", self.kind)),
+            "detail" => Some(format!("{}", self.detail)),
+            "operation" => Some(format!("{}", self.operation)),
+            "position" => Some(format!("{}", self.position)),
+            "path" => {
+                Some(
+                    match &self.path {
+                        Some(value) => format!("{}", value),
+                        None => "None".to_string(),
+                    },
+                )
+            }
+            _ => None,
+        }
+    }
+    fn __field_items__(&self) -> Vec<(String, String)> {
+        vec![
+            ("kind".to_string(), format!("{}", self.kind)), ("detail".to_string(),
+            format!("{}", self.detail)), ("operation".to_string(), format!("{}", self
+            .operation)), ("position".to_string(), format!("{}", self.position)), ("path"
+            .to_string(), match & self.path { Some(value) => format!("{}", value), None
+            => "None".to_string(), })
+        ]
+    }
+}
 impl IoError {
     /// Return the human-readable error detail.
     ///

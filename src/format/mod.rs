@@ -1705,7 +1705,7 @@ const B: int = 2
         let formatted = format_source(source)?;
         assert_eq!(formatted, source);
 
-        let methods_only = r#"""Module docstring."""
+        let methods_only = r#""""Module docstring."""
 
 
 enum Marker:
