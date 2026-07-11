@@ -824,6 +824,16 @@ fn prepare_project_with_options(
         codegen.set_declared_crate_names(m.declared_rust_crate_names());
     }
     codegen.set_library_manifest_index(library_manifest_index.clone());
+    for module in dep_modules
+        .iter()
+        .filter(|module| stdlib::is_compiled_builtin_stdlib_emission_path(&module.path_segments))
+    {
+        codegen.add_dependency_symbol_module_with_path_segments(
+            &module.name,
+            &module.ast,
+            module.path_segments.clone(),
+        );
+    }
     // Add user dependency modules
     for module in &emitted_dep_modules {
         codegen.add_module_with_path_segments(&module.name, &module.ast, module.path_segments.clone());

@@ -1389,7 +1389,14 @@ impl<'a> IrEmitter<'a> {
     ) -> bool {
         matches!(
             program.source_module_name.as_deref(),
-            Some(module_name) if module_name == support.source_module || module_name == support.generated_module
+            Some(module_name)
+                if module_name == support.source_module
+                    || module_name == support.generated_module
+                    || (std::env::var_os(BUILTIN_STDLIB_ARTIFACT_BUILD_ENV).is_some()
+                        && support
+                            .source_module
+                            .strip_prefix("std.")
+                            .is_some_and(|artifact_module| module_name == artifact_module))
         )
     }
 
@@ -3474,6 +3481,9 @@ impl<'a> IrEmitter<'a> {
                     continue;
                 }
                 if let Some(name) = union_ty.union_type_name() {
+                    if self.external_union_type_libraries.contains_key(&name) {
+                        continue;
+                    }
                     canonical_union_types.insert(name, union_ty);
                 }
             }

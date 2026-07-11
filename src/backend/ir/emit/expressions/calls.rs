@@ -1222,7 +1222,9 @@ impl<'a> IrEmitter<'a> {
         // Private stdlib helpers are implementation details of the artifact. They remain addressable only while
         // compiling that artifact itself; consumer code must never acquire a cross-crate path to an underscored
         // source helper merely because its enclosing module is compiled.
-        let can_link_compiled_stdlib_symbol = compiling_builtin_stdlib_artifact || !function_name.starts_with('_');
+        let can_link_compiled_stdlib_symbol = compiling_builtin_stdlib_artifact
+            || !function_name.starts_with('_')
+            || stdlib::is_compiled_builtin_stdlib_support_function(&module_path, function_name);
         let mut segments: Vec<TokenStream> = if module_path.first().map(String::as_str) == Some("incan_stdlib") {
             let mut segments = vec![quote! { incan_stdlib }];
             for seg in module_path.iter().skip(1) {

@@ -6715,11 +6715,18 @@ async def main() -> None:
             generated_main.contains("__incan_ordinal_require_str("),
             "OrdinalMap[str] literal lookup should lower through the borrowed string fast path:\n{generated_main}"
         );
-        let generated_collections =
-            fs::read_to_string("target/incan/std_ordinal_map_surface/src/__incan_std/collections.rs")?;
+        assert!(
+            generated_main.contains("pub use incan_builtin_stdlib::collections::OrdinalMap;"),
+            "OrdinalMap should be supplied by the compiled built-in stdlib artifact:\n{generated_main}"
+        );
+        assert!(
+            !std::path::Path::new("target/incan/std_ordinal_map_surface/src/__incan_std/collections.rs").exists(),
+            "a compiled std.collections module must not be materialized in the consumer"
+        );
+        let generated_collections = fs::read_to_string("crates/incan_stdlib/stdlib/target/lib/src/collections.rs")?;
         assert!(
             generated_collections.contains("incan_stdlib::__incan_ordinal_map_string_fast_impls!();"),
-            "generated std.collections should splice in the stdlib-owned OrdinalMap string support:\n{generated_collections}"
+            "the compiled std.collections artifact should splice in the stdlib-owned OrdinalMap string support:\n{generated_collections}"
         );
         Ok(())
     }

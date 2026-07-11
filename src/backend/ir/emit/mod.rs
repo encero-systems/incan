@@ -40,8 +40,8 @@ use super::{FunctionRegistry, FunctionSignature, IrProgram};
 use crate::frontend::library_manifest_index::{LibraryManifestIndex, LibraryManifestIndexEntry};
 use crate::frontend::symbols::ResolvedType;
 use crate::library_manifest::{FieldExport, TypeParamExport, TypeRef, resolved_type_from_manifest_type_ref};
-use incan_core::lang::rust_keywords;
 use incan_core::lang::types::collections::{self, CollectionTypeId};
+use incan_core::lang::{rust_keywords, stdlib};
 
 /// Value-enum metadata loaded from a `.incnlib` dependency for consumer-side trait bridges.
 #[derive(Debug, Clone)]
@@ -392,6 +392,9 @@ pub struct IrEmitter<'a> {
     /// Multi-file source modules share generated ordinary union wrappers through the crate root so same-shaped unions
     /// remain one Rust nominal type across module boundaries.
     qualify_union_types_from_crate: bool,
+    /// Anonymous union wrappers owned by an external compiled artifact, keyed
+    /// by their stable generated Rust name.
+    external_union_type_libraries: HashMap<String, String>,
     /// Extra anonymous union shapes that should be emitted in this module in addition to locally referenced shapes.
     generated_union_types: HashMap<String, IrType>,
     /// Whether this module should emit generated ordinary union wrapper definitions.
@@ -472,6 +475,7 @@ impl<'a> IrEmitter<'a> {
             in_static_initializer: RefCell::new(false),
             qualify_internal_canonical_paths: RefCell::new(false),
             qualify_union_types_from_crate: false,
+            external_union_type_libraries: HashMap::new(),
             generated_union_types: HashMap::new(),
             emit_generated_union_definitions: true,
             storage_binding_mut_names: RefCell::new(Vec::new()),
@@ -891,6 +895,11 @@ impl<'a> IrEmitter<'a> {
         self.qualify_union_types_from_crate = enabled;
     }
 
+    /// Set external owners for generated anonymous union wrappers.
+    pub fn set_external_union_type_libraries(&mut self, libraries: HashMap<String, String>) {
+        self.external_union_type_libraries = libraries;
+    }
+
     /// Add generated union wrapper definitions that should be emitted by this module.
     pub fn set_generated_union_types(&mut self, types: HashMap<String, IrType>) {
         self.generated_union_types = types;
@@ -1122,8 +1131,17 @@ impl<'a> IrEmitter<'a> {
         module_path: &[String],
         name: &str,
     ) -> Option<TokenStream> {
-        let mut segments = vec![quote! { crate }];
-        for segment in module_path {
+        let compiling_builtin_stdlib_artifact =
+            std::env::var_os("INCAN_INTERNAL_BUILTIN_STDLIB_ARTIFACT_BUILD").is_some();
+        let compiled_builtin_stdlib_module = stdlib::is_compiled_builtin_stdlib_emission_path(module_path);
+        let (mut segments, path_segments): (Vec<TokenStream>, &[String]) =
+            if compiled_builtin_stdlib_module && !compiling_builtin_stdlib_artifact {
+                let artifact = Self::rust_ident(stdlib::BUILTIN_STDLIB_ARTIFACT_CRATE);
+                (vec![quote! { #artifact }], &module_path[1..])
+            } else {
+                (vec![quote! { crate }], module_path)
+            };
+        for segment in path_segments {
             let ident = Self::rust_ident(segment);
             segments.push(quote! { #ident });
         }

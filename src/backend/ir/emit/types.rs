@@ -47,6 +47,10 @@ impl<'a> IrEmitter<'a> {
             });
             return quote! { #path :: #n };
         }
+        if let Some(library) = self.external_union_type_libraries.get(&union_name) {
+            let library = Self::rust_ident(library);
+            return quote! { #library :: #n };
+        }
         if self.qualify_union_types_from_crate {
             quote! { crate :: #n }
         } else {
@@ -376,12 +380,15 @@ impl<'a> IrEmitter<'a> {
                     // Parse as a path
                     let segments: Vec<_> = variant.split("::").collect();
                     let idents: Vec<_> = segments.iter().map(|s| format_ident!("{}", s)).collect();
-                    if self.qualify_union_types_from_crate
-                        && segments
-                            .first()
-                            .is_some_and(|segment| segment.starts_with("__IncanUnion"))
-                    {
-                        quote! { crate :: #(#idents)::* }
+                    if let Some(union_name) = segments.first().filter(|segment| segment.starts_with("__IncanUnion")) {
+                        if let Some(library) = self.external_union_type_libraries.get(*union_name) {
+                            let library = Self::rust_ident(library);
+                            quote! { #library :: #(#idents)::* }
+                        } else if self.qualify_union_types_from_crate {
+                            quote! { crate :: #(#idents)::* }
+                        } else {
+                            quote! { #(#idents)::* }
+                        }
                     } else {
                         quote! { #(#idents)::* }
                     }

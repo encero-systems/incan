@@ -3292,6 +3292,17 @@ pub(super) fn run_file_tests_batch(
         .iter()
         .filter(|module| !stdlib::is_compiled_builtin_stdlib_emission_path(&module.path_segments))
         .collect::<Vec<_>>();
+    for module in prepared
+        .source_modules
+        .iter()
+        .filter(|module| stdlib::is_compiled_builtin_stdlib_emission_path(&module.path_segments))
+    {
+        codegen.add_dependency_symbol_module_with_path_segments(
+            &module.name,
+            &module.ast,
+            module.path_segments.clone(),
+        );
+    }
     for module in &emitted_source_modules {
         codegen.add_module_with_path_segments(&module.name, &module.ast, module.path_segments.clone());
     }

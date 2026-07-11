@@ -284,6 +284,20 @@ pub fn is_compiled_builtin_stdlib_emission_path(path: &[String]) -> bool {
     is_compiled_builtin_stdlib_module(&source_path)
 }
 
+/// Return whether a compiler-generated support call is a deliberate cross-crate
+/// part of the compiled built-in stdlib contract.
+///
+/// These names remain underscored in Incan because they are not general user
+/// API. They are nevertheless public Rust symbols: generated trait defaults
+/// in a consumer must be able to call them when their source contract is owned
+/// by the compiled artifact.
+#[must_use]
+pub fn is_compiled_builtin_stdlib_support_function(path: &[String], name: &str) -> bool {
+    name == "_ordinal_hash"
+        && (path.iter().map(String::as_str).eq([STDLIB_ROOT, "collections"])
+            || path.iter().map(String::as_str).eq([INCAN_STD_NAMESPACE, "collections"]))
+}
+
 /// Return whether `name` is an RFC 047 graph type with direct constructor syntax.
 #[must_use]
 pub fn is_graph_constructor_type(name: &str) -> bool {
