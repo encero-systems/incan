@@ -3359,8 +3359,9 @@ def run() -> Result[None, IoError]:
     println(staged.exists())
     return Ok(None)
 
-def main() -> None:
+def main() -> Result[None, IoError]:
     run()?
+    return Ok(None)
 "#,
             staged = staged.display(),
             target = target.display(),
