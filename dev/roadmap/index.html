@@ -7077,7 +7077,7 @@
 </tr>
 <tr>
 <td style="text-align: right;"><a href="/dev/RFCs/077_workspace_and_multi_package_projects">RFC 077</a></td>
-<td>Draft</td>
+<td>Planned</td>
 <td>proposed / active</td>
 <td>workspace and multi-package projects</td>
 </tr>
@@ -7366,6 +7366,7 @@
 <li>backend migration scaffolding.</li>
 </ul>
 <p>Stdlib RFC/work is allowed in this lane. Hees.ai is also allowed, but only as a constrained commercial and dogfood proof path that validates compiler, stdlib, runtime, and tooling direction. Hees.ai work should consume general Incan surfaces, not quietly become broad product scope inside the language milestone.</p>
+<p>RFC 077 workspace foundations are a targeted tooling dependency in 0.5 rather than a general lifecycle reopening. The InQL and InQL-DB monorepo direction needs explicit root/member topology, shared dependency and lock semantics, deterministic member selection, machine-readable inspection, and lifecycle command fan-out. Pulling that foundation forward lets the monorepo begin with stable package boundaries; registry publication, nested workspaces, remote execution, and broad workspace product surfaces remain outside this exception.</p>
 <p>Core tracking issues:</p>
 <ul>
 <li><a href="https://github.com/encero-systems/incan/issues/634">#634</a>: v1.0 middle-end foundation umbrella.</li>
@@ -7378,6 +7379,7 @@
 <li><a href="https://github.com/encero-systems/incan/issues/224">#224</a>: <code>CompilationSession</code> semantic database transition.</li>
 <li><a href="https://github.com/encero-systems/incan/issues/549">#549</a>: Hees.ai governed workbench demo.</li>
 <li><a href="https://github.com/encero-systems/incan/issues/651">#651</a>: Hees.ai dependency inventory and guardrails.</li>
+<li><a href="https://github.com/encero-systems/incan/issues/405">#405</a>: RFC 077 workspace and multi-package project foundations.</li>
 </ul>
 <p>Phase-0 references:</p>
 <ul>

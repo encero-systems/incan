@@ -6206,6 +6206,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#terminology-and-mental-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      Terminology and mental model
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#guide-level-explanation" class="md-nav__link">
     <span class="md-ellipsis">
       Guide-level explanation
@@ -6228,6 +6237,15 @@
   <a href="#running-across-members" class="md-nav__link">
     <span class="md-ellipsis">
       Running across members
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sharing-environments-explicitly" class="md-nav__link">
+    <span class="md-ellipsis">
+      Sharing environments explicitly
     </span>
   </a>
   
@@ -6258,9 +6276,18 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#workspace-root-and-members" class="md-nav__link">
+  <a href="#workspace-manifest-schema" class="md-nav__link">
     <span class="md-ellipsis">
-      Workspace root and members
+      Workspace manifest schema
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#workspace-discovery-and-member-identity" class="md-nav__link">
+    <span class="md-ellipsis">
+      Workspace discovery and member identity
     </span>
   </a>
   
@@ -6276,6 +6303,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#shared-dependencies-and-explicit-inheritance" class="md-nav__link">
+    <span class="md-ellipsis">
+      Shared dependencies and explicit inheritance
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#shared-lock-state" class="md-nav__link">
     <span class="md-ellipsis">
       Shared lock state
@@ -6285,27 +6321,18 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#shared-dependencies-and-overrides" class="md-nav__link">
+  <a href="#environments-and-matrices" class="md-nav__link">
     <span class="md-ellipsis">
-      Shared dependencies and overrides
+      Environments and matrices
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#envs-and-matrices" class="md-nav__link">
+  <a href="#workspace-mutation-plans-and-policy" class="md-nav__link">
     <span class="md-ellipsis">
-      Envs and matrices
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#workspace-mutation-plans" class="md-nav__link">
-    <span class="md-ellipsis">
-      Workspace mutation plans
+      Workspace mutation plans and policy
     </span>
   </a>
   
@@ -6315,6 +6342,24 @@
   <a href="#machine-readable-inspection" class="md-nav__link">
     <span class="md-ellipsis">
       Machine-readable inspection
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#publication-and-versions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Publication and versions
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compatibility-and-migration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Compatibility and migration
     </span>
   </a>
   
@@ -6339,6 +6384,15 @@
   <a href="#relationship-to-rfc-015" class="md-nav__link">
     <span class="md-ellipsis">
       Relationship to RFC 015
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#relationship-to-rfc-020" class="md-nav__link">
+    <span class="md-ellipsis">
+      Relationship to RFC 020
     </span>
   </a>
   
@@ -6380,6 +6434,15 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#why-root-membership-follows-manifest-identity" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why root membership follows manifest identity
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -6408,6 +6471,51 @@
   <a href="#require-one-package-per-repository" class="md-nav__link">
     <span class="md-ellipsis">
       Require one package per repository
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#infer-members-from-path-dependencies" class="md-nav__link">
+    <span class="md-ellipsis">
+      Infer members from path dependencies
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#require-for-root-membership" class="md-nav__link">
+    <span class="md-ellipsis">
+      Require "." for root membership
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#allow-a-root-project-outside-its-colocated-workspace" class="md-nav__link">
+    <span class="md-ellipsis">
+      Allow a root project outside its colocated workspace
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#keep-one-lockfile-per-member" class="md-nav__link">
+    <span class="md-ellipsis">
+      Keep one lockfile per member
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#require-moving-the-root-package-under-packages" class="md-nav__link">
+    <span class="md-ellipsis">
+      Require moving the root package under packages/
     </span>
   </a>
   
@@ -6455,9 +6563,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#unresolved-questions" class="md-nav__link">
+  <a href="#design-decisions" class="md-nav__link">
     <span class="md-ellipsis">
-      Unresolved questions
+      Design Decisions
     </span>
   </a>
   
@@ -6483,7 +6591,7 @@
 
 <h1 id="rfc-077-workspace-and-multi-package-projects">RFC 077: workspace and multi-package projects<a class="headerlink" href="#rfc-077-workspace-and-multi-package-projects" title="Permanent link">&para;</a></h1>
 <ul>
-<li><strong>Status:</strong> Draft</li>
+<li><strong>Status:</strong> Planned</li>
 <li><strong>Created:</strong> 2026-04-26</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong><ul>
@@ -6497,23 +6605,25 @@
 <li>RFC 079 (<code>incan.pub</code> artifact graph)</li>
 </ul>
 </li>
-<li><strong>Issue:</strong> https://github.com/encero-systems/incan/issues/405</li>
-<li><strong>RFC PR:</strong> —</li>
+<li><strong>Issue:</strong> <a href="https://github.com/encero-systems/incan/issues/405">#405</a></li>
+<li><strong>RFC PR:</strong> <a href="https://github.com/encero-systems/incan/pull/830">#830</a></li>
 <li><strong>Written against:</strong> v0.3</li>
 <li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
 <p>This RFC defines a first-class workspace model for Incan projects that contain multiple related packages, applications, libraries, tools, examples, or generated artifacts in one repository. RFC 015 envs answer how commands run; workspaces answer what project members exist, how they share dependency resolution and policy, and how lifecycle commands operate across member boundaries.</p>
 <h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
-<p>Read this RFC as seven foundations:</p>
+<p>Read this RFC as nine foundations:</p>
 <ol>
 <li><strong>Topology is explicit:</strong> a workspace declares its root and members instead of relying on ad-hoc directory conventions.</li>
 <li><strong>Members remain ordinary projects:</strong> each member can have its own package metadata, source tree, dependencies, envs, scripts, capabilities, and publish settings.</li>
-<li><strong>The root coordinates shared concerns:</strong> a workspace may provide shared lock state, shared policy, shared dependency overrides, shared metadata, shared tooling, and shared catalog configuration.</li>
+<li><strong>Root identity is structural:</strong> when <code>[project]</code> and <code>[workspace]</code> coexist in the root manifest, the root project is a workspace member automatically; a root with only <code>[workspace]</code> is virtual.</li>
+<li><strong>Resolution is workspace-wide:</strong> one canonical root lockfile represents the dependency graph of every member, independent of which members a command executes.</li>
 <li><strong>Commands select a scope:</strong> lifecycle commands must know whether they apply to the current member, selected members, default members, or the whole workspace.</li>
+<li><strong>Inheritance is explicit and refinable:</strong> members opt into shared dependency and environment declarations; inherited Rust dependencies may add usage-specific features and optionality without changing shared dependency identity.</li>
 <li><strong>Envs compose with topology:</strong> RFC 015 envs still describe execution context, but workspace commands decide which members receive that context.</li>
 <li><strong>Capabilities are scoped:</strong> starters and capability packs may target one member, multiple members, or workspace-level metadata, and must show that scope in mutation plans.</li>
-<li><strong>The workspace is publish-aware:</strong> publication, documentation, artifact discovery, and policy may need workspace-level views without forcing every member to publish together.</li>
+<li><strong>The workspace is publish-aware:</strong> publication, documentation, artifact discovery, and policy may need workspace-level views without forcing every member to publish or version together.</li>
 </ol>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
 <p>RFC 015 gives Incan a project lifecycle and RFC 073 gives env matrices a way to describe execution variation. Those are necessary but not enough for repositories that naturally contain multiple packages: an application plus internal libraries, a CLI plus a core library, examples plus integration tests, or a product surface plus shared schemas. Treating those as unrelated projects loses shared locking, shared policy, shared scripts, and cross-member dependency intent.</p>
@@ -6521,8 +6631,10 @@
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Define workspace root discovery and workspace member declaration.</li>
-<li>Allow members to be selected by name, path, glob, default set, or all-members mode.</li>
-<li>Define shared workspace lock and dependency resolution expectations.</li>
+<li>Allow non-root members to be declared by path or glob and resolved members to be selected by name, path, default set, or all-members mode.</li>
+<li>Allow an existing root project to become the implicit root member without relocating its source tree or repeating <code>"."</code> in <code>members</code>.</li>
+<li>Define one shared workspace lock and deterministic whole-workspace dependency resolution.</li>
+<li>Define explicit inheritance for shared Incan dependencies, refinable Rust dependencies, and environments.</li>
 <li>Define how RFC 015 envs and RFC 073 matrices apply across members.</li>
 <li>Define workspace-level policy and catalog/source configuration hooks for RFC 076.</li>
 <li>Define how RFC 075 starters and capabilities can apply to one member, selected members, or workspace-level metadata.</li>
@@ -6535,140 +6647,249 @@
 <li>Replacing RFC 015 envs or RFC 073 matrices.</li>
 <li>Requiring every project to be a workspace.</li>
 <li>Requiring all workspace members to share one package version.</li>
+<li>Inferring workspace membership from path dependencies.</li>
+<li>Supporting nested workspaces or members outside the workspace root.</li>
+<li>Providing atomic multi-package publication; publication remains a per-member operation.</li>
 <li>Defining registry hosting behavior for workspace artifacts.</li>
-<li>Defining exact CLI flag spelling for every member-selection operation.</li>
+</ul>
+<h2 id="terminology-and-mental-model">Terminology and mental model<a class="headerlink" href="#terminology-and-mental-model" title="Permanent link">&para;</a></h2>
+<ul>
+<li>A <strong>project</strong> or <strong>package</strong> is an independently named and versioned unit described by <code>[project]</code>; it can declare dependencies and may be published.</li>
+<li>A <strong>member</strong> is a project that belongs to one workspace. Membership says that projects are managed together; it does not imply that they depend on one another.</li>
+<li>A <strong>workspace</strong> is the repository-level coordination boundary for members, dependency resolution, locking, policy, and command selection. It is not itself a package or compiled artifact.</li>
+<li>An <strong>environment</strong> describes how commands run: toolchain constraints, variables, scripts, dependency overlays, and matrices. Workspace selection determines which members run; environment selection determines the execution context for each selected member.</li>
 </ul>
 <h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
 <h3 id="declaring-a-workspace">Declaring a workspace<a class="headerlink" href="#declaring-a-workspace" title="Permanent link">&para;</a></h3>
-<p>A repository may declare a workspace at the root:</p>
-<div class="language-toml highlight"><pre><span></span><code><span class="k">[workspace]</span>
-<span class="n">members</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;packages/core&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;packages/cli&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;examples/*&quot;</span><span class="p">]</span>
-<span class="n">default-members</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;packages/core&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;packages/cli&quot;</span><span class="p">]</span>
+<p>A repository may add a workspace to an existing root project without moving that project:</p>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[project]</span>
+<span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;query_core&quot;</span>
+<span class="n">version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.4.0&quot;</span>
+
+<span class="k">[workspace]</span>
+<span class="n">members</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;packages/storage_backend&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;examples/*&quot;</span><span class="p">]</span>
+<span class="n">exclude</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;examples/experimental&quot;</span><span class="p">]</span>
 
 <span class="k">[workspace.dependencies]</span>
-<span class="n">json</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;1.2.0&quot;</span>
-<span class="n">http</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.8.0&quot;</span>
+<span class="n">query_core</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;.&quot;</span><span class="w"> </span><span class="p">}</span>
 
-<span class="k">[workspace.policy]</span>
-<span class="n">source-policy</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;strict&quot;</span>
+<span class="k">[workspace.rust-dependencies]</span>
+<span class="n">serde</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">version</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;1&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">default-features</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">false</span><span class="w"> </span><span class="p">}</span>
 </code></pre></div>
-<p>Each member remains an ordinary Incan project:</p>
+<p>Each non-root member remains an ordinary Incan project and opts into shared declarations explicitly:</p>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[project]</span>
+<span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;storage_backend&quot;</span>
+<span class="n">version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.1.0&quot;</span>
+
+<span class="k">[dependencies]</span>
+<span class="n">query_core</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">workspace</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">true</span><span class="w"> </span><span class="p">}</span>
+
+<span class="k">[rust-dependencies]</span>
+<span class="n">serde</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">workspace</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="n">features</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;derive&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;std&quot;</span><span class="p">]</span><span class="w"> </span><span class="p">}</span>
+</code></pre></div>
+<p>The member inherits Serde's version, source, and default-feature policy from the workspace, then adds the <code>derive</code> and <code>std</code> features for its own use. A member may also mark an inherited Rust dependency as <code>optional</code>; it cannot replace the inherited version or source.</p>
+<p>The resulting repository keeps independent package boundaries:</p>
 <div class="language-text highlight"><pre><span></span><code>repo/
   incan.toml
   incan.lock
+  src/
+    lib.incn
   packages/
-    core/
+    storage_backend/
       incan.toml
       src/lib.incn
-    cli/
+  examples/
+    demo/
       incan.toml
       src/main.incn
 </code></pre></div>
-<p>The root is not magic source code. It coordinates member discovery, shared dependency resolution, shared lock state, shared policy, and shared tooling.</p>
+<p>The root coordinates member discovery, dependency resolution, shared lock state, policy, and tooling. Because the same manifest contains <code>[project]</code> and <code>[workspace]</code>, <code>query_core</code> is the root member automatically. A manifest containing <code>[workspace]</code> without <code>[project]</code> instead defines a virtual workspace root.</p>
 <h3 id="running-across-members">Running across members<a class="headerlink" href="#running-across-members" title="Permanent link">&para;</a></h3>
 <p>A user can run commands against the current member, the default members, or the whole workspace:</p>
-<div class="language-text highlight"><pre><span></span><code>incan test
-incan test --workspace
-incan test --member cli
-incan run --member cli --env ci
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span><span class="nb">test</span>
+incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--workspace
+incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--member<span class="w"> </span>storage_backend
+incan<span class="w"> </span>run<span class="w"> </span>--member<span class="w"> </span>demo
+incan<span class="w"> </span>workspace<span class="w"> </span>inspect<span class="w"> </span>--format<span class="w"> </span>json
 </code></pre></div>
-<p>The exact flags are not normative. The requirement is that command scope must be explicit in diagnostics and machine-readable output.</p>
+<p>With no explicit selector, a command run inside a member targets that member. The workspace-root directory is the exception: it targets <code>default-members</code> when configured, otherwise the implicit root member in a rooted workspace, or every member in a virtual workspace. A command below the root but outside every non-root member belongs to the implicit root member. <code>--workspace</code> selects every member, while one or more <code>--member</code> flags select named members or member paths.</p>
+<p>Commands that inherently operate on one project, such as <code>run</code> or <code>version</code>, must reject a scope containing multiple members and ask for an explicit member. Commands such as <code>check</code>, <code>build</code>, <code>test</code>, and <code>fmt</code> may operate across a selected member set. <code>lock</code> is workspace-wide whenever a workspace is active because the root lock represents every member.</p>
+<h3 id="sharing-environments-explicitly">Sharing environments explicitly<a class="headerlink" href="#sharing-environments-explicitly" title="Permanent link">&para;</a></h3>
+<p>The workspace may define reusable RFC 015 environment fragments:</p>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[workspace.envs.ci]</span>
+<span class="n">requires-incan</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;&gt;=0.5,&lt;0.6&quot;</span>
+
+<span class="k">[workspace.envs.ci.env-vars]</span>
+<span class="n">CI</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;true&quot;</span>
+</code></pre></div>
+<p>A member inherits that environment only by naming the workspace-qualified environment in its local <code>extends</code> list:</p>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[tool.incan.envs.ci]</span>
+<span class="n">extends</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;workspace:ci&quot;</span><span class="p">]</span>
+
+<span class="k">[tool.incan.envs.ci.scripts]</span>
+<span class="n">test</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;incan&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;test&quot;</span><span class="p">]</span>
+</code></pre></div>
+<p>Workspace environments therefore remove duplication without becoming ambient configuration that silently changes unrelated members.</p>
 <h3 id="applying-capabilities-in-a-workspace">Applying capabilities in a workspace<a class="headerlink" href="#applying-capabilities-in-a-workspace" title="Permanent link">&para;</a></h3>
 <p>A capability can target one member:</p>
-<div class="language-text highlight"><pre><span></span><code>incan capability add cli --member packages/cli --dry-run
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>capability<span class="w"> </span>add<span class="w"> </span>cli<span class="w"> </span>--member<span class="w"> </span>packages/cli<span class="w"> </span>--dry-run
 </code></pre></div>
 <p>Or a workspace-level capability can add coordinated metadata:</p>
-<div class="language-text highlight"><pre><span></span><code>incan capability add workspace.ci --workspace --dry-run
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>capability<span class="w"> </span>add<span class="w"> </span>workspace.ci<span class="w"> </span>--workspace<span class="w"> </span>--dry-run
 </code></pre></div>
 <p>The dry-run plan must show which member receives each file, manifest entry, dependency, script, env, policy, or agent-guidance change.</p>
 <h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
-<h3 id="workspace-root-and-members">Workspace root and members<a class="headerlink" href="#workspace-root-and-members" title="Permanent link">&para;</a></h3>
-<p>A workspace root is a directory containing a manifest with a <code>[workspace]</code> table. Implementations should search parent directories for a workspace root when executing member-aware commands.</p>
-<p>Workspace members are project roots selected by explicit paths, globs, or other stable member selectors. A member must contain a project manifest unless a later RFC defines generated or virtual members.</p>
-<p>Member names must be stable within one workspace. If two members declare the same package name, workspace inspection must report the ambiguity and member selection must require path or another disambiguator.</p>
+<h3 id="workspace-manifest-schema">Workspace manifest schema<a class="headerlink" href="#workspace-manifest-schema" title="Permanent link">&para;</a></h3>
+<p>A workspace root is a directory whose <code>incan.toml</code> contains a top-level <code>[workspace]</code> table. When the same manifest also contains <code>[project]</code>, that project is the implicit root member. A manifest with <code>[workspace]</code> but no <code>[project]</code> is a virtual workspace root.</p>
+<p><code>[workspace]</code> has these fields:</p>
+<ul>
+<li><code>members: list[str]</code> contains explicit root-relative paths or glob patterns for non-root members. It may be omitted or empty when an implicit root member exists; a virtual workspace must expand at least one member.</li>
+<li><code>default-members: list[str]</code> is optional and names the members selected when a command starts at the workspace root without an explicit selector.</li>
+<li><code>exclude: list[str]</code> is optional and removes root-relative non-root paths from the expanded member set.</li>
+</ul>
+<p>The implicit root member must have a non-empty <code>[project].name</code> and is not repeated in <code>members</code>. A literal <code>"."</code>, or a path or glob that canonicalizes to the workspace root, is invalid in <code>members</code> and <code>exclude</code>; diagnostics must explain that <code>[project]</code> already establishes root membership. The root may still be selected by project name or <code>"."</code> in <code>default-members</code>, <code>--member</code>, and machine-readable tooling.</p>
+<p>A path dependency on a project does not make that project a workspace member, and declaring a shared dependency does not make its target a member. All non-root membership therefore comes from <code>members</code> after applying <code>exclude</code>.</p>
+<p>Every expanded non-root member path must resolve to a directory containing an <code>incan.toml</code> with a non-empty <code>[project].name</code>. Member paths must remain beneath the canonical workspace root after resolving <code>.</code> components and symbolic links. Nested workspaces and external members are not supported by this RFC.</p>
+<p>Member globs must be expanded in deterministic lexical order. Exclusions are applied after expansion, duplicate canonical paths are removed, and a literal member path that does not contain a manifest is an error. A glob that matches no members should produce a warning so temporary repository states remain inspectable without silently hiding a likely typo.</p>
+<p>The implicit root member, when present, is first in deterministic workspace order. Expanded non-root members follow in canonical lexical path order.</p>
+<p>The final workspace graph, including the implicit root member when present, must be non-empty.</p>
+<p>Member names, including the implicit root member's name, must be unique within one workspace. Duplicate names make the workspace invalid; commands must not silently choose one by path order.</p>
+<p>Every <code>default-members</code> entry must resolve to one member by name or root-relative path. Missing, excluded, or ambiguous defaults make the workspace invalid. When <code>default-members</code> is absent, commands started at the workspace root default to the implicit root member in a rooted workspace and to every member in a virtual workspace.</p>
+<h3 id="workspace-discovery-and-member-identity">Workspace discovery and member identity<a class="headerlink" href="#workspace-discovery-and-member-identity" title="Permanent link">&para;</a></h3>
+<p>Project discovery continues to locate the nearest <code>incan.toml</code> as defined by RFC 015. Workspace discovery then searches that manifest and its ancestors for the nearest <code>[workspace]</code> whose member graph contains the discovered project. The root project is contained structurally by <code>[project]</code> in the workspace manifest; non-root projects must be present in the expanded <code>members</code> set. An ancestor workspace that does not contain the project has no authority over it.</p>
+<p>When a command starts at a virtual workspace root, the workspace is still a valid command context even though the root has no project identity. When the root manifest has both sections, the root has both workspace identity and member identity automatically.</p>
+<p>Each workspace graph must record the canonical root, root manifest, ordered members, member names and manifests, root-member status, defaults, exclusions, and the relationship between each member and its path dependencies. A member must belong to at most one active workspace graph.</p>
 <h3 id="command-scope">Command scope<a class="headerlink" href="#command-scope" title="Permanent link">&para;</a></h3>
-<p>Workspace-aware commands must decide their scope before reading or mutating member manifests. Scope may be:</p>
+<p>Workspace-aware commands must resolve scope before compiling, executing, locking, or mutating member state. The standard selectors are:</p>
 <ul>
-<li>current member</li>
-<li>workspace root</li>
-<li>default members</li>
-<li>selected members</li>
-<li>all members</li>
+<li><code>--workspace</code> selects every member and conflicts with <code>--member</code>.</li>
+<li><code>--member &lt;name-or-path&gt;</code> selects one member and may be repeated by commands that support multiple members.</li>
+<li>no selector inside a member selects that member. The workspace-root directory is the exception: it selects <code>default-members</code> when configured, otherwise the implicit root member in a rooted workspace, or every member in a virtual workspace. A descendant not contained by a non-root member belongs to the implicit root member.</li>
 </ul>
-<p>Diagnostics and machine-readable output must include the selected scope. A command that mutates files or manifests must not silently apply to more members than the user requested.</p>
+<p>Explicit selectors take precedence over current-directory inference. Unknown names, paths outside the workspace, ambiguous selections, and an empty selected set are errors.</p>
+<p>Commands such as <code>check</code>, <code>build</code>, <code>test</code>, and <code>fmt</code> may support multiple members and must process the selected set in deterministic workspace order. Commands whose semantics require one project, including <code>run</code> and <code>version</code>, must reject a multi-member scope with a diagnostic that requests <code>--member</code>. <code>incan lock</code> must resolve and write the complete workspace graph regardless of the current member or selector.</p>
+<p>Diagnostics, progress output, build reports, and machine-readable results must identify the workspace root, selected scope, and member associated with each result. A command that mutates files or manifests must not silently apply to more members than the resolved scope.</p>
+<h3 id="shared-dependencies-and-explicit-inheritance">Shared dependencies and explicit inheritance<a class="headerlink" href="#shared-dependencies-and-explicit-inheritance" title="Permanent link">&para;</a></h3>
+<p>The workspace root may declare shared dependency specifications under <code>[workspace.dependencies]</code>, <code>[workspace.rust-dependencies]</code>, and <code>[workspace.rust-dev-dependencies]</code>. Paths in these tables are resolved relative to the workspace root.</p>
+<p>A shared declaration is a reusable specification, not an activated dependency. Every member, including the implicit root member, inherits one only by declaring the same key with <code>{ workspace = true }</code> in the corresponding member table.</p>
+<p>For Incan library dependencies under <code>[workspace.dependencies]</code>, the current dependency schema has no member-level usage refinements. An inheriting <code>[dependencies]</code> entry therefore contains only <code>workspace = true</code>.</p>
+<p>For Rust dependencies, an inherited member entry may contain only <code>workspace</code>, <code>features</code>, and <code>optional</code>. The workspace owns dependency identity and the member owns package-local usage:</p>
+<ul>
+<li>The workspace declaration owns the version requirement, registry/git/path source, git reference, package rename, and <code>default-features</code> baseline. A member must not override those fields while inheriting.</li>
+<li>A member may add <code>features</code>; its feature set is the deterministic union of workspace and member features.</li>
+<li>A member may set <code>optional</code> because optionality belongs to the consuming package. Workspace Rust dependency declarations must not set <code>optional</code>.</li>
+<li>Refinement is additive. A member cannot remove a workspace feature or disable defaults enabled by the workspace. When the workspace disables default features, a member may add the dependency's <code>default</code> feature explicitly.</li>
+</ul>
+<p>For example:</p>
+<div class="language-toml highlight"><pre><span></span><code><span class="c1"># Workspace root</span>
+<span class="k">[workspace.rust-dependencies]</span>
+<span class="n">serde</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">version</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;1&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">default-features</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">false</span><span class="w"> </span><span class="p">}</span>
+
+<span class="c1"># Member</span>
+<span class="k">[rust-dependencies]</span>
+<span class="n">serde</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">workspace</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="n">features</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;derive&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;std&quot;</span><span class="p">],</span><span class="w"> </span><span class="n">optional</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">true</span><span class="w"> </span><span class="p">}</span>
+</code></pre></div>
+<p>If a member needs a different version, source, package rename, or default-feature baseline, it must stop inheriting and declare a complete member-local dependency instead. Workspace dependency entries should therefore define the smallest baseline shared by their inheriting members.</p>
+<p>Missing workspace keys, dependency-kind mismatches, inheritance cycles, and prohibited refinements are manifest errors. Inspection and diagnostics must distinguish workspace-owned fields, member refinements, and the effective dependency. For Rust features, tooling must report the workspace baseline, each member's additions, and the effective feature set so cross-member feature activation is attributable rather than ambient. When a selected build graph causes Cargo to unify requests from multiple members, the build report must identify every member that enabled each resulting feature.</p>
 <h3 id="shared-lock-state">Shared lock state<a class="headerlink" href="#shared-lock-state" title="Permanent link">&para;</a></h3>
-<p>A workspace may use a shared lockfile at the root. If a shared lockfile exists, dependency resolution should consider all selected members and shared workspace dependency declarations.</p>
-<p>Commands that require locked or frozen operation must fail if the shared lockfile would need to change. If only one member is selected, the toolchain must still respect shared workspace constraints.</p>
-<h3 id="shared-dependencies-and-overrides">Shared dependencies and overrides<a class="headerlink" href="#shared-dependencies-and-overrides" title="Permanent link">&para;</a></h3>
-<p>The workspace root may declare shared dependency requirements, dev-dependencies, overrides, patches, or source configuration. Member manifests may opt into shared dependencies using a stable encoding defined by the implementation.</p>
-<p>The toolchain must make it clear whether a dependency requirement came from a member manifest or from workspace-level shared configuration.</p>
-<h3 id="envs-and-matrices">Envs and matrices<a class="headerlink" href="#envs-and-matrices" title="Permanent link">&para;</a></h3>
-<p>RFC 015 envs and RFC 073 matrices remain execution-context features. Workspaces add member selection on top of those contexts.</p>
-<p>When an env is declared at the workspace root, members may inherit it if inheritance is explicitly enabled. Member envs may override or extend workspace envs only through deterministic merge rules.</p>
-<h3 id="workspace-mutation-plans">Workspace mutation plans<a class="headerlink" href="#workspace-mutation-plans" title="Permanent link">&para;</a></h3>
-<p>Any workspace-scoped mutation plan must include member scope. For each planned change, the plan must state whether it affects the workspace root, one member, selected members, or all members.</p>
-<p>Workspace mutation plans must be compatible with RFC 076 policy. Policy may require additional approval for cross-member changes, shared dependency changes, shared env changes, or workspace-level source policy changes.</p>
+<p>A declared workspace has one canonical <code>incan.lock</code> at the workspace root. Lock generation must resolve the union of every member's effective dependency graph after inheritance and refinement, regardless of the execution scope of the command that triggered locking. An unused shared declaration is inspectable configuration but does not activate or resolve a package. Member selection must never change the root lock fingerprint.</p>
+<p>Project-aware commands run from any member must consult the root lock. A member-local <code>incan.lock</code> inside a declared workspace is not authoritative and must not be read as a fallback. Workspace inspection must report stale member-local lockfiles so migration is visible, but tooling must not delete them without an explicit mutation operation.</p>
+<p>Commands that require locked or frozen operation must fail if the root lock is absent, stale for any member, or inconsistent with any effective inherited declaration. A command targeting one member must still respect the whole-workspace lock contract.</p>
+<h3 id="environments-and-matrices">Environments and matrices<a class="headerlink" href="#environments-and-matrices" title="Permanent link">&para;</a></h3>
+<p>RFC 015 environments and RFC 073 matrices remain execution-context features. Workspaces add reusable environment definitions and member selection without changing the meaning of one resolved environment.</p>
+<p>The workspace root may declare environment fragments under <code>[workspace.envs.&lt;name&gt;]</code>. A member opts into a fragment by including <code>workspace:&lt;name&gt;</code> in a local environment's <code>extends</code> list. Workspace environments are never inherited by name coincidence or by being present at the root.</p>
+<p>Workspace-qualified and member-local environment layers are resolved in declared <code>extends</code> order using RFC 015 merge rules. Cycles across workspace and member environments are errors. Matrix expansion occurs after member selection and is reported separately for each selected member.</p>
+<h3 id="workspace-mutation-plans-and-policy">Workspace mutation plans and policy<a class="headerlink" href="#workspace-mutation-plans-and-policy" title="Permanent link">&para;</a></h3>
+<p>Any workspace-scoped mutation plan must include member scope. For each planned change, the plan must state whether it affects the workspace root, one member, selected members, or every member.</p>
+<p>Workspace mutation plans must be compatible with RFC 076 policy. Policy may require additional approval for cross-member changes, shared dependency changes, shared environment changes, shared lock changes, or workspace-level source policy changes. When workspace and member policy both apply, the more restrictive outcome wins.</p>
+<p>Workspace-aware capability application from RFC 075 requires, at minimum, a validated workspace graph, deterministic member selection, machine-readable inspection, scoped mutation planning, and policy evaluation. Until all five are available, capability commands must remain member-local rather than approximating whole-workspace behavior.</p>
 <h3 id="machine-readable-inspection">Machine-readable inspection<a class="headerlink" href="#machine-readable-inspection" title="Permanent link">&para;</a></h3>
-<p>The CLI must expose a machine-readable workspace view containing:</p>
+<p>The CLI must expose <code>incan workspace inspect</code> with a JSON output mode. The machine-readable workspace view must contain:</p>
 <ul>
-<li>workspace root</li>
-<li>members and member paths</li>
-<li>default members</li>
-<li>selected scope for a command</li>
-<li>shared dependency declarations</li>
-<li>shared envs and inherited envs</li>
-<li>shared policy and source configuration</li>
-<li>member capabilities and provenance summaries</li>
-<li>lock state and lockfile location</li>
+<li>a schema version;</li>
+<li>workspace root and manifest path;</li>
+<li>members, canonical paths, names, and root-member status;</li>
+<li>default members and exclusions;</li>
+<li>selected scope for the current invocation;</li>
+<li>shared dependency declarations, member refinements, effective specifications, and feature-enablement provenance;</li>
+<li>shared environments and member inheritance provenance;</li>
+<li>shared policy and source configuration;</li>
+<li>member capabilities and provenance summaries;</li>
+<li>root lock state, fingerprint, and lockfile location; and</li>
+<li>warnings such as unmatched globs, unused shared declarations, and stale member-local lockfiles.</li>
 </ul>
+<p>Inspection must remain available when the active toolchain does not satisfy a member's <code>requires-incan</code> constraint, although the result must report that incompatibility.</p>
+<h3 id="publication-and-versions">Publication and versions<a class="headerlink" href="#publication-and-versions" title="Permanent link">&para;</a></h3>
+<p>Workspace members keep independent <code>[project].version</code> values and are published independently. A future convenience command may orchestrate publication of several selected members, but each publication remains a separately validated operation with its own artifact identity and result. This RFC does not define an atomic workspace release.</p>
+<h3 id="compatibility-and-migration">Compatibility and migration<a class="headerlink" href="#compatibility-and-migration" title="Permanent link">&para;</a></h3>
+<p>Manifests without <code>[workspace]</code> retain RFC 015 single-project behavior. Existing projects become implicit root members by adding <code>[workspace]</code>; they do not list <code>"."</code>, move their source tree, or change package identity.</p>
+<p>When separate projects adopt one workspace, they must generate a canonical root lockfile. Existing member-local lockfiles cease to be authoritative and should be removed through an explicit reviewed change after workspace inspection confirms the new root lock.</p>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
 <h3 id="relationship-to-rfc-015">Relationship to RFC 015<a class="headerlink" href="#relationship-to-rfc-015" title="Permanent link">&para;</a></h3>
-<p>RFC 015 owns single-project lifecycle commands, manifest metadata, envs, scripts, and root discovery. This RFC extends root discovery to workspace topology and defines how lifecycle commands select member scope.</p>
+<p>RFC 015 owns single-project lifecycle commands, manifest metadata, envs, scripts, and nearest-project discovery. This RFC preserves that project identity and adds an ancestor workspace graph when the project is the implicit root member or an explicitly listed non-root member.</p>
+<h3 id="relationship-to-rfc-020">Relationship to RFC 020<a class="headerlink" href="#relationship-to-rfc-020" title="Permanent link">&para;</a></h3>
+<p>RFC 020 owns locked and frozen dependency policy. This RFC changes the lock ownership boundary for a declared workspace: the root lock covers every member and is the only lock consulted by workspace members.</p>
 <h3 id="relationship-to-rfc-073">Relationship to RFC 073<a class="headerlink" href="#relationship-to-rfc-073" title="Permanent link">&para;</a></h3>
 <p>RFC 073 owns matrix expansion and toolchain constraints. Workspace member selection happens before env or matrix execution. Matrix expansion should be reported per selected member.</p>
 <h3 id="relationship-to-rfc-075">Relationship to RFC 075<a class="headerlink" href="#relationship-to-rfc-075" title="Permanent link">&para;</a></h3>
-<p>Starter and capability descriptors may be workspace-aware. A descriptor that mutates multiple members must report member scope in its dry-run and machine-readable plan.</p>
+<p>Starter and capability descriptors may be workspace-aware only after workspace graph validation, selection, inspection, scoped mutation planning, and policy evaluation are available. A descriptor that mutates multiple members must report member scope in its dry-run and machine-readable plan.</p>
 <h3 id="relationship-to-rfc-076">Relationship to RFC 076<a class="headerlink" href="#relationship-to-rfc-076" title="Permanent link">&para;</a></h3>
 <p>Workspace-level policy may be stricter than member-level policy. If multiple policies apply, RFC 076's conservative precedence model should be used unless this RFC later defines a more specific workspace precedence rule.</p>
 <h3 id="relationship-to-rfc-079">Relationship to RFC 079<a class="headerlink" href="#relationship-to-rfc-079" title="Permanent link">&para;</a></h3>
 <p>The artifact graph may represent workspace relationships: root project, member packages, examples, docs, generated artifacts, AI assets, and publishable units. This RFC defines the local topology that a future registry can mirror.</p>
+<h3 id="why-root-membership-follows-manifest-identity">Why root membership follows manifest identity<a class="headerlink" href="#why-root-membership-follows-manifest-identity" title="Permanent link">&para;</a></h3>
+<p><code>[project]</code> already declares a project at the workspace root, so repeating <code>"."</code> in <code>members</code> adds ceremony without adding identity. More importantly, a root project outside its colocated workspace would compete with that workspace for the same root command context and canonical <code>incan.lock</code>. Treating the root as an automatic member removes that incoherent state while keeping every non-root member explicit. A virtual root remains unambiguous because it omits <code>[project]</code>.</p>
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <h3 id="model-workspaces-as-envs">Model workspaces as envs<a class="headerlink" href="#model-workspaces-as-envs" title="Permanent link">&para;</a></h3>
 <p>Rejected because envs describe execution context, while workspaces describe project topology. Collapsing them would make it hard to express shared locks, member selection, cross-member dependencies, and publish topology.</p>
 <h3 id="require-one-package-per-repository">Require one package per repository<a class="headerlink" href="#require-one-package-per-repository" title="Permanent link">&para;</a></h3>
 <p>Rejected because real projects often need multiple related packages, examples, tools, and applications in one repository.</p>
+<h3 id="infer-members-from-path-dependencies">Infer members from path dependencies<a class="headerlink" href="#infer-members-from-path-dependencies" title="Permanent link">&para;</a></h3>
+<p>Rejected because dependency edges and workspace ownership are different relationships. Automatic membership would make an unrelated nested project join workspace commands, policy, and lock resolution merely because one package references it.</p>
+<h3 id="require-for-root-membership">Require <code>"."</code> for root membership<a class="headerlink" href="#require-for-root-membership" title="Permanent link">&para;</a></h3>
+<p>Rejected because <code>[project]</code> in the workspace manifest already declares the root project explicitly. Requiring a second marker creates an omission footgun, while permitting the omission to exclude the root creates ambiguous command and lock ownership.</p>
+<h3 id="allow-a-root-project-outside-its-colocated-workspace">Allow a root project outside its colocated workspace<a class="headerlink" href="#allow-a-root-project-outside-its-colocated-workspace" title="Permanent link">&para;</a></h3>
+<p>Rejected because the project and workspace would both claim the same root command context and <code>incan.lock</code> path while describing different dependency graphs. A repository that needs a virtual workspace root should omit <code>[project]</code> there and keep every project in an explicit member directory.</p>
+<h3 id="keep-one-lockfile-per-member">Keep one lockfile per member<a class="headerlink" href="#keep-one-lockfile-per-member" title="Permanent link">&para;</a></h3>
+<p>Rejected because independently resolved member locks cannot represent shared dependency constraints or guarantee that a workspace-wide command sees one coherent dependency graph. Per-member locks would also make results depend on command entrypoint and selection.</p>
+<h3 id="require-moving-the-root-package-under-packages">Require moving the root package under <code>packages/</code><a class="headerlink" href="#require-moving-the-root-package-under-packages" title="Permanent link">&para;</a></h3>
+<p>Rejected because directory layout should not determine whether a package can participate in a workspace. Implicit root membership provides the same boundary without forcing repository-wide path churn.</p>
 <h3 id="make-every-project-a-workspace">Make every project a workspace<a class="headerlink" href="#make-every-project-a-workspace" title="Permanent link">&para;</a></h3>
 <p>Rejected because it would add unnecessary conceptual overhead to small projects. Single-project behavior should remain simple.</p>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Workspaces add another layer of command scope that users must understand.</li>
 <li>Shared dependency and env inheritance can become confusing without strong diagnostics.</li>
+<li>Additive Rust features requested by several selected members may broaden the effective feature set through Cargo feature unification; build reports must make that provenance visible.</li>
 <li>Cross-member mutation plans increase the importance of machine-readable output and policy review.</li>
-<li>Workspace support may force lifecycle commands to reason about more project topology than v1 strictly needs.</li>
+<li>Whole-workspace locking means a stale dependency declaration in an unselected member can block a locked command in another member.</li>
+<li>First-class workspace support requires lifecycle commands, the test runner, build reports, and editor tooling to carry member identity consistently.</li>
 </ul>
 <h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
-<p>The recommended implementation shape is to build a workspace graph before command planning. The graph contains the root, members, shared configuration, lock state, and selected scope. Existing lifecycle commands can then operate on one or more member project contexts rather than special-casing workspace behavior throughout the toolchain.</p>
+<p>The implementation should build one validated workspace graph before command planning. The graph contains the root, ordered members, shared declarations, member refinements, effective dependency specifications, root lock state, and selected scope. Existing project commands can then operate on one or more member project contexts while preserving RFC 015 behavior for projects outside a workspace.</p>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Manifest schema / configuration validation:</strong> manifests need workspace root, member, default-member, shared dependency, shared env, and shared policy fields.</li>
+<li><strong>Manifest schema / configuration validation:</strong> manifests need workspace root, implicit root-member, non-root member, default-member, shared dependency, member refinement, shared env, and shared policy fields.</li>
 <li><strong>CLI / tooling:</strong> lifecycle commands need member selection, workspace discovery, workspace inspection, and workspace-scoped mutation plans.</li>
 <li><strong>Locking / dependency resolution:</strong> shared lockfiles and shared dependency constraints must be understood by project resolution.</li>
+<li><strong>Build / test / format orchestration:</strong> multi-member commands must fan out deterministically while preserving member-local source roots, diagnostics, reports, and generated artifacts.</li>
 <li><strong>LSP / IDE tooling:</strong> editor tooling should surface workspace members, default members, selected command scope, and member-specific diagnostics.</li>
 <li><strong>Agentic tooling:</strong> agents may use workspace topology to select relevant project skills, but must respect member scope and policy.</li>
 <li><strong>Documentation:</strong> docs must explain the difference between envs, members, workspace roots, and project packages.</li>
 </ul>
-<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
+<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Should workspace members be discovered only from explicit <code>members</code>, or should path dependencies under the root become members automatically?</li>
-<li>Should shared dependencies be inherited explicitly by each member or applied implicitly across all members?</li>
-<li>Should a workspace always have one shared lockfile, or should per-member lockfiles be allowed?</li>
-<li>How should workspace env inheritance be encoded?</li>
-<li>Should package publication happen per member, per selected group, or through a workspace publish command?</li>
-<li>Should generated examples and docs be first-class workspace members or ordinary files?</li>
-<li>What is the minimum workspace support needed before RFC 075 capabilities can target multiple members?</li>
+<li><code>[project]</code> in the workspace manifest creates an implicit root member; <code>[workspace]</code> without <code>[project]</code> creates a virtual root.</li>
+<li>All non-root membership comes only from explicit <code>members</code> paths and globs. Path dependencies never create membership.</li>
+<li>Non-root members and their canonical paths must remain beneath the workspace root. Nested and external workspaces are deferred.</li>
+<li>Shared Incan, Rust, and Rust dev dependencies require <code>{ workspace = true }</code> in each member that inherits them. Rust members may add features by set union and choose member-local optionality; version, source, package rename, and default-feature policy remain workspace-owned.</li>
+<li>One root <code>incan.lock</code> covers every member's effective dependency graph. Unused shared declarations do not activate packages, and command selection does not narrow dependency resolution or change the lock fingerprint.</li>
+<li>Workspace environments are inherited explicitly through <code>workspace:&lt;name&gt;</code> entries in member-local <code>extends</code> lists.</li>
+<li><code>--workspace</code> selects every member, repeatable <code>--member</code> selects named members or paths, and current-directory/default-member rules define unqualified scope.</li>
+<li>Publication and versions remain per member. A workspace publication command may orchestrate those operations later but does not make them atomic or lockstep.</li>
+<li>Non-root examples, documentation tools, and generated projects are members only when they have their own project manifest and are selected explicitly by <code>members</code>.</li>
+<li>Workspace-aware capabilities require graph validation, deterministic selection, machine-readable inspection, scoped mutation planning, and policy evaluation. Until that foundation exists, capabilities remain member-local.</li>
 </ul>
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 
