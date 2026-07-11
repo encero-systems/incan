@@ -1,3 +1,19 @@
+# incan-feature: begin
+# id = "std.logging"
+# name = "`std.logging` structured logging"
+# since = "0.3"
+# rfc = "RFC 072"
+# category = "stdlib"
+# stability = "stable"
+# activation = "Import from `std.logging`; ambient `log` is available for the current module logger."
+# summary = "Structured logging includes levels, named loggers, bound fields, formatting, JSON rendering, and telemetry values."
+# canonical = "from std.logging import Level, basic_config"
+# canonical = "log.info(\"started\", fields={\"component\": \"worker\"})"
+# prefer_over = "Printing diagnostic strings or routing ordinary application logging through custom Rust shims."
+# reference = "std.logging | stdlib/logging.md"
+# reference = "Release 0.3 | ../../release_notes/0_3.md"
+# incan-feature: end
+
 """
 Structured logging surface for ordinary Incan programs.
 

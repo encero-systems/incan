@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use incan_core::lang::builtins;
 use incan_core::lang::derives;
 use incan_core::lang::errors;
+use incan_core::lang::feature_metadata;
 use incan_core::lang::features;
 use incan_core::lang::keywords;
 use incan_core::lang::magic_methods;
@@ -276,7 +277,16 @@ fn traits_spellings_unique_and_resolvable() {
 
 #[test]
 fn feature_inventory_has_required_metadata() {
-    assert_eq!(features::FEATURES.len(), 61, "feature inventory length changed");
+    assert_eq!(
+        features::LEGACY_FEATURE_COUNT,
+        60,
+        "legacy migration bridge count changed"
+    );
+    assert_eq!(
+        features::FEATURES.len(),
+        features::LEGACY_FEATURE_COUNT,
+        "legacy feature inventory length changed"
+    );
 
     let mut seen = HashMap::new();
     for feature in features::FEATURES {
@@ -312,6 +322,23 @@ fn feature_inventory_has_required_metadata() {
             feature.id
         );
     }
+}
+
+#[test]
+fn source_local_feature_inventory_is_valid_and_discovered() -> Result<(), Box<dyn std::error::Error>> {
+    let inventory = feature_metadata::load_feature_inventory(&repo_root())?;
+    let logging = inventory
+        .iter()
+        .filter(|feature| feature.id == "std.logging")
+        .collect::<Vec<_>>();
+    assert_eq!(logging.len(), 1, "std.logging should have one source-local descriptor");
+    assert_eq!(logging[0].name, "`std.logging` structured logging");
+    assert_eq!(
+        inventory.len(),
+        61,
+        "merged inventory should preserve the generated capability count"
+    );
+    Ok(())
 }
 
 #[test]

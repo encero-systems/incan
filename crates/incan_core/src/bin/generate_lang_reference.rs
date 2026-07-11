@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 
 use incan_core::lang::types::{collections, numerics, stringlike};
 use incan_core::lang::{
-    builtins, decorators, derives, errors, features, keywords, operators, punctuation, stdlib, surface, traits,
+    builtins, decorators, derives, errors, feature_metadata, keywords, operators, punctuation, stdlib, surface, traits,
 };
 
 /// Reduce trailing blank lines in generated Markdown to at most one empty line.
@@ -84,7 +84,7 @@ fn main() {
     }
 
     write_language_reference(&out_dir.join("language.md"));
-    write_feature_inventory_reference(&out_dir.join("feature_inventory.md"));
+    write_feature_inventory_reference(&root, &out_dir.join("feature_inventory.md"));
 }
 
 /// Write `workspaces/docs-site/docs/language/reference/language.md`.
@@ -147,12 +147,16 @@ fn write_language_reference(path: &Path) {
 ///
 /// This generated page is backed by a curated product-level feature registry. It complements `language.md`, which lists
 /// lower-level vocabulary such as keywords, operators, builtins, and surface methods.
-fn write_feature_inventory_reference(path: &Path) {
+fn write_feature_inventory_reference(root: &Path, path: &Path) {
+    let inventory = match feature_metadata::load_feature_inventory(root) {
+        Ok(inventory) => inventory,
+        Err(error) => panic!("load source-local feature metadata: {error}"),
+    };
     let mut out = String::new();
     out.push_str("# Incan feature inventory\n\n");
     out.push_str("!!! warning \"Generated file\"\n");
     out.push_str(
-        "    Do not edit this page by hand. If it looks wrong/outdated, update `crates/incan_core/src/lang/features.rs` and regenerate it.\n",
+        "    Do not edit this page by hand. If it looks wrong/outdated, update the source-local `incan-feature` metadata beside the owning surface and regenerate it. Remaining legacy entries are tracked only as a migration bridge in `crates/incan_core/src/lang/features.rs`.\n",
     );
     out.push('\n');
     out.push_str("    Regenerate with: `cargo run -p incan_core --bin generate_lang_reference`\n\n");
@@ -165,8 +169,8 @@ fn write_feature_inventory_reference(path: &Path) {
     out.push_str("- [All features](#all-features)\n");
     out.push_str("- [Feature details](#feature-details)\n\n");
 
-    render_features_summary_section(&mut out);
-    render_features_detail_section(&mut out);
+    render_features_summary_section(&mut out, &inventory);
+    render_features_detail_section(&mut out, &inventory);
 
     trim_trailing_newlines(&mut out);
     out.push('\n');
@@ -186,7 +190,7 @@ fn markdown_code(value: &str) -> String {
 }
 
 /// Render a comma-separated list of Markdown links for generated reference output.
-fn markdown_links(links: &[features::FeatureLink]) -> String {
+fn markdown_links(links: &[feature_metadata::FeatureReference]) -> String {
     links
         .iter()
         .map(|link| format!("[{}]({})", link.label, link.path))
@@ -195,7 +199,7 @@ fn markdown_links(links: &[features::FeatureLink]) -> String {
 }
 
 /// Render the canonical source forms cell for a generated reference table row.
-fn canonical_forms_cell(forms: &[&str]) -> String {
+fn canonical_forms_cell(forms: &[String]) -> String {
     if forms.is_empty() {
         return "-".to_string();
     }
@@ -207,7 +211,7 @@ fn canonical_forms_cell(forms: &[&str]) -> String {
 }
 
 /// Render the compact feature summary table for the generated language reference.
-fn render_features_summary_section(out: &mut String) {
+fn render_features_summary_section(out: &mut String, inventory: &[feature_metadata::FeatureInventoryEntry]) {
     start_section(out, "## All features");
 
     out.push_str(
@@ -215,15 +219,15 @@ fn render_features_summary_section(out: &mut String) {
     );
     out.push_str("|---|---|---:|---|---|---|---|---|\n");
 
-    for feature in features::FEATURES {
-        let name = markdown_table_cell(feature.name);
+    for feature in inventory {
+        let name = markdown_table_cell(&feature.name);
         let category = format!("{:?}", feature.category);
         let since = feature.since;
-        let activation = markdown_table_cell(feature.activation);
-        let canonical_forms = canonical_forms_cell(feature.canonical_forms);
-        let summary = markdown_table_cell(feature.summary);
-        let prefer_over = markdown_table_cell(feature.prefer_over);
-        let references = markdown_links(feature.references);
+        let activation = markdown_table_cell(&feature.activation);
+        let canonical_forms = canonical_forms_cell(&feature.canonical_forms);
+        let summary = markdown_table_cell(&feature.summary);
+        let prefer_over = markdown_table_cell(&feature.prefer_over);
+        let references = markdown_links(&feature.references);
         out.push_str(&format!(
             "| {name} | {category} | {since} | {activation} | {canonical_forms} | {summary} | {prefer_over} | {references} |\n"
         ));
@@ -232,24 +236,27 @@ fn render_features_summary_section(out: &mut String) {
 }
 
 /// Render detailed feature entries for the generated language reference.
-fn render_features_detail_section(out: &mut String) {
+fn render_features_detail_section(out: &mut String, inventory: &[feature_metadata::FeatureInventoryEntry]) {
     start_section(out, "## Feature details");
 
-    for feature in features::FEATURES {
+    for feature in inventory {
         out.push_str(&format!("### {}\n\n", feature.name));
-        out.push_str(&format!("- **Id:** `{:?}`\n", feature.id));
+        out.push_str(&format!("- **Id:** `{}`\n", feature.id));
         out.push_str(&format!("- **Category:** `{:?}`\n", feature.category));
         out.push_str(&format!("- **Since:** `{}`\n", feature.since));
         out.push_str(&format!("- **RFC:** `{}`\n", feature.introduced_in_rfc));
         out.push_str(&format!("- **Stability:** `{:?}`\n", feature.stability));
         out.push_str(&format!("- **Activation:** {}\n", feature.activation));
         out.push_str(&format!("- **Use instead of:** {}\n", feature.prefer_over));
-        out.push_str(&format!("- **References:** {}\n\n", markdown_links(feature.references)));
-        out.push_str(feature.summary);
+        out.push_str(&format!(
+            "- **References:** {}\n\n",
+            markdown_links(&feature.references)
+        ));
+        out.push_str(&feature.summary);
         out.push_str("\n\n");
         if !feature.canonical_forms.is_empty() {
             out.push_str("Canonical forms:\n\n");
-            for form in feature.canonical_forms {
+            for form in &feature.canonical_forms {
                 out.push_str(&format!("- `{}`\n", form.replace('`', "\\`")));
             }
             out.push('\n');

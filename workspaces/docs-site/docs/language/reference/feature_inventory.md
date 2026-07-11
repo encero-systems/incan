@@ -1,7 +1,7 @@
 # Incan feature inventory
 
 !!! warning "Generated file"
-    Do not edit this page by hand. If it looks wrong/outdated, update `crates/incan_core/src/lang/features.rs` and regenerate it.
+    Do not edit this page by hand. If it looks wrong/outdated, update the source-local `incan-feature` metadata beside the owning surface and regenerate it. Remaining legacy entries are tracked only as a migration bridge in `crates/incan_core/src/lang/features.rs`.
 
     Regenerate with: `cargo run -p incan_core --bin generate_lang_reference`
 
@@ -64,7 +64,6 @@ Use it when deciding whether code should use an existing Incan surface before ad
 | `std.tempfile` temporary resources | Stdlib | 0.3 | Import from `std.tempfile`. | `NamedTemporaryFile.try_new()`<br>`TemporaryDirectory.try_new()`<br>`tmp.persist()` | Temporary files and directories are explicit resources with cleanup and persist semantics. | Manual random path generation or unchecked cleanup around temporary files. | [std.tempfile](stdlib/tempfile.md), [Release 0.3](../../release_notes/0_3.md) |
 | `std.datetime` temporal values | Stdlib | 0.3 | Import from `std.datetime` modules or prelude. | `Date.utc_today()`<br>`DateTime.utc_now()`<br>`TimeDelta(days=1)` | Temporal APIs cover runtime timing, civil dates/times, fixed offsets, parsing/formatting, intervals, and calendar arithmetic. | Raw strings or integer timestamps inside code that has date/time semantics. | [std.datetime](stdlib/datetime.md), [Dates and times](../tutorials/dates_and_times.md), [Dates and times how-to](../how-to/dates_and_times.md) |
 | `std.telemetry.core` data model | Stdlib | 0.3 | Import from `std.telemetry.core` or the `std.telemetry` prelude. | `from std.telemetry.core import TelemetryValue, Attributes`<br>`TelemetryValue.string("ready")`<br>`Attributes.from_string_fields(fields)` | Telemetry core provides structured values, attributes, resources, scopes, and trace context identifiers without configuring providers or exporters. | Stringifying structured observability fields before they reach logging or telemetry boundaries. | [std.logging](stdlib/logging.md), [Release 0.3](../../release_notes/0_3.md) |
-| `std.logging` structured logging | Stdlib | 0.3 | Import from `std.logging`; ambient `log` is available for the current module logger. | `from std.logging import Level, basic_config`<br>`log.info("started", fields={"component": "worker"})` | Structured logging includes levels, named loggers, bound fields, formatting, JSON rendering, and telemetry values. | Printing diagnostic strings or routing ordinary application logging through custom Rust shims. | [std.logging](stdlib/logging.md), [Release 0.3](../../release_notes/0_3.md) |
 | `std.checksum` CRC32 helpers | Stdlib | 0.5 | Import from `std.checksum`. | `from std.checksum import crc32`<br>`crc32.value(b"abc")`<br>`crc32.digest(b"abc")`<br>`h = crc32.new()` | `std.checksum` exposes CRC32 value, digest-byte, and incremental helpers for compatibility and accidental-corruption checks, separate from `std.hash` hashing contracts. | Project-local Rust shims or `std.hash` helpers when a protocol explicitly requires CRC32 checksum semantics. | [std.checksum](stdlib/checksum.md), [Hashing data](../how-to/hashing_data.md), [RFC 065 checksum boundary](../../RFCs/closed/implemented/065_std_hash.md#checksum-boundary), [Release 0.5](../../release_notes/0_5.md) |
 | Testing assertions and markers | Testing | 0.3 | Use `assert` directly; import marker/helper APIs from `std.testing`. | `assert value == expected`<br>`assert call() raises ValueError`<br>`@parametrize("case", cases)` | Tests can use language assertions, raises checks, helper assertions, fixtures, parametrization, and marker decorators. | Ad hoc panic helpers or external test metadata formats for ordinary Incan tests. | [std.testing](stdlib/testing.md), [Testing how-to](../how-to/testing_stdlib.md), [Release 0.3](../../release_notes/0_3.md) |
 | `incan test` runner | Testing | 0.3 | Run `incan test`. | `module tests:`<br>`incan test --list`<br>`incan test --format json --junit report.xml` | The runner owns discovery, inline test modules, stable ids, selection, fixtures, parametrization, reporting, shuffling, and scheduling. | Project-local scripts that duplicate core test discovery and reporting behavior. | [Tooling: testing](../../tooling/how-to/testing.md), [std.testing](stdlib/testing.md), [Release 0.3](../../release_notes/0_3.md) |
@@ -79,6 +78,7 @@ Use it when deciding whether code should use an existing Incan surface before ad
 | Compiler-backed codegraph inspection | Tooling | 0.4 | Use `incan inspect codegraph`. | `incan inspect codegraph src/main.incn --format jsonl`<br>`incan inspect codegraph src --format jsonl --allow-errors` | Incan-language source files, modules, declarations, imports, exports, body-level reference and call syntax, conservative resolved reference and call targets, containment, spans, provenance, language tags, degraded state, and diagnostics can be exported as deterministic JSONL records. | Repeated grep/read loops or tool-specific source scrapers when agents and tooling need basic Incan structure. | [Codegraph inspection](../../tooling/reference/codegraph_inspection.md), [CLI reference](../../tooling/reference/cli_reference.md), [Release 0.4](../../release_notes/0_4.md) |
 | Checked API metadata | Tooling | 0.3 | Use `incan tools metadata api` or LSP metadata commands. | `incan tools metadata api src/lib.incn`<br>`incan tools metadata model emit` | Typechecked public APIs can emit structured metadata for docs, manifests, hovers, and model bundle tooling. | Scraping source text or generated Rust when tooling needs API contracts. | [Release 0.3](../../release_notes/0_3.md), [Project lifecycle](project_lifecycle.md) |
 | Formatter spacing and wrapping contract | Tooling | 0.3 | Run `incan fmt`. | `incan fmt src/main.incn`<br>`incan fmt --check` | Formatter output has explicit vertical-spacing buckets, docstring normalization, comment attachment, and common wrapping rules. | Hand-maintained whitespace conventions that drift from the formatter. | [Code style](code_style.md), [Formatting how-to](../../tooling/how-to/formatting.md), [Release 0.3](../../release_notes/0_3.md) |
+| `std.logging` structured logging | Stdlib | 0.3 | Import from `std.logging`; ambient `log` is available for the current module logger. | `from std.logging import Level, basic_config`<br>`log.info("started", fields={"component": "worker"})` | Structured logging includes levels, named loggers, bound fields, formatting, JSON rendering, and telemetry values. | Printing diagnostic strings or routing ordinary application logging through custom Rust shims. | [std.logging](stdlib/logging.md), [Release 0.3](../../release_notes/0_3.md) |
 
 ## Feature details
 
@@ -944,24 +944,6 @@ Canonical forms:
 - `TelemetryValue.string("ready")`
 - `Attributes.from_string_fields(fields)`
 
-### `std.logging` structured logging
-
-- **Id:** `StdLogging`
-- **Category:** `Stdlib`
-- **Since:** `0.3`
-- **RFC:** `RFC 072`
-- **Stability:** `Stable`
-- **Activation:** Import from `std.logging`; ambient `log` is available for the current module logger.
-- **Use instead of:** Printing diagnostic strings or routing ordinary application logging through custom Rust shims.
-- **References:** [std.logging](stdlib/logging.md), [Release 0.3](../../release_notes/0_3.md)
-
-Structured logging includes levels, named loggers, bound fields, formatting, JSON rendering, and telemetry values.
-
-Canonical forms:
-
-- `from std.logging import Level, basic_config`
-- `log.info("started", fields={"component": "worker"})`
-
 ### `std.checksum` CRC32 helpers
 
 - **Id:** `StdChecksum`
@@ -1227,3 +1209,21 @@ Canonical forms:
 
 - `incan fmt src/main.incn`
 - `incan fmt --check`
+
+### `std.logging` structured logging
+
+- **Id:** `std.logging`
+- **Category:** `Stdlib`
+- **Since:** `0.3`
+- **RFC:** `RFC 072`
+- **Stability:** `Stable`
+- **Activation:** Import from `std.logging`; ambient `log` is available for the current module logger.
+- **Use instead of:** Printing diagnostic strings or routing ordinary application logging through custom Rust shims.
+- **References:** [std.logging](stdlib/logging.md), [Release 0.3](../../release_notes/0_3.md)
+
+Structured logging includes levels, named loggers, bound fields, formatting, JSON rendering, and telemetry values.
+
+Canonical forms:
+
+- `from std.logging import Level, basic_config`
+- `log.info("started", fields={"component": "worker"})`

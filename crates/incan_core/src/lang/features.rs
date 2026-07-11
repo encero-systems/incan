@@ -1,8 +1,10 @@
-//! Curated current-language feature inventory.
+//! Legacy bridge for the current-language feature inventory.
 //!
 //! The generated language reference lists raw vocabulary such as keywords, operators, builtins, and surface methods.
 //! This registry sits one level higher: it names product-level language capabilities so docs, reviewers, and agents can
-//! answer "what can Incan express today?" without rereading release notes.
+//! answer "what can Incan express today?" without rereading release notes. New entries belong in source-local
+//! `incan-feature` metadata blocks; this table remains a fixed migration bridge until existing features move to their
+//! owning source surfaces.
 
 use super::registry::{RFC, RfcId, Since, Stability};
 
@@ -55,7 +57,6 @@ pub enum FeatureId {
     StdTempfile,
     StdDatetime,
     StdTelemetryCore,
-    StdLogging,
     StdChecksum,
     TestingAssertions,
     TestRunner,
@@ -108,6 +109,12 @@ pub struct FeatureDescriptor {
     pub references: &'static [FeatureLink],
 }
 
+/// Number of entries remaining in the frozen centralized migration bridge.
+///
+/// New feature inventory entries must be source-local. This guardrail makes an accidental addition here visible in the
+/// registry tests until the remaining historical descriptors have been migrated to their owning source surfaces.
+pub const LEGACY_FEATURE_COUNT: usize = 60;
+
 macro_rules! links {
     ($(($label:literal, $path:literal)),+ $(,)?) => {
         &[
@@ -116,10 +123,10 @@ macro_rules! links {
     };
 }
 
-/// Current feature inventory.
+/// Legacy feature inventory during source-local metadata migration.
 ///
-/// This is intentionally curated rather than inferred. A feature can span parser syntax, stdlib source, manifests,
-/// docs, and tooling, so implementation-level registries alone cannot reliably describe the user-facing capability.
+/// This table must not grow. New capability documentation is authored beside the owning `.incn` or Rust source using
+/// [`super::feature_metadata`]; guardrails lock this bridge's count while migration proceeds.
 pub const FEATURES: &[FeatureDescriptor] = &[
     FeatureDescriptor {
         id: FeatureId::NamespacedStdlib,
@@ -1017,25 +1024,6 @@ pub const FEATURES: &[FeatureDescriptor] = &[
             "Attributes.from_string_fields(fields)",
         ],
         prefer_over: "Stringifying structured observability fields before they reach logging or telemetry boundaries.",
-        references: links![
-            ("std.logging", "stdlib/logging.md"),
-            ("Release 0.3", "../../release_notes/0_3.md"),
-        ],
-    },
-    FeatureDescriptor {
-        id: FeatureId::StdLogging,
-        name: "`std.logging` structured logging",
-        category: FeatureCategory::Stdlib,
-        since: Since(0, 3),
-        introduced_in_rfc: RFC::_072,
-        stability: Stability::Stable,
-        activation: "Import from `std.logging`; ambient `log` is available for the current module logger.",
-        summary: "Structured logging includes levels, named loggers, bound fields, formatting, JSON rendering, and telemetry values.",
-        canonical_forms: &[
-            "from std.logging import Level, basic_config",
-            "log.info(\"started\", fields={\"component\": \"worker\"})",
-        ],
-        prefer_over: "Printing diagnostic strings or routing ordinary application logging through custom Rust shims.",
         references: links![
             ("std.logging", "stdlib/logging.md"),
             ("Release 0.3", "../../release_notes/0_3.md"),

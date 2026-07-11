@@ -30,6 +30,7 @@ pub mod decorators;
 pub mod derives;
 pub mod enum_helpers;
 pub mod errors;
+pub mod feature_metadata;
 pub mod features;
 pub mod field_metadata;
 pub mod generated_support;
