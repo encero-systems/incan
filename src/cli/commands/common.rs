@@ -223,6 +223,36 @@ fn builtin_stdlib_artifact_builder_executable(
     })
 }
 
+/// Seed a development built-in stdlib artifact from its enclosing workspace lockfile.
+///
+/// A standalone artifact crate otherwise resolves its own newest compatible
+/// versions, which can differ from the compiler workspace's verified offline
+/// cache. Installed SDK layouts need not contain a workspace lockfile, so they
+/// deliberately retain normal Cargo resolution.
+fn seed_builtin_stdlib_artifact_workspace_lock(stdlib_root: &Path, artifact_root: &Path) -> CliResult<()> {
+    let Some(workspace_lock) = stdlib_root
+        .ancestors()
+        .skip(1)
+        .map(|parent| parent.join("Cargo.lock"))
+        .find(|path| path.is_file())
+    else {
+        return Ok(());
+    };
+    fs::create_dir_all(artifact_root).map_err(|error| {
+        CliError::failure(format!(
+            "failed to create compiled built-in stdlib artifact directory {}: {error}",
+            artifact_root.display()
+        ))
+    })?;
+    fs::copy(&workspace_lock, artifact_root.join("Cargo.lock")).map_err(|error| {
+        CliError::failure(format!(
+            "failed to seed compiled built-in stdlib artifact lock from {}: {error}",
+            workspace_lock.display()
+        ))
+    })?;
+    Ok(())
+}
+
 /// Build the local built-in stdlib library artifact when a consumer imports a migrated module.
 ///
 /// The artifact project lives beside the `.incn` sources so development and installed SDK layouts use the same
@@ -254,6 +284,8 @@ fn prepare_builtin_stdlib_artifact() -> CliResult<LibraryArtifactMetadata> {
             )));
         }
     }
+
+    seed_builtin_stdlib_artifact_workspace_lock(&stdlib_root, &metadata.crate_root)?;
 
     eprintln!(
         "Preparing compiled built-in stdlib artifact with `incan build --lib` in {}",
@@ -2527,6 +2559,24 @@ mod tests {
             builtin_stdlib_artifact_builder_executable(None, PathBuf::from("/tmp/target/debug/deps/incan-abc123"),),
             PathBuf::from("/tmp/target/debug/incan")
         );
+    }
+
+    #[test]
+    fn builtin_stdlib_artifact_lock_uses_enclosing_workspace_lock() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let workspace = tmp.path().join("workspace");
+        let stdlib_root = workspace.join("crates/incan_stdlib/stdlib");
+        let artifact_root = stdlib_root.join("target/lib");
+        fs::create_dir_all(&stdlib_root)?;
+        fs::write(workspace.join("Cargo.lock"), "workspace lock payload")?;
+
+        seed_builtin_stdlib_artifact_workspace_lock(&stdlib_root, &artifact_root)?;
+
+        assert_eq!(
+            fs::read_to_string(artifact_root.join("Cargo.lock"))?,
+            "workspace lock payload"
+        );
+        Ok(())
     }
 
     fn registry_dependency(crate_name: &str, version: &str) -> DependencySpec {
