@@ -2571,6 +2571,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#stdenviron-runtime-environment-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      std.environ runtime environment access
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#stdjson-dynamic-json-values" class="md-nav__link">
     <span class="md-ellipsis">
       std.json dynamic JSON values
@@ -3106,6 +3115,8 @@
       
         
       
+        
+      
     
     
       
@@ -3285,6 +3296,27 @@
   
   <span class="md-ellipsis">
     std.encoding
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib/environ/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.environ
   </span>
   
 
@@ -7184,6 +7216,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#stdenviron-runtime-environment-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      std.environ runtime environment access
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#stdjson-dynamic-json-values" class="md-nav__link">
     <span class="md-ellipsis">
       std.json dynamic JSON values
@@ -7814,6 +7855,16 @@
 <td><code>std.hash</code> provides deterministic byte, file, reader, and incremental hashing through explicit cryptographic, compatibility, and non-cryptographic algorithm namespaces.</td>
 <td>Ad hoc hashing shims, hidden default algorithms, or <code>std.checksum</code> when the caller needs hash rather than checksum semantics.</td>
 <td><a href="../stdlib/hash/">std.hash</a>, <a href="../../how-to/hashing_data/">Hashing data</a>, <a href="../../../RFCs/closed/implemented/065_std_hash/">RFC 065</a>, <a href="../../../release_notes/0_3/">Release 0.3</a></td>
+</tr>
+<tr>
+<td><code>std.environ</code> runtime environment access</td>
+<td>Stdlib</td>
+<td style="text-align: right;">0.5</td>
+<td>Import from <code>std.environ</code>.</td>
+<td><code>from std.environ import get, get_optional, get_or, get_as</code><br><code>token = get("API_TOKEN")?</code><br><code>port = get_as[Port]("PORT", default=8080)?</code></td>
+<td><code>std.environ</code> provides redacted, read-only Unicode environment access through string helpers and typed <code>TryFrom[str]</code> reads for primitives, explicit adopters, and validated newtypes.</td>
+<td>Direct <code>rust::std::env</code> imports or shell glue for ordinary runtime environment reads.</td>
+<td><a href="../stdlib/environ/">std.environ</a>, <a href="../../../RFCs/closed/implemented/089_std_environ/">RFC 089</a>, <a href="../../../release_notes/0_5/">Release 0.5</a></td>
 </tr>
 <tr>
 <td><code>std.json</code> dynamic JSON values</td>
@@ -8732,6 +8783,24 @@
 <li><code>from std.hash import sha256, file_digest</code></li>
 <li><code>sha256.digest(payload)</code></li>
 <li><code>xxh3_64.new()</code></li>
+</ul>
+<h3 id="stdenviron-runtime-environment-access"><code>std.environ</code> runtime environment access<a class="headerlink" href="#stdenviron-runtime-environment-access" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Id:</strong> <code>StdEnviron</code></li>
+<li><strong>Category:</strong> <code>Stdlib</code></li>
+<li><strong>Since:</strong> <code>0.5</code></li>
+<li><strong>RFC:</strong> <code>RFC 089</code></li>
+<li><strong>Stability:</strong> <code>Stable</code></li>
+<li><strong>Activation:</strong> Import from <code>std.environ</code>.</li>
+<li><strong>Use instead of:</strong> Direct <code>rust::std::env</code> imports or shell glue for ordinary runtime environment reads.</li>
+<li><strong>References:</strong> <a href="../stdlib/environ/">std.environ</a>, <a href="../../../RFCs/closed/implemented/089_std_environ/">RFC 089</a>, <a href="../../../release_notes/0_5/">Release 0.5</a></li>
+</ul>
+<p><code>std.environ</code> provides redacted, read-only Unicode environment access through string helpers and typed <code>TryFrom[str]</code> reads for primitives, explicit adopters, and validated newtypes.</p>
+<p>Canonical forms:</p>
+<ul>
+<li><code>from std.environ import get, get_optional, get_or, get_as</code></li>
+<li><code>token = get("API_TOKEN")?</code></li>
+<li><code>port = get_as[Port]("PORT", default=8080)?</code></li>
 </ul>
 <h3 id="stdjson-dynamic-json-values"><code>std.json</code> dynamic JSON values<a class="headerlink" href="#stdjson-dynamic-json-values" title="Permanent link">&para;</a></h3>
 <ul>

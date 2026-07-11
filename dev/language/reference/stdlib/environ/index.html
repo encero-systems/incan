@@ -11,21 +11,25 @@
       
       
       
+        <link rel="prev" href="../encoding/">
       
       
-      <link rel="icon" href="../../assets/images/favicon.png">
+        <link rel="next" href="../fs/">
+      
+      
+      <link rel="icon" href="../../../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
     
     
       
-        <title>RFC 089: std.environ runtime environment access - Incan Documentation</title>
+        <title>std.environ - Incan Documentation</title>
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
+      <link rel="stylesheet" href="../../../../assets/stylesheets/main.6f8fc17f.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+        <link rel="stylesheet" href="../../../../assets/stylesheets/palette.06af60db.min.css">
       
       
 
@@ -44,11 +48,11 @@
       
     
     
-      <link rel="stylesheet" href="../../stylesheets/pygments.css">
+      <link rel="stylesheet" href="../../../../stylesheets/pygments.css">
     
       <link rel="stylesheet" href="/shared/incapunk/incapunk.css">
     
-    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -74,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfc-089-stdenviron-runtime-environment-access" class="md-skip">
+        <a href="#stdenviron" class="md-skip">
           Skip to content
         </a>
       
@@ -94,7 +98,7 @@
 
 <header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+    <a href="../../../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
       
   <img src="/shared/incapunk/wordmark_small_001.png" alt="logo">
 
@@ -113,7 +117,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 089: std.environ runtime environment access
+              std.environ
             
           </span>
         </div>
@@ -200,7 +204,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../.." class="md-tabs__link">
+      <a href="../../../.." class="md-tabs__link">
         
   
     
@@ -219,7 +223,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../start_here/" class="md-tabs__link">
+        <a href="../../../../start_here/" class="md-tabs__link">
           
   
     
@@ -235,11 +239,13 @@
         
   
   
+    
+  
   
     
     
-      <li class="md-tabs__item">
-        <a href="../../language/" class="md-tabs__link">
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../../../" class="md-tabs__link">
           
   
     
@@ -259,7 +265,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../tooling/" class="md-tabs__link">
+        <a href="../../../../tooling/" class="md-tabs__link">
           
   
     
@@ -279,7 +285,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../contributing/" class="md-tabs__link">
+        <a href="../../../../contributing/" class="md-tabs__link">
           
   
     
@@ -299,7 +305,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../release_notes/" class="md-tabs__link">
+        <a href="../../../../release_notes/" class="md-tabs__link">
           
   
     
@@ -325,7 +331,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../whitepapers/" class="md-tabs__link">
+        <a href="../../../../whitepapers/" class="md-tabs__link">
           
   
     
@@ -369,7 +375,7 @@
 
 <nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+    <a href="../../../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
       
   <img src="/shared/incapunk/wordmark_small_001.png" alt="logo">
 
@@ -398,7 +404,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../.." class="md-nav__link">
+      <a href="../../../.." class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -459,7 +465,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../start_here/" class="md-nav__link ">
+            <a href="../../../../start_here/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -492,7 +498,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/what_incan_is_for/" class="md-nav__link">
+      <a href="../../../../start_here/what_incan_is_for/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -513,7 +519,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/coming_from_python/" class="md-nav__link">
+      <a href="../../../../start_here/coming_from_python/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -534,7 +540,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/coming_from_rust/" class="md-nav__link">
+      <a href="../../../../start_here/coming_from_rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -555,7 +561,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/coming_from_typescript_javascript/" class="md-nav__link">
+      <a href="../../../../start_here/coming_from_typescript_javascript/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -576,7 +582,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/pipelines_and_automation/" class="md-nav__link">
+      <a href="../../../../start_here/pipelines_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -597,7 +603,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/encero_stack/" class="md-nav__link">
+      <a href="../../../../start_here/encero_stack/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -618,7 +624,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/domain_native_demo/" class="md-nav__link">
+      <a href="../../../../start_here/domain_native_demo/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -639,7 +645,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/public_contracts/" class="md-nav__link">
+      <a href="../../../../start_here/public_contracts/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -660,7 +666,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/beginner/" class="md-nav__link">
+      <a href="../../../../start_here/beginner/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -727,7 +733,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../comparisons/python/" class="md-nav__link">
+      <a href="../../../../comparisons/python/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -748,7 +754,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../comparisons/javascript_typescript/" class="md-nav__link">
+      <a href="../../../../comparisons/javascript_typescript/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -769,7 +775,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../comparisons/rust/" class="md-nav__link">
+      <a href="../../../../comparisons/rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -802,6 +808,8 @@
       
   
   
+    
+  
   
   
     
@@ -822,19 +830,22 @@
     
     
       
+        
+        
+      
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
         
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/" class="md-nav__link ">
+            <a href="../../../" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -845,13 +856,13 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             Language
@@ -964,7 +975,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/tutorials/book/" class="md-nav__link ">
+            <a href="../../../tutorials/book/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -997,7 +1008,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/01_hello_world/" class="md-nav__link">
+      <a href="../../../tutorials/book/01_hello_world/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1018,7 +1029,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/02_values_variables_and_types/" class="md-nav__link">
+      <a href="../../../tutorials/book/02_values_variables_and_types/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1039,7 +1050,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/03_functions/" class="md-nav__link">
+      <a href="../../../tutorials/book/03_functions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1060,7 +1071,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/04_control_flow/" class="md-nav__link">
+      <a href="../../../tutorials/book/04_control_flow/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1081,7 +1092,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/05_modules_and_imports/" class="md-nav__link">
+      <a href="../../../tutorials/book/05_modules_and_imports/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1102,7 +1113,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/06_errors/" class="md-nav__link">
+      <a href="../../../tutorials/book/06_errors/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1123,7 +1134,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/07_strings_and_formatting/" class="md-nav__link">
+      <a href="../../../tutorials/book/07_strings_and_formatting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1144,7 +1155,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/08_collections_and_iteration/" class="md-nav__link">
+      <a href="../../../tutorials/book/08_collections_and_iteration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1165,7 +1176,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/09_enums/" class="md-nav__link">
+      <a href="../../../tutorials/book/09_enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1186,7 +1197,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/10_models_vs_classes/" class="md-nav__link">
+      <a href="../../../tutorials/book/10_models_vs_classes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1207,7 +1218,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/11_traits_and_derives/" class="md-nav__link">
+      <a href="../../../tutorials/book/11_traits_and_derives/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1228,7 +1239,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/12_newtypes/" class="md-nav__link">
+      <a href="../../../tutorials/book/12_newtypes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1249,7 +1260,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/13_unit_tests/" class="md-nav__link">
+      <a href="../../../tutorials/book/13_unit_tests/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1278,7 +1289,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/dates_and_times/" class="md-nav__link">
+      <a href="../../../tutorials/dates_and_times/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1299,7 +1310,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/build_your_first_api/" class="md-nav__link">
+      <a href="../../../tutorials/build_your_first_api/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1320,7 +1331,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/fallible_and_infallible_paths/" class="md-nav__link">
+      <a href="../../../tutorials/fallible_and_infallible_paths/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1341,7 +1352,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/web_framework/" class="md-nav__link">
+      <a href="../../../tutorials/web_framework/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1462,7 +1473,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/async_programming/" class="md-nav__link">
+      <a href="../../../how-to/async_programming/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1483,7 +1494,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/customize_derived_behavior/" class="md-nav__link">
+      <a href="../../../how-to/customize_derived_behavior/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1504,7 +1515,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/dates_and_times/" class="md-nav__link">
+      <a href="../../../how-to/dates_and_times/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1525,7 +1536,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/error_handling_recipes/" class="md-nav__link">
+      <a href="../../../how-to/error_handling_recipes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1546,7 +1557,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/error_messages/" class="md-nav__link">
+      <a href="../../../how-to/error_messages/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1567,7 +1578,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/file_io/" class="md-nav__link">
+      <a href="../../../how-to/file_io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1588,7 +1599,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/binary_text_encoding/" class="md-nav__link">
+      <a href="../../../how-to/binary_text_encoding/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1609,7 +1620,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/compression/" class="md-nav__link">
+      <a href="../../../how-to/compression/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1630,7 +1641,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/dynamic_json/" class="md-nav__link">
+      <a href="../../../how-to/dynamic_json/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1651,7 +1662,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/hashing_data/" class="md-nav__link">
+      <a href="../../../how-to/hashing_data/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1672,7 +1683,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/logging/" class="md-nav__link">
+      <a href="../../../how-to/logging/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1693,7 +1704,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/generators/" class="md-nav__link">
+      <a href="../../../how-to/generators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1714,7 +1725,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/imports_and_modules/" class="md-nav__link">
+      <a href="../../../how-to/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1735,7 +1746,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/module_state/" class="md-nav__link">
+      <a href="../../../how-to/module_state/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1756,7 +1767,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/choosing_collections/" class="md-nav__link">
+      <a href="../../../how-to/choosing_collections/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1777,7 +1788,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/working_with_graphs/" class="md-nav__link">
+      <a href="../../../how-to/working_with_graphs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1798,7 +1809,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/choosing_numeric_types/" class="md-nav__link">
+      <a href="../../../how-to/choosing_numeric_types/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1819,7 +1830,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/modeling_with_enums/" class="md-nav__link">
+      <a href="../../../how-to/modeling_with_enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1840,7 +1851,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/project_lifecycle/" class="md-nav__link">
+      <a href="../../../how-to/project_lifecycle/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1861,7 +1872,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/testing_stdlib/" class="md-nav__link">
+      <a href="../../../how-to/testing_stdlib/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1882,7 +1893,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/string_processing/" class="md-nav__link">
+      <a href="../../../how-to/string_processing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1903,7 +1914,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/regular_expressions/" class="md-nav__link">
+      <a href="../../../how-to/regular_expressions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1924,7 +1935,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/working_with_uuids/" class="md-nav__link">
+      <a href="../../../how-to/working_with_uuids/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1945,7 +1956,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/performance/" class="md-nav__link">
+      <a href="../../../how-to/performance/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1966,7 +1977,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/rust_interop/" class="md-nav__link">
+      <a href="../../../how-to/rust_interop/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1987,7 +1998,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/rust_types_for_python_devs/" class="md-nav__link">
+      <a href="../../../how-to/rust_types_for_python_devs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2013,8 +2024,10 @@
                 
   
   
+    
   
   
+  
     
     
       
@@ -2062,11 +2075,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" checked>
         
           
           <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
@@ -2080,7 +2093,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3_4">
             <span class="md-nav__icon md-icon"></span>
             Reference
@@ -2094,7 +2107,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/language/" class="md-nav__link">
+      <a href="../../language/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2115,7 +2128,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/feature_inventory/" class="md-nav__link">
+      <a href="../../feature_inventory/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2136,7 +2149,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/code_style/" class="md-nav__link">
+      <a href="../../code_style/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2157,7 +2170,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/functions/" class="md-nav__link">
+      <a href="../../functions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2178,7 +2191,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/generators/" class="md-nav__link">
+      <a href="../../generators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2199,7 +2212,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/symbol_aliases/" class="md-nav__link">
+      <a href="../../symbol_aliases/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2220,7 +2233,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/callable_presets/" class="md-nav__link">
+      <a href="../../callable_presets/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2241,7 +2254,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/glossary/" class="md-nav__link">
+      <a href="../../glossary/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2262,7 +2275,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/file_io/" class="md-nav__link">
+      <a href="../../file_io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2283,7 +2296,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/imports_and_modules/" class="md-nav__link">
+      <a href="../../imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2304,7 +2317,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/static_storage/" class="md-nav__link">
+      <a href="../../static_storage/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2325,7 +2338,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/numeric_semantics/" class="md-nav__link">
+      <a href="../../numeric_semantics/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2346,7 +2359,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/project_lifecycle/" class="md-nav__link">
+      <a href="../../project_lifecycle/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2367,7 +2380,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/strings/" class="md-nav__link">
+      <a href="../../strings/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2388,7 +2401,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/reflection/" class="md-nav__link">
+      <a href="../../reflection/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2409,7 +2422,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives_and_traits/" class="md-nav__link">
+      <a href="../../derives_and_traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2427,6 +2440,8 @@
                 
   
   
+    
+  
   
   
     
@@ -2480,22 +2495,24 @@
       
         
       
+        
+      
     
     
       
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_17" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_17" checked>
         
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/reference/stdlib/" class="md-nav__link ">
+            <a href="../" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2512,7 +2529,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_17_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_17_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3_4_17">
             <span class="md-nav__icon md-icon"></span>
             Standard library
@@ -2528,7 +2545,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/async/" class="md-nav__link">
+      <a href="../async/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2549,7 +2566,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/collections/" class="md-nav__link">
+      <a href="../collections/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2570,7 +2587,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/checksum/" class="md-nav__link">
+      <a href="../checksum/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2591,7 +2608,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/compression/" class="md-nav__link">
+      <a href="../compression/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2612,7 +2629,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/derives/" class="md-nav__link">
+      <a href="../derives/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2633,7 +2650,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/datetime/" class="md-nav__link">
+      <a href="../datetime/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2654,7 +2671,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/encoding/" class="md-nav__link">
+      <a href="../encoding/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2672,10 +2689,116 @@
                 
   
   
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  <span class="md-ellipsis">
+    std.environ
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  <span class="md-ellipsis">
+    std.environ
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#string-reads" class="md-nav__link">
+    <span class="md-ellipsis">
+      String reads
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#typed-reads" class="md-nav__link">
+    <span class="md-ellipsis">
+      Typed reads
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#validated-newtypes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Validated newtypes
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      Errors
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#runtime-scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      Runtime scope
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/fs/" class="md-nav__link">
+      <a href="../fs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2696,7 +2819,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/graph/" class="md-nav__link">
+      <a href="../graph/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2717,7 +2840,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/hash/" class="md-nav__link">
+      <a href="../hash/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2738,7 +2861,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/io/" class="md-nav__link">
+      <a href="../io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2759,7 +2882,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/json/" class="md-nav__link">
+      <a href="../json/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2780,7 +2903,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/logging/" class="md-nav__link">
+      <a href="../logging/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2801,7 +2924,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/telemetry/" class="md-nav__link">
+      <a href="../telemetry/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2822,7 +2945,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/regex/" class="md-nav__link">
+      <a href="../regex/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2843,7 +2966,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/uuid/" class="md-nav__link">
+      <a href="../uuid/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2864,7 +2987,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/tempfile/" class="md-nav__link">
+      <a href="../tempfile/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2885,7 +3008,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/reflection/" class="md-nav__link">
+      <a href="../reflection/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2906,7 +3029,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/result/" class="md-nav__link">
+      <a href="../result/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2927,7 +3050,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/traits/" class="md-nav__link">
+      <a href="../traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2948,7 +3071,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/testing/" class="md-nav__link">
+      <a href="../testing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2969,7 +3092,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/math/" class="md-nav__link">
+      <a href="../math/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3033,7 +3156,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/reference/stdlib_traits/" class="md-nav__link ">
+            <a href="../../stdlib_traits/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3066,7 +3189,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/collection_protocols/" class="md-nav__link">
+      <a href="../../stdlib_traits/collection_protocols/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3087,7 +3210,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
+      <a href="../../stdlib_traits/indexing_and_slicing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3108,7 +3231,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/callable/" class="md-nav__link">
+      <a href="../../stdlib_traits/callable/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3129,7 +3252,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/awaitable/" class="md-nav__link">
+      <a href="../../stdlib_traits/awaitable/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3150,7 +3273,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/error/" class="md-nav__link">
+      <a href="../../stdlib_traits/error/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3171,7 +3294,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/operators/" class="md-nav__link">
+      <a href="../../stdlib_traits/operators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3192,7 +3315,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/conversions/" class="md-nav__link">
+      <a href="../../stdlib_traits/conversions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3273,7 +3396,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/string_representation/" class="md-nav__link">
+      <a href="../../derives/string_representation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3294,7 +3417,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/comparison/" class="md-nav__link">
+      <a href="../../derives/comparison/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3315,7 +3438,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/copying_default/" class="md-nav__link">
+      <a href="../../derives/copying_default/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3336,7 +3459,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/serialization/" class="md-nav__link">
+      <a href="../../derives/serialization/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3357,7 +3480,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/validation/" class="md-nav__link">
+      <a href="../../derives/validation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3378,7 +3501,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/custom_behavior/" class="md-nav__link">
+      <a href="../../derives/custom_behavior/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3503,7 +3626,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/why_incan/" class="md-nav__link">
+      <a href="../../../explanation/why_incan/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3524,7 +3647,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/why_not_just_rust/" class="md-nav__link">
+      <a href="../../../explanation/why_not_just_rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3545,7 +3668,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/how_incan_works/" class="md-nav__link">
+      <a href="../../../explanation/how_incan_works/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3566,7 +3689,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/compile_time_and_runtime/" class="md-nav__link">
+      <a href="../../../explanation/compile_time_and_runtime/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3587,7 +3710,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/rust_shaped_confidence/" class="md-nav__link">
+      <a href="../../../explanation/rust_shaped_confidence/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3608,7 +3731,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/control_flow/" class="md-nav__link">
+      <a href="../../../explanation/control_flow/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3629,7 +3752,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/callable_presets/" class="md-nav__link">
+      <a href="../../../explanation/callable_presets/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3650,7 +3773,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/closures/" class="md-nav__link">
+      <a href="../../../explanation/closures/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3671,7 +3794,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/consts/" class="md-nav__link">
+      <a href="../../../explanation/consts/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3692,7 +3815,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/generators/" class="md-nav__link">
+      <a href="../../../explanation/generators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3713,7 +3836,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/static_storage/" class="md-nav__link">
+      <a href="../../../explanation/static_storage/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3734,7 +3857,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/numeric_types/" class="md-nav__link">
+      <a href="../../../explanation/numeric_types/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3755,7 +3878,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/datetime_model/" class="md-nav__link">
+      <a href="../../../explanation/datetime_model/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3776,7 +3899,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/ordinal_map/" class="md-nav__link">
+      <a href="../../../explanation/ordinal_map/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3797,7 +3920,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/graph_model/" class="md-nav__link">
+      <a href="../../../explanation/graph_model/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3818,7 +3941,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/derives_and_traits/" class="md-nav__link">
+      <a href="../../../explanation/derives_and_traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3839,7 +3962,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/call_site_type_arguments/" class="md-nav__link">
+      <a href="../../../explanation/call_site_type_arguments/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3860,7 +3983,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/how_derives_work/" class="md-nav__link">
+      <a href="../../../explanation/how_derives_work/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3881,7 +4004,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/enums/" class="md-nav__link">
+      <a href="../../../explanation/enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3902,7 +4025,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/error_handling/" class="md-nav__link">
+      <a href="../../../explanation/error_handling/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3923,7 +4046,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/imports_and_modules/" class="md-nav__link">
+      <a href="../../../explanation/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3969,7 +4092,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/explanation/models_and_classes/" class="md-nav__link ">
+            <a href="../../../explanation/models_and_classes/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -4002,7 +4125,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/models_and_classes/models/" class="md-nav__link">
+      <a href="../../../explanation/models_and_classes/models/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4023,7 +4146,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/models_and_classes/classes/" class="md-nav__link">
+      <a href="../../../explanation/models_and_classes/classes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4052,7 +4175,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/traits_as_language_hooks/" class="md-nav__link">
+      <a href="../../../explanation/traits_as_language_hooks/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4073,7 +4196,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/scopes_and_name_resolution/" class="md-nav__link">
+      <a href="../../../explanation/scopes_and_name_resolution/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4138,7 +4261,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../tooling/" class="md-nav__link ">
+            <a href="../../../../tooling/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -4217,7 +4340,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/tutorials/getting_started/" class="md-nav__link">
+      <a href="../../../../tooling/tutorials/getting_started/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4238,7 +4361,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/tutorials/your_first_project/" class="md-nav__link">
+      <a href="../../../../tooling/tutorials/your_first_project/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4259,7 +4382,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
+      <a href="../../../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4344,7 +4467,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/install_and_run/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/install_and_run/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4365,7 +4488,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/dependencies/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/dependencies/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4386,7 +4509,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/ci_and_automation/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/ci_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4407,7 +4530,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/troubleshooting/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/troubleshooting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4428,7 +4551,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/editor_setup/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/editor_setup/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4449,7 +4572,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/lsp/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/lsp/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4470,7 +4593,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/formatting/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/formatting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4491,7 +4614,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/testing/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/testing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4564,7 +4687,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/explanation/projects_today/" class="md-nav__link">
+      <a href="../../../../tooling/explanation/projects_today/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4585,7 +4708,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/explanation/lsp_architecture/" class="md-nav__link">
+      <a href="../../../../tooling/explanation/lsp_architecture/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4668,7 +4791,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/cli_reference/" class="md-nav__link">
+      <a href="../../../../tooling/reference/cli_reference/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4689,7 +4812,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/codegraph_inspection/" class="md-nav__link">
+      <a href="../../../../tooling/reference/codegraph_inspection/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4710,7 +4833,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/agent_docs_surfaces/" class="md-nav__link">
+      <a href="../../../../tooling/reference/agent_docs_surfaces/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4731,7 +4854,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/contract_metadata/" class="md-nav__link">
+      <a href="../../../../tooling/reference/contract_metadata/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4752,7 +4875,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/checked_api_metadata/" class="md-nav__link">
+      <a href="../../../../tooling/reference/checked_api_metadata/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4773,7 +4896,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/project_configuration/" class="md-nav__link">
+      <a href="../../../../tooling/reference/project_configuration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4794,7 +4917,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
+      <a href="../../../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4865,7 +4988,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../contributing/" class="md-nav__link ">
+            <a href="../../../../contributing/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -4898,7 +5021,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/contributors/" class="md-nav__link">
+      <a href="../../../../contributing/contributors/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4998,7 +5121,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../contributing/tutorials/book/" class="md-nav__link ">
+            <a href="../../../../contributing/tutorials/book/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -5031,7 +5154,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5052,7 +5175,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5073,7 +5196,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5094,7 +5217,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5115,7 +5238,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5136,7 +5259,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5157,7 +5280,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5178,7 +5301,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5267,7 +5390,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/extending_language/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/extending_language/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5288,7 +5411,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5309,7 +5432,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/auditing_generated_rust/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/auditing_generated_rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5330,7 +5453,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5351,7 +5474,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/ci_and_automation/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/ci_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5372,7 +5495,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/writing_rfcs/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/writing_rfcs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5455,7 +5578,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/architecture/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/architecture/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5476,7 +5599,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/duckborrowing/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/duckborrowing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5497,7 +5620,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/generated_rust_quality/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/generated_rust_quality/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5518,7 +5641,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/layering/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/layering/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5539,7 +5662,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/incapunk_docs_theme/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/incapunk_docs_theme/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5560,7 +5683,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5581,7 +5704,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5658,7 +5781,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/reference/backend_behavior_inventory/" class="md-nav__link">
+      <a href="../../../../contributing/reference/backend_behavior_inventory/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5679,7 +5802,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/reference/generated_rust_stdlib_coverage/" class="md-nav__link">
+      <a href="../../../../contributing/reference/generated_rust_stdlib_coverage/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5700,7 +5823,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/reference/hees_ai_v05_dependency_inventory/" class="md-nav__link">
+      <a href="../../../../contributing/reference/hees_ai_v05_dependency_inventory/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5721,7 +5844,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/reference/rust_source_backend_deprecation/" class="md-nav__link">
+      <a href="../../../../contributing/reference/rust_source_backend_deprecation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5750,7 +5873,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../" class="md-nav__link">
+      <a href="../../../../RFCs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5809,7 +5932,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../release_notes/" class="md-nav__link ">
+            <a href="../../../../release_notes/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -5842,7 +5965,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../release_notes/0_5/" class="md-nav__link">
+      <a href="../../../../release_notes/0_5/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5863,7 +5986,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../release_notes/0_4/" class="md-nav__link">
+      <a href="../../../../release_notes/0_4/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5884,7 +6007,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../release_notes/0_3/" class="md-nav__link">
+      <a href="../../../../release_notes/0_3/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5905,7 +6028,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../release_notes/0_2/" class="md-nav__link">
+      <a href="../../../../release_notes/0_2/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5926,7 +6049,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../release_notes/0_1/" class="md-nav__link">
+      <a href="../../../../release_notes/0_1/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -6023,7 +6146,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../whitepapers/" class="md-nav__link ">
+            <a href="../../../../whitepapers/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -6056,7 +6179,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../whitepapers/incan_ecosystem_north_star/" class="md-nav__link">
+      <a href="../../../../whitepapers/incan_ecosystem_north_star/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -6092,7 +6215,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../roadmap/" class="md-nav__link">
+      <a href="../../../../roadmap/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -6113,7 +6236,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../stability/" class="md-nav__link">
+      <a href="../../../../stability/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -6161,273 +6284,45 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#summary" class="md-nav__link">
+  <a href="#string-reads" class="md-nav__link">
     <span class="md-ellipsis">
-      Summary
+      String reads
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#core-model" class="md-nav__link">
+  <a href="#typed-reads" class="md-nav__link">
     <span class="md-ellipsis">
-      Core model
+      Typed reads
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#motivation" class="md-nav__link">
+  <a href="#validated-newtypes" class="md-nav__link">
     <span class="md-ellipsis">
-      Motivation
+      Validated newtypes
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#goals" class="md-nav__link">
+  <a href="#errors" class="md-nav__link">
     <span class="md-ellipsis">
-      Goals
+      Errors
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#non-goals" class="md-nav__link">
+  <a href="#runtime-scope" class="md-nav__link">
     <span class="md-ellipsis">
-      Non-Goals
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#guide-level-explanation" class="md-nav__link">
-    <span class="md-ellipsis">
-      Guide-level explanation
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#reference-level-explanation" class="md-nav__link">
-    <span class="md-ellipsis">
-      Reference-level explanation
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Reference-level explanation">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#module-surface" class="md-nav__link">
-    <span class="md-ellipsis">
-      Module surface
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#missing-variables" class="md-nav__link">
-    <span class="md-ellipsis">
-      Missing variables
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#present-variables" class="md-nav__link">
-    <span class="md-ellipsis">
-      Present variables
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#get_ast-parsing-and-validation" class="md-nav__link">
-    <span class="md-ellipsis">
-      get_as[T] parsing and validation
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#defaults-for-newtype-targets" class="md-nav__link">
-    <span class="md-ellipsis">
-      Defaults for newtype targets
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#key-rules" class="md-nav__link">
-    <span class="md-ellipsis">
-      Key rules
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#error-shape" class="md-nav__link">
-    <span class="md-ellipsis">
-      Error shape
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#const-evaluation" class="md-nav__link">
-    <span class="md-ellipsis">
-      Const evaluation
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#side-effects" class="md-nav__link">
-    <span class="md-ellipsis">
-      Side effects
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#design-details" class="md-nav__link">
-    <span class="md-ellipsis">
-      Design details
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Design details">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#why-stdenviron" class="md-nav__link">
-    <span class="md-ellipsis">
-      Why std.environ
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#relationship-to-ctx" class="md-nav__link">
-    <span class="md-ellipsis">
-      Relationship to ctx
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#relationship-to-stdcienv" class="md-nav__link">
-    <span class="md-ellipsis">
-      Relationship to std.ci.env
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#relationship-to-stdprocess" class="md-nav__link">
-    <span class="md-ellipsis">
-      Relationship to std.process
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#secrets-and-diagnostics" class="md-nav__link">
-    <span class="md-ellipsis">
-      Secrets and diagnostics
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#why-no-put-in-the-initial-surface" class="md-nav__link">
-    <span class="md-ellipsis">
-      Why no put in the initial surface
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#compatibility-migration" class="md-nav__link">
-    <span class="md-ellipsis">
-      Compatibility / migration
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#alternatives-considered" class="md-nav__link">
-    <span class="md-ellipsis">
-      Alternatives considered
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#drawbacks" class="md-nav__link">
-    <span class="md-ellipsis">
-      Drawbacks
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#implementation-architecture" class="md-nav__link">
-    <span class="md-ellipsis">
-      Implementation architecture
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#layers-affected" class="md-nav__link">
-    <span class="md-ellipsis">
-      Layers affected
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#unresolved-questions" class="md-nav__link">
-    <span class="md-ellipsis">
-      Unresolved questions
+      Runtime scope
     </span>
   </a>
   
@@ -6451,73 +6346,8 @@
   
 
 
-<h1 id="rfc-089-stdenviron-runtime-environment-access">RFC 089: <code>std.environ</code> runtime environment access<a class="headerlink" href="#rfc-089-stdenviron-runtime-environment-access" title="Permanent link">&para;</a></h1>
-<ul>
-<li><strong>Status:</strong> Draft</li>
-<li><strong>Created:</strong> 2026-05-05</li>
-<li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
-<li><strong>Related:</strong><ul>
-<li>RFC 017 (validated newtypes with implicit coercion)</li>
-<li>RFC 033 (<code>ctx</code> typed configuration context)</li>
-<li>RFC 063 (<code>std.process</code> process spawning and command execution)</li>
-<li>RFC 067 (<code>std.ci</code> deterministic CI and automation scripting primitives)</li>
-<li>RFC 070 (Result combinators)</li>
-</ul>
-</li>
-<li><strong>Issue:</strong> —</li>
-<li><strong>RFC PR:</strong> —</li>
-<li><strong>Written against:</strong> v0.3</li>
-<li><strong>Shipped in:</strong> —</li>
-</ul>
-<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>This RFC introduces <code>std.environ</code>, a small standard-library module for explicit runtime access to the current process environment. The module provides string accessors (<code>get</code>, <code>get_optional</code>, <code>get_or</code>) and typed accessors (<code>get_as</code>) that compose with Incan parsing and validated newtypes, including <code>from_underlying</code> validation hooks. <code>std.environ</code> is intentionally lower-level than RFC 033 <code>ctx</code>: it reads runtime process state directly, while <code>ctx</code> remains the typed application-configuration surface built from defaults, environment overrides, and application-specific structure.</p>
-<h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
-<ol>
-<li><strong>Environment access is runtime I/O-like state:</strong> environment variables are not compile-time facts and must not be available in <code>const</code> evaluation.</li>
-<li><strong>The base environment value is a string:</strong> the operating-system boundary exposes string keys and string values; typed values are parsed from that string boundary.</li>
-<li><strong>Missing and malformed are distinct:</strong> a missing variable is not the same as a present variable that cannot be parsed or validated.</li>
-<li><strong>Typed reads compose with the type system:</strong> <code>get_as[T]</code> should parse supported primitive targets and should validate newtypes through their <code>from_underlying</code> hooks where applicable.</li>
-<li><strong>Application configuration remains higher-level:</strong> ordinary programs may use <code>std.environ</code> directly, but structured app config should prefer RFC 033 <code>ctx</code> once available.</li>
-<li><strong>CI wrappers stay narrow:</strong> RFC 067 <code>std.ci.env</code> may wrap or re-export this surface, but CI should not be the only route to reading environment variables.</li>
-</ol>
-<h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<p>Environment variables are a normal runtime boundary for applications, CLIs, automation scripts, and deployment platforms. In Python, users commonly reach for <code>os.environ</code> or <code>os.environ.get(...)</code>; when they come to Incan, they should have an obvious equivalent that does not require Rust interop, shell glue, CI-only APIs, or a full application <code>ctx</code> declaration.</p>
-<p>The need surfaced while documenting compile-time versus runtime behavior. A <code>const</code> example involving environment variables is conceptually useful because environment variables are runtime state, but the docs should not show a fake helper or imply that users must wait for <code>ctx</code> before they can read one variable. Incan needs a minimal, real runtime environment surface.</p>
-<p>The design should also use Incan's strengths rather than copying Python's stringly style directly. A raw read should be available, but users should be able to parse and validate runtime environment values into stronger types:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.environ</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_as</span>
-
-<span class="nb">type</span> <span class="nc">PortNumber</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">int</span><span class="p">:</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">from_underlying</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">PortNumber</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
-        <span class="k">if</span> <span class="n">value</span> <span class="o">&lt;</span> <span class="mi">1</span> <span class="ow">or</span> <span class="n">value</span> <span class="o">&gt;</span> <span class="mi">65535</span><span class="p">:</span>
-            <span class="k">return</span> <span class="nb">Err</span><span class="p">(</span><span class="s2">&quot;port must be between 1 and 65535&quot;</span><span class="p">)</span>
-        <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="nc">PortNumber</span><span class="p">(</span><span class="n">value</span><span class="p">))</span>
-
-<span class="n">port</span> <span class="o">=</span> <span class="n">get_as</span><span class="p">[</span><span class="nc">PortNumber</span><span class="p">](</span><span class="s2">&quot;PORT&quot;</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="mi">8080</span><span class="p">)</span><span class="o">?</span>
-</code></pre></div>
-<p>The example is the desired distinction: the environment is runtime input, but the resulting value can still be checked against a domain type.</p>
-<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Provide a general-purpose <code>std.environ</code> module for reading current-process environment variables.</li>
-<li>Keep the base API small, explicit, and easy for Python users to recognize.</li>
-<li>Distinguish missing variables from malformed or invalid present values.</li>
-<li>Provide typed reads through <code>get_as[T]</code>.</li>
-<li>Make typed reads compose with validated newtypes and <code>from_underlying</code>.</li>
-<li>Keep secrets and diagnostics conservative.</li>
-<li>Make <code>std.ci.env</code> and <code>ctx</code> able to build on or align with the same underlying semantics.</li>
-</ul>
-<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Replacing RFC 033 <code>ctx</code> for structured application configuration.</li>
-<li>Replacing RFC 063 <code>std.process.Command.env(...)</code> for child-process environment construction.</li>
-<li>Defining a dotenv file loader.</li>
-<li>Defining secret management, vault integration, or encrypted environment variables.</li>
-<li>Standardizing all possible parsing targets in this RFC.</li>
-<li>Making environment variables available to <code>const</code> evaluation.</li>
-<li>Requiring current-process environment mutation (<code>put</code>, <code>set</code>, <code>unset</code>, <code>clear</code>) in the initial surface.</li>
-<li>Introducing new language syntax.</li>
-</ul>
-<h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
-<p>Use <code>std.environ</code> when ordinary runtime code needs to read the current process environment directly.</p>
+<h1 id="stdenviron"><code>std.environ</code><a class="headerlink" href="#stdenviron" title="Permanent link">&para;</a></h1>
+<p><code>std.environ</code> provides read-only runtime access to current-process environment variables as Unicode strings or typed values converted through <code>TryFrom[str]</code>. Structured errors distinguish missing, invalid, non-Unicode, and malformed values without exposing observed environment contents.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.environ</span><span class="w"> </span><span class="kn">import</span> <span class="nb">get</span><span class="p">,</span> <span class="n">get_optional</span><span class="p">,</span> <span class="n">get_or</span><span class="p">,</span> <span class="n">get_as</span>
 
 <span class="n">token</span> <span class="o">=</span> <span class="nb">get</span><span class="p">(</span><span class="s2">&quot;API_TOKEN&quot;</span><span class="p">)</span><span class="o">?</span>
@@ -6525,164 +6355,64 @@
 <span class="n">region</span> <span class="o">=</span> <span class="n">get_or</span><span class="p">(</span><span class="s2">&quot;APP_REGION&quot;</span><span class="p">,</span> <span class="s2">&quot;eu-west-1&quot;</span><span class="p">)</span>
 <span class="n">port</span> <span class="o">=</span> <span class="n">get_as</span><span class="p">[</span><span class="nb">int</span><span class="p">](</span><span class="s2">&quot;PORT&quot;</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="mi">8080</span><span class="p">)</span><span class="o">?</span>
 </code></pre></div>
-<p>Use <code>get</code> when the variable is required:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.environ</span><span class="w"> </span><span class="kn">import</span> <span class="nb">get</span>
-
-<span class="n">token</span> <span class="o">=</span> <span class="nb">get</span><span class="p">(</span><span class="s2">&quot;API_TOKEN&quot;</span><span class="p">)</span><span class="o">?</span>
-</code></pre></div>
-<p>If <code>API_TOKEN</code> is missing, <code>get</code> returns an error. It does not silently return an empty string.</p>
-<p>Use <code>get_optional</code> when absence is meaningful:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.environ</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_optional</span>
-
-<span class="k">match</span> <span class="n">get_optional</span><span class="p">(</span><span class="s2">&quot;APP_MODE&quot;</span><span class="p">):</span>
-    <span class="nb">Some</span><span class="p">(</span><span class="n">mode</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;mode=</span><span class="si">{</span><span class="n">mode</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-    <span class="kc">None</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;mode=default&quot;</span><span class="p">)</span>
-</code></pre></div>
-<p>Use <code>get_or</code> for string defaults:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.environ</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_or</span>
-
-<span class="n">region</span> <span class="o">=</span> <span class="n">get_or</span><span class="p">(</span><span class="s2">&quot;APP_REGION&quot;</span><span class="p">,</span> <span class="s2">&quot;eu-west-1&quot;</span><span class="p">)</span>
-</code></pre></div>
-<p>Use <code>get_as[T]</code> when the variable should be parsed into a type:</p>
+<h2 id="string-reads">String reads<a class="headerlink" href="#string-reads" title="Permanent link">&para;</a></h2>
+<p><code>get(key: str) -&gt; Result[str, EnvironError]</code> returns a required Unicode value. Missing keys, invalid keys, and non-Unicode host values return distinct errors. A key is invalid when it is empty or contains <code>=</code> or NUL.</p>
+<p><code>get_optional(key: str) -&gt; Option[str]</code> returns <code>Some(value)</code> for a present Unicode value and <code>None</code> for missing, invalid-key, or non-Unicode reads. Use <code>get()</code> when code needs the precise failure category.</p>
+<p><code>get_or(key: str, default: str) -&gt; str</code> returns the present Unicode value or <code>default</code> when no Unicode value is available. It has the same deliberately lossy error behavior as <code>get_optional()</code>.</p>
+<h2 id="typed-reads">Typed reads<a class="headerlink" href="#typed-reads" title="Permanent link">&para;</a></h2>
+<p><code>get_as[T with TryFrom[str]](key: str) -&gt; Result[Option[T], EnvironError]</code> returns <code>Ok(None)</code> when the key is absent. A present value is converted through <code>TryFrom[str]</code>; parse or validation failure returns <code>invalid_value</code>.</p>
+<p><code>get_as[T with TryFrom[str]](key: str, default: T) -&gt; Result[T, EnvironError]</code> returns the default only when the key is absent. The default can be positional or named:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.environ</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_as</span>
 
-<span class="n">port</span><span class="p">:</span> <span class="kt">Option</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="n">get_as</span><span class="p">[</span><span class="nb">int</span><span class="p">](</span><span class="s2">&quot;PORT&quot;</span><span class="p">)</span><span class="o">?</span>
+<span class="n">port</span> <span class="o">=</span> <span class="n">get_as</span><span class="p">[</span><span class="nb">int</span><span class="p">](</span><span class="s2">&quot;PORT&quot;</span><span class="p">,</span> <span class="mi">8080</span><span class="p">)</span><span class="o">?</span>
+<span class="nb">timeout</span> <span class="o">=</span> <span class="n">get_as</span><span class="p">[</span><span class="nb">float</span><span class="p">](</span><span class="s2">&quot;TIMEOUT&quot;</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="mf">2.5</span><span class="p">)</span><span class="o">?</span>
 </code></pre></div>
-<p>If <code>PORT</code> is absent, this returns <code>None</code>. If <code>PORT=3000</code>, this returns <code>Some(3000)</code>. If <code>PORT=abc</code>, this returns a parse error.</p>
-<p>When a default is provided, <code>get_as[T]</code> returns <code>T</code> directly:</p>
+<p>A malformed present value never falls back to the default. For example, <code>PORT=not-a-number</code> returns <code>invalid_value</code> even when a default is supplied.</p>
+<p>The compiler provides <code>TryFrom[str]</code> conversion for <code>str</code>, <code>bool</code>, <code>int</code>, <code>float</code>, and the exact signed, unsigned, and binary floating-point numeric types. Boolean values use the canonical <code>true</code> and <code>false</code> spellings. Numeric values follow the lexical and range rules of their target type.</p>
+<p>User-defined models, classes, enums, and newtypes can opt in by implementing <code>TryFrom[str]</code> explicitly:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.environ</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_as</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.traits.convert</span><span class="w"> </span><span class="kn">import</span> <span class="nc">TryFrom</span>
+
+<span class="k">model</span> <span class="nc">Deployment</span> <span class="k">with</span> <span class="nc">TryFrom</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">try_from</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Self</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">return</span> <span class="nb">Err</span><span class="p">(</span><span class="s2">&quot;deployment must not be empty&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="nc">Deployment</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="n">value</span><span class="p">))</span>
+
+
+<span class="n">deployment</span> <span class="o">=</span> <span class="n">get_as</span><span class="p">[</span><span class="nc">Deployment</span><span class="p">](</span><span class="s2">&quot;DEPLOYMENT&quot;</span><span class="p">)</span><span class="o">?</span>
+</code></pre></div>
+<h2 id="validated-newtypes">Validated newtypes<a class="headerlink" href="#validated-newtypes" title="Permanent link">&para;</a></h2>
+<p>Newtype instantiations compose automatically when their underlying type supports <code>TryFrom[str]</code>. If a newtype defines <code>from_underlying</code>, typed reads use that checked constructor after parsing:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.environ</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_as</span>
 
-<span class="n">port</span> <span class="o">=</span> <span class="n">get_as</span><span class="p">[</span><span class="nb">int</span><span class="p">](</span><span class="s2">&quot;PORT&quot;</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="mi">8080</span><span class="p">)</span><span class="o">?</span>
-</code></pre></div>
-<p>The positional spelling is equivalent:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">port</span> <span class="o">=</span> <span class="n">get_as</span><span class="p">[</span><span class="nb">int</span><span class="p">](</span><span class="s2">&quot;PORT&quot;</span><span class="p">,</span> <span class="mi">8080</span><span class="p">)</span><span class="o">?</span>
-</code></pre></div>
-<p>If <code>PORT</code> is absent, the result is <code>8080</code>. If <code>PORT=3000</code>, the result is <code>3000</code>. If <code>PORT=abc</code>, the result is still an error; a malformed explicit value must not be hidden by the default.</p>
-<p>Typed reads also work with validated newtypes when the underlying parse path and <code>from_underlying</code> hook are available:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.environ</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_as</span>
-
-<span class="nb">type</span> <span class="nc">PortNumber</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">int</span><span class="p">:</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">from_underlying</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">PortNumber</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+<span class="nb">type</span> <span class="nc">Port</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_underlying</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Self</span><span class="p">,</span> <span class="kt">ValidationError</span><span class="p">]:</span>
         <span class="k">if</span> <span class="n">value</span> <span class="o">&lt;</span> <span class="mi">1</span> <span class="ow">or</span> <span class="n">value</span> <span class="o">&gt;</span> <span class="mi">65535</span><span class="p">:</span>
-            <span class="k">return</span> <span class="nb">Err</span><span class="p">(</span><span class="s2">&quot;port must be between 1 and 65535&quot;</span><span class="p">)</span>
-        <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="nc">PortNumber</span><span class="p">(</span><span class="n">value</span><span class="p">))</span>
+            <span class="k">return</span> <span class="nb">Err</span><span class="p">(</span><span class="kt">ValidationError</span><span class="p">(</span><span class="s2">&quot;port must be between 1 and 65535&quot;</span><span class="p">))</span>
+        <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="nc">Port</span><span class="p">(</span><span class="n">value</span><span class="p">))</span>
 
-<span class="n">port</span> <span class="o">=</span> <span class="n">get_as</span><span class="p">[</span><span class="nc">PortNumber</span><span class="p">](</span><span class="s2">&quot;PORT&quot;</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="mi">8080</span><span class="p">)</span><span class="o">?</span>
-</code></pre></div>
-<p>Here <code>PORT=70000</code> is not accepted just because it parses as an integer. The parsed integer must also pass <code>PortNumber.from_underlying(...)</code>.</p>
-<p><code>std.environ</code> is still runtime code. It belongs inside functions, setup paths, or configuration initialization, not in <code>const</code> declarations:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.environ</span><span class="w"> </span><span class="kn">import</span> <span class="nb">get</span>
 
-<span class="k">const</span> <span class="nc">TOKEN</span> <span class="o">=</span> <span class="nb">get</span><span class="p">(</span><span class="s2">&quot;API_TOKEN&quot;</span><span class="p">)</span><span class="o">?</span>  <span class="c1"># rejected: environment access is runtime behavior</span>
+<span class="n">port</span> <span class="o">=</span> <span class="n">get_as</span><span class="p">[</span><span class="nc">Port</span><span class="p">](</span><span class="s2">&quot;PORT&quot;</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="mi">8080</span><span class="p">)</span><span class="o">?</span>
 </code></pre></div>
-<h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
-<h3 id="module-surface">Module surface<a class="headerlink" href="#module-surface" title="Permanent link">&para;</a></h3>
-<p><code>std.environ</code> must provide these functions:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">get</span><span class="p">(</span><span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nc">EnvironError</span><span class="p">]</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">get_optional</span><span class="p">(</span><span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Option</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">get_or</span><span class="p">(</span><span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">default</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">get_as</span><span class="p">[</span><span class="nc">T</span><span class="p">](</span><span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kt">Option</span><span class="p">[</span><span class="nc">T</span><span class="p">],</span> <span class="nc">EnvironError</span><span class="p">]</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">get_as</span><span class="p">[</span><span class="nc">T</span><span class="p">](</span><span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">default</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">T</span><span class="p">,</span> <span class="nc">EnvironError</span><span class="p">]</span>
-</code></pre></div>
-<p>The second <code>get_as</code> overload also supports keyword spelling:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">get_as</span><span class="p">[</span><span class="nc">T</span><span class="p">](</span><span class="n">key</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="n">value</span><span class="p">)</span>
-</code></pre></div>
-<h3 id="missing-variables">Missing variables<a class="headerlink" href="#missing-variables" title="Permanent link">&para;</a></h3>
-<p><code>get(key)</code> must return <code>Err(EnvironError.Missing(key))</code> or an equivalent structured missing-variable error when <code>key</code> is absent.</p>
-<p><code>get_optional(key)</code> must return <code>None</code> when <code>key</code> is absent.</p>
-<p><code>get_or(key, default)</code> must return <code>default</code> when <code>key</code> is absent.</p>
-<p><code>get_as[T](key)</code> must return <code>Ok(None)</code> when <code>key</code> is absent.</p>
-<p><code>get_as[T](key, default)</code> must return <code>Ok(default)</code> when <code>key</code> is absent, after validating that the default is a valid <code>T</code> value at the ordinary call site.</p>
-<h3 id="present-variables">Present variables<a class="headerlink" href="#present-variables" title="Permanent link">&para;</a></h3>
-<p>For string accessors, if <code>key</code> is present, the returned value must be the environment variable value as a <code>str</code>.</p>
-<p>For typed accessors, if <code>key</code> is present, the implementation must attempt to parse and validate the string value as <code>T</code>. If parsing or validation fails, the function must return <code>Err(...)</code>; it must not fall back to the supplied default.</p>
-<h3 id="get_ast-parsing-and-validation"><code>get_as[T]</code> parsing and validation<a class="headerlink" href="#get_ast-parsing-and-validation" title="Permanent link">&para;</a></h3>
-<p>For primitive targets, <code>get_as[T]</code> must use the standard string-to-<code>T</code> parsing behavior for supported target types.</p>
-<p>For newtype targets, <code>get_as[T]</code> should behave as follows:</p>
-<ol>
-<li>identify the newtype's underlying type;</li>
-<li>parse the environment string into that underlying type;</li>
-<li>construct or validate the newtype through the canonical checked-construction path;</li>
-<li>if the newtype defines <code>from_underlying</code>, use that hook and propagate validation failure as <code>EnvironError.Parse</code> or a more specific typed validation variant;</li>
-<li>return the validated newtype value on success.</li>
-</ol>
-<p>If a target type has no supported parse path, <code>get_as[T]</code> must be rejected at typecheck time when possible. If the unsupported target is only discovered later through library metadata or backend capability, the diagnostic must name <code>T</code> and explain that it cannot be read from an environment string.</p>
-<h3 id="defaults-for-newtype-targets">Defaults for newtype targets<a class="headerlink" href="#defaults-for-newtype-targets" title="Permanent link">&para;</a></h3>
-<p>For <code>get_as[Newtype]("KEY", default=value)</code>, <code>default</code> must be type-compatible with the return type. If existing newtype coercion rules allow the newtype's underlying type at this call site, the compiler may apply that checked construction path. Invalid defaults are ordinary compile-time or runtime validation failures according to the existing newtype rules; they are not special to <code>std.environ</code>.</p>
-<h3 id="key-rules">Key rules<a class="headerlink" href="#key-rules" title="Permanent link">&para;</a></h3>
-<p>Environment variable keys must be <code>str</code>.</p>
-<p>An implementation should reject empty keys with <code>EnvironError.InvalidKey</code> or an equivalent error. Platform-specific key restrictions may be reported at runtime.</p>
-<p>On platforms with case-insensitive environment keys, the module must follow the platform's native behavior. The language-level contract must not promise cross-platform case sensitivity.</p>
-<h3 id="error-shape">Error shape<a class="headerlink" href="#error-shape" title="Permanent link">&para;</a></h3>
-<p><code>EnvironError</code> must distinguish at least:</p>
+<p><code>PORT=70000</code> fails validation. When <code>PORT</code> is absent, the integer default is converted through the ordinary checked newtype coercion path, so an invalid default does not bypass <code>from_underlying</code>.</p>
+<h2 id="errors">Errors<a class="headerlink" href="#errors" title="Permanent link">&para;</a></h2>
+<p><code>EnvironError</code> exposes <code>kind()</code> and <code>kind_name()</code>, the requested <code>key</code>, and a redacted <code>detail</code> message. The stable categories are:</p>
 <ul>
-<li>missing required key;</li>
-<li>invalid key;</li>
-<li>invalid Unicode or unsupported platform encoding, if applicable;</li>
-<li>parse or validation failure for typed reads.</li>
+<li><code>missing</code>: the key is not present.</li>
+<li><code>invalid_key</code>: the key is empty or contains <code>=</code> or NUL.</li>
+<li><code>invalid_value</code>: a typed read could not parse or validate the present value.</li>
+<li><code>not_unicode</code>: the host value cannot be represented as Unicode text.</li>
+<li><code>other</code>: an unexpected host failure.</li>
 </ul>
-<p>Errors should include the key name and expected type where relevant. Errors must not include secret values by default.</p>
-<h3 id="const-evaluation">Const evaluation<a class="headerlink" href="#const-evaluation" title="Permanent link">&para;</a></h3>
-<p>Calls into <code>std.environ</code> must not be const-evaluable. They must be rejected in <code>const</code> initializers and any other compile-time-only expression context.</p>
-<h3 id="side-effects">Side effects<a class="headerlink" href="#side-effects" title="Permanent link">&para;</a></h3>
-<p>The initial <code>std.environ</code> surface is read-only. Reading an environment variable must not mutate the current process environment.</p>
-<h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
-<h3 id="why-stdenviron">Why <code>std.environ</code><a class="headerlink" href="#why-stdenviron" title="Permanent link">&para;</a></h3>
-<p>The name is intentionally <code>std.environ</code>, not <code>std.env</code>. <code>environ</code> matches Python's familiar <code>os.environ</code> spelling, while avoiding confusion with project lifecycle environments (<code>incan env</code>, <code>[tool.incan.envs.*]</code>) and with RFC 033 <code>Env</code> enum axes.</p>
-<h3 id="relationship-to-ctx">Relationship to <code>ctx</code><a class="headerlink" href="#relationship-to-ctx" title="Permanent link">&para;</a></h3>
-<p>RFC 033 <code>ctx</code> remains the preferred surface for typed application configuration. <code>std.environ</code> is lower-level. It is appropriate for small scripts, library code that needs one runtime variable, and building blocks for higher-level configuration surfaces.</p>
-<p><code>ctx</code> may use <code>std.environ</code> semantics internally, but this RFC does not require a particular implementation relationship.</p>
-<h3 id="relationship-to-stdcienv">Relationship to <code>std.ci.env</code><a class="headerlink" href="#relationship-to-stdcienv" title="Permanent link">&para;</a></h3>
-<p>RFC 067 <code>std.ci.env</code> is CI-oriented. It may wrap, re-export, or mirror <code>std.environ</code> functions, but CI should not be the only namespace where environment access exists.</p>
-<p>Provider-specific behavior must remain outside <code>std.environ</code>. <code>std.environ</code> reads process environment variables; it does not know about GitHub Actions, GitLab CI, buildkite, or any other runner.</p>
-<h3 id="relationship-to-stdprocess">Relationship to <code>std.process</code><a class="headerlink" href="#relationship-to-stdprocess" title="Permanent link">&para;</a></h3>
-<p>RFC 063 <code>std.process</code> owns child-process environment construction through command builder methods such as <code>env</code>, <code>env_remove</code>, and <code>env_clear</code>. <code>std.environ</code> owns current-process environment reads. The two surfaces should use compatible key/value expectations but must not be conflated.</p>
-<h3 id="secrets-and-diagnostics">Secrets and diagnostics<a class="headerlink" href="#secrets-and-diagnostics" title="Permanent link">&para;</a></h3>
-<p>Environment variables often carry secrets. <code>std.environ</code> errors should name keys and expected types, but should not print the observed value by default. Debug or tracing integrations may provide opt-in redaction-aware diagnostics later, but this RFC only requires conservative default behavior.</p>
-<h3 id="why-no-put-in-the-initial-surface">Why no <code>put</code> in the initial surface<a class="headerlink" href="#why-no-put-in-the-initial-surface" title="Permanent link">&para;</a></h3>
-<p>Python exposes environment mutation through <code>os.environ</code>, and also has lower-level <code>putenv</code> / <code>unsetenv</code> behavior. Incan should not copy that casually. The current process environment is global process state, and some target runtimes treat mutation as unsafe or platform-constrained once a program is multithreaded. That makes <code>put</code> materially different from <code>get</code>: reads are ordinary runtime observation, while writes mutate ambient state that libraries, child processes, tests, and platform calls may observe.</p>
-<p>The initial <code>std.environ</code> surface is therefore read-only. Code that needs to pass environment variables to a child process should use the child-process environment controls from RFC 063 <code>std.process</code>. Tests that need temporary environment changes should use test fixtures or a dedicated testing surface with scoped restoration. A future RFC may add current-process mutation, but it should specify lifecycle restrictions, thread-safety rules, test isolation, and platform behavior explicitly.</p>
-<h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
-<p>This feature is additive. Existing code using Rust interop, project lifecycle environment injection, or future <code>ctx</code> declarations remains valid.</p>
-<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
-<ol>
-<li><strong>Use only <code>ctx</code> for environment variables</strong> — Rejected because <code>ctx</code> is a structured configuration feature. Programs and libraries still need a small runtime primitive for direct environment reads.</li>
-<li><strong>Use only <code>std.ci.env</code></strong> — Rejected because environment variables are not CI-specific. CI should be a specialized wrapper, not the only environment namespace.</li>
-<li><strong>Name the module <code>std.env</code></strong> — Rejected because <code>env</code> already appears heavily in project lifecycle terminology and RFC 033 axis examples. <code>std.environ</code> is more explicit and Python-familiar.</li>
-<li><strong>Single <code>get(key, default=...)</code> function</strong> — Rejected because it blurs required, optional, defaulted, and typed access into one overloaded call shape. Separate helpers keep call sites obvious.</li>
-<li><strong>Return empty string for missing variables</strong> — Rejected because it hides configuration mistakes and collapses absence into a valid value.</li>
-<li><strong>Default hides parse errors</strong> — Rejected because an explicitly configured invalid value should fail loudly. Defaults only handle absence.</li>
-<li><strong>Expose the whole environment as a mutable mapping first</strong> — Rejected for the initial surface because mutation semantics, platform behavior, secret exposure, and concurrency deserve separate design.</li>
-<li><strong>Add <code>put(key, value)</code> immediately</strong> — Rejected for the initial surface because current-process environment mutation is global ambient state. Child-process environment construction belongs in RFC 063 <code>std.process</code>; scoped test mutation belongs in testing support; general mutation needs a separate safety policy.</li>
-</ol>
-<h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
-<ul>
-<li>The surface adds another configuration-adjacent API next to <code>ctx</code>, project lifecycle environments, <code>std.ci.env</code>, and <code>std.process</code> env builders.</li>
-<li><code>get_as[T]</code> introduces protocol complexity around parsing, newtypes, validation errors, and default handling.</li>
-<li>A read-only first version may frustrate users who expect Python-like mutation through <code>os.environ</code>.</li>
-<li>Platform differences around key casing, encoding, and process environment mutation remain visible at the boundary.</li>
-</ul>
-<h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
-<p><em>(Non-normative.)</em> A minimal implementation can start with current-process string reads plus <code>Result</code> and <code>Option</code> wrappers, then route <code>get_as[T]</code> through the same parse and checked-construction machinery used by ordinary conversions and validated newtypes. CI-specific helpers can then call into the same runtime primitive while preserving their CI-oriented error messages.</p>
-<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>Stdlib / runtime (<code>incan_stdlib</code>)</strong>: must expose <code>std.environ</code>, provide current-process environment reads, define <code>EnvironError</code>, and keep diagnostics conservative around secret values.</li>
-<li><strong>Typechecker / symbol resolution</strong>: must resolve the generic <code>get_as[T]</code> surface, reject unsupported target types where possible, and reject <code>std.environ</code> calls in const-only contexts.</li>
-<li><strong>Lowering / emission</strong>: must lower environment reads to the target runtime's process-environment API and preserve <code>Result</code> / <code>Option</code> behavior.</li>
-<li><strong>Validated newtypes / conversions</strong>: must allow <code>get_as[T]</code> to compose with supported parse paths and <code>from_underlying</code> checked construction for newtype targets.</li>
-<li><strong>Docs / examples</strong>: must teach <code>std.environ</code> as runtime state, distinguish it from <code>ctx</code>, and avoid showing environment reads in <code>const</code> examples except as rejected code.</li>
-<li><strong>LSP / tooling</strong>: should provide hover and completion for <code>std.environ</code> functions and should surface precise diagnostics for unsupported <code>get_as[T]</code> targets.</li>
-</ul>
-<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Should <code>std.environ</code> ever include mutation helpers such as <code>put</code>, <code>set</code>, <code>unset</code>, and <code>clear</code>, or should current-process environment mutation remain outside the general runtime API?</li>
-<li>Should <code>get_as[T]</code> use a general parse trait once one is standardized, or should this RFC define a narrow environment parsing protocol directly?</li>
-<li>Should bytes-oriented environment access exist on Unix-like platforms, or should <code>std.environ</code> intentionally expose only Unicode <code>str</code> values?</li>
-<li>Should <code>get_as[T](key, default)</code> accept an underlying value for a newtype target through implicit checked construction, or require callers to pass an already constructed <code>T</code>?</li>
-<li>Should <code>std.ci.env</code> re-export <code>std.environ</code> names directly, or keep CI-specific wrappers with different error text?</li>
-</ul>
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+<p><code>kind() -&gt; EnvironErrorKind</code> returns the typed value enum. Its variants are <code>Missing</code>, <code>InvalidKey</code>, <code>InvalidValue</code>, <code>NotUnicode</code>, and <code>Other</code>. <code>kind_name() -&gt; str</code> returns the corresponding lowercase spelling shown above when text output or serialization is more convenient.</p>
+<p>Error details may include the key and expected target type. They never include the observed environment value.</p>
+<h2 id="runtime-scope">Runtime scope<a class="headerlink" href="#runtime-scope" title="Permanent link">&para;</a></h2>
+<p>Environment reads are runtime operations and are rejected in <code>const</code> initializers. The module does not mutate the current process environment and does not expose a byte-oriented host environment API.</p>
+<p>Use <code>std.environ</code> for direct ambient reads. Structured application configuration belongs to the planned <code>ctx</code> surface, while planned <code>std.ci.env</code> helpers may add CI-specific policy without becoming the only environment namespace. Child-process environment construction belongs to the planned <code>std.process</code> command API rather than current-process reads.</p>
 
 
 
@@ -6731,18 +6461,18 @@
     </div>
     
     
-    <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.instant", "navigation.tabs", "navigation.tabs.sticky", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    <script id="__config" type="application/json">{"base": "../../../..", "features": ["navigation.instant", "navigation.tabs", "navigation.tabs.sticky", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      <script src="../../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
-        <script src="../../_snippets/javascripts/mathjax.js"></script>
+        <script src="../../../../_snippets/javascripts/mathjax.js"></script>
       
         <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
       
-        <script src="../../_snippets/javascripts/tablesort.js"></script>
+        <script src="../../../../_snippets/javascripts/tablesort.js"></script>
       
-        <script src="../../_snippets/javascripts/rfc_table_filter.js"></script>
+        <script src="../../../../_snippets/javascripts/rfc_table_filter.js"></script>
       
     
   </body>
