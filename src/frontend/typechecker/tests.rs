@@ -14880,6 +14880,268 @@ def accept_user_id(value: UserId) -> UserId:
 }
 
 #[test]
+fn test_std_environ_get_as_accepts_required_primitive_targets() {
+    let source = r#"
+from std.environ import EnvironError, get_as
+
+def read_values() -> None:
+  text: Result[Option[str], EnvironError] = get_as[str]("TEXT")
+  flag: Result[Option[bool], EnvironError] = get_as[bool]("FLAG")
+  integer: Result[Option[int], EnvironError] = get_as[int]("INTEGER")
+  floating: Result[Option[float], EnvironError] = get_as[float]("FLOATING")
+  i8_value: Result[Option[i8], EnvironError] = get_as[i8]("I8")
+  i16_value: Result[Option[i16], EnvironError] = get_as[i16]("I16")
+  i32_value: Result[Option[i32], EnvironError] = get_as[i32]("I32")
+  i64_value: Result[Option[i64], EnvironError] = get_as[i64]("I64")
+  i128_value: Result[Option[i128], EnvironError] = get_as[i128]("I128")
+  isize_value: Result[Option[isize], EnvironError] = get_as[isize]("ISIZE")
+  u8_value: Result[Option[u8], EnvironError] = get_as[u8]("U8")
+  u16_value: Result[Option[u16], EnvironError] = get_as[u16]("U16")
+  u32_value: Result[Option[u32], EnvironError] = get_as[u32]("U32")
+  u64_value: Result[Option[u64], EnvironError] = get_as[u64]("U64")
+  u128_value: Result[Option[u128], EnvironError] = get_as[u128]("U128")
+  usize_value: Result[Option[usize], EnvironError] = get_as[usize]("USIZE")
+  f32_value: Result[Option[f32], EnvironError] = get_as[f32]("F32")
+  f64_value: Result[Option[f64], EnvironError] = get_as[f64]("F64")
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_std_environ_get_as_accepts_validated_newtype_target() {
+    let source = r#"
+from std.environ import EnvironError, get_as
+
+type Port = newtype int:
+  def from_underlying(value: int) -> Result[Self, ValidationError]:
+    if value < 1 or value > 65535:
+      return Err(ValidationError("port out of range"))
+    return Ok(Port(value))
+
+def read_port() -> Result[Option[Port], EnvironError]:
+  return get_as[Port]("PORT")
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_std_environ_get_as_accepts_generic_newtype_when_concrete_underlying_is_supported() {
+    let source = r#"
+from std.environ import EnvironError, get_as
+
+type Boxed[T] = newtype T
+
+def read_boxed() -> Result[Option[Boxed[int]], EnvironError]:
+  return get_as[Boxed[int]]("BOXED")
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_std_environ_get_as_rejects_generic_newtype_when_concrete_underlying_is_unsupported() {
+    let source = r#"
+from std.environ import get_as
+
+type Boxed[T] = newtype T
+
+def read_boxed() -> None:
+  get_as[Boxed[bytes]]("BOXED")
+"#;
+    let errors = check_str_err(source, "unsupported generic newtype target should fail typechecking");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("Boxed[bytes]") && error.message.contains("TryFrom[str]")),
+        "expected a concrete generic target diagnostic, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_std_environ_get_as_accepts_positional_and_keyword_defaults() {
+    let source = r#"
+from std.environ import EnvironError, get_as
+
+type Port = newtype int:
+  def from_underlying(value: int) -> Result[Self, ValidationError]:
+    if value < 1 or value > 65535:
+      return Err(ValidationError("port out of range"))
+    return Ok(Port(value))
+
+def read_values() -> None:
+  positional: Result[int, EnvironError] = get_as[int]("PORT", 8080)
+  keyword: Result[int, EnvironError] = get_as[int]("PORT", default=8080)
+  newtype_positional: Result[Port, EnvironError] = get_as[Port]("PORT", 8080)
+  newtype_keyword: Result[Port, EnvironError] = get_as[Port]("PORT", default=8080)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_std_environ_module_qualified_get_as_preserves_overloads() {
+    let source = r#"
+import std.environ as environ
+from std.environ import EnvironError
+
+def read_values() -> None:
+  optional: Result[Option[int], EnvironError] = environ.get_as[int]("PORT")
+  positional: Result[int, EnvironError] = environ.get_as[int]("PORT", 8080)
+  keyword: Result[int, EnvironError] = environ.get_as[int]("PORT", default=8080)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_std_environ_get_as_rejects_unsupported_target_during_typechecking() {
+    let source = r#"
+from std.environ import get_as
+
+model Config:
+  name: str
+
+def read_config() -> None:
+  get_as[Config]("CONFIG")
+"#;
+    let errors = check_str_err(source, "unsupported std.environ target should fail typechecking");
+    assert!(
+        errors.iter().any(|error| {
+            error.message.contains("Config")
+                && error.message.contains("generic bound")
+                && error.message.contains("TryFrom[str]")
+        }),
+        "expected a target-specific TryFrom[str] diagnostic, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_std_environ_get_as_does_not_accept_try_from_int_adoption() {
+    let source = r#"
+from std.environ import get_as
+from std.traits.convert import TryFrom
+
+model NumericToken with TryFrom[int]:
+  value: int
+
+  @classmethod
+  def try_from(cls, value: int) -> Result[Self, str]:
+    return Ok(NumericToken(value=value))
+
+def read_token() -> None:
+  get_as[NumericToken]("TOKEN")
+"#;
+    let errors = check_str_err(source, "TryFrom[int] must not satisfy TryFrom[str]");
+    assert!(
+        errors.iter().any(|error| {
+            error.message.contains("NumericToken")
+                && error.message.contains("generic bound")
+                && error.message.contains("TryFrom[str]")
+        }),
+        "expected exact TryFrom[str] bound rejection, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_std_environ_get_as_rejects_unrelated_local_try_from_trait() {
+    let source = r#"
+from std.environ import get_as
+
+trait TryFrom[T]:
+  @classmethod
+  def try_from(cls, value: T) -> Result[Self, str]: ...
+
+model LocalToken with TryFrom[str]:
+  value: str
+
+  @classmethod
+  def try_from(cls, value: str) -> Result[Self, str]:
+    return Ok(LocalToken(value=value))
+
+def read_token() -> None:
+  get_as[LocalToken]("TOKEN")
+"#;
+    let errors = check_str_err(
+        source,
+        "an unrelated local TryFrom trait must not satisfy std conversion",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("LocalToken") && error.message.contains("TryFrom[str]")),
+        "expected canonical trait identity rejection, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_std_environ_get_as_rejects_unrelated_local_try_from_on_active_generic() {
+    let source = r#"
+from std.environ import EnvironError, get_as
+
+trait TryFrom[T]:
+  @classmethod
+  def try_from(cls, value: T) -> Result[Self, str]: ...
+
+def read_token[T with TryFrom[str]]() -> Result[Option[T], EnvironError]:
+  return get_as[T]("TOKEN")
+"#;
+    let errors = check_str_err(
+        source,
+        "an unrelated active generic TryFrom bound must not satisfy std conversion",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("T") && error.message.contains("TryFrom[str]")),
+        "expected canonical active-bound rejection, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_std_environ_get_as_accepts_generic_subtrait_adopter() {
+    let source = r#"
+from std.environ import EnvironError, get_as
+from std.traits.convert import TryFrom
+
+trait EnvReadable[T] with TryFrom[T]:
+  def source_name(self) -> str: ...
+
+model Token with EnvReadable[str]:
+  value: str
+
+  @classmethod
+  def try_from(cls, value: str) -> Result[Self, str]:
+    return Ok(Token(value=value))
+
+  def source_name(self) -> str:
+    return "environment"
+
+def read_token() -> Result[Option[Token], EnvironError]:
+  return get_as[Token]("TOKEN")
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_std_environ_calls_are_rejected_in_const_initializers() {
+    let source = r#"
+from std.environ import get
+
+const TOKEN = get("API_TOKEN")
+"#;
+    let errors = check_str_err(source, "std.environ reads must remain runtime-only");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("not allowed") || error.message.contains("const initializers")),
+        "expected const-context rejection, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn test_explicit_clone_bound_rejects_non_clone_model() {
     let source = r#"
 model Token:

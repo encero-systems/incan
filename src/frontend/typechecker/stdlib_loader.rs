@@ -24,7 +24,8 @@
 //!   signatures for class/model/enum imports.
 //! - Trait signatures are extracted from top-level `trait` declarations with their methods and `with` supertraits (RFC
 //!   042), using the same lightweight `ast_type_to_resolved` mapping as method signatures.
-//! - Default parameter values are not captured (only the parameter name and type).
+//! - Compact signatures retain default presence but not expressions. Paired source declarations preserve full default
+//!   expressions for source-defined functions; Rust-imported runtime entries may have no declaration.
 //! - Complex types beyond the common set (`int`, `str`, `bool`, `Option[T]`, etc.) are treated as `Named`.
 //! - Parse failures are logged and the module is treated as unavailable for AST-derived signature lookup.
 
@@ -49,8 +50,7 @@ use incan_core::lang::types::stringlike::{self as string_types, StringLikeId};
 
 #[derive(Debug, Clone, Default)]
 struct StdlibModuleData {
-    functions: Vec<(String, FunctionInfo)>,
-    function_declarations: Vec<(String, ast::FunctionDecl)>,
+    functions: Vec<StdlibFunctionEntry>,
     traits: Vec<(String, TraitInfo)>,
     trait_declarations: Vec<(String, ast::TraitDecl)>,
     types: Vec<(String, TypeInfo)>,
@@ -60,6 +60,14 @@ struct StdlibModuleData {
     derivable_traits: Vec<String>,
     function_meta: HashMap<String, FunctionMeta>,
     trait_meta: HashMap<String, TraitMeta>,
+}
+
+/// One cached stdlib function overload with its source declaration when available.
+#[derive(Debug, Clone)]
+struct StdlibFunctionEntry {
+    name: String,
+    info: FunctionInfo,
+    declaration: Option<ast::FunctionDecl>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -118,8 +126,8 @@ impl StdlibAstCache {
             .get(&key)?
             .functions
             .iter()
-            .filter(|(name, _)| name == function_name)
-            .map(|(_, info)| info.clone())
+            .filter(|entry| entry.name == function_name)
+            .map(|entry| entry.info.clone())
             .collect::<Vec<_>>();
         match functions.as_slice() {
             [] => None,
@@ -189,9 +197,9 @@ impl StdlibAstCache {
         self.cache
             .get(&key)
             .into_iter()
-            .flat_map(|data| &data.function_declarations)
-            .filter(|(name, _)| name == function_name)
-            .map(|(_, declaration)| declaration.clone())
+            .flat_map(|data| &data.functions)
+            .filter(|entry| entry.name == function_name)
+            .filter_map(|entry| entry.declaration.clone())
             .collect()
     }
 
@@ -226,21 +234,14 @@ impl StdlibAstCache {
         let Some(data) = self.cache.get(&key) else {
             return StdlibModuleLspMetadata::default();
         };
-        let mut function_declarations = HashMap::<String, std::collections::VecDeque<ast::FunctionDecl>>::new();
-        for (name, declaration) in &data.function_declarations {
-            function_declarations
-                .entry(name.clone())
-                .or_default()
-                .push_back(declaration.clone());
-        }
         StdlibModuleLspMetadata {
             functions: data
                 .functions
                 .iter()
-                .map(|(name, info)| StdlibFunctionLspMetadata {
-                    name: name.clone(),
-                    info: info.clone(),
-                    declaration: function_declarations.get_mut(name).and_then(|items| items.pop_front()),
+                .map(|entry| StdlibFunctionLspMetadata {
+                    name: entry.name.clone(),
+                    info: entry.info.clone(),
+                    declaration: entry.declaration.clone(),
                 })
                 .collect(),
             traits: data.traits.clone(),
@@ -386,9 +387,8 @@ fn load_stdlib_module_data_unguarded(
         })
         .ok()?;
 
-    let mut functions = extract_function_signatures(&program);
+    let mut functions = extract_function_entries(&program);
     assign_function_overload_emitted_names(&mut functions);
-    let mut function_declarations = extract_function_declarations(&program);
     let mut traits = extract_trait_signatures(&program);
     let mut trait_declarations = extract_trait_declarations(&program);
     let mut types = extract_type_signatures(&program);
@@ -405,7 +405,6 @@ fn load_stdlib_module_data_unguarded(
     // `std.web.routing`.
     let mut reexport_targets = ReexportMetadataTargets {
         functions: &mut functions,
-        function_declarations: &mut function_declarations,
         traits: &mut traits,
         trait_declarations: &mut trait_declarations,
         types: &mut types,
@@ -419,7 +418,6 @@ fn load_stdlib_module_data_unguarded(
 
     Some(StdlibModuleData {
         functions,
-        function_declarations,
         traits,
         trait_declarations,
         types,
@@ -433,8 +431,7 @@ fn load_stdlib_module_data_unguarded(
 }
 
 struct ReexportMetadataTargets<'a> {
-    functions: &'a mut Vec<(String, FunctionInfo)>,
-    function_declarations: &'a mut Vec<(String, ast::FunctionDecl)>,
+    functions: &'a mut Vec<StdlibFunctionEntry>,
     traits: &'a mut Vec<(String, TraitInfo)>,
     trait_declarations: &'a mut Vec<(String, ast::TraitDecl)>,
     types: &'a mut Vec<(String, TypeInfo)>,
@@ -488,28 +485,14 @@ fn merge_reexported_metadata(
             let effective_name = item.alias.as_deref().unwrap_or(&item.name);
 
             // Merge every function overload and its matching source declaration under the re-exported source name.
-            let source_declarations = sub_data
-                .function_declarations
-                .iter()
-                .filter(|(name, _)| name == &item.name)
-                .collect::<Vec<_>>();
-            for (overload_index, (_, info)) in sub_data
-                .functions
-                .iter()
-                .filter(|(name, _)| name == &item.name)
-                .enumerate()
-            {
-                let already_present = targets
-                    .functions
-                    .iter()
-                    .any(|(name, existing)| name == effective_name && existing.emitted_name == info.emitted_name);
+            for entry in sub_data.functions.iter().filter(|entry| entry.name == item.name) {
+                let already_present = targets.functions.iter().any(|existing| {
+                    existing.name == effective_name && existing.info.emitted_name == entry.info.emitted_name
+                });
                 if !already_present {
-                    targets.functions.push((effective_name.to_string(), info.clone()));
-                    if let Some((_, declaration)) = source_declarations.get(overload_index) {
-                        targets
-                            .function_declarations
-                            .push((effective_name.to_string(), (*declaration).clone()));
-                    }
+                    let mut entry = entry.clone();
+                    entry.name = effective_name.to_string();
+                    targets.functions.push(entry);
                 }
             }
 
@@ -788,10 +771,10 @@ fn find_reexported_type_method_decl(
     })
 }
 
-/// Extract function signatures from a parsed stdlib `.incn` program.
+/// Extract paired function metadata from a parsed stdlib `.incn` program.
 ///
 /// Only top-level `def` declarations are extracted. Methods and other declarations are ignored.
-fn extract_function_signatures(program: &ast::Program) -> Vec<(String, FunctionInfo)> {
+fn extract_function_entries(program: &ast::Program) -> Vec<StdlibFunctionEntry> {
     let mut fns = Vec::new();
     let stdlib_imports = stdlib_import_aliases(program);
     for decl in &program.declarations {
@@ -800,7 +783,11 @@ fn extract_function_signatures(program: &ast::Program) -> Vec<(String, FunctionI
                 continue;
             }
             let info = function_decl_to_info(func, &stdlib_imports);
-            fns.push((func.name.clone(), info));
+            fns.push(StdlibFunctionEntry {
+                name: func.name.clone(),
+                info,
+                declaration: Some(func.clone()),
+            });
             continue;
         }
 
@@ -811,9 +798,13 @@ fn extract_function_signatures(program: &ast::Program) -> Vec<(String, FunctionI
             for item in items {
                 let local_name = item.alias.as_deref().unwrap_or(&item.name);
                 if let Some(info) = imported_runtime_function_info(local_name)
-                    && !fns.iter().any(|(name, _)| name == local_name)
+                    && !fns.iter().any(|entry| entry.name == local_name)
                 {
-                    fns.push((local_name.to_string(), info));
+                    fns.push(StdlibFunctionEntry {
+                        name: local_name.to_string(),
+                        info,
+                        declaration: None,
+                    });
                 }
             }
         }
@@ -821,31 +812,15 @@ fn extract_function_signatures(program: &ast::Program) -> Vec<(String, FunctionI
     fns
 }
 
-/// Preserve every public source function declaration in overload order.
-fn extract_function_declarations(program: &ast::Program) -> Vec<(String, ast::FunctionDecl)> {
-    program
-        .declarations
-        .iter()
-        .filter_map(|declaration| match &declaration.node {
-            ast::Declaration::Function(function) if function.visibility == ast::Visibility::Public => {
-                Some((function.name.clone(), function.clone()))
-            }
-            _ => None,
-        })
-        .collect()
-}
-
 /// Assign provider Rust names to every member of a same-name source overload set.
-fn assign_function_overload_emitted_names(functions: &mut [(String, FunctionInfo)]) {
-    let overloaded_names = functions
-        .iter()
-        .map(|(name, _)| name)
-        .filter(|name| functions.iter().filter(|(candidate, _)| candidate == *name).count() > 1)
-        .cloned()
-        .collect::<HashSet<_>>();
-    for (name, info) in functions {
-        if overloaded_names.contains(name) {
-            info.emitted_name = Some(overloaded_function_emitted_name(name, info));
+fn assign_function_overload_emitted_names(functions: &mut [StdlibFunctionEntry]) {
+    let mut counts = HashMap::<String, usize>::new();
+    for entry in functions.iter() {
+        *counts.entry(entry.name.clone()).or_default() += 1;
+    }
+    for entry in functions {
+        if counts.get(entry.name.as_str()).copied().unwrap_or_default() > 1 {
+            entry.info.emitted_name = Some(overloaded_function_emitted_name(&entry.name, &entry.info));
         }
     }
 }
@@ -1794,27 +1769,27 @@ mod tests {
         assert!(!fns.is_empty(), "should have extracted function signatures");
 
         // Check a few known functions.
-        let fail_fn = fns.iter().find(|(name, _)| name == "fail");
+        let fail_fn = fns.iter().find(|entry| entry.name == "fail");
         assert!(fail_fn.is_some(), "should find 'fail' function");
-        let fail_info = &fail_fn.ok_or("fail not found")?.1;
+        let fail_info = &fail_fn.ok_or("fail not found")?.info;
         assert_eq!(fail_info.params.len(), 1);
         assert_eq!(fail_info.params[0].name(), Some("msg"));
         assert!(matches!(fail_info.params[0].ty, ResolvedType::Str));
         assert!(fail_info.type_params.is_empty());
         assert!(matches!(fail_info.return_type, ResolvedType::Unit));
 
-        let fail_t_fn = fns.iter().find(|(name, _)| name == "fail_t");
+        let fail_t_fn = fns.iter().find(|entry| entry.name == "fail_t");
         assert!(fail_t_fn.is_some(), "should find 'fail_t' function");
-        let fail_t_info = &fail_t_fn.ok_or("fail_t not found")?.1;
+        let fail_t_info = &fail_t_fn.ok_or("fail_t not found")?.info;
         assert_eq!(fail_t_info.params.len(), 1);
         assert_eq!(fail_t_info.params[0].name(), Some("msg"));
         assert!(matches!(fail_t_info.params[0].ty, ResolvedType::Str));
         assert_eq!(fail_t_info.type_params, vec!["T".to_string()]);
         assert!(matches!(fail_t_info.return_type, ResolvedType::TypeVar(ref s) if s == "T"));
 
-        let assert_eq_fn = fns.iter().find(|(name, _)| name == "assert_eq");
+        let assert_eq_fn = fns.iter().find(|entry| entry.name == "assert_eq");
         assert!(assert_eq_fn.is_some(), "should find 'assert_eq' function");
-        let assert_eq_info = &assert_eq_fn.ok_or("assert_eq not found")?.1;
+        let assert_eq_info = &assert_eq_fn.ok_or("assert_eq not found")?.info;
         assert_eq!(assert_eq_info.params.len(), 3);
         assert_eq!(assert_eq_info.type_params, vec!["T".to_string()]);
         assert!(matches!(assert_eq_info.params[0].ty, ResolvedType::TypeVar(ref s) if s == "T"));
@@ -1962,7 +1937,7 @@ mod tests {
                 .ok_or_else(|| format!("failed to load stdlib/encoding/{module_name}.incn"))?;
             for expected in expected_functions {
                 assert!(
-                    module.functions.iter().any(|(name, _)| name == expected),
+                    module.functions.iter().any(|entry| entry.name == expected),
                     "std.encoding.{module_name} should export {expected}"
                 );
             }
@@ -1988,7 +1963,7 @@ mod tests {
         let functions = module
             .functions
             .iter()
-            .map(|(name, _)| name.as_str())
+            .map(|entry| entry.name.as_str())
             .collect::<std::collections::BTreeSet<_>>();
         for removed in [
             "parse",
@@ -2189,8 +2164,7 @@ pub type File = rusttype RustFile:
         let program = crate::frontend::parser::parse(&tokens)
             .map_err(|errs| format!("synthetic std.fs source should parse: {errs:?}"))?;
         let module_data = StdlibModuleData {
-            functions: extract_function_signatures(&program),
-            function_declarations: extract_function_declarations(&program),
+            functions: extract_function_entries(&program),
             traits: extract_trait_signatures(&program),
             trait_declarations: extract_trait_declarations(&program),
             types: extract_type_signatures(&program),
@@ -2254,9 +2228,9 @@ pub type File = rusttype RustFile:
         let module = load_stdlib_module_data(&path);
         let module = module.ok_or("failed to load stdlib/async/time.incn")?;
         let fns = &module.functions;
-        let sleep_fn = fns.iter().find(|(name, _)| name == "sleep");
+        let sleep_fn = fns.iter().find(|entry| entry.name == "sleep");
         assert!(sleep_fn.is_some(), "should find 'sleep' function");
-        let timeout_fn = fns.iter().find(|(name, _)| name == "timeout");
+        let timeout_fn = fns.iter().find(|entry| entry.name == "timeout");
         assert!(timeout_fn.is_some(), "should find 'timeout' function");
         let timeout_join_outcome = module
             .types
@@ -2280,9 +2254,9 @@ pub type File = rusttype RustFile:
         let path = vec!["std".to_string(), "async".to_string()];
         let module = load_stdlib_module_data(&path);
         let fns = module.ok_or("failed to load stdlib/async/prelude.incn")?.functions;
-        let sleep_fn = fns.iter().find(|(name, _)| name == "sleep");
+        let sleep_fn = fns.iter().find(|entry| entry.name == "sleep");
         assert!(sleep_fn.is_some(), "should resolve prelude re-export 'sleep'");
-        let spawn_fn = fns.iter().find(|(name, _)| name == "spawn");
+        let spawn_fn = fns.iter().find(|entry| entry.name == "spawn");
         assert!(spawn_fn.is_some(), "should resolve prelude re-export 'spawn'");
         Ok(())
     }
@@ -2294,9 +2268,9 @@ pub type File = rusttype RustFile:
 
         let fns = module.ok_or("failed to load stdlib/async/channel.incn")?.functions;
 
-        let channel_fn = fns.iter().find(|(name, _)| name == "channel");
+        let channel_fn = fns.iter().find(|entry| entry.name == "channel");
         assert!(channel_fn.is_some(), "should find 'channel' function");
-        let oneshot_fn = fns.iter().find(|(name, _)| name == "oneshot");
+        let oneshot_fn = fns.iter().find(|entry| entry.name == "oneshot");
         assert!(oneshot_fn.is_some(), "should find 'oneshot' function");
 
         Ok(())
@@ -2308,9 +2282,9 @@ pub type File = rusttype RustFile:
         let module = load_stdlib_module_data(&path);
         let fns = module.ok_or("failed to load stdlib/async/task.incn")?.functions;
 
-        assert!(fns.iter().any(|(name, _)| name == "spawn"));
-        assert!(fns.iter().any(|(name, _)| name == "spawn_blocking"));
-        assert!(fns.iter().any(|(name, _)| name == "yield_now"));
+        assert!(fns.iter().any(|entry| entry.name == "spawn"));
+        assert!(fns.iter().any(|entry| entry.name == "spawn_blocking"));
+        assert!(fns.iter().any(|entry| entry.name == "yield_now"));
         Ok(())
     }
 
@@ -2321,7 +2295,7 @@ pub type File = rusttype RustFile:
         let module = module.ok_or("failed to load stdlib/async/race.incn")?;
         let fns = module.functions;
 
-        let exported_names: Vec<&str> = fns.iter().map(|(name, _)| name.as_str()).collect();
+        let exported_names: Vec<&str> = fns.iter().map(|entry| entry.name.as_str()).collect();
         assert_eq!(exported_names, vec!["arm", "race", "race_timeout"]);
         assert!(module.types.iter().any(|(name, _)| name == "RaceArm"));
         Ok(())

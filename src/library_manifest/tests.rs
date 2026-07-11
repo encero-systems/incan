@@ -308,6 +308,68 @@ fn checked_exports_publish_semantic_identity_graph() -> Result<(), Box<dyn std::
 }
 
 #[test]
+fn checked_newtype_rewrite_uses_source_identity_for_same_leaf_names() -> Result<(), Box<dyn std::error::Error>> {
+    use crate::frontend::library_exports::{
+        CheckedExportIdentity, CheckedExportKind, CheckedNamedExport, CheckedNewtypeExport,
+    };
+    use crate::frontend::symbols::ResolvedType;
+
+    let checked_newtype = |name: &str, underlying: ResolvedType| CheckedNewtypeExport {
+        name: name.to_string(),
+        type_params: Vec::new(),
+        traits: Vec::new(),
+        trait_adoptions: Vec::new(),
+        is_rusttype: false,
+        underlying,
+        checked_constructor: None,
+        constraints: Vec::new(),
+        implicit_coercion_enabled: true,
+        methods: Vec::new(),
+    };
+    let exports = vec![
+        CheckedNamedExport {
+            name: "Id".to_string(),
+            identity: CheckedExportIdentity::reexport(
+                vec!["a".to_string(), "Id".to_string()],
+                vec!["a".to_string(), "Id".to_string()],
+            ),
+            kind: CheckedExportKind::Newtype(checked_newtype("Id", ResolvedType::Int)),
+        },
+        CheckedNamedExport {
+            name: "BId".to_string(),
+            identity: CheckedExportIdentity::reexport(
+                vec!["b".to_string(), "Id".to_string()],
+                vec!["b".to_string(), "Id".to_string()],
+            ),
+            kind: CheckedExportKind::Newtype(checked_newtype("BId", ResolvedType::Int)),
+        },
+        CheckedNamedExport {
+            name: "BoxedId".to_string(),
+            identity: CheckedExportIdentity::reexport(
+                vec!["b".to_string(), "BoxedId".to_string()],
+                vec!["b".to_string(), "BoxedId".to_string()],
+            ),
+            kind: CheckedExportKind::Newtype(checked_newtype("BoxedId", ResolvedType::Named("Id".to_string()))),
+        },
+    ];
+
+    let manifest = LibraryManifest::from_checked_exports("mylib", "0.1.0", &exports);
+    let boxed = manifest
+        .exports
+        .newtypes
+        .iter()
+        .find(|newtype| newtype.name == "BoxedId")
+        .ok_or("missing composed newtype export")?;
+    assert_eq!(
+        boxed.underlying,
+        TypeRef::Named {
+            name: "BId".to_string()
+        }
+    );
+    Ok(())
+}
+
+#[test]
 fn parameter_default_materializability_is_all_or_nothing() {
     let empty_call = ParamDefaultExport::Call {
         path: Vec::new(),
@@ -1038,12 +1100,30 @@ fn manifest_reader_rejects_unknown_manifest_format() -> Result<(), Box<dyn std::
 }
 
 #[test]
+fn manifest_reader_rejects_pre_checked_newtype_manifest_format() {
+    let content = r#"{
+  "name": "mylib",
+  "version": "0.1.0",
+  "incan_version": "0.4.0",
+  "manifest_format": 1,
+  "exports": {},
+  "soft_keywords": {}
+}"#;
+
+    let err = LibraryManifest::from_json_str(content);
+    assert!(
+        matches!(err, Err(LibraryManifestError::Invalid(message)) if message.contains("manifest_format 1")),
+        "expected pre-checked-newtype manifest format to be rejected"
+    );
+}
+
+#[test]
 fn manifest_reader_rejects_newer_required_compiler_version() -> Result<(), Box<dyn std::error::Error>> {
     let content = r#"{
   "name": "mylib",
   "version": "0.1.0",
   "incan_version": "999.0.0",
-  "manifest_format": 1,
+  "manifest_format": 2,
   "exports": {},
   "soft_keywords": {}
 }"#;

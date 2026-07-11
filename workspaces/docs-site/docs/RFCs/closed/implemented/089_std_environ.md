@@ -1,6 +1,6 @@
 # RFC 089: `std.environ` runtime environment access
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Created:** 2026-05-05
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -10,9 +10,9 @@
     - RFC 067 (`std.ci` deterministic CI and automation scripting primitives)
     - RFC 070 (Result combinators)
 - **Issue:** https://github.com/encero-systems/incan/issues/557
-- **RFC PR:** —
+- **RFC PR:** https://github.com/encero-systems/incan/pull/825
 - **Written against:** v0.3
-- **Shipped in:** —
+- **Shipped in:** v0.5
 
 ## Summary
 
@@ -39,9 +39,9 @@ The design should also use Incan's strengths rather than copying Python's string
 from std.environ import get_as
 
 type PortNumber = newtype int:
-    def from_underlying(value: int) -> Result[PortNumber, str]:
+    def from_underlying(value: int) -> Result[PortNumber, ValidationError]:
         if value < 1 or value > 65535:
-            return Err("port must be between 1 and 65535")
+            return Err(ValidationError("port must be between 1 and 65535"))
         return Ok(PortNumber(value))
 
 port = get_as[PortNumber]("PORT", default=8080)?
@@ -67,7 +67,7 @@ The example is the desired distinction: the environment is runtime input, but th
 - Defining secret management, vault integration, or encrypted environment variables.
 - Standardizing all possible parsing targets in this RFC.
 - Making environment variables available to `const` evaluation.
-- Requiring current-process environment mutation (`put`, `set`, `unset`, `clear`) in the initial surface.
+- Requiring current-process environment mutation (`put`, `set`, `unset`, `clear`).
 - Introducing new language syntax.
 
 ## Guide-level explanation
@@ -143,9 +143,9 @@ Typed reads also work with validated newtypes when the underlying parse path and
 from std.environ import get_as
 
 type PortNumber = newtype int:
-    def from_underlying(value: int) -> Result[PortNumber, str]:
+    def from_underlying(value: int) -> Result[PortNumber, ValidationError]:
         if value < 1 or value > 65535:
-            return Err("port must be between 1 and 65535")
+            return Err(ValidationError("port must be between 1 and 65535"))
         return Ok(PortNumber(value))
 
 port = get_as[PortNumber]("PORT", default=8080)?
@@ -171,8 +171,8 @@ const TOKEN = get("API_TOKEN")?  # rejected: environment access is runtime behav
 def get(key: str) -> Result[str, EnvironError]
 def get_optional(key: str) -> Option[str]
 def get_or(key: str, default: str) -> str
-def get_as[T](key: str) -> Result[Option[T], EnvironError]
-def get_as[T](key: str, default: T) -> Result[T, EnvironError]
+def get_as[T with TryFrom[str]](key: str) -> Result[Option[T], EnvironError]
+def get_as[T with TryFrom[str]](key: str, default: T) -> Result[T, EnvironError]
 ```
 
 The second `get_as` overload also supports keyword spelling:
@@ -185,9 +185,9 @@ get_as[T](key, default=value)
 
 `get(key)` must return `Err(EnvironError.Missing(key))` or an equivalent structured missing-variable error when `key` is absent.
 
-`get_optional(key)` must return `None` when `key` is absent.
+`get_optional(key)` must return `None` when `key` is absent or no Unicode value can be read. Callers that need to distinguish absence, an invalid key, and a non-Unicode host value must use `get(key)`.
 
-`get_or(key, default)` must return `default` when `key` is absent.
+`get_or(key, default)` must return `default` when `key` is absent or no Unicode value can be read. Callers that need the precise failure category must use `get(key)`.
 
 `get_as[T](key)` must return `Ok(None)` when `key` is absent.
 
@@ -201,14 +201,16 @@ For typed accessors, if `key` is present, the implementation must attempt to par
 
 ### `get_as[T]` parsing and validation
 
-For primitive targets, `get_as[T]` must use the standard string-to-`T` parsing behavior for supported target types.
+For primitive targets, `get_as[T]` must use the standard string-to-`T` parsing behavior exposed through `TryFrom[str]`. This RFC requires `str`, `bool`, `int`, `float`, and the exact-width integer and floating-point types to support that conversion. Boolean parsing accepts the canonical `true` and `false` spellings. String parsing is identity. Numeric parsing follows the target type's ordinary lexical and range rules.
+
+User-defined models, classes, enums, and newtypes may opt into typed environment reads by implementing `TryFrom[str]` explicitly. A target that neither has compiler-provided `TryFrom[str]` support nor explicitly adopts the trait is unsupported.
 
 For newtype targets, `get_as[T]` should behave as follows:
 
 1. identify the newtype's underlying type;
 2. parse the environment string into that underlying type;
 3. construct or validate the newtype through the canonical checked-construction path;
-4. if the newtype defines `from_underlying`, use that hook and propagate validation failure as `EnvironError.Parse` or a more specific typed validation variant;
+4. if the newtype defines `from_underlying`, use that hook and propagate validation failure as `EnvironError.InvalidValue` or an equivalent typed validation variant;
 5. return the validated newtype value on success.
 
 If a target type has no supported parse path, `get_as[T]` must be rejected at typecheck time when possible. If the unsupported target is only discovered later through library metadata or backend capability, the diagnostic must name `T` and explain that it cannot be read from an environment string.
@@ -221,7 +223,7 @@ For `get_as[Newtype]("KEY", default=value)`, `default` must be type-compatible w
 
 Environment variable keys must be `str`.
 
-An implementation should reject empty keys with `EnvironError.InvalidKey` or an equivalent error. Platform-specific key restrictions may be reported at runtime.
+`get` and `get_as` must reject empty keys and keys containing `=` or NUL with `EnvironError.InvalidKey` or an equivalent error. The non-throwing convenience functions `get_optional` and `get_or` collapse invalid-key and non-Unicode failures into their documented absence/default behavior. Additional platform-specific key restrictions may be reported at runtime.
 
 On platforms with case-insensitive environment keys, the module must follow the platform's native behavior. The language-level contract must not promise cross-platform case sensitivity.
 
@@ -242,7 +244,7 @@ Calls into `std.environ` must not be const-evaluable. They must be rejected in `
 
 ### Side effects
 
-The initial `std.environ` surface is read-only. Reading an environment variable must not mutate the current process environment.
+The `std.environ` surface defined by this RFC is read-only. Reading an environment variable must not mutate the current process environment.
 
 ## Design details
 
@@ -270,11 +272,11 @@ RFC 063 `std.process` owns child-process environment construction through comman
 
 Environment variables often carry secrets. `std.environ` errors should name keys and expected types, but should not print the observed value by default. Debug or tracing integrations may provide opt-in redaction-aware diagnostics later, but this RFC only requires conservative default behavior.
 
-### Why no `put` in the initial surface
+### Why no `put`
 
 Python exposes environment mutation through `os.environ`, and also has lower-level `putenv` / `unsetenv` behavior. Incan should not copy that casually. The current process environment is global process state, and some target runtimes treat mutation as unsafe or platform-constrained once a program is multithreaded. That makes `put` materially different from `get`: reads are ordinary runtime observation, while writes mutate ambient state that libraries, child processes, tests, and platform calls may observe.
 
-The initial `std.environ` surface is therefore read-only. Code that needs to pass environment variables to a child process should use the child-process environment controls from RFC 063 `std.process`. Tests that need temporary environment changes should use test fixtures or a dedicated testing surface with scoped restoration. A future RFC may add current-process mutation, but it should specify lifecycle restrictions, thread-safety rules, test isolation, and platform behavior explicitly.
+The `std.environ` surface is therefore read-only. Code that needs to pass environment variables to a child process should use the child-process environment controls from RFC 063 `std.process`. Tests that need temporary environment changes should use test fixtures or a dedicated testing surface with scoped restoration. A future RFC may add current-process mutation, but it should specify lifecycle restrictions, thread-safety rules, test isolation, and platform behavior explicitly.
 
 ### Compatibility / migration
 
@@ -288,19 +290,19 @@ This feature is additive. Existing code using Rust interop, project lifecycle en
 4. **Single `get(key, default=...)` function** — Rejected because it blurs required, optional, defaulted, and typed access into one overloaded call shape. Separate helpers keep call sites obvious.
 5. **Return empty string for missing variables** — Rejected because it hides configuration mistakes and collapses absence into a valid value.
 6. **Default hides parse errors** — Rejected because an explicitly configured invalid value should fail loudly. Defaults only handle absence.
-7. **Expose the whole environment as a mutable mapping first** — Rejected for the initial surface because mutation semantics, platform behavior, secret exposure, and concurrency deserve separate design.
-8. **Add `put(key, value)` immediately** — Rejected for the initial surface because current-process environment mutation is global ambient state. Child-process environment construction belongs in RFC 063 `std.process`; scoped test mutation belongs in testing support; general mutation needs a separate safety policy.
+7. **Expose the whole environment as a mutable mapping** — Rejected because mutation semantics, platform behavior, secret exposure, and concurrency deserve separate design.
+8. **Add `put(key, value)`** — Rejected because current-process environment mutation is global ambient state. Child-process environment construction belongs in RFC 063 `std.process`; scoped test mutation belongs in testing support; general mutation needs a separate safety policy.
 
 ## Drawbacks
 
 - The surface adds another configuration-adjacent API next to `ctx`, project lifecycle environments, `std.ci.env`, and `std.process` env builders.
 - `get_as[T]` introduces protocol complexity around parsing, newtypes, validation errors, and default handling.
-- A read-only first version may frustrate users who expect Python-like mutation through `os.environ`.
+- A read-only environment API may frustrate users who expect Python-like mutation through `os.environ`.
 - Platform differences around key casing, encoding, and process environment mutation remain visible at the boundary.
 
 ## Implementation architecture
 
-*(Non-normative.)* A minimal implementation can start with current-process string reads plus `Result` and `Option` wrappers, then route `get_as[T]` through the same parse and checked-construction machinery used by ordinary conversions and validated newtypes. CI-specific helpers can then call into the same runtime primitive while preserving their CI-oriented error messages.
+*(Non-normative.)* The Incan source module should own the public API, error model, and missing/default control flow. The host boundary should only read current-process Unicode values and return stable, non-secret failure categories. `get_as[T]` should reuse the source-owned `TryFrom[str]` contract, with compiler-provided implementations for supported primitives and validated newtypes. Newtype conversion should reuse RFC 017 checked-construction metadata rather than adding an environment-specific validation path.
 
 ## Layers affected
 
@@ -311,13 +313,89 @@ This feature is additive. Existing code using Rust interop, project lifecycle en
 - **Docs / examples**: must teach `std.environ` as runtime state, distinguish it from `ctx`, and avoid showing environment reads in `const` examples except as rejected code.
 - **LSP / tooling**: should provide hover and completion for `std.environ` functions and should surface precise diagnostics for unsupported `get_as[T]` targets.
 
-## Unresolved questions
+## Implementation Plan
 
-- Should `std.environ` ever include mutation helpers such as `put`, `set`, `unset`, and `clear`, or should current-process environment mutation remain outside the general runtime API?
-- Should `get_as[T]` use a general parse trait once one is standardized, or should this RFC define a narrow environment parsing protocol directly?
-- Should bytes-oriented environment access exist on Unix-like platforms, or should `std.environ` intentionally expose only Unicode `str` values?
-- Should `get_as[T](key, default)` accept an underlying value for a newtype target through implicit checked construction, or require callers to pass an already constructed `T`?
-- Should `std.ci.env` re-export `std.environ` names directly, or keep CI-specific wrappers with different error text?
+### Phase 1: source and host boundary
 
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- Expose the read-only string accessors and structured, redacted environment errors from `std.environ`.
+- Keep the Rust host boundary limited to current-process Unicode reads and stable failure categories.
+
+### Phase 2: typed conversion contract
+
+- Make supported primitive targets satisfy the source-owned `TryFrom[str]` protocol.
+- Route validated-newtype targets through their underlying parse path and RFC 017 `from_underlying` hook.
+- Add optional and defaulted `get_as` overloads and preserve malformed-present-value errors.
+- Reject unsupported typed targets during typechecking with a target-specific diagnostic.
+
+### Phase 3: compiler and tooling boundaries
+
+- Preserve typed environment behavior through lowering, generated Rust, facades, test batches, and public package consumers.
+- Verify that ordinary const evaluation rejects environment reads.
+- Expose the complete module through LSP completion and hover metadata.
+
+### Phase 4: documentation and release integration
+
+- Update authored reference documentation, generated feature inventory, and the central 0.5 release notes.
+- Advance the development version and complete the RFC lifecycle after all verification gates pass.
+
+## Progress Checklist
+
+### Spec / design
+
+- [x] Define the read-only Unicode environment boundary and distinguish it from `ctx`, `std.ci`, and `std.process`.
+- [x] Settle typed reads on the source-owned `TryFrom[str]` protocol.
+- [x] Define supported primitive targets and validated-newtype construction semantics.
+- [x] Keep mutation and bytes-oriented access outside this RFC.
+
+### Stdlib / runtime
+
+- [x] Implement `get`, `get_optional`, and `get_or`.
+- [x] Implement structured missing, invalid-key, non-Unicode, invalid-value, and fallback error categories without secret values.
+- [x] Implement optional trait-based `get_as[T](key)` reads.
+- [x] Implement positional and keyword defaulted `get_as[T](key, default)` reads.
+
+### Typechecker / conversions
+
+- [x] Provide `TryFrom[str]` for all RFC-required primitive targets.
+- [x] Compose `get_as` with explicit user `TryFrom[str]` implementations.
+- [x] Compose `get_as` with validated newtypes through underlying parsing and `from_underlying`.
+- [x] Apply ordinary checked newtype coercion to underlying default arguments where valid.
+- [x] Reject unsupported `get_as[T]` targets at typecheck time with a target-specific diagnostic.
+- [x] Reject `std.environ` calls in const-only contexts.
+
+### Lowering / emission / boundaries
+
+- [x] Preserve overload selection and conversion behavior in generated Rust.
+- [x] Verify direct imports and facade reexports.
+- [x] Verify multi-file and test-batch compilation.
+- [x] Verify public package consumers for explicit converters and validated newtypes.
+
+### Tooling
+
+- [x] Verify LSP module and import-item completion for the complete surface.
+- [x] Verify LSP hover documentation for `get_as` and `EnvironError`.
+
+### Tests
+
+- [x] Cover required, optional, defaulted string, missing-key, and invalid-key behavior.
+- [x] Cover explicit `TryFrom[str]` success, missing, invalid, and redacted error behavior.
+- [x] Cover primitive success, malformed values, range failures, and typed defaults.
+- [x] Cover validated-newtype success, validation failure, missing/default behavior, and invalid defaults.
+- [x] Cover non-Unicode host values on supported platforms.
+- [x] Run the complete repository verification gate.
+
+### Docs / release
+
+- [x] Publish complete user-facing `std.environ` reference documentation and examples.
+- [x] Regenerate the language feature inventory and RFC indexes.
+- [x] Update the central 0.5 release note without partial-scope wording.
+- [x] Advance the 0.5 development version.
+
+## Design Decisions
+
+- Current-process environment mutation remains outside the general runtime API. A future RFC may define it only with explicit thread-safety, lifecycle, and test-isolation rules.
+- `get_as[T]` uses the existing source-owned `TryFrom[str]` protocol. The compiler provides conformance for the primitive and validated-newtype families required here; user-defined targets opt in by implementing the trait.
+- `std.environ` intentionally exposes Unicode `str` values only. Platform byte-oriented access requires a separate proposal.
+- A default for a newtype target may use the underlying type when ordinary RFC 017 implicit checked construction permits that call-site coercion. Otherwise callers must pass an already constructed target value.
+- `std.ci.env` may retain CI-specific wrappers and diagnostics. This RFC requires semantic alignment, not direct reexports.
+- `get_optional` and `get_or` are deliberately lossy convenience functions. Precise host failure categories remain available through `get` and `get_as`.

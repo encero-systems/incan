@@ -432,11 +432,17 @@ impl TypeChecker {
         testing_semantics: Option<&TestingMarkerSemantics>,
         span: Span,
     ) -> bool {
-        if let Some(info) = self.stdlib_cache.lookup_function(&context.module.segments, &item.name) {
+        if let Some(kind) = self
+            .stdlib_cache
+            .lookup_function_symbol(&context.module.segments, &item.name)
+        {
             let local_name = Self::import_item_local_name(item);
             let surface_function = surface_functions::from_str(&item.name);
             self.record_testing_marker_import(context, item, &local_name, testing_semantics);
-            let symbol_id = self.define_named_import_symbol(local_name.clone(), SymbolKind::Function(info), span);
+            if let SymbolKind::FunctionOverloads(overloads) = &kind {
+                self.record_function_overload_binding(&local_name, overloads, true);
+            }
+            let symbol_id = self.define_named_import_symbol(local_name.clone(), kind, span);
             if let Some(surface_function) = surface_function {
                 self.surface_function_import_bindings
                     .insert(local_name, (surface_function, symbol_id));
@@ -733,25 +739,12 @@ impl TypeChecker {
         }
     }
 
-    /// Resolve one exported function from a loaded `pub::` library manifest.
-    pub(in crate::frontend::typechecker) fn lookup_pub_library_function_member(
-        &self,
-        library: &str,
-        member: &str,
-    ) -> Option<FunctionInfo> {
-        let entry = self.library_manifests.get(library)?;
-        let LibraryManifestIndexEntry::Loaded { manifest, .. } = entry else {
-            return None;
-        };
-        if let Some(export) = manifest.exports.functions.iter().find(|item| item.name == member) {
-            return Some(self.function_info_from_manifest(export));
-        }
-        let export = manifest.exports.partials.iter().find(|item| item.name == member)?;
-        Some(self.partial_info_from_manifest(export))
-    }
-
     /// Resolve one exported function name from a public manifest into a local symbol kind.
-    fn pub_library_function_symbol(&self, manifest: &LibraryManifest, member: &str) -> Option<SymbolKind> {
+    pub(in crate::frontend::typechecker) fn pub_library_function_symbol(
+        &self,
+        manifest: &LibraryManifest,
+        member: &str,
+    ) -> Option<SymbolKind> {
         let functions = manifest
             .exports
             .functions
@@ -1890,8 +1883,12 @@ impl TypeChecker {
             is_rusttype: export.is_rusttype,
             has_interop: false,
             underlying: resolved_type_from_manifest_type_ref(&export.underlying),
-            constraints: Vec::new(),
-            implicit_coercion_enabled: true,
+            constraints: export
+                .constraints
+                .iter()
+                .map(|constraint| constraint.to_checked())
+                .collect(),
+            implicit_coercion_enabled: export.implicit_coercion_enabled,
             method_rebindings: std::collections::HashMap::new(),
             traits: export.traits.clone(),
             trait_adoptions: Self::trait_adoptions_from_manifest(&export.traits, &export.trait_adoptions),

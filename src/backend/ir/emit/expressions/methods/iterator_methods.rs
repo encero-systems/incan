@@ -440,7 +440,11 @@ fn emit_newtype_from_underlying_sum(
     underlying_sum: TokenStream,
 ) -> TokenStream {
     let newtype_path = emit_path_ident(newtype_name);
-    if let Some(ctor) = emitter.newtype_checked_ctor.get(newtype_name) {
+    if let Some(ctor) = emitter
+        .newtype_construction
+        .get(newtype_name)
+        .and_then(|plan| plan.checked_constructor.as_ref())
+    {
         let ctor_ident = format_ident!("{}", ctor);
         let message = format!("validated newtype construction failed: {newtype_name}::{ctor}");
         return quote! {

@@ -22,8 +22,12 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use crate::frontend::symbols::{overload_emitted_name_prefix, overload_source_name_from_emitted};
+use crate::frontend::ast::TypeConstraintKey;
+use crate::frontend::symbols::{
+    NewtypePrimitiveConstraint, overload_emitted_name_prefix, overload_source_name_from_emitted,
+};
 use incan_core::lang::surface::result_methods::ResultMethodId;
+use incan_core::lang::types::numerics::{self, NumericFamily};
 use incan_core::lang::{conventions, magic_methods, stdlib as core_stdlib, trait_capabilities};
 
 use super::super::decl::{
@@ -1547,6 +1551,358 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Emit compiler-provided `TryFrom[str]` implementations for RFC 089 primitive targets.
+    ///
+    /// `TryFrom` remains a source-owned Incan trait. These impls are emitted next to that trait declaration, where
+    /// Rust coherence permits the generated crate to implement it for language primitive representations.
+    fn emit_builtin_string_try_from_impls(&self) -> TokenStream {
+        let capability = trait_capabilities::string_try_from();
+        let parse_impls = numerics::NUMERIC_TYPES
+            .iter()
+            .filter(|info| {
+                let capability_type = if info.family == NumericFamily::Bool {
+                    trait_capabilities::TraitCapabilityType::Bool
+                } else {
+                    trait_capabilities::TraitCapabilityType::Numeric(info.id)
+                };
+                trait_capabilities::supports_type(capability, capability_type)
+            })
+            .map(|info| {
+                let ty = Self::rust_ident(info.canonical);
+                quote! { __incan_try_from_string_parse_impl!(#ty); }
+            })
+            .collect::<Vec<_>>();
+        quote! {
+            macro_rules! __incan_try_from_string_parse_impl {
+                ($ty:ty) => {
+                    impl TryFrom<String> for $ty {
+                        fn try_from(value: String) -> Result<Self, String> {
+                            value.parse::<$ty>().map_err(|error| error.to_string())
+                        }
+                    }
+                };
+            }
+
+            impl TryFrom<String> for String {
+                fn try_from(value: String) -> Result<Self, String> {
+                    Ok(value)
+                }
+            }
+
+            #(#parse_impls)*
+        }
+    }
+
+    /// Return local types that already provide the canonical `std.traits.convert.TryFrom[str]` implementation.
+    fn explicit_string_try_from_types(emitted_declarations: &[&IrDecl]) -> HashSet<String> {
+        let capability = trait_capabilities::string_try_from();
+        emitted_declarations
+            .iter()
+            .filter_map(|decl| {
+                let IrDeclKind::Impl(impl_block) = &decl.kind else {
+                    return None;
+                };
+                let source_name = impl_block
+                    .trait_source_name
+                    .as_deref()
+                    .or(impl_block.trait_name.as_deref())?;
+                (source_name == capability.trait_name
+                    && impl_block
+                        .trait_module_path
+                        .as_deref()
+                        .is_some_and(|path| trait_capabilities::module_path_matches(capability, path))
+                    && impl_block.trait_type_args.as_slice() == [IrType::String])
+                .then(|| impl_block.target_type.clone())
+            })
+            .collect()
+    }
+
+    /// Emit one constrained-newtype predicate against the parsed underlying value.
+    fn string_try_from_constraint_predicate(
+        constraint: &NewtypePrimitiveConstraint,
+        float_underlying: bool,
+    ) -> TokenStream {
+        let literal = if float_underlying {
+            let value = proc_macro2::Literal::f64_unsuffixed(constraint.value as f64);
+            quote! { #value }
+        } else {
+            let value = proc_macro2::Literal::i64_unsuffixed(constraint.value);
+            quote! { #value }
+        };
+        match constraint.key {
+            TypeConstraintKey::Ge => quote! { parsed >= #literal },
+            TypeConstraintKey::Gt => quote! { parsed > #literal },
+            TypeConstraintKey::Le => quote! { parsed <= #literal },
+            TypeConstraintKey::Lt => quote! { parsed < #literal },
+        }
+    }
+
+    /// Return whether a newtype underlying type uses a floating-point Rust representation.
+    fn string_try_from_underlying_is_float(underlying: &IrType) -> bool {
+        matches!(underlying, IrType::Float)
+            || matches!(
+                underlying,
+                IrType::Numeric(id) if numerics::info_for(*id).family == NumericFamily::BinaryFloat
+            )
+    }
+
+    /// Emit compiler-provided `TryFrom[str]` implementations from local newtype construction plans.
+    fn emit_local_newtype_string_try_from_impls(&self, emitted_declarations: &[&IrDecl]) -> TokenStream {
+        if !self.emit_std_string_try_from_newtype_impls {
+            return quote! {};
+        }
+
+        let explicit = Self::explicit_string_try_from_types(emitted_declarations);
+        let trait_path = quote! { crate::__incan_std::traits::convert::TryFrom };
+        let mut impls = Vec::new();
+        let mut plans = self.newtype_construction.iter().collect::<Vec<_>>();
+        plans.sort_by_key(|(name, _)| (*name).clone());
+        for (source_name, plan) in plans {
+            if !plan.supports_string_conversion || explicit.contains(source_name) {
+                continue;
+            }
+
+            let name = Self::rust_ident(source_name);
+            let generics = self.emit_type_params(&plan.type_params);
+            let generics_bare = self.emit_type_params_bare(&plan.type_params);
+            let underlying = self.emit_type(&plan.underlying);
+            let construction = if let Some(constructor) = &plan.checked_constructor {
+                let constructor = Self::rust_ident(constructor);
+                quote! {
+                    #name::#constructor(parsed)
+                        .map_err(|_| format!("{} validation failed", stringify!(#name)))
+                }
+            } else if !plan.constraints.is_empty() {
+                let float_underlying = Self::string_try_from_underlying_is_float(&plan.underlying);
+                let predicates = plan
+                    .constraints
+                    .iter()
+                    .map(|constraint| Self::string_try_from_constraint_predicate(constraint, float_underlying))
+                    .collect::<Vec<_>>();
+                quote! {
+                    if #(#predicates)&&* {
+                        Ok(#name(parsed))
+                    } else {
+                        Err(format!("{} validation failed", stringify!(#name)))
+                    }
+                }
+            } else {
+                quote! { Ok(#name(parsed)) }
+            };
+
+            impls.push(quote! {
+                impl #generics #trait_path<String> for #name #generics_bare
+                where
+                    #underlying: #trait_path<String>,
+                {
+                    fn try_from(value: String) -> Result<Self, String> {
+                        let parsed = <#underlying as #trait_path<String>>::try_from(value)?;
+                        #construction
+                    }
+                }
+            });
+        }
+        quote! { #(#impls)* }
+    }
+
+    /// Emit consumer-side adapters for exported dependency types, including generic definitions.
+    fn emit_external_string_try_from_impls(&self) -> TokenStream {
+        if self.external_string_try_from_types.is_empty() {
+            return quote! {};
+        }
+        let trait_path = quote! { crate::__incan_std::traits::convert::TryFrom };
+        let mut impls = Vec::new();
+        for external in &self.external_string_try_from_types {
+            let dependency = Self::rust_ident(&external.dependency_key);
+            let name = Self::rust_ident(&external.name);
+            let type_path = quote! { :: #dependency :: #name };
+            let type_param_names = external
+                .type_params
+                .iter()
+                .map(|param| Self::rust_ident(&param.name))
+                .collect::<Vec<_>>();
+            let impl_generics = if external.type_params.is_empty() {
+                quote! {}
+            } else {
+                let declarations = external.type_params.iter().map(|param| {
+                    let name = Self::rust_ident(&param.name);
+                    let bounds = param
+                        .bounds
+                        .iter()
+                        .map(|bound| self.emit_external_type_param_bound(bound, &dependency))
+                        .collect::<Vec<_>>();
+                    if bounds.is_empty() {
+                        quote! { #name }
+                    } else {
+                        quote! { #name: #(#bounds)+* }
+                    }
+                });
+                quote! { <#(#declarations),*> }
+            };
+            let type_generics = if type_param_names.is_empty() {
+                quote! {}
+            } else {
+                quote! { <#(#type_param_names),*> }
+            };
+            let target_type = quote! { #type_path #type_generics };
+            match &external.kind {
+                super::ExternalStringTryFromKind::Explicit => {
+                    let provider_trait =
+                        quote! { :: #dependency :: __incan_std :: traits :: convert :: TryFrom<String> };
+                    impls.push(quote! {
+                        impl #impl_generics #trait_path<String> for #target_type
+                        where
+                            #target_type: #provider_trait,
+                        {
+                            fn try_from(value: String) -> Result<Self, String> {
+                                <#target_type as #provider_trait>::try_from(value)
+                            }
+                        }
+                    });
+                }
+                super::ExternalStringTryFromKind::Newtype {
+                    underlying,
+                    checked_constructor,
+                    constraints,
+                } => {
+                    let underlying_tokens = self.emit_external_string_conversion_type(underlying, &dependency);
+                    let construction = if let Some(constructor) = checked_constructor {
+                        let constructor = Self::rust_ident(constructor);
+                        quote! {
+                            <#target_type>::#constructor(parsed)
+                                .map_err(|_| format!("{} validation failed", stringify!(#name)))
+                        }
+                    } else if !constraints.is_empty() {
+                        let underlying_ir = Self::manifest_type_ref_to_ir_type(underlying);
+                        let float_underlying = Self::string_try_from_underlying_is_float(&underlying_ir);
+                        let predicates = constraints
+                            .iter()
+                            .map(|constraint| Self::string_try_from_constraint_predicate(constraint, float_underlying))
+                            .collect::<Vec<_>>();
+                        quote! {
+                            if #(#predicates)&&* {
+                                Ok(#type_path(parsed))
+                            } else {
+                                Err(format!("{} validation failed", stringify!(#name)))
+                            }
+                        }
+                    } else {
+                        quote! { Ok(#type_path(parsed)) }
+                    };
+                    impls.push(quote! {
+                        impl #impl_generics #trait_path<String> for #target_type
+                        where
+                            #underlying_tokens: #trait_path<String>,
+                        {
+                            fn try_from(value: String) -> Result<Self, String> {
+                                let parsed = <#underlying_tokens as #trait_path<String>>::try_from(value)?;
+                                #construction
+                            }
+                        }
+                    });
+                }
+            }
+        }
+        quote! { #(#impls)* }
+    }
+
+    /// Emit one producer-owned generic declaration bound in a consumer adapter impl header.
+    fn emit_external_type_param_bound(
+        &self,
+        bound: &crate::library_manifest::TypeBoundExport,
+        dependency: &proc_macro2::Ident,
+    ) -> TokenStream {
+        let trait_name = Self::rust_ident(
+            bound
+                .source_name
+                .as_deref()
+                .unwrap_or_else(|| bound.name.rsplit('.').next().unwrap_or(bound.name.as_str())),
+        );
+        let path = if let Some(module_path) = &bound.module_path {
+            let mut segments = module_path.as_slice();
+            if segments.first().is_some_and(|segment| segment == "std") {
+                segments = &segments[1..];
+                let segments = segments.iter().map(|segment| Self::rust_ident(segment));
+                quote! { :: #dependency :: __incan_std :: #(#segments ::)* #trait_name }
+            } else {
+                let dependency_name = dependency.to_string();
+                if segments
+                    .first()
+                    .is_some_and(|segment| segment == "lib" || segment == "main" || segment == &dependency_name)
+                {
+                    segments = &segments[1..];
+                }
+                let segments = segments.iter().map(|segment| Self::rust_ident(segment));
+                quote! { :: #dependency :: #(#segments ::)* #trait_name }
+            }
+        } else {
+            let segments = bound
+                .name
+                .split(['.', ':'])
+                .filter(|segment| !segment.is_empty())
+                .map(|segment| {
+                    let ident = Self::rust_ident(segment);
+                    quote! { #ident }
+                })
+                .collect::<Vec<_>>();
+            super::decls::join_path_tokens(&segments)
+        };
+        if bound.type_args.is_empty() {
+            path
+        } else {
+            let type_args = bound
+                .type_args
+                .iter()
+                .map(|arg| self.emit_external_string_conversion_type(arg, dependency));
+            quote! { #path <#(#type_args),*> }
+        }
+    }
+
+    /// Emit one package type reference inside a consumer-side string-conversion adapter.
+    fn emit_external_string_conversion_type(
+        &self,
+        ty: &crate::library_manifest::TypeRef,
+        dependency: &proc_macro2::Ident,
+    ) -> TokenStream {
+        use crate::library_manifest::TypeRef;
+
+        match ty {
+            TypeRef::TypeParam { name } => {
+                let name = Self::rust_ident(name);
+                quote! { #name }
+            }
+            TypeRef::Named { name } => {
+                let resolved = crate::library_manifest::resolved_type_from_manifest_type_ref(ty);
+                if matches!(
+                    resolved,
+                    crate::frontend::symbols::ResolvedType::Int
+                        | crate::frontend::symbols::ResolvedType::Float
+                        | crate::frontend::symbols::ResolvedType::Numeric(_)
+                        | crate::frontend::symbols::ResolvedType::Bool
+                        | crate::frontend::symbols::ResolvedType::Str
+                ) {
+                    let ir = Self::resolved_type_to_ir_type(&resolved);
+                    self.emit_type(&ir)
+                } else {
+                    let name = Self::rust_ident(name);
+                    quote! { :: #dependency :: #name }
+                }
+            }
+            TypeRef::Applied { name, args } => {
+                let name = Self::rust_ident(name);
+                let args = args
+                    .iter()
+                    .map(|arg| self.emit_external_string_conversion_type(arg, dependency))
+                    .collect::<Vec<_>>();
+                quote! { :: #dependency :: #name <#(#args),*> }
+            }
+            _ => {
+                let ir = Self::manifest_type_ref_to_ir_type(ty);
+                self.emit_type(&ir)
+            }
+        }
+    }
+
     /// Return whether the current module imports the stdlib ordinal-map contract surface.
     fn emitted_declarations_import_std_collections_ordinal_contract(emitted_declarations: &[&IrDecl]) -> bool {
         let capability = trait_capabilities::stable_ordinal_key();
@@ -2612,7 +2968,7 @@ impl<'a> IrEmitter<'a> {
             self.rust_module_path = program.rust_module_path.clone();
         }
         self.seed_nominal_metadata_from_program(program);
-        self.newtype_checked_ctor = program.newtype_checked_ctor.clone();
+        self.newtype_construction = program.newtype_construction.clone();
 
         // First pass: collect struct derives, struct field types, and enum variant typing
         let mut static_str_const_exprs: HashMap<String, TypedExpr> = HashMap::new();
@@ -3166,6 +3522,11 @@ impl<'a> IrEmitter<'a> {
             &emitted_declarations,
             trait_capabilities::stable_ordinal_key(),
         );
+        let defines_string_try_from_trait = Self::emitted_declarations_define_capability_trait(
+            program,
+            &emitted_declarations,
+            trait_capabilities::string_try_from(),
+        );
         let imports_std_ordinal_contract =
             Self::emitted_declarations_import_std_collections_ordinal_contract(&emitted_declarations);
         let mut decl_items = Vec::new();
@@ -3200,6 +3561,13 @@ impl<'a> IrEmitter<'a> {
 
         // Add the declarations after imports
         items.extend(decl_items);
+        if defines_string_try_from_trait {
+            items.push(self.emit_builtin_string_try_from_impls());
+        }
+        items.push(self.emit_local_newtype_string_try_from_impls(&emitted_declarations));
+        if !defines_string_try_from_trait {
+            items.push(self.emit_external_string_try_from_impls());
+        }
         if defines_ordinal_key_trait {
             items.push(self.emit_builtin_ordinal_key_impls());
         }

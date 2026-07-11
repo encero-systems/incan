@@ -83,7 +83,13 @@ impl TypeChecker {
             Expr::Field(base, member) => self
                 .imported_module_for_expr(base)
                 .and_then(|(_, module_path)| self.resolve_imported_module_function_member(&module_path, member))
-                .is_some_and(|info| info.is_async),
+                .is_some_and(|kind| match kind {
+                    SymbolKind::Function(info) => info.is_async,
+                    SymbolKind::FunctionOverloads(overloads) => {
+                        !overloads.is_empty() && overloads.iter().all(|overload| overload.info.is_async)
+                    }
+                    _ => false,
+                }),
             _ => false,
         }
     }

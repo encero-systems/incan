@@ -3129,7 +3129,7 @@ fn stdlib_function_docstring(function: &crate::frontend::ast::FunctionDecl) -> O
     Some(docstring.clone())
 }
 
-/// Render a source-facing signature from checked stdlib function metadata.
+/// Render a source-facing signature from cached, resolved stdlib function metadata.
 fn stdlib_function_signature(name: &str, info: &FunctionInfo) -> String {
     let mut signature = String::new();
     if info.is_async {

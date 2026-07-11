@@ -69,11 +69,11 @@ pub trait HasClassName {
     fn __class_name__(&self) -> &'static str;
 }
 
-/// Provides type-level source names for generated models/classes and primitive type parameters.
+/// Provides type-level source names for generated nominal and primitive type parameters.
 ///
 /// The compiler uses this trait for generic helpers that reflect on an explicit type argument, for example
-/// `T.__class_name__()`, without requiring a dummy runtime value. Models and classes return the declared model/class
-/// name, while primitive Incan type arguments return canonical source spellings such as `"int"` or `"str"`.
+/// `T.__class_name__()`, without requiring a dummy runtime value. Nominal types return their declaration name, while
+/// primitive Incan type arguments return canonical source spellings such as `"int"` or `"str"`.
 pub trait HasTypeClassName {
     /// Returns this type's Incan source name.
     fn __class_name__() -> &'static str;
@@ -107,6 +107,18 @@ impl_primitive_type_class_name!(i64 => "int");
 impl_primitive_type_class_name!(f64 => "float");
 impl_primitive_type_class_name!(String => "str");
 impl_primitive_type_class_name!(bool => "bool");
+impl_primitive_type_class_name!(i8 => "i8");
+impl_primitive_type_class_name!(i16 => "i16");
+impl_primitive_type_class_name!(i32 => "i32");
+impl_primitive_type_class_name!(i128 => "i128");
+impl_primitive_type_class_name!(isize => "isize");
+impl_primitive_type_class_name!(u8 => "u8");
+impl_primitive_type_class_name!(u16 => "u16");
+impl_primitive_type_class_name!(u32 => "u32");
+impl_primitive_type_class_name!(u64 => "u64");
+impl_primitive_type_class_name!(u128 => "u128");
+impl_primitive_type_class_name!(usize => "usize");
+impl_primitive_type_class_name!(f32 => "f32");
 
 /// Runtime value type for field reflection (RFC 021).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

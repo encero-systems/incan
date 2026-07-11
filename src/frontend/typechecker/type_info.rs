@@ -207,6 +207,10 @@ pub struct RustInteropArtifacts {
 /// Declaration-level binding rewrites and visibility facts consumed by lowering.
 #[derive(Debug, Default, Clone)]
 pub struct DeclarationArtifacts {
+    /// Compiler-checked construction semantics for local newtypes.
+    ///
+    /// Lowering consumes this snapshot instead of rediscovering newtypes from tuple-struct shape or raw decorators.
+    pub newtype_construction: HashMap<String, NewtypeConstructionInfo>,
     /// Module-local function declarations keyed by source name after annotation resolution.
     ///
     /// Lowering consumes this instead of re-lowering raw AST annotations so aliases such as
@@ -247,6 +251,23 @@ pub struct DeclarationArtifacts {
     pub decorated_function_bindings_by_span: HashMap<(usize, usize), DecoratedFunctionBindingInfo>,
     /// RFC 036: Method names whose declaration was rebound through a user-defined decorator chain.
     pub decorated_method_bindings: HashMap<(String, String), DecoratedMethodBindingInfo>,
+}
+
+/// One compiler-checked newtype construction plan shared by lowering and generated bridges.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NewtypeConstructionInfo {
+    /// Declared type parameters in source order.
+    pub type_params: Vec<String>,
+    /// Resolved wrapped value type, including references to the declared type parameters.
+    pub underlying: ResolvedType,
+    /// Canonical checked constructor selected by the typechecker, when present.
+    pub checked_constructor: Option<String>,
+    /// Compiler-generated constrained-primitive predicates used when no checked constructor exists.
+    pub constraints: Vec<NewtypePrimitiveConstraint>,
+    /// Whether ordinary implicit construction from the underlying value is allowed.
+    pub implicit_coercion_enabled: bool,
+    /// Whether the typechecker proved the newtype can participate in `TryFrom[str]` composition.
+    pub supports_string_conversion: bool,
 }
 
 /// Source-level partial projection metadata preserved after collection.

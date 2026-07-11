@@ -186,18 +186,21 @@ impl AstLowering {
         }
     }
 
-    /// Resolve `module.function(...)` syntax when the receiver is an imported public dependency module.
-    pub(in crate::backend::ir::lower) fn imported_pub_method_callee_path(
+    /// Resolve `module.function(...)` syntax when the receiver is an imported stdlib or public dependency module.
+    pub(in crate::backend::ir::lower) fn imported_module_function_callee_path(
         &self,
         receiver: &ast::Expr,
         method_name: &str,
     ) -> Option<Vec<String>> {
         let mut path = self.imported_field_base_path(receiver)?;
-        if path.first().map(String::as_str) != Some("pub") {
-            return None;
+        match path.first().map(String::as_str) {
+            Some(stdlib::STDLIB_ROOT) if stdlib::is_known_stdlib_module(&path) => {}
+            Some("pub") => {
+                let library = path.get(1)?;
+                self.pub_function_export(library, method_name)?;
+            }
+            _ => return None,
         }
-        let library = path.get(1)?;
-        self.pub_function_export(library, method_name)?;
         path.push(method_name.to_string());
         Some(path)
     }
@@ -2469,10 +2472,11 @@ impl AstLowering {
             return self.lower_aggregate_constructor_call(name, args, struct_ty);
         }
 
-        // ----------------------------------------------------------------
-        // Newtype checked construction (v0.1 hardening for #44, RFC runway)
-        // ----------------------------------------------------------------
-        if self.newtype_checked_ctor.contains_key(name)
+        // Apply the canonical checked-construction hook before ordinary tuple construction.
+        if let Some(ctor) = self
+            .newtype_construction
+            .get(name)
+            .and_then(|plan| plan.checked_constructor.clone())
             && args.len() == 1
             && matches!(args[0], ast::CallArg::Positional(_))
             && self.current_impl_type.as_deref() != Some(name)
@@ -2481,17 +2485,16 @@ impl AstLowering {
                 unreachable!("checked by matches! above")
             };
             let lowered_value = self.lower_expr_spanned(value)?;
-            let ctor = self
-                .newtype_checked_ctor
-                .get(name)
-                .cloned()
-                .unwrap_or_else(|| "from_underlying".to_string());
             // Keep the failure path local to generated code: the Err branch still panics, but we no longer emit an
             // `.expect()` extraction in the generated Rust.
             let checked = Self::checked_newtype_match_expr(name, &ctor, lowered_value, struct_ty.clone());
             return Ok((checked.kind, struct_ty));
         }
-        if let Some(constraints) = self.newtype_constraints.get(name).cloned()
+        if let Some(constraints) = self
+            .newtype_construction
+            .get(name)
+            .filter(|plan| plan.checked_constructor.is_none() && !plan.constraints.is_empty())
+            .map(|plan| plan.constraints.clone())
             && args.len() == 1
             && matches!(args[0], ast::CallArg::Positional(_))
             && self.current_impl_type.as_deref() != Some(name)

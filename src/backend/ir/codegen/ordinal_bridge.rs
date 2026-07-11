@@ -1,36 +1,20 @@
 //! OrdinalKey bridge planning for generated IR emission.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::frontend::ast::{Declaration, ImportKind, ImportPath, Program};
+use crate::frontend::ast::Program;
 use crate::frontend::library_manifest_index::{LibraryManifestIndex, LibraryManifestIndexEntry};
 use crate::library_manifest::{EnumValueExport, EnumValueTypeExport};
 use incan_core::lang::trait_capabilities;
 
+use super::capability_bridge;
 use crate::backend::ir::decl::{IrEnumValue, IrEnumValueType};
 use crate::backend::ir::emit::{ExternalOrdinalCustomKey, ExternalOrdinalValueEnum};
 
 /// Return whether a program imports the stdlib ordinal-map contract.
 pub(super) fn imports_std_ordinal_contract(program: &Program) -> bool {
-    let capability = trait_capabilities::stable_ordinal_key();
-    program.declarations.iter().any(|decl| {
-        let Declaration::Import(import) = &decl.node else {
-            return false;
-        };
-        match &import.kind {
-            ImportKind::Module(_) => false,
-            ImportKind::From { module, items } if import_path_matches_capability(module, capability) => items
-                .iter()
-                .any(|item| trait_capabilities::import_triggers_capability(capability, item.name.as_str())),
-            _ => false,
-        }
-    })
-}
-
-/// Return whether an import path names the module that owns a temporary capability contract.
-fn import_path_matches_capability(path: &ImportPath, capability: &trait_capabilities::TraitCapabilityInfo) -> bool {
-    trait_capabilities::module_path_matches(capability, &path.segments)
+    capability_bridge::imports_contract(program, trait_capabilities::stable_ordinal_key())
 }
 
 /// Return whether any module in the current compilation needs value-enum `OrdinalKey` impls.
@@ -38,7 +22,7 @@ pub(super) fn compilation_imports_std_ordinal_contract(
     main: &Program,
     deps: &[(&str, &Program, Option<Vec<String>>)],
 ) -> bool {
-    imports_std_ordinal_contract(main) || deps.iter().any(|(_, program, _)| imports_std_ordinal_contract(program))
+    capability_bridge::compilation_imports_contract(main, deps, trait_capabilities::stable_ordinal_key())
 }
 
 /// Collect public scalar value enums from loaded `.incnlib` dependencies.
@@ -89,65 +73,12 @@ fn external_ordinal_value_enums(index: Option<&Arc<LibraryManifestIndex>>) -> Ve
     out
 }
 
-/// Return whether a serialized trait bound names the std `OrdinalKey` capability.
-fn type_bound_matches_ordinal_key(bound: &crate::library_manifest::TypeBoundExport) -> bool {
-    let capability = trait_capabilities::stable_ordinal_key();
-    let trait_name = bound
-        .source_name
-        .as_deref()
-        .unwrap_or_else(|| bound.name.rsplit('.').next().unwrap_or(bound.name.as_str()));
-    if trait_name != capability.trait_name {
-        return false;
-    }
-    let Some(module_path) = &bound.module_path else {
-        return false;
-    };
-    trait_capabilities::module_path_matches(capability, module_path)
-}
-
 /// Return whether any exported trait adoption satisfies the std `OrdinalKey` contract.
 fn export_adopts_ordinal_key(
     trait_adoptions: &[crate::library_manifest::TypeBoundExport],
     traits: &HashMap<String, &crate::library_manifest::TraitExport>,
 ) -> bool {
-    trait_adoptions
-        .iter()
-        .any(|bound| type_bound_matches_ordinal_key(bound) || trait_bound_extends_ordinal_key(bound, traits))
-}
-
-/// Return whether a serialized trait bound resolves transitively to std `OrdinalKey`.
-fn trait_bound_extends_ordinal_key(
-    bound: &crate::library_manifest::TypeBoundExport,
-    traits: &HashMap<String, &crate::library_manifest::TraitExport>,
-) -> bool {
-    let mut seen = HashSet::new();
-    let mut work = vec![bound.name.as_str()];
-    while let Some(name) = work.pop() {
-        if !seen.insert(name.to_string()) {
-            continue;
-        }
-        let Some(trait_export) = traits.get(name) else {
-            continue;
-        };
-        for supertrait in &trait_export.supertraits {
-            if type_bound_matches_ordinal_key(supertrait) {
-                return true;
-            }
-            work.push(supertrait.name.as_str());
-        }
-    }
-    false
-}
-
-/// Return lookup keys for a manifest trait export, including its original source name when reexported under an alias.
-fn trait_export_lookup_keys(trait_export: &crate::library_manifest::TraitExport) -> Vec<String> {
-    let mut keys = vec![trait_export.name.clone()];
-    if let Some(source_name) = &trait_export.source_name
-        && source_name != &trait_export.name
-    {
-        keys.push(source_name.clone());
-    }
-    keys
+    capability_bridge::export_adopts_capability(trait_adoptions, traits, trait_capabilities::stable_ordinal_key())
 }
 
 /// Return whether a manifest method set exposes a source method or its generated alias.
@@ -193,9 +124,7 @@ fn external_ordinal_custom_keys(index: Option<&Arc<LibraryManifestIndex>>) -> Ve
             .traits
             .iter()
             .flat_map(|trait_export| {
-                trait_export_lookup_keys(trait_export)
-                    .into_iter()
-                    .map(move |key| (key, trait_export))
+                capability_bridge::trait_export_lookup_keys(trait_export).map(move |key| (key, trait_export))
             })
             .collect::<HashMap<_, _>>();
         for model in &manifest.exports.models {

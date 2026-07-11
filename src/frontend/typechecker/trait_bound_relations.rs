@@ -1,6 +1,6 @@
 //! Trait-bound satisfaction and temporary capability bridges.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::TypeChecker;
 use crate::frontend::resolved_type_subst::substitute_resolved_type;
@@ -8,7 +8,9 @@ use crate::frontend::symbols::{ResolvedType, TypeBoundInfo, TypeInfo};
 use crate::frontend::typechecker::helpers::collection_type_id;
 use incan_core::interop::is_rust_capability_bound;
 use incan_core::lang::derives::{self, DeriveId};
-use incan_core::lang::trait_capabilities::{self, TraitCapabilityInfo, TraitCapabilityType};
+use incan_core::lang::trait_capabilities::{
+    self, TraitCapabilityId, TraitCapabilityInfo, TraitCapabilityType, TraitCapabilityTypeArg,
+};
 use incan_core::lang::traits::{self as builtin_traits, TraitId};
 use incan_core::lang::types::collections::CollectionTypeId;
 use incan_core::lang::types::numerics;
@@ -51,7 +53,7 @@ impl TypeChecker {
                 .map(|arg| substitute_resolved_type(arg, bindings));
             return self.type_satisfies_awaitable_bound(ty, expected_output.as_ref());
         }
-        if let Some(capability) = self.temporary_trait_capability_for_bound_info(bound)
+        if let Some(capability) = self.temporary_trait_capability_for_bound_info(bound, bindings)
             && let Some(satisfies) = self.temporary_trait_capability_supports_type(capability, ty)
         {
             return satisfies;
@@ -62,14 +64,17 @@ impl TypeChecker {
         if is_rust_capability_bound(&bound.name) {
             return true;
         }
-        if builtin_traits::from_str(&bound.name).is_some() || self.lookup_semantic_trait_info(&bound.name).is_none() {
-            return self.type_satisfies_explicit_bound(ty, &bound.name);
-        }
         let expected_args = bound
             .type_args
             .iter()
             .map(|arg| substitute_resolved_type(arg, bindings))
             .collect::<Vec<_>>();
+        if builtin_traits::from_str(&bound.name).is_some() {
+            return self.type_satisfies_nominal_trait_bound_with_args(ty, &bound.name, &expected_args);
+        }
+        if self.lookup_semantic_trait_info(&bound.name).is_none() {
+            return self.type_satisfies_explicit_bound(ty, &bound.name);
+        }
         self.type_satisfies_nominal_trait_bound_with_args(ty, &bound.name, &expected_args)
     }
 
@@ -162,27 +167,7 @@ impl TypeChecker {
                 continue;
             };
             for active in active_bounds {
-                if !Self::type_bound_names_match(active, required) {
-                    continue;
-                }
-                if required.type_args.is_empty() {
-                    return true;
-                }
-                if active.type_args.len() != required.type_args.len() {
-                    continue;
-                }
-                let expected = required
-                    .type_args
-                    .iter()
-                    .map(|arg| substitute_resolved_type(arg, bindings));
-                let actual = active
-                    .type_args
-                    .iter()
-                    .map(|arg| substitute_resolved_type(arg, bindings));
-                if expected
-                    .zip(actual)
-                    .all(|(left, right)| self.types_compatible(&left, &right))
-                {
+                if self.type_bound_implies_bound_info(active, required, bindings) {
                     return true;
                 }
             }
@@ -199,14 +184,88 @@ impl TypeChecker {
             .unwrap_or_else(|| bound.name.rsplit('.').next().unwrap_or(bound.name.as_str()))
     }
 
+    /// Return the canonical source identity for a checked trait bound when it can be resolved.
+    fn type_bound_identity(&self, bound: &TypeBoundInfo) -> Option<(Vec<String>, String)> {
+        if let Some(module_path) = &bound.module_path {
+            return Some((module_path.clone(), Self::type_bound_source_name(bound).to_string()));
+        }
+        let (module_path, resolved_name) = self.resolve_bound_trait_path(&bound.name)?;
+        Some((module_path, bound.source_name.clone().unwrap_or(resolved_name)))
+    }
+
     /// Return whether two bound records identify the same trait, accounting for import aliases.
-    fn type_bound_names_match(left: &TypeBoundInfo, right: &TypeBoundInfo) -> bool {
-        if left.name == right.name {
+    fn type_bound_names_match(&self, left: &TypeBoundInfo, right: &TypeBoundInfo) -> bool {
+        match (self.type_bound_identity(left), self.type_bound_identity(right)) {
+            (Some(left), Some(right)) => left == right,
+            (Some(_), None) | (None, Some(_)) => false,
+            (None, None) => {
+                left.name == right.name && Self::type_bound_source_name(left) == Self::type_bound_source_name(right)
+            }
+        }
+    }
+
+    /// Compare one active and required bound after applying call-site substitutions.
+    fn type_bound_args_match(
+        &self,
+        active: &TypeBoundInfo,
+        required: &TypeBoundInfo,
+        bindings: &HashMap<String, ResolvedType>,
+    ) -> bool {
+        if required.type_args.is_empty() {
             return true;
         }
-        left.module_path == right.module_path
-            && left.module_path.is_some()
-            && Self::type_bound_source_name(left) == Self::type_bound_source_name(right)
+        active.type_args.len() == required.type_args.len()
+            && active
+                .type_args
+                .iter()
+                .zip(&required.type_args)
+                .all(|(actual, expected)| {
+                    let actual = substitute_resolved_type(actual, bindings);
+                    let expected = substitute_resolved_type(expected, bindings);
+                    self.types_compatible(&actual, &expected)
+                })
+    }
+
+    /// Return whether one checked bound directly or transitively guarantees another bound.
+    fn type_bound_implies_bound_info(
+        &self,
+        active: &TypeBoundInfo,
+        required: &TypeBoundInfo,
+        bindings: &HashMap<String, ResolvedType>,
+    ) -> bool {
+        if self.type_bound_names_match(active, required) && self.type_bound_args_match(active, required, bindings) {
+            return true;
+        }
+
+        let Some(active_trait) = self.lookup_semantic_trait_info(&active.name) else {
+            return false;
+        };
+        let active_args = active
+            .type_args
+            .iter()
+            .map(|arg| substitute_resolved_type(arg, bindings))
+            .collect::<Vec<_>>();
+        if active_args.len() != active_trait.type_params.len() {
+            return false;
+        }
+        let substitutions =
+            crate::frontend::resolved_type_subst::type_param_subst_map(&active_trait.type_params, &active_args);
+        self.semantic_supertrait_closure(&active.name)
+            .into_iter()
+            .any(|(name, type_args)| {
+                let (module_path, resolved_name) = self.resolve_bound_trait_path(&name).unzip();
+                let candidate = TypeBoundInfo {
+                    name,
+                    source_name: resolved_name,
+                    type_args: type_args
+                        .iter()
+                        .map(|arg| substitute_resolved_type(arg, &substitutions))
+                        .collect(),
+                    module_path,
+                };
+                self.type_bound_names_match(&candidate, required)
+                    && self.type_bound_args_match(&candidate, required, bindings)
+            })
     }
 
     /// Check whether `ty` satisfies a nominal trait bound `bound_trait` under RFC 042 semantics.
@@ -449,22 +508,52 @@ impl TypeChecker {
     fn temporary_trait_capability_for_bound(&self, bound: &str) -> Option<&'static TraitCapabilityInfo> {
         let (module_path, trait_name) = self.resolve_bound_trait_path(bound)?;
         let capability = trait_capabilities::for_trait_path(&module_path, &trait_name)?;
+        if !capability.required_type_args.is_empty() {
+            return None;
+        }
         self.validated_temporary_trait_capability(capability, bound, None, None)
     }
 
     /// Resolve a temporary capability bridge from a checked bound that may have crossed a package manifest boundary.
-    fn temporary_trait_capability_for_bound_info(&self, bound: &TypeBoundInfo) -> Option<&'static TraitCapabilityInfo> {
-        if let Some(module_path) = &bound.module_path {
+    fn temporary_trait_capability_for_bound_info(
+        &self,
+        bound: &TypeBoundInfo,
+        bindings: &HashMap<String, ResolvedType>,
+    ) -> Option<&'static TraitCapabilityInfo> {
+        let capability = if let Some(module_path) = &bound.module_path {
             let trait_name = Self::type_bound_source_name(bound);
             let capability = trait_capabilities::for_trait_path(module_path, trait_name)?;
-            return self.validated_temporary_trait_capability(
+            self.validated_temporary_trait_capability(
                 capability,
                 &bound.name,
                 bound.source_name.as_deref(),
                 Some(module_path),
-            );
-        }
-        self.temporary_trait_capability_for_bound(&bound.name)
+            )?
+        } else {
+            let (module_path, trait_name) = self.resolve_bound_trait_path(&bound.name)?;
+            let capability = trait_capabilities::for_trait_path(&module_path, &trait_name)?;
+            self.validated_temporary_trait_capability(capability, &bound.name, None, None)?
+        };
+        self.capability_type_args_match(capability, bound, bindings)
+            .then_some(capability)
+    }
+
+    /// Return whether a checked trait bound carries the concrete arguments required by a capability bridge.
+    fn capability_type_args_match(
+        &self,
+        capability: &TraitCapabilityInfo,
+        bound: &TypeBoundInfo,
+        bindings: &HashMap<String, ResolvedType>,
+    ) -> bool {
+        capability.required_type_args.len() == bound.type_args.len()
+            && capability
+                .required_type_args
+                .iter()
+                .zip(&bound.type_args)
+                .all(|(required, actual)| {
+                    let actual = substitute_resolved_type(actual, bindings);
+                    matches!((required, actual), (TraitCapabilityTypeArg::Str, ResolvedType::Str))
+                })
     }
 
     /// Validate that a temporary capability bridge points at a real trait with the required semantic surface.
@@ -487,13 +576,22 @@ impl TypeChecker {
         {
             return Some(capability);
         }
-        let manifest_bound_identifies_capability = source_name == Some(capability.trait_name)
+        let resolved_source_name = source_name.unwrap_or_else(|| {
+            visible_bound
+                .rsplit(['.', ':'])
+                .find(|segment| !segment.is_empty())
+                .unwrap_or(visible_bound)
+        });
+        let manifest_bound_identifies_capability = resolved_source_name == capability.trait_name
             && module_path.is_some_and(|path| trait_capabilities::module_path_matches(capability, path));
         manifest_bound_identifies_capability.then_some(capability)
     }
 
     /// Resolve a bound spelling to its defining module path and trait name.
-    fn resolve_bound_trait_path(&self, bound: &str) -> Option<(Vec<String>, String)> {
+    pub(in crate::frontend::typechecker) fn resolve_bound_trait_path(
+        &self,
+        bound: &str,
+    ) -> Option<(Vec<String>, String)> {
         if let Some(path) = self.import_aliases.get(bound)
             && path.len() >= 2
         {
@@ -510,11 +608,21 @@ impl TypeChecker {
         Some((module_path, trait_name.to_string()))
     }
 
-    /// Return temporary trait satisfaction for proven source type families.
-    fn temporary_trait_capability_supports_type(
+    /// Return temporary trait satisfaction when known, provisionally accepting unresolved inference categories.
+    pub(in crate::frontend::typechecker) fn temporary_trait_capability_supports_type(
         &self,
         capability: &TraitCapabilityInfo,
         ty: &ResolvedType,
+    ) -> Option<bool> {
+        self.temporary_trait_capability_supports_type_inner(capability, ty, &mut HashSet::new())
+    }
+
+    /// Recursively evaluate a capability family, including transparent validated-newtype composition.
+    fn temporary_trait_capability_supports_type_inner(
+        &self,
+        capability: &TraitCapabilityInfo,
+        ty: &ResolvedType,
+        seen_newtypes: &mut HashSet<String>,
     ) -> Option<bool> {
         match ty {
             ResolvedType::Unknown
@@ -522,6 +630,10 @@ impl TypeChecker {
             | ResolvedType::RustPath(_)
             | ResolvedType::CallSiteInfer => Some(true),
             ResolvedType::Int => Some(trait_capabilities::supports_type(capability, TraitCapabilityType::Int)),
+            ResolvedType::Float => Some(trait_capabilities::supports_type(
+                capability,
+                TraitCapabilityType::Float,
+            )),
             ResolvedType::Bool => Some(trait_capabilities::supports_type(capability, TraitCapabilityType::Bool)),
             ResolvedType::Str => Some(trait_capabilities::supports_type(capability, TraitCapabilityType::Str)),
             ResolvedType::Bytes => Some(trait_capabilities::supports_type(
@@ -533,7 +645,7 @@ impl TypeChecker {
                 TraitCapabilityType::Numeric(*id),
             )),
             ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) | ResolvedType::TypeToken(inner) => {
-                self.temporary_trait_capability_supports_type(capability, inner)
+                self.temporary_trait_capability_supports_type_inner(capability, inner, seen_newtypes)
             }
             ResolvedType::Generic(name, args)
                 if numerics::decimal_constructor_from_str(name.as_str()).is_some()
@@ -555,8 +667,19 @@ impl TypeChecker {
                     TraitCapabilityType::ValueEnum,
                 ))
             }
-            ResolvedType::Float
-            | ResolvedType::FrozenStr
+            ResolvedType::Named(type_name) if capability.id == TraitCapabilityId::StringTryFrom => Some(
+                self.nominal_type_explicitly_adopts_temporary_capability(type_name, &[], capability)
+                    || self
+                        .newtype_satisfies_string_try_from(type_name, &[], capability, seen_newtypes)
+                        .unwrap_or(false),
+            ),
+            ResolvedType::Generic(type_name, type_args) if capability.id == TraitCapabilityId::StringTryFrom => Some(
+                self.nominal_type_explicitly_adopts_temporary_capability(type_name, type_args, capability)
+                    || self
+                        .newtype_satisfies_string_try_from(type_name, type_args, capability, seen_newtypes)
+                        .unwrap_or(false),
+            ),
+            ResolvedType::FrozenStr
             | ResolvedType::FrozenBytes
             | ResolvedType::Unit
             | ResolvedType::Tuple(_)
@@ -567,6 +690,79 @@ impl TypeChecker {
             | ResolvedType::SelfType => Some(false),
             ResolvedType::Generic(_, _) | ResolvedType::Named(_) => None,
         }
+    }
+
+    /// Match a concrete type's checked adoption or supertrait closure against a temporary capability identity.
+    ///
+    /// Package consumers may carry the adoption in `.incnlib` metadata without importing the provider's trait symbol
+    /// into their own source scope. Canonical module/source identity and concrete trait arguments are sufficient.
+    fn nominal_type_explicitly_adopts_temporary_capability(
+        &self,
+        type_name: &str,
+        concrete_type_args: &[ResolvedType],
+        capability: &TraitCapabilityInfo,
+    ) -> bool {
+        let Some(info) = self.lookup_semantic_type_info(type_name) else {
+            return false;
+        };
+        let (owner_type_params, adoptions) = match info {
+            TypeInfo::Model(model) => (model.type_params.as_slice(), model.trait_adoptions.as_slice()),
+            TypeInfo::Class(class) => (class.type_params.as_slice(), class.trait_adoptions.as_slice()),
+            TypeInfo::Enum(en) => (en.type_params.as_slice(), en.trait_adoptions.as_slice()),
+            TypeInfo::Newtype(newtype) => (newtype.type_params.as_slice(), newtype.trait_adoptions.as_slice()),
+            TypeInfo::Builtin | TypeInfo::TypeAlias => return false,
+        };
+        if owner_type_params.len() != concrete_type_args.len() {
+            return false;
+        }
+        let substitutions =
+            crate::frontend::resolved_type_subst::type_param_subst_map(owner_type_params, concrete_type_args);
+        let required = TypeBoundInfo {
+            name: capability.trait_name.to_string(),
+            source_name: Some(capability.trait_name.to_string()),
+            type_args: capability
+                .required_type_args
+                .iter()
+                .map(|arg| match arg {
+                    TraitCapabilityTypeArg::Str => ResolvedType::Str,
+                })
+                .collect(),
+            module_path: Some(
+                capability
+                    .module_path
+                    .iter()
+                    .map(|segment| (*segment).to_string())
+                    .collect(),
+            ),
+        };
+        adoptions
+            .iter()
+            .any(|adoption| self.type_bound_implies_bound_info(adoption, &required, &substitutions))
+    }
+
+    /// Return compiler-provided `TryFrom[str]` conformance for a concrete Incan newtype.
+    fn newtype_satisfies_string_try_from(
+        &self,
+        type_name: &str,
+        type_args: &[ResolvedType],
+        capability: &TraitCapabilityInfo,
+        seen_newtypes: &mut HashSet<String>,
+    ) -> Option<bool> {
+        let Some(TypeInfo::Newtype(info)) = self.lookup_semantic_type_info(type_name) else {
+            return None;
+        };
+        if info.is_rusttype || info.type_params.len() != type_args.len() || !seen_newtypes.insert(type_name.to_string())
+        {
+            return Some(false);
+        }
+
+        let substitutions = crate::frontend::resolved_type_subst::type_param_subst_map(&info.type_params, type_args);
+        let underlying = substitute_resolved_type(&info.underlying, &substitutions);
+        let supported = self
+            .temporary_trait_capability_supports_type_inner(capability, &underlying, seen_newtypes)
+            .unwrap_or(false);
+        seen_newtypes.remove(type_name);
+        Some(supported)
     }
 
     /// Return whether a nominal type is a stable scalar value enum category for temporary capability bridges.

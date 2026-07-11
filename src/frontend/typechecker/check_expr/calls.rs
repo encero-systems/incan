@@ -3,7 +3,7 @@
 //! This module keeps the call-expression coordinator (`foo(...)`) thin and delegates argument binding, constructor
 //! handling, generic inference, builtin dispatch, and Rust boundary validation to focused child modules.
 
-use crate::frontend::ast::{CallArg, Expr, Span, Spanned, Type};
+use crate::frontend::ast::{CallArg, Expr, ParamKind, Span, Spanned, Type};
 use crate::frontend::diagnostics::{CompileError, errors};
 use crate::frontend::resolved_type_subst::substitute_resolved_type;
 use crate::frontend::symbols::{FieldInfo, FunctionInfo, FunctionOverloadInfo, ResolvedType, SymbolKind, TypeInfo};
@@ -119,18 +119,29 @@ impl TypeChecker {
         {
             // Ensure lowering marks the receiver identifier as a module-path binding.
             let _ = self.check_ident(module_name.as_str(), base.span);
-            if let Some(func_info) = self.resolve_imported_module_function_member(&module_path, method.as_str()) {
+            if let Some(kind) = self.resolve_imported_module_function_member(&module_path, method.as_str()) {
                 let callable = format!("{module_name}.{method}");
                 self.record_source_target(span, module_path.clone(), method.clone(), "function");
                 self.record_source_target(callee.span, module_path, method.clone(), "function");
-                return self.validate_stdlib_module_function_call(
-                    callable.as_str(),
-                    &func_info,
-                    type_args,
-                    args,
-                    span,
-                    expected_return_ty,
-                );
+                return match kind {
+                    SymbolKind::Function(info) => self.validate_stdlib_module_function_call(
+                        callable.as_str(),
+                        &info,
+                        type_args,
+                        args,
+                        span,
+                        expected_return_ty,
+                    ),
+                    SymbolKind::FunctionOverloads(overloads) => self.validate_function_overload_call(
+                        callable.as_str(),
+                        &overloads,
+                        type_args,
+                        args,
+                        span,
+                        expected_return_ty,
+                    ),
+                    _ => ResolvedType::Unknown,
+                };
             }
         }
 
@@ -553,7 +564,7 @@ impl TypeChecker {
     ///
     /// Candidate checking runs through the ordinary function-call validator and rolls back failed candidates.
     /// That keeps overload dispatch on the ordinary checker while preserving argument-shape metadata for lowering.
-    fn validate_function_overload_call(
+    pub(in crate::frontend::typechecker) fn validate_function_overload_call(
         &mut self,
         func_name: &str,
         overloads: &[FunctionOverloadInfo],
@@ -605,8 +616,11 @@ impl TypeChecker {
                 self.warnings = baseline_warnings;
                 self.type_info = baseline_type_info;
                 self.consumed_iterator_bindings = baseline_consumed_iterator_bindings;
-                if let Some(first) = overloads.first() {
-                    self.validate_function_call(func_name, &first.info, type_args, args, span, expected_return_ty)
+                let shape_match = overloads
+                    .iter()
+                    .find(|overload| Self::function_call_shape_accepts(&overload.info, type_args, args));
+                if let Some(candidate) = shape_match.or_else(|| overloads.first()) {
+                    self.validate_function_call(func_name, &candidate.info, type_args, args, span, expected_return_ty)
                 } else {
                     ResolvedType::Unknown
                 }
@@ -623,6 +637,28 @@ impl TypeChecker {
                 ResolvedType::Unknown
             }
         }
+    }
+
+    /// Return whether one overload accepts the supplied generic and value-argument counts.
+    fn function_call_shape_accepts(
+        info: &FunctionInfo,
+        explicit_type_args: &[Spanned<Type>],
+        args: &[CallArg],
+    ) -> bool {
+        if !explicit_type_args.is_empty() && explicit_type_args.len() != info.type_params.len() {
+            return false;
+        }
+        let normal_params = info
+            .params
+            .iter()
+            .filter(|param| param.kind == ParamKind::Normal)
+            .collect::<Vec<_>>();
+        let required = normal_params.iter().filter(|param| !param.has_default).count();
+        let accepts_extra = info
+            .params
+            .iter()
+            .any(|param| matches!(param.kind, ParamKind::RestPositional | ParamKind::RestKeyword));
+        args.len() >= required && (accepts_extra || args.len() <= normal_params.len())
     }
 
     /// Type-check a call to an imported Rust named-field struct using rust-inspect field metadata.

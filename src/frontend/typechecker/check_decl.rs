@@ -4230,15 +4230,18 @@ impl TypeChecker {
                     tp.name.clone(),
                     tp.bounds
                         .iter()
-                        .map(|bound| TypeBoundInfo {
-                            name: bound.name.clone(),
-                            source_name: None,
-                            type_args: bound
-                                .type_args
-                                .iter()
-                                .map(|type_arg| self.resolve_type_checked(type_arg))
-                                .collect(),
-                            module_path: None,
+                        .map(|bound| {
+                            let module_path = self.trait_bound_module_path(&bound.name);
+                            TypeBoundInfo {
+                                name: self.resolve_trait_bound_name(&bound.name, Span::default()),
+                                source_name: self.trait_bound_source_name(&bound.name),
+                                type_args: bound
+                                    .type_args
+                                    .iter()
+                                    .map(|type_arg| self.resolve_type_checked(type_arg))
+                                    .collect(),
+                                module_path,
+                            }
                         })
                         .collect(),
                 )

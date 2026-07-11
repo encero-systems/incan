@@ -13,7 +13,7 @@ port = get_as[int]("PORT", default=8080)?
 
 ## String reads
 
-`get(key: str) -> Result[str, EnvironError]` returns a required Unicode value. Missing keys, empty keys, and non-Unicode host values return distinct errors.
+`get(key: str) -> Result[str, EnvironError]` returns a required Unicode value. Missing keys, invalid keys, and non-Unicode host values return distinct errors. A key is invalid when it is empty or contains `=` or NUL.
 
 `get_optional(key: str) -> Option[str]` returns `Some(value)` for a present Unicode value and `None` for missing, invalid-key, or non-Unicode reads. Use `get()` when code needs the precise failure category.
 
@@ -57,7 +57,7 @@ deployment = get_as[Deployment]("DEPLOYMENT")?
 
 ## Validated newtypes
 
-Concrete newtypes compose automatically when their underlying type supports `TryFrom[str]`. If a newtype defines `from_underlying`, typed reads use that checked constructor after parsing:
+Newtype instantiations compose automatically when their underlying type supports `TryFrom[str]`. If a newtype defines `from_underlying`, typed reads use that checked constructor after parsing:
 
 ```incan
 from std.environ import get_as
@@ -79,13 +79,17 @@ port = get_as[Port]("PORT", default=8080)?
 `EnvironError` exposes `kind()` and `kind_name()`, the requested `key`, and a redacted `detail` message. The stable categories are:
 
 - `missing`: the key is not present.
-- `invalid_key`: the key is empty.
+- `invalid_key`: the key is empty or contains `=` or NUL.
 - `invalid_value`: a typed read could not parse or validate the present value.
 - `not_unicode`: the host value cannot be represented as Unicode text.
 - `other`: an unexpected host failure.
+
+`kind() -> EnvironErrorKind` returns the typed value enum. Its variants are `Missing`, `InvalidKey`, `InvalidValue`, `NotUnicode`, and `Other`. `kind_name() -> str` returns the corresponding lowercase spelling shown above when text output or serialization is more convenient.
 
 Error details may include the key and expected target type. They never include the observed environment value.
 
 ## Runtime scope
 
-Environment reads are runtime operations and are rejected in `const` initializers. The module does not mutate the current process environment and does not expose a byte-oriented host environment API. Use `std.process` environment controls when configuring child processes.
+Environment reads are runtime operations and are rejected in `const` initializers. The module does not mutate the current process environment and does not expose a byte-oriented host environment API.
+
+Use `std.environ` for direct ambient reads. Structured application configuration belongs to the planned `ctx` surface, while planned `std.ci.env` helpers may add CI-specific policy without becoming the only environment namespace. Child-process environment construction belongs to the planned `std.process` command API rather than current-process reads.
