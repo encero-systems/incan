@@ -7,7 +7,7 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-pub use crate::__incan_std::encoding::base32;
-pub use crate::__incan_std::encoding::base64;
-pub use crate::__incan_std::encoding::hex;
-pub use crate::__incan_std::encoding::EncodingError;
+pub use incan_builtin_stdlib::encoding::base32;
+pub use incan_builtin_stdlib::encoding::base64;
+pub use incan_builtin_stdlib::encoding::hex;
+pub use incan_builtin_stdlib::encoding::EncodingError;

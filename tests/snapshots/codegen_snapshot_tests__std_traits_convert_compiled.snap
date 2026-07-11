@@ -7,3 +7,94 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+/// From trait - Type conversion from another type
+/// Rust equivalent: std::convert::From
+///
+/// Implementing From[T] automatically provides Into[T] for the source type.
+///
+/// Example:
+///
+/// ```ignore
+/// model UserId:
+///     value: int
+///
+/// impl From[int] for UserId:
+///     @classmethod
+///     def from(cls, value: int) -> UserId:
+///         return UserId(value=value)
+///
+/// # Now you can do:
+/// id = UserId.from(42)
+/// ```
+///
+/// Common patterns:
+///
+/// ```ignore
+/// # From string
+/// impl From[str] for Email:
+///     @classmethod
+///     def from(cls, s: str) -> Email:
+///         return Email(address=s)
+///
+/// # From tuple
+/// impl From[Tuple[int, int]] for Point:
+///     @classmethod
+///     def from(cls, t: Tuple[int, int]) -> Point:
+///         return Point(x=t.0, y=t.1)
+/// ```
+pub trait From<T> {
+    fn from(value: T) -> Self
+    where
+        Self: Sized;
+}
+/// Into trait - Convert self into another type
+/// Rust equivalent: std::convert::Into
+///
+/// Note: You rarely implement Into directly. Instead, implement From[T]
+/// and Into is provided automatically.
+///
+/// Example:
+///
+/// ```ignore
+/// # If UserId implements From[int], then int gets Into[UserId]:
+/// id: UserId=(42).into()
+/// ```
+pub trait Into<T> {
+    fn into(&self) -> T;
+}
+/// TryFrom trait - Fallible type conversion
+/// Rust equivalent: std::convert::TryFrom
+///
+/// Use when conversion can fail (e.g., parsing, validation).
+///
+/// Example:
+///
+/// ```ignore
+/// model PositiveInt:
+///     value: int
+///
+/// impl TryFrom[int] for PositiveInt:
+///     @classmethod
+///     def try_from(cls, value: int) -> Result[PositiveInt, str]:
+///         if value <= 0:
+///             return Err("Value must be positive")
+///         return Ok(PositiveInt(value=value))
+///
+/// # Usage:
+/// result = PositiveInt.try_from(-5)
+/// match result:
+///     Ok(n) => println(f"Got {n.value}")
+///     Err(e) => println(f"Error: {e}")
+/// ```
+pub trait TryFrom<T> {
+    fn try_from(value: T) -> Result<Self, String>
+    where
+        Self: Sized;
+}
+/// TryInto trait - Fallible conversion of self into another type
+/// Rust equivalent: std::convert::TryInto
+///
+/// Like Into, you rarely implement this directly — implement TryFrom instead.
+pub trait TryInto<T> {
+    fn try_into(&self) -> Result<T, String>;
+}

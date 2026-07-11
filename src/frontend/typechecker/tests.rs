@@ -14965,6 +14965,27 @@ def read_boxed() -> None:
 }
 
 #[test]
+fn test_std_environ_get_as_rejects_newtype_over_rust_backed_value() {
+    let source = r#"
+from rust::std::path import PathBuf
+from std.environ import get_as
+
+type WrappedPath = newtype PathBuf
+
+def read_path() -> None:
+  get_as[WrappedPath]("PATH")
+"#;
+    let errors = check_str_err(source, "rust-backed newtype target should fail typechecking");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("WrappedPath") && error.message.contains("TryFrom[str]")),
+        "expected a Rust-backed target diagnostic, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn test_std_environ_get_as_accepts_positional_and_keyword_defaults() {
     let source = r#"
 from std.environ import EnvironError, get_as

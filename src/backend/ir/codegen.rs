@@ -1753,7 +1753,7 @@ import std.math as math
 pub root = math.sqrt
 "#,
         );
-        assert!(code.contains("pub use crate::__incan_std::math as math;"), "{code}");
+        assert!(code.contains("pub use incan_builtin_stdlib::math as math;"), "{code}");
         assert!(code.contains("pub use math::sqrt as root;"), "{code}");
     }
 

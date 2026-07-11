@@ -13,7 +13,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::manifest::DependencySpec;
-use incan_core::lang::rust_keywords;
+use incan_core::lang::{rust_keywords, stdlib};
 use sha2::{Digest as _, Sha256};
 
 const MOD_INSERT_MARKER: &str = "// __INCAN_INSERT_MODS__";
@@ -44,6 +44,15 @@ fn transform_stdlib_path(path: &[String]) -> Vec<String> {
     } else {
         path.to_vec()
     }
+}
+
+/// Return whether this process is compiling the built-in stdlib into its own library artifact.
+///
+/// The generated artifact exposes source modules directly (`crate::fs`, `crate::traits`, …), while existing compiler
+/// bridges address those same modules through `crate::__incan_std`. Keep that compatibility namespace confined to the
+/// artifact build so ordinary user libraries do not acquire a synthetic module.
+fn is_builtin_stdlib_artifact_build() -> bool {
+    std::env::var_os("INCAN_INTERNAL_BUILTIN_STDLIB_ARTIFACT_BUILD").is_some()
 }
 
 /// Project generator for creating runnable Rust projects from Incan code.
@@ -335,6 +344,21 @@ impl ProjectGenerator {
         format!("{visibility}mod {escaped_name};")
     }
 
+    /// Render the compatibility namespace used by generated compiler bridges inside the compiled stdlib artifact.
+    ///
+    /// The artifact owns its source modules at crate root so consumers can depend on normal Rust paths, but generated
+    /// source still refers to `__incan_std` while the migration is in flight. Re-export each concrete root module
+    /// rather than glob-re-exporting the crate: the latter would recursively re-export the facade itself.
+    fn builtin_stdlib_artifact_facade(top_level_modules: &[String]) -> String {
+        let mut facade = String::from("pub mod __incan_std {\n");
+        for module in top_level_modules {
+            let escaped_module = rust_keywords::escape_keyword(module);
+            facade.push_str(&format!("    pub use crate::{escaped_module};\n"));
+        }
+        facade.push_str("}\n");
+        facade
+    }
+
     /// Generate the project structure (single-file mode).
     pub fn generate(&self, rust_code: &str) -> io::Result<bool> {
         let src_dir = self.ensure_generated_src_dir()?;
@@ -458,6 +482,39 @@ impl ProjectGenerator {
         for (path, code) in modules {
             let transformed_path = transform_stdlib_path(path);
             transformed_modules.insert(transformed_path, code.clone());
+        }
+
+        // Remove only migrated artifact modules from a reused generated project. Other source-backed stdlib modules
+        // must remain available until their own migration is complete.
+        for source_path in stdlib::compiled_builtin_stdlib_modules() {
+            let emitted_path: Vec<String> = source_path
+                .iter()
+                .enumerate()
+                .map(|(idx, segment)| {
+                    if idx == 0 {
+                        stdlib::INCAN_STD_NAMESPACE.to_string()
+                    } else {
+                        (*segment).to_string()
+                    }
+                })
+                .collect();
+            let Some(last_segment) = emitted_path.last() else {
+                continue;
+            };
+            let mut leaf = src_dir.clone();
+            for segment in &emitted_path[..emitted_path.len() - 1] {
+                leaf.push(segment);
+            }
+            leaf.push(last_segment);
+            changed |= Self::remove_conflicting_module_artifact(&leaf.with_extension("rs"))?;
+            for depth in (1..emitted_path.len()).rev() {
+                let parent = &emitted_path[..depth];
+                if transformed_modules.keys().any(|path| path.starts_with(parent)) {
+                    break;
+                }
+                let parent_dir = parent.iter().fold(src_dir.clone(), |dir, segment| dir.join(segment));
+                changed |= Self::remove_conflicting_module_artifact(&parent_dir)?;
+            }
         }
 
         // ---- Collect directory structure and submodules ----
@@ -598,7 +655,7 @@ impl ProjectGenerator {
         sorted_top.sort();
         if !sorted_top.is_empty() {
             let visibility = if self.is_binary { "" } else { "pub " };
-            let mods: String = sorted_top
+            let mut mods: String = sorted_top
                 .iter()
                 .map(|m| {
                     let top_level_path = vec![(*m).clone()];
@@ -612,6 +669,11 @@ impl ProjectGenerator {
                 .collect::<Vec<_>>()
                 .join("\n")
                 + "\n";
+
+            if !self.is_binary && is_builtin_stdlib_artifact_build() {
+                mods.push('\n');
+                mods.push_str(&Self::builtin_stdlib_artifact_facade(&sorted_top));
+            }
 
             if let Some(marker_pos) = full_main.find(MOD_INSERT_MARKER) {
                 let line_end = full_main[marker_pos..]
@@ -687,6 +749,20 @@ mod tests {
             vec!["db".to_string(), "models".to_string()]
         );
         assert_eq!(transform_stdlib_path(&["api".to_string()]), vec!["api".to_string()]);
+    }
+
+    #[test]
+    fn test_builtin_stdlib_artifact_facade_reexports_direct_modules() {
+        let facade = ProjectGenerator::builtin_stdlib_artifact_facade(&[
+            "async".to_string(),
+            "fs".to_string(),
+            "traits".to_string(),
+        ]);
+
+        assert_eq!(
+            facade,
+            "pub mod __incan_std {\n    pub use crate::r#async;\n    pub use crate::fs;\n    pub use crate::traits;\n}\n"
+        );
     }
 
     #[test]

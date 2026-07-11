@@ -1217,8 +1217,36 @@ impl<'a> IrEmitter<'a> {
         let Some(function_name) = canonical_path.last() else {
             return Ok(None);
         };
+        let compiling_builtin_stdlib_artifact =
+            std::env::var_os("INCAN_INTERNAL_BUILTIN_STDLIB_ARTIFACT_BUILD").is_some();
+        // Private stdlib helpers are implementation details of the artifact. They remain addressable only while
+        // compiling that artifact itself; consumer code must never acquire a cross-crate path to an underscored
+        // source helper merely because its enclosing module is compiled.
+        let can_link_compiled_stdlib_symbol = compiling_builtin_stdlib_artifact || !function_name.starts_with('_');
         let mut segments: Vec<TokenStream> = if module_path.first().map(String::as_str) == Some("incan_stdlib") {
             let mut segments = vec![quote! { incan_stdlib }];
+            for seg in module_path.iter().skip(1) {
+                let ident = Self::rust_ident(seg);
+                segments.push(quote! { #ident });
+            }
+            segments
+        } else if module_path.first().map(String::as_str) == Some(stdlib::INCAN_STD_NAMESPACE)
+            && stdlib::is_compiled_builtin_stdlib_emission_path(&module_path)
+            && can_link_compiled_stdlib_symbol
+        {
+            let mut segments = if compiling_builtin_stdlib_artifact {
+                vec![quote! { crate }]
+            } else {
+                let artifact = Self::rust_ident(stdlib::BUILTIN_STDLIB_ARTIFACT_CRATE);
+                vec![quote! { #artifact }]
+            };
+            for seg in module_path.iter().skip(1) {
+                let ident = Self::rust_ident(seg);
+                segments.push(quote! { #ident });
+            }
+            segments
+        } else if module_path.first().map(String::as_str) == Some(stdlib::INCAN_STD_NAMESPACE) {
+            let mut segments = vec![quote! { crate }];
             for seg in module_path.iter().skip(1) {
                 let ident = Self::rust_ident(seg);
                 segments.push(quote! { #ident });
@@ -1228,8 +1256,15 @@ impl<'a> IrEmitter<'a> {
             if canonical_path.len() < 3 || !stdlib::is_known_stdlib_module(&module_path) {
                 return Ok(None);
             }
-            let ns = Self::rust_ident(stdlib::INCAN_STD_NAMESPACE);
-            let mut segments = vec![quote! { crate }, quote! { #ns }];
+            let mut segments = if compiling_builtin_stdlib_artifact {
+                vec![quote! { crate }]
+            } else if stdlib::is_compiled_builtin_stdlib_module(&module_path) && can_link_compiled_stdlib_symbol {
+                let artifact = Self::rust_ident(stdlib::BUILTIN_STDLIB_ARTIFACT_CRATE);
+                vec![quote! { #artifact }]
+            } else {
+                let ns = Self::rust_ident(stdlib::INCAN_STD_NAMESPACE);
+                vec![quote! { crate }, quote! { #ns }]
+            };
             for seg in module_path.iter().skip(1) {
                 let ident = Self::rust_ident(seg);
                 segments.push(quote! { #ident });

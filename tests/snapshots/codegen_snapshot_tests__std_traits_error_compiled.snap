@@ -7,3 +7,48 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+/// Error trait - Base trait for custom error types in Result[T, E]
+///
+/// Implement this trait to create error types that work well with
+/// Incan's Result type and the ? operator.
+///
+/// Example:
+///
+/// ```ignore
+/// model AgeValidationError with Error:
+///     field: str
+///     message: str
+///
+///     def message(self) -> str:
+///         return f"Validation failed for '{self.field}': {self.message}"
+///
+/// def validate_age(age: int) -> Result[int, AgeValidationError]:
+///     if age < 0:
+///         return Err(AgeValidationError(field="age", message="cannot be negative"))
+///     if age > 150:
+///         return Err(AgeValidationError(field="age", message="seems unrealistic"))
+///     return Ok(age)
+///
+/// def main() -> None:
+///     match validate_age(-5):
+///         Ok(age) => println(f"Valid age: {age}")
+///         Err(e) => println(f"Error: {e.message()}")
+/// ```
+///
+/// Error Chaining:
+///
+/// ```ignore
+/// model DatabaseError with Error:
+///     query: str
+///     cause: Option[str]
+///
+///     def message(self) -> str:
+///         return f"Database query failed: {self.query}"
+///
+///     def source(self) -> Option[str]:
+///         return self.cause
+/// ```
+pub trait Error {
+    fn message(&self) -> String;
+    fn source(&self) -> Option<String>;
+}

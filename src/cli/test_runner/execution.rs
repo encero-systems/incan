@@ -29,6 +29,7 @@ use crate::frontend::vocab_desugar_pass;
 use crate::frontend::{lexer, parser};
 use crate::lockfile::CargoFeatureSelection;
 use crate::manifest::ProjectManifest;
+use incan_core::lang::stdlib;
 use sha2::{Digest, Sha256};
 
 use super::module_graph::collect_source_modules_for_test;
@@ -3272,7 +3273,14 @@ pub(super) fn run_file_tests_batch(
         codegen.set_rust_inspect_manifest_dir(prepared.rust_inspect_manifest_dir.clone());
     }
 
-    for module in &prepared.source_modules {
+    // The test harness shares the production compiler boundary: typechecking may use source-backed stdlib modules,
+    // but migrated modules must link the compiled artifact instead of being generated under `__incan_std`.
+    let emitted_source_modules = prepared
+        .source_modules
+        .iter()
+        .filter(|module| !stdlib::is_compiled_builtin_stdlib_emission_path(&module.path_segments))
+        .collect::<Vec<_>>();
+    for module in &emitted_source_modules {
         codegen.add_module_with_path_segments(&module.name, &module.ast, module.path_segments.clone());
     }
     let fixtures = prepared.fixtures.clone();
@@ -3336,16 +3344,27 @@ pub(super) fn run_file_tests_batch(
             .collect::<Vec<_>>()
     };
 
-    let runner_dependencies =
+    let mut runner_dependencies =
         match merge_test_runner_dependencies(&prepared.resolved.dependencies, &prepared.resolved.dev_dependencies) {
             Ok(deps) => deps,
             Err(message) => return gen_err(message),
         };
+    if !runner_dependencies
+        .iter()
+        .any(|dependency| dependency.crate_name == incan_core::lang::stdlib::BUILTIN_STDLIB_ARTIFACT_CRATE)
+    {
+        let artifact = match common::compiled_builtin_stdlib_artifact_dependency() {
+            Ok(artifact) => artifact,
+            Err(error) => return gen_err(error.message),
+        };
+        runner_dependencies.push(artifact);
+        runner_dependencies.sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
+    }
     generator.set_include_dev_dependencies(false);
     generator.set_dependencies(runner_dependencies);
     generator.set_dev_dependencies(Vec::new());
 
-    let generated_changed = if prepared.source_modules.is_empty() {
+    let generated_changed = if emitted_source_modules.is_empty() {
         let rust_code = match codegen.try_generate(&prepared.ast) {
             Ok(code) => code,
             Err(e) => return gen_err(format!("Code generation error: {}", e)),
@@ -3356,11 +3375,7 @@ pub(super) fn run_file_tests_batch(
             Err(e) => return gen_err(format!("Failed to generate project: {}", e)),
         }
     } else {
-        let module_paths: Vec<Vec<String>> = prepared
-            .source_modules
-            .iter()
-            .map(|m| m.path_segments.clone())
-            .collect();
+        let module_paths: Vec<Vec<String>> = emitted_source_modules.iter().map(|m| m.path_segments.clone()).collect();
         let (mut main_code, mut rust_modules) =
             match codegen.try_generate_multi_file_nested(&prepared.ast, &module_paths) {
                 Ok(result) => result,

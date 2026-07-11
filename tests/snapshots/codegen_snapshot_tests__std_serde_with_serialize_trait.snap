@@ -7,7 +7,7 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-pub use crate::__incan_std::serde::json::Serialize;
+pub use incan_builtin_stdlib::serde::json::Serialize;
 #[derive(
     serde::Serialize,
     Debug,

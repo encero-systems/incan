@@ -8,7 +8,7 @@ expression: rust_code
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 use json::{Deserialize as _, Serialize as _};
-pub use crate::__incan_std::serde::json;
+pub use incan_builtin_stdlib::serde::json;
 #[derive(
     serde::Serialize,
     serde::Deserialize,

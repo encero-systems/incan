@@ -704,7 +704,8 @@ impl LibraryArtifactMetadata {
         Self::from_manifest_path(dependency_key, manifest_name, manifest_path, crate_root)
     }
 
-    fn to_dependency_spec(&self) -> DependencySpec {
+    /// Convert this verified artifact location into the Cargo dependency used by generated consumers.
+    pub(crate) fn to_dependency_spec(&self) -> DependencySpec {
         DependencySpec {
             crate_name: self.dependency_key.clone(),
             version: None,

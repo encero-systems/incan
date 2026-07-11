@@ -53,7 +53,11 @@ use super::vocab_extraction::collect_library_vocab_metadata_for_parser;
 /// Files larger than this are rejected to prevent out-of-memory conditions during compilation.
 const MAX_SOURCE_SIZE: u64 = 100 * 1024 * 1024;
 static PREPARED_LIBRARY_DEPENDENCIES: LazyLock<Mutex<HashSet<PathBuf>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
+static PREPARED_BUILTIN_STDLIB_ARTIFACTS: LazyLock<Mutex<HashSet<PathBuf>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
 pub(crate) const INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV: &str = "INCAN_INTERNAL_LIBRARY_ARTIFACT_ONLY";
+/// Internal marker selecting canonical local module paths while compiling the built-in stdlib artifact itself.
+pub(crate) const INTERNAL_BUILTIN_STDLIB_ARTIFACT_BUILD_ENV: &str = "INCAN_INTERNAL_BUILTIN_STDLIB_ARTIFACT_BUILD";
 
 /// One compiler diagnostic with enough source context for either human or machine-readable rendering.
 #[derive(Debug, Clone)]
@@ -148,6 +152,127 @@ pub(crate) struct ProjectRequirements {
     pub stdlib_features: Vec<String>,
     /// Required Cargo dependencies contributed by stdlib namespaces and provider manifests.
     pub dependencies: Vec<DependencySpec>,
+}
+
+/// Return whether any parsed source imports a stdlib module supplied by the compiled built-in artifact.
+fn uses_compiled_builtin_stdlib_artifact(modules: &[ParsedModule]) -> bool {
+    if env::var_os(INTERNAL_BUILTIN_STDLIB_ARTIFACT_BUILD_ENV).is_some()
+        || env::var_os(INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV).is_some()
+    {
+        return false;
+    }
+    // `incan build --lib` is also the artifact producer. Its entry module lives under the built-in stdlib source
+    // root, so linking `incan_builtin_stdlib` there would make the library depend on itself. Consumers still collect
+    // copied stdlib source modules, but their final entry module is outside this root and must receive the artifact.
+    if let (Some(entry), Some(stdlib_root)) = (modules.last(), crate::cli::prelude::find_stdlib_dir()) {
+        let entry_path = fs::canonicalize(&entry.file_path).unwrap_or_else(|_| entry.file_path.clone());
+        let stdlib_root = fs::canonicalize(&stdlib_root).unwrap_or(stdlib_root);
+        if entry_path.starts_with(stdlib_root) {
+            return false;
+        }
+    }
+    modules.iter().any(|module| {
+        module.ast.declarations.iter().any(|decl| {
+            let crate::frontend::ast::Declaration::Import(import) = &decl.node else {
+                return false;
+            };
+            let path = match &import.kind {
+                ImportKind::From { module, .. } => {
+                    if module.parent_levels > 0 || module.is_absolute {
+                        return false;
+                    }
+                    &module.segments
+                }
+                ImportKind::Module(path) => {
+                    if path.parent_levels > 0 || path.is_absolute {
+                        return false;
+                    }
+                    &path.segments
+                }
+                _ => return false,
+            };
+            stdlib::is_compiled_builtin_stdlib_module(path)
+        })
+    })
+}
+
+/// Build the local built-in stdlib library artifact when a consumer imports a migrated module.
+///
+/// The artifact project lives beside the `.incn` sources so development and installed SDK layouts use the same
+/// compiler-owned format. This is intentionally independent from project manifests: built-in `std.*` imports must
+/// not require users to declare a `pub::` dependency.
+fn prepare_builtin_stdlib_artifact() -> CliResult<LibraryArtifactMetadata> {
+    let stdlib_root = crate::cli::prelude::find_stdlib_dir().ok_or_else(|| {
+        CliError::failure("cannot locate built-in stdlib sources needed to prepare the compiled stdlib artifact")
+    })?;
+    let canonical_root = fs::canonicalize(&stdlib_root).unwrap_or_else(|_| stdlib_root.clone());
+    let artifact_root = stdlib_root.join("target").join("lib");
+    let metadata = LibraryArtifactMetadata::from_crate_root(
+        stdlib::BUILTIN_STDLIB_ARTIFACT_CRATE,
+        stdlib::BUILTIN_STDLIB_ARTIFACT_CRATE,
+        artifact_root,
+    );
+    if metadata.manifest_path.is_file() && metadata.cargo_toml_path.is_file() && metadata.crate_lib_path.is_file() {
+        return Ok(metadata);
+    }
+
+    {
+        let prepared = PREPARED_BUILTIN_STDLIB_ARTIFACTS
+            .lock()
+            .map_err(|_| CliError::failure("failed to lock prepared built-in stdlib artifact set"))?;
+        if prepared.contains(&canonical_root) {
+            return Err(CliError::failure(format!(
+                "compiled built-in stdlib artifact is missing after preparation at {}",
+                metadata.crate_root.display()
+            )));
+        }
+    }
+
+    eprintln!(
+        "Preparing compiled built-in stdlib artifact with `incan build --lib` in {}",
+        stdlib_root.display()
+    );
+    let current_exe = env::current_exe()
+        .map_err(|error| CliError::failure(format!("failed to resolve current incan executable: {error}")))?;
+    let status = Command::new(current_exe)
+        .args(["build", "--lib"])
+        .current_dir(&stdlib_root)
+        .env_remove(INTERNAL_MANIFEST_OVERRIDE_ENV)
+        .env_remove(INTERNAL_PROJECT_ROOT_OVERRIDE_ENV)
+        .env(INTERNAL_BUILTIN_STDLIB_ARTIFACT_BUILD_ENV, "1")
+        .env(INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, "1")
+        .status()
+        .map_err(|error| {
+            CliError::failure(format!(
+                "failed to run `incan build --lib` for built-in stdlib artifact at {}: {error}",
+                stdlib_root.display()
+            ))
+        })?;
+    if !status.success() {
+        return Err(CliError::failure(format!(
+            "failed to prepare compiled built-in stdlib artifact at {}",
+            stdlib_root.display()
+        )));
+    }
+    if !metadata.manifest_path.is_file() || !metadata.cargo_toml_path.is_file() || !metadata.crate_lib_path.is_file() {
+        return Err(CliError::failure(format!(
+            "compiled built-in stdlib artifact is incomplete at {}",
+            metadata.crate_root.display()
+        )));
+    }
+    let mut prepared = PREPARED_BUILTIN_STDLIB_ARTIFACTS
+        .lock()
+        .map_err(|_| CliError::failure("failed to lock prepared built-in stdlib artifact set"))?;
+    prepared.insert(canonical_root);
+    Ok(metadata)
+}
+
+/// Return the Cargo dependency for the verified locally compiled built-in stdlib artifact.
+///
+/// Generated test harnesses inject `std.testing` support even when a test file has no explicit stdlib imports, so they
+/// use this helper rather than relying only on source-import requirement discovery.
+pub(crate) fn compiled_builtin_stdlib_artifact_dependency() -> CliResult<DependencySpec> {
+    Ok(prepare_builtin_stdlib_artifact()?.to_dependency_spec())
 }
 
 /// Cargo execution policy resolved from CLI inputs and environment defaults.
@@ -658,6 +783,15 @@ pub(crate) fn collect_project_requirements(
         )?;
     }
 
+    if uses_compiled_builtin_stdlib_artifact(modules) {
+        let artifact = prepare_builtin_stdlib_artifact()?;
+        merge_requirement_dependency(
+            &mut requirements.dependencies,
+            artifact.to_dependency_spec(),
+            "compiled built-in stdlib artifact".to_string(),
+        )?;
+    }
+
     Ok(requirements)
 }
 
@@ -708,7 +842,7 @@ fn merge_requirement_dependency(
     source_label: String,
 ) -> CliResult<()> {
     if let Some(existing) = merged.iter().find(|dep| dep.crate_name == candidate.crate_name) {
-        if existing != &candidate {
+        if !dependency_specs_match(existing, &candidate) {
             return Err(CliError::failure(format!(
                 "dependency requirement `{}` conflicts with existing collected requirements ({source_label})",
                 candidate.crate_name
@@ -719,6 +853,21 @@ fn merge_requirement_dependency(
     merged.push(candidate);
     merged.sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
     Ok(())
+}
+
+/// Compare dependency specs while treating equivalent path spellings as the same dependency.
+fn dependency_specs_match(left: &DependencySpec, right: &DependencySpec) -> bool {
+    if left == right {
+        return true;
+    }
+    let mut left = left.clone();
+    let mut right = right.clone();
+    for spec in [&mut left, &mut right] {
+        if let DependencySource::Path { path } = &mut spec.source {
+            *path = fs::canonicalize(&*path).unwrap_or_else(|_| path.clone());
+        }
+    }
+    left == right
 }
 
 /// Merge collected requirement dependencies into resolved dependency sets.
@@ -734,7 +883,7 @@ pub(crate) fn merge_project_requirement_dependencies(
             .iter()
             .find(|spec| spec.crate_name == required.crate_name);
         if let Some(existing) = already_in_dependencies {
-            if existing != required {
+            if !dependency_specs_match(existing, required) {
                 return Err(CliError::failure(format!(
                     "dependency `{}` conflicts between resolved imports and collected project requirements",
                     required.crate_name
@@ -1624,6 +1773,16 @@ pub(crate) fn collect_modules_detailed(entry_path: &str) -> Result<Vec<ParsedMod
     let mut processed = HashSet::new();
     let mut dependency_edges: HashMap<String, HashSet<String>> = HashMap::new();
     let mut incan_source_stdlib_module_paths: HashMap<String, PathBuf> = HashMap::new();
+    let compiling_builtin_stdlib_artifact = env::var_os(INTERNAL_BUILTIN_STDLIB_ARTIFACT_BUILD_ENV).is_some();
+    let stdlib_module_segments = |module_path: &[String]| {
+        if compiling_builtin_stdlib_artifact {
+            module_path.iter().skip(1).cloned().collect()
+        } else {
+            let mut segments = vec![stdlib::INCAN_STD_NAMESPACE.to_string()];
+            segments.extend(module_path.iter().skip(1).cloned());
+            segments
+        }
+    };
     // (file_path, module_name, path_segments)
     let mut to_process: Vec<(String, String, Vec<String>)> = vec![(
         path.to_string_lossy().to_string(),
@@ -1670,8 +1829,7 @@ pub(crate) fn collect_modules_detailed(entry_path: &str) -> Result<Vec<ParsedMod
                 "collection".to_string(),
             ];
             let source_path = resolve_stdlib_module_source_path(&module_path)?;
-            let mut module_segments = vec![stdlib::INCAN_STD_NAMESPACE.to_string()];
-            module_segments.extend(module_path.iter().skip(1).cloned());
+            let module_segments = stdlib_module_segments(&module_path);
             let module_name = module_segments.join("_");
             let dep_path_str = source_path.to_string_lossy().to_string();
             if !processed.contains(&dep_path_str) {
@@ -1685,8 +1843,7 @@ pub(crate) fn collect_modules_detailed(entry_path: &str) -> Result<Vec<ParsedMod
         if uses_result_combinator_surface(&ast) {
             let module_path = vec![stdlib::STDLIB_ROOT.to_string(), "result".to_string()];
             let source_path = resolve_stdlib_module_source_path(&module_path)?;
-            let mut module_segments = vec![stdlib::INCAN_STD_NAMESPACE.to_string()];
-            module_segments.extend(module_path.iter().skip(1).cloned());
+            let module_segments = stdlib_module_segments(&module_path);
             let module_name = module_segments.join("_");
             let dep_path_str = source_path.to_string_lossy().to_string();
             if !processed.contains(&dep_path_str) {
@@ -1712,8 +1869,7 @@ pub(crate) fn collect_modules_detailed(entry_path: &str) -> Result<Vec<ParsedMod
                         resolved
                     };
 
-                    let mut module_segments = vec![stdlib::INCAN_STD_NAMESPACE.to_string()];
-                    module_segments.extend(module_path.iter().skip(1).cloned());
+                    let module_segments = stdlib_module_segments(&module_path);
                     let module_name = module_segments.join("_");
                     let dep_path_str = source_path.to_string_lossy().to_string();
                     if !processed.contains(&dep_path_str) {
@@ -2737,6 +2893,13 @@ model User:
                 .iter()
                 .all(|dep| dep.crate_name != "serde_json"),
             "serde_json should stay behind incan_stdlib's json feature"
+        );
+        assert!(
+            requirements
+                .dependencies
+                .iter()
+                .any(|dep| dep.crate_name == stdlib::BUILTIN_STDLIB_ARTIFACT_CRATE),
+            "std.serde imports should link the compiled built-in stdlib artifact"
         );
         Ok(())
     }

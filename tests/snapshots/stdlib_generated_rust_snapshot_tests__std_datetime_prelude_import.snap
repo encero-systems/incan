@@ -7,12 +7,12 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-pub use crate::__incan_std::datetime::DateTimeError;
-pub use crate::__incan_std::datetime::Duration;
-pub use crate::__incan_std::datetime::Instant;
-pub use crate::__incan_std::datetime::SystemTime;
-pub use crate::__incan_std::datetime::TimeDelta;
-pub use crate::__incan_std::datetime::Date;
-pub use crate::__incan_std::datetime::Time;
-pub use crate::__incan_std::datetime::DateTime;
-pub use crate::__incan_std::datetime::FixedOffset;
+pub use incan_builtin_stdlib::datetime::DateTimeError;
+pub use incan_builtin_stdlib::datetime::Duration;
+pub use incan_builtin_stdlib::datetime::Instant;
+pub use incan_builtin_stdlib::datetime::SystemTime;
+pub use incan_builtin_stdlib::datetime::TimeDelta;
+pub use incan_builtin_stdlib::datetime::Date;
+pub use incan_builtin_stdlib::datetime::Time;
+pub use incan_builtin_stdlib::datetime::DateTime;
+pub use incan_builtin_stdlib::datetime::FixedOffset;

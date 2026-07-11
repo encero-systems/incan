@@ -53,6 +53,7 @@ use super::vocab_extraction::{PendingDesugarerArtifact, collect_library_vocab_me
 use crate::cli::prelude::ParsedModule;
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect::{InspectError, Inspector, InspectorConfig};
+use incan_core::lang::stdlib;
 use sha2::{Digest as _, Sha256};
 
 // ============================================================================
@@ -773,6 +774,15 @@ fn prepare_project_with_options(
     };
 
     let dep_modules = &modules[..modules.len() - 1];
+    // Typechecking still consumes the source-backed stdlib module graph during the compatibility transition, but
+    // migrated modules are supplied by the compiled built-in artifact at Rust emission time. Keeping this split here
+    // prevents generated consumers from silently materializing a second `__incan_std` implementation. Remove this
+    // bridge once the incnlib manifest carries the module-qualified type, trait, decorator, and default-argument
+    // metadata needed by the frontend's stdlib import resolver.
+    let emitted_dep_modules: Vec<&ParsedModule> = dep_modules
+        .iter()
+        .filter(|module| !stdlib::is_compiled_builtin_stdlib_emission_path(&module.path_segments))
+        .collect();
     let project_root = manifest
         .as_ref()
         .map(|manifest| manifest.project_root().to_path_buf())
@@ -815,7 +825,7 @@ fn prepare_project_with_options(
     }
     codegen.set_library_manifest_index(library_manifest_index.clone());
     // Add user dependency modules
-    for module in dep_modules {
+    for module in &emitted_dep_modules {
         codegen.add_module_with_path_segments(&module.name, &module.ast, module.path_segments.clone());
     }
     // ---- Setup project generator ----
@@ -830,7 +840,7 @@ fn prepare_project_with_options(
     );
 
     let mut inline_imports = collect_rust_dependency_uses(main_module, false);
-    for module in dep_modules {
+    for module in &emitted_dep_modules {
         inline_imports.extend(collect_rust_dependency_uses(module, false));
     }
     // RFC 023: Stdlib modules should not have inline rust imports (they use rust.module() + @rust.extern instead),
@@ -953,9 +963,12 @@ fn prepare_project_with_options(
     generator.set_dev_dependencies(resolved.dev_dependencies);
 
     // ---- Generate Rust project files ----
-    let has_deps = !dep_modules.is_empty();
+    let has_deps = !emitted_dep_modules.is_empty()
+        || dep_modules
+            .iter()
+            .any(|module| stdlib::is_compiled_builtin_stdlib_emission_path(&module.path_segments));
     let project_changed = if has_deps {
-        let module_paths: Vec<Vec<String>> = dep_modules.iter().map(|m| m.path_segments.clone()).collect();
+        let module_paths: Vec<Vec<String>> = emitted_dep_modules.iter().map(|m| m.path_segments.clone()).collect();
         let (main_code, rust_modules) = codegen
             .try_generate_multi_file_nested(&main_module.ast, &module_paths)
             .map_err(|e| CliError::failure(format!("Code generation error: {}", e)))?;

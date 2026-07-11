@@ -1177,8 +1177,8 @@ fn test_std_fs_import_codegen() {
     let source = load_test_file("std_fs_import");
     let rust_code = generate_rust(&source);
     assert!(
-        rust_code.contains("pub use crate::__incan_std::fs::Path;"),
-        "std.fs Path import should emit through the generated stdlib fs module; generated:\n{rust_code}"
+        rust_code.contains("pub use incan_builtin_stdlib::fs::Path;"),
+        "std.fs Path import should emit through the compiled stdlib artifact; generated:\n{rust_code}"
     );
     assert!(
         !rust_code.contains("__incan_std::web::Path"),
@@ -1192,20 +1192,20 @@ fn test_std_tempfile_import_codegen() {
     let source = load_test_file("std_tempfile_import");
     let rust_code = generate_rust(&source);
     assert!(
-        rust_code.contains("pub use crate::__incan_std::tempfile::NamedTemporaryFile;"),
-        "std.tempfile NamedTemporaryFile import should emit through the generated stdlib tempfile module; generated:\n{rust_code}"
+        rust_code.contains("pub use incan_builtin_stdlib::tempfile::NamedTemporaryFile;"),
+        "std.tempfile NamedTemporaryFile import should emit through the compiled stdlib artifact; generated:\n{rust_code}"
     );
     assert!(
-        rust_code.contains("pub use crate::__incan_std::tempfile::TemporaryDirectory;"),
-        "std.tempfile TemporaryDirectory import should emit through the generated stdlib tempfile module; generated:\n{rust_code}"
+        rust_code.contains("pub use incan_builtin_stdlib::tempfile::TemporaryDirectory;"),
+        "std.tempfile TemporaryDirectory import should emit through the compiled stdlib artifact; generated:\n{rust_code}"
     );
     assert!(
-        rust_code.contains("pub use crate::__incan_std::tempfile::SpooledTemporaryFile;"),
-        "std.tempfile SpooledTemporaryFile import should emit through the generated stdlib tempfile module; generated:\n{rust_code}"
+        rust_code.contains("pub use incan_builtin_stdlib::tempfile::SpooledTemporaryFile;"),
+        "std.tempfile SpooledTemporaryFile import should emit through the compiled stdlib artifact; generated:\n{rust_code}"
     );
     assert!(
-        rust_code.contains("pub use crate::__incan_std::fs::Path;"),
-        "std.tempfile call sites should still use std.fs Path for path values; generated:\n{rust_code}"
+        rust_code.contains("pub use incan_builtin_stdlib::fs::Path;"),
+        "std.tempfile call sites should use the compiled std.fs Path value; generated:\n{rust_code}"
     );
     assert!(
         !rust_code.contains("__incan_std::web::Path"),
@@ -3434,11 +3434,11 @@ fn test_ordinal_key_builtin_impls_codegen() {
     let rust_code = generate_rust(&source);
     let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
     assert!(
-        compact.contains("pubusecrate::__incan_std::collections::OrdinalKey;"),
+        compact.contains("pubuseincan_builtin_stdlib::collections::OrdinalKey;"),
         "expected imported std.collections.OrdinalKey re-export; generated:\n{rust_code}"
     );
     assert!(
-        compact.contains("implcrate::__incan_std::collections::OrdinalKeyforStatus{")
+        compact.contains("implincan_builtin_stdlib::collections::OrdinalKeyforStatus{")
             && compact
                 .contains("fnordinal_hash(&self)->i64{incan_stdlib::collections::__private::ordinal_key_hash_bytes")
             && compact
@@ -3446,7 +3446,7 @@ fn test_ordinal_key_builtin_impls_codegen() {
         "expected generated OrdinalKey impl for string value enum; generated:\n{rust_code}"
     );
     assert!(
-        compact.contains("implcrate::__incan_std::collections::OrdinalKeyforHttpStatus{")
+        compact.contains("implincan_builtin_stdlib::collections::OrdinalKeyforHttpStatus{")
             && compact.contains(
                 "fnordinal_hash(&self)->i64{incan_stdlib::collections::__private::ordinal_key_hash_bytes"
             )

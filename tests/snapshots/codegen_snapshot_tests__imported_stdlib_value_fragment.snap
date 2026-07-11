@@ -7,7 +7,7 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-pub use crate::__incan_std::datetime::civil::naive::ordinal_key_byte;
+pub use incan_builtin_stdlib::datetime::civil::naive::ordinal_key_byte;
 fn main() {
     std::panic::set_hook(
         std::boxed::Box::new(|panic_info| {
@@ -20,7 +20,7 @@ fn main() {
             }
         }),
     );
-    let out = crate::__incan_std::datetime::civil::naive::ordinal_key_byte(7);
+    let out = incan_builtin_stdlib::datetime::civil::naive::ordinal_key_byte(7);
     let _ = if ::std::convert::identity(out.len() as i64) != 1 {
         panic!("AssertionError: left != right");
     };

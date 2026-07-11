@@ -7,8 +7,8 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-pub use crate::__incan_std::telemetry::TelemetryValue;
-pub use crate::__incan_std::telemetry::Attributes;
-pub use crate::__incan_std::telemetry::Resource;
-pub use crate::__incan_std::telemetry::InstrumentationScope;
-pub use crate::__incan_std::telemetry::SpanContext;
+pub use incan_builtin_stdlib::telemetry::TelemetryValue;
+pub use incan_builtin_stdlib::telemetry::Attributes;
+pub use incan_builtin_stdlib::telemetry::Resource;
+pub use incan_builtin_stdlib::telemetry::InstrumentationScope;
+pub use incan_builtin_stdlib::telemetry::SpanContext;

@@ -43,6 +43,8 @@ use super::super::types::{IR_UNION_TYPE_NAME, IrType};
 use super::super::{FunctionRegistry, FunctionSignature, IrDecl, IrProgram, IrStmt, IrStmtKind, TypedExpr};
 use super::{CallableNameUseFacts, EmitError, GeneratedUseAnalysis, IrEmitter};
 
+const BUILTIN_STDLIB_ARTIFACT_BUILD_ENV: &str = "INCAN_INTERNAL_BUILTIN_STDLIB_ARTIFACT_BUILD";
+
 struct OrdinalValueEnumBridgeSpec {
     type_path: TokenStream,
     display_name: String,
@@ -1357,7 +1359,16 @@ impl<'a> IrEmitter<'a> {
             .strip_prefix(&["std"])
             .map(|tail| format!("{}.{}", core_stdlib::INCAN_STD_NAMESPACE, tail.join(".")))
             .unwrap_or_else(|| canonical_module.clone());
-        if source_module_name != canonical_module && source_module_name != generated_module {
+        // A compiled built-in stdlib artifact owns the source modules directly at crate root rather than under the
+        // consumer-only `__incan_std` namespace. Its capability declarations must still trigger their companion
+        // implementations (for example primitive `TryFrom[str]` implementations) inside the artifact crate.
+        let artifact_module = capability.module_path.strip_prefix(&["std"]).map(|tail| tail.join("."));
+        let is_direct_artifact_module = std::env::var_os(BUILTIN_STDLIB_ARTIFACT_BUILD_ENV).is_some()
+            && artifact_module.as_deref() == Some(source_module_name);
+        if source_module_name != canonical_module
+            && source_module_name != generated_module
+            && !is_direct_artifact_module
+        {
             return false;
         }
         emitted_declarations.iter().any(|decl| {
@@ -1646,6 +1657,36 @@ impl<'a> IrEmitter<'a> {
             )
     }
 
+    /// Return the source-owned `TryFrom[str]` trait identity for the current generated crate.
+    ///
+    /// A normal consumer must implement the trait exported by the compiled built-in artifact; only the artifact build
+    /// itself owns the compatibility facade under `crate::__incan_std`.
+    fn string_try_from_trait_path() -> TokenStream {
+        if std::env::var_os(BUILTIN_STDLIB_ARTIFACT_BUILD_ENV).is_some() {
+            quote! { crate::__incan_std::traits::convert::TryFrom }
+        } else {
+            quote! { incan_builtin_stdlib::traits::convert::TryFrom }
+        }
+    }
+
+    /// Return the `OrdinalKey` contract and error identities for the current generated crate.
+    ///
+    /// Consumers implement the trait exported by the compiled stdlib artifact; the artifact build itself keeps using
+    /// its crate-local compatibility facade while source modules are compiled together.
+    fn ordinal_key_contract_paths() -> (TokenStream, TokenStream) {
+        if std::env::var_os(BUILTIN_STDLIB_ARTIFACT_BUILD_ENV).is_some() {
+            (
+                quote! { crate::__incan_std::collections::OrdinalKey },
+                quote! { crate::__incan_std::collections::OrdinalMapError },
+            )
+        } else {
+            (
+                quote! { incan_builtin_stdlib::collections::OrdinalKey },
+                quote! { incan_builtin_stdlib::collections::OrdinalMapError },
+            )
+        }
+    }
+
     /// Emit compiler-provided `TryFrom[str]` implementations from local newtype construction plans.
     fn emit_local_newtype_string_try_from_impls(&self, emitted_declarations: &[&IrDecl]) -> TokenStream {
         if !self.emit_std_string_try_from_newtype_impls {
@@ -1653,7 +1694,7 @@ impl<'a> IrEmitter<'a> {
         }
 
         let explicit = Self::explicit_string_try_from_types(emitted_declarations);
-        let trait_path = quote! { crate::__incan_std::traits::convert::TryFrom };
+        let trait_path = Self::string_try_from_trait_path();
         let mut impls = Vec::new();
         let mut plans = self.newtype_construction.iter().collect::<Vec<_>>();
         plans.sort_by_key(|(name, _)| (*name).clone());
@@ -1710,7 +1751,7 @@ impl<'a> IrEmitter<'a> {
         if self.external_string_try_from_types.is_empty() {
             return quote! {};
         }
-        let trait_path = quote! { crate::__incan_std::traits::convert::TryFrom };
+        let trait_path = Self::string_try_from_trait_path();
         let mut impls = Vec::new();
         for external in &self.external_string_try_from_types {
             let dependency = Self::rust_ident(&external.dependency_key);
@@ -2069,12 +2110,12 @@ impl<'a> IrEmitter<'a> {
         let local_trait_path = if local_ordinal_key_trait {
             quote! { OrdinalKey }
         } else {
-            quote! { crate::__incan_std::collections::OrdinalKey }
+            Self::ordinal_key_contract_paths().0
         };
         let local_error_path = if local_ordinal_key_trait {
             quote! { OrdinalMapError }
         } else {
-            quote! { crate::__incan_std::collections::OrdinalMapError }
+            Self::ordinal_key_contract_paths().1
         };
 
         let mut specs = Vec::new();
@@ -2102,8 +2143,7 @@ impl<'a> IrEmitter<'a> {
         }
 
         if !local_ordinal_key_trait {
-            let external_trait_path = quote! { crate::__incan_std::collections::OrdinalKey };
-            let external_error_path = quote! { crate::__incan_std::collections::OrdinalMapError };
+            let (external_trait_path, external_error_path) = Self::ordinal_key_contract_paths();
             for external in &self.external_ordinal_value_enums {
                 let Some(encoding) = Self::external_value_enum_ordinal_encoding(external) else {
                     continue;
@@ -2134,8 +2174,7 @@ impl<'a> IrEmitter<'a> {
         if self.external_ordinal_custom_keys.is_empty() {
             return quote! {};
         }
-        let trait_path = quote! { crate::__incan_std::collections::OrdinalKey };
-        let error_path = quote! { crate::__incan_std::collections::OrdinalMapError };
+        let (trait_path, error_path) = Self::ordinal_key_contract_paths();
         let mut impls = Vec::new();
         for external in &self.external_ordinal_custom_keys {
             let dependency = Self::rust_ident(&external.dependency_key);

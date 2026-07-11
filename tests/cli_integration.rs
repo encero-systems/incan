@@ -169,6 +169,108 @@ fn parse_jsonl_stdout(output: &Output) -> Result<Vec<serde_json::Value>, Box<dyn
 }
 
 #[test]
+fn compiled_builtin_stdlib_artifact_replaces_consumer_fs_source_closure() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "compiled_builtin_stdlib_glob", "")?;
+    fs::write(
+        &main_path,
+        r#"from std.fs.glob import matches
+from std.fs.path import Path
+
+def main() -> None:
+  println(matches("routes/users.incn", "routes/*.incn"))
+  println(Path("routes/users.incn").name())
+"#,
+    )?;
+    let output_dir = tmp.path().join("generated");
+    let main_arg = main_path.to_string_lossy();
+    let output_arg = output_dir.to_string_lossy();
+    let output = run_incan(tmp.path(), &["build", &main_arg, &output_arg])?;
+    assert_success(&output, "incan build with compiled std.fs artifact");
+
+    let cargo_toml = fs::read_to_string(output_dir.join("Cargo.toml"))?;
+    assert!(
+        cargo_toml.contains("[dependencies.incan_builtin_stdlib]"),
+        "consumer must link the compiled stdlib artifact:\n{cargo_toml}"
+    );
+    assert!(
+        !output_dir.join("src/__incan_std").exists(),
+        "migrated std.fs source closure must not be materialized into the consumer"
+    );
+    let main_rust = fs::read_to_string(output_dir.join("src/main.rs"))?;
+    assert!(
+        main_rust.contains("incan_builtin_stdlib::fs::glob::matches"),
+        "generated consumer must call the compiled artifact:\n{main_rust}"
+    );
+    assert!(
+        main_rust.contains("incan_builtin_stdlib::fs::path::Path"),
+        "generated consumer must construct types from the compiled artifact:\n{main_rust}"
+    );
+    Ok(())
+}
+
+#[test]
+fn compiled_builtin_stdlib_artifact_keeps_serde_trait_imports_out_of_consumers()
+-> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "compiled_builtin_stdlib_serde", "")?;
+    fs::write(
+        &main_path,
+        r#"from std.serde.json import Serialize
+
+def main() -> None:
+  println("serde trait metadata is available")
+"#,
+    )?;
+    let output_dir = tmp.path().join("generated");
+    let main_arg = main_path.to_string_lossy();
+    let output_arg = output_dir.to_string_lossy();
+    let output = run_incan(tmp.path(), &["build", &main_arg, &output_arg])?;
+    assert_success(&output, "incan build with compiled std.serde.json artifact");
+
+    assert!(
+        !output_dir.join("src/__incan_std").exists(),
+        "compiled std.serde.json must not be materialized into the consumer"
+    );
+    let cargo_toml = fs::read_to_string(output_dir.join("Cargo.toml"))?;
+    assert!(
+        cargo_toml.contains("[dependencies.incan_builtin_stdlib]"),
+        "consumer must link the compiled stdlib artifact:\n{cargo_toml}"
+    );
+
+    let tests_dir = tmp.path().join("tests");
+    fs::create_dir_all(&tests_dir)?;
+    fs::write(
+        tests_dir.join("test_artifact.incn"),
+        r#"from std.fs.path import Path
+from std.testing import assert_eq
+
+def test_artifact_path() -> None:
+  assert_eq(Path("routes/users.incn").name(), "users.incn")
+"#,
+    )?;
+    let test_output = run_incan(tmp.path(), &["test"])?;
+    assert_success(&test_output, "incan test with compiled std.fs artifact");
+    let mut generated_test_harnesses = 0;
+    for entry in fs::read_dir(tmp.path().join("target/incan_tests"))? {
+        let entry = entry?;
+        if entry.file_type()?.is_dir() {
+            generated_test_harnesses += 1;
+            assert!(
+                !entry.path().join("src/__incan_std").exists(),
+                "migrated std.fs source closure must not be materialized into a generated test harness: {}",
+                entry.path().display()
+            );
+        }
+    }
+    assert!(
+        generated_test_harnesses > 0,
+        "incan test did not create a generated test harness"
+    );
+    Ok(())
+}
+
+#[test]
 fn run_std_environ_string_accessors_issue557() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "std_environ_string_accessors", "")?;
@@ -467,10 +569,10 @@ def main() -> None:
             "bool:false\n",
             "i8-overflow:invalid_value\n",
             "u8-negative:invalid_value\n",
-            "environment variable `INCAN_ENVIRON_BAD_F64` could not be parsed or validated as `float`\n",
+            "environment variable `INCAN_ENVIRON_BAD_F64` could not be parsed or validated as `the requested type`\n",
             "bool-invalid:invalid_value\n",
             "invalid_value:INCAN_ENVIRON_BAD_INTEGER\n",
-            "environment variable `INCAN_ENVIRON_REDACTED` could not be parsed or validated as `int`\n",
+            "environment variable `INCAN_ENVIRON_REDACTED` could not be parsed or validated as `the requested type`\n",
             "missing\n",
         ),
     );

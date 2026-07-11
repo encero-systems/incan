@@ -104,10 +104,10 @@ pub class EnvironError with Error:
 
         Args:
             key: Requested environment key.
-            target: Concise source type name expected by the typed read.
+            target: Redacted description of the conversion target expected by the typed read.
 
         Returns:
-            Redacted parse or validation error that names the key and target but not the observed value.
+            Redacted parse or validation error that names the key and target description but not the observed value.
         """
         return EnvironError.from_kind(
             EnvironErrorKind.InvalidValue,
@@ -209,7 +209,7 @@ pub def get_as[T with TryFrom[str]](key: str) -> Result[Option[T], EnvironError]
         Ok(value) =>
             match T.try_from(value):
                 Ok(parsed) => return Ok(Some(parsed))
-                Err(_) => return Err(EnvironError.invalid_value(key, T.__class_name__()))
+                Err(_) => return Err(EnvironError.invalid_value(key, "the requested type"))
         Err(error) =>
             if error.kind() == EnvironErrorKind.Missing:
                 return Ok(None)
