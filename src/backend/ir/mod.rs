@@ -250,6 +250,26 @@ pub struct FunctionReexport {
     pub target_path: Vec<String>,
 }
 
+/// Construction semantics for one local newtype.
+///
+/// Production codegen carries this from checked frontend metadata. Direct AST-lowering tests may construct a
+/// conservative fallback plan when no `TypeCheckInfo` is available.
+#[derive(Debug, Clone)]
+pub struct IrNewtypeConstructionPlan {
+    /// Declared generic parameters, including source bounds.
+    pub type_params: Vec<decl::IrTypeParam>,
+    /// Wrapped runtime value type after frontend resolution.
+    pub underlying: IrType,
+    /// Canonical validation hook selected by the checked frontend or conservative fallback.
+    pub checked_constructor: Option<String>,
+    /// Generated primitive predicates used when no explicit validation hook exists.
+    pub constraints: Vec<crate::frontend::symbols::NewtypePrimitiveConstraint>,
+    /// Whether ordinary implicit underlying-to-newtype coercion is enabled.
+    pub implicit_coercion_enabled: bool,
+    /// Whether the available construction plan supports `TryFrom[str]` composition for this newtype.
+    pub supports_string_conversion: bool,
+}
+
 /// A complete IR program
 #[derive(Debug, Clone)]
 pub struct IrProgram {
@@ -268,11 +288,8 @@ pub struct IrProgram {
     /// When present, `@rust.extern` functions in this program emit delegation calls to this Rust module path instead
     /// of compiling their Incan bodies. See RFC 023 for full design.
     pub rust_module_path: Option<String>,
-    /// Newtype -> selected checked constructor method.
-    ///
-    /// Backend-generated code uses this when it must construct a newtype while preserving normal
-    /// `from_underlying`/`from_*` validation semantics.
-    pub newtype_checked_ctor: std::collections::HashMap<String, String>,
+    /// Construction plans keyed by local newtype name; production entries come from checked frontend metadata.
+    pub newtype_construction: std::collections::HashMap<String, IrNewtypeConstructionPlan>,
 }
 
 impl IrProgram {
@@ -285,7 +302,7 @@ impl IrProgram {
             function_registry: FunctionRegistry::new(),
             function_reexports: Vec::new(),
             rust_module_path: None,
-            newtype_checked_ctor: std::collections::HashMap::new(),
+            newtype_construction: std::collections::HashMap::new(),
         }
     }
 }

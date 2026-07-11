@@ -13,6 +13,7 @@ Pages in this section are curated and checked into the repository.
 - [`std.derives.*`](derives.md) (curated)
 - [`std.datetime`](datetime.md) (curated; see also [tutorial](../../tutorials/dates_and_times.md), [how-to](../../how-to/dates_and_times.md), and [model](../../explanation/datetime_model.md))
 - [`std.encoding`](encoding.md) (curated)
+- [`std.environ`](environ.md) (curated; string and typed environment access)
 - [`std.fs`](fs.md) (curated)
 - [`std.graph`](graph.md) (curated; see also [how-to](../../how-to/working_with_graphs.md) and [model](../../explanation/graph_model.md))
 - [`std.hash`](hash.md) (curated; see also [how-to](../../how-to/hashing_data.md))

@@ -118,16 +118,18 @@ impl TypeChecker {
         Some((name.clone(), info.path.clone()))
     }
 
-    fn resolve_imported_module_function_member(
-        &mut self,
-        module_path: &[String],
-        member: &str,
-    ) -> Option<FunctionInfo> {
-        if let Some(info) = self.stdlib_cache.lookup_function(module_path, member) {
-            return Some(info);
+    /// Resolve a function member from a stdlib or public-package module binding.
+    fn resolve_imported_module_function_member(&mut self, module_path: &[String], member: &str) -> Option<SymbolKind> {
+        if let Some(kind) = self.stdlib_cache.lookup_function_symbol(module_path, member) {
+            return Some(kind);
         }
         if module_path.len() == 2 && module_path.first().is_some_and(|seg| seg == "pub") {
-            return self.lookup_pub_library_function_member(&module_path[1], member);
+            let entry = self.library_manifests.get(&module_path[1])?;
+            let crate::frontend::library_manifest_index::LibraryManifestIndexEntry::Loaded { manifest, .. } = entry
+            else {
+                return None;
+            };
+            return self.pub_library_function_symbol(manifest, member);
         }
         None
     }

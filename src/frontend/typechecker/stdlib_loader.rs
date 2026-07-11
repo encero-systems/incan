@@ -24,7 +24,8 @@
 //!   signatures for class/model/enum imports.
 //! - Trait signatures are extracted from top-level `trait` declarations with their methods and `with` supertraits (RFC
 //!   042), using the same lightweight `ast_type_to_resolved` mapping as method signatures.
-//! - Default parameter values are not captured (only the parameter name and type).
+//! - Compact signatures retain default presence but not expressions. Paired source declarations preserve full default
+//!   expressions for source-defined functions; Rust-imported runtime entries may have no declaration.
 //! - Complex types beyond the common set (`int`, `str`, `bool`, `Option[T]`, etc.) are treated as `Named`.
 //! - Parse failures are logged and the module is treated as unavailable for AST-derived signature lookup.
 
@@ -32,10 +33,10 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use crate::frontend::ast;
-use crate::frontend::symbols::{CallableParam, VariableInfo};
+use crate::frontend::symbols::{CallableParam, FunctionOverloadInfo, SymbolKind, VariableInfo};
 use crate::frontend::symbols::{
     ClassInfo, EnumInfo, FieldInfo, FunctionInfo, MethodInfo, ModelInfo, NewtypeInfo, ResolvedType, StaticInfo,
-    TraitInfo, TypeBoundInfo, TypeInfo,
+    TraitInfo, TypeBoundInfo, TypeInfo, overloaded_function_emitted_name,
 };
 use crate::frontend::typechecker::helpers::render_resolved_type_as_rust_arg;
 use incan_core::lang::conventions;
@@ -49,14 +50,24 @@ use incan_core::lang::types::stringlike::{self as string_types, StringLikeId};
 
 #[derive(Debug, Clone, Default)]
 struct StdlibModuleData {
-    functions: Vec<(String, FunctionInfo)>,
+    functions: Vec<StdlibFunctionEntry>,
     traits: Vec<(String, TraitInfo)>,
+    trait_declarations: Vec<(String, ast::TraitDecl)>,
     types: Vec<(String, TypeInfo)>,
+    type_docstrings: HashMap<String, String>,
     constants: Vec<(String, VariableInfo)>,
     statics: Vec<(String, StaticInfo)>,
     derivable_traits: Vec<String>,
     function_meta: HashMap<String, FunctionMeta>,
     trait_meta: HashMap<String, TraitMeta>,
+}
+
+/// One cached stdlib function overload with its source declaration when available.
+#[derive(Debug, Clone)]
+struct StdlibFunctionEntry {
+    name: String,
+    info: FunctionInfo,
+    declaration: Option<ast::FunctionDecl>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -71,6 +82,29 @@ pub(crate) struct TraitMeta {
     pub rust_derive_paths: Vec<String>,
 }
 
+/// Public stdlib source metadata consumed by one LSP completion or hover request.
+///
+/// Resolved signatures and source declarations deliberately travel together so callers can render every overload and
+/// its docstring without reparsing the module for each public item.
+#[cfg(feature = "lsp")]
+#[derive(Debug, Clone, Default)]
+pub(crate) struct StdlibModuleLspMetadata {
+    pub functions: Vec<StdlibFunctionLspMetadata>,
+    pub traits: Vec<(String, TraitInfo)>,
+    pub trait_declarations: Vec<(String, ast::TraitDecl)>,
+    pub types: Vec<(String, TypeInfo)>,
+    pub type_docstrings: HashMap<String, String>,
+}
+
+/// One resolved stdlib overload paired with its source declaration when the function is source-defined.
+#[cfg(feature = "lsp")]
+#[derive(Debug, Clone)]
+pub(crate) struct StdlibFunctionLspMetadata {
+    pub name: String,
+    pub info: FunctionInfo,
+    pub declaration: Option<ast::FunctionDecl>,
+}
+
 /// Cached stdlib module signatures keyed by dot-joined module path (e.g. `"std.testing"`).
 #[derive(Debug, Clone, Default)]
 pub(crate) struct StdlibAstCache {
@@ -83,18 +117,31 @@ impl StdlibAstCache {
         Self { cache: HashMap::new() }
     }
 
-    /// Look up a specific function in a stdlib module.
-    ///
-    /// Returns `Some(FunctionInfo)` if the module has been loaded and contains a function with the given name.
-    pub fn lookup_function(&mut self, module_path: &[String], function_name: &str) -> Option<FunctionInfo> {
+    /// Look up a function binding while preserving a same-name overload set.
+    pub fn lookup_function_symbol(&mut self, module_path: &[String], function_name: &str) -> Option<SymbolKind> {
         self.ensure_loaded(module_path);
         let key = module_path.join(".");
-        self.cache
+        let functions = self
+            .cache
             .get(&key)?
             .functions
             .iter()
-            .find(|(name, _)| name == function_name)
-            .map(|(_, info)| info.clone())
+            .filter(|entry| entry.name == function_name)
+            .map(|entry| entry.info.clone())
+            .collect::<Vec<_>>();
+        match functions.as_slice() {
+            [] => None,
+            [info] => Some(SymbolKind::Function(info.clone())),
+            _ => Some(SymbolKind::FunctionOverloads(
+                functions
+                    .into_iter()
+                    .map(|info| FunctionOverloadInfo {
+                        info,
+                        span: ast::Span::default(),
+                    })
+                    .collect(),
+            )),
+        }
     }
 
     /// Look up a specific trait in a stdlib module.
@@ -136,27 +183,72 @@ impl StdlibAstCache {
         lookup_type_method_decl_inner(module_path, type_name, method_name, &mut HashSet::new())
     }
 
-    /// Look up a stdlib function declaration, following prelude re-exports.
+    /// Look up all stdlib function declarations for a source name, preserving overload order.
     ///
-    /// This preserves source-level default expressions for lowering and emission. `lookup_function` intentionally
-    /// returns compact type metadata and only records whether a parameter has a default.
+    /// This preserves source-level default expressions for lowering and emission. `lookup_function_symbol`
+    /// intentionally returns compact type metadata and only records whether a parameter has a default.
+    pub(crate) fn lookup_function_decls(
+        &mut self,
+        module_path: &[String],
+        function_name: &str,
+    ) -> Vec<ast::FunctionDecl> {
+        self.ensure_loaded(module_path);
+        let key = module_path.join(".");
+        self.cache
+            .get(&key)
+            .into_iter()
+            .flat_map(|data| &data.functions)
+            .filter(|entry| entry.name == function_name)
+            .filter_map(|entry| entry.declaration.clone())
+            .collect()
+    }
+
+    /// Look up the first stdlib function declaration for legacy lowering paths that select overloads separately.
     pub(crate) fn lookup_function_decl(
         &mut self,
         module_path: &[String],
         function_name: &str,
     ) -> Option<ast::FunctionDecl> {
-        lookup_function_decl_inner(module_path, function_name, &mut HashSet::new())
+        self.lookup_function_decls(module_path, function_name)
+            .into_iter()
+            .next()
     }
 
     /// Look up a stdlib trait declaration, following prelude re-exports.
     pub(crate) fn lookup_trait_decl(&mut self, module_path: &[String], trait_name: &str) -> Option<ast::TraitDecl> {
-        lookup_trait_decl_inner(module_path, trait_name, &mut HashSet::new())
+        self.ensure_loaded(module_path);
+        let key = module_path.join(".");
+        self.cache
+            .get(&key)?
+            .trait_declarations
+            .iter()
+            .find(|(name, _)| name == trait_name)
+            .map(|(_, declaration)| declaration.clone())
     }
 
-    /// Look up a stdlib type docstring, following prelude re-exports.
+    /// Return one cached snapshot of public declarations, signatures, and docs for LSP rendering.
     #[cfg(feature = "lsp")]
-    pub(crate) fn lookup_type_docstring(&mut self, module_path: &[String], type_name: &str) -> Option<String> {
-        lookup_type_docstring_inner(module_path, type_name, &mut HashSet::new())
+    pub(crate) fn lsp_metadata(&mut self, module_path: &[String]) -> StdlibModuleLspMetadata {
+        self.ensure_loaded(module_path);
+        let key = module_path.join(".");
+        let Some(data) = self.cache.get(&key) else {
+            return StdlibModuleLspMetadata::default();
+        };
+        StdlibModuleLspMetadata {
+            functions: data
+                .functions
+                .iter()
+                .map(|entry| StdlibFunctionLspMetadata {
+                    name: entry.name.clone(),
+                    info: entry.info.clone(),
+                    declaration: entry.declaration.clone(),
+                })
+                .collect(),
+            traits: data.traits.clone(),
+            trait_declarations: data.trait_declarations.clone(),
+            types: data.types.clone(),
+            type_docstrings: data.type_docstrings.clone(),
+        }
     }
 
     /// List public type signatures in a stdlib module.
@@ -295,9 +387,12 @@ fn load_stdlib_module_data_unguarded(
         })
         .ok()?;
 
-    let mut functions = extract_function_signatures(&program);
+    let mut functions = extract_function_entries(&program);
+    assign_function_overload_emitted_names(&mut functions);
     let mut traits = extract_trait_signatures(&program);
+    let mut trait_declarations = extract_trait_declarations(&program);
     let mut types = extract_type_signatures(&program);
+    let mut type_docstrings = extract_type_docstrings(&program);
     let mut constants = extract_const_signatures(&program);
     let mut statics = extract_static_signatures(&program);
     let mut function_meta = extract_function_meta(&program);
@@ -311,7 +406,9 @@ fn load_stdlib_module_data_unguarded(
     let mut reexport_targets = ReexportMetadataTargets {
         functions: &mut functions,
         traits: &mut traits,
+        trait_declarations: &mut trait_declarations,
         types: &mut types,
+        type_docstrings: &mut type_docstrings,
         constants: &mut constants,
         statics: &mut statics,
         function_meta: &mut function_meta,
@@ -322,7 +419,9 @@ fn load_stdlib_module_data_unguarded(
     Some(StdlibModuleData {
         functions,
         traits,
+        trait_declarations,
         types,
+        type_docstrings,
         constants,
         statics,
         derivable_traits: extract_derivable_traits(&program),
@@ -332,9 +431,11 @@ fn load_stdlib_module_data_unguarded(
 }
 
 struct ReexportMetadataTargets<'a> {
-    functions: &'a mut Vec<(String, FunctionInfo)>,
+    functions: &'a mut Vec<StdlibFunctionEntry>,
     traits: &'a mut Vec<(String, TraitInfo)>,
+    trait_declarations: &'a mut Vec<(String, ast::TraitDecl)>,
     types: &'a mut Vec<(String, TypeInfo)>,
+    type_docstrings: &'a mut HashMap<String, String>,
     constants: &'a mut Vec<(String, VariableInfo)>,
     statics: &'a mut Vec<(String, StaticInfo)>,
     function_meta: &'a mut HashMap<String, FunctionMeta>,
@@ -383,11 +484,16 @@ fn merge_reexported_metadata(
         for item in items {
             let effective_name = item.alias.as_deref().unwrap_or(&item.name);
 
-            // Merge function signature.
-            if let Some((_, info)) = sub_data.functions.iter().find(|(n, _)| n == &item.name)
-                && !targets.functions.iter().any(|(n, _)| n == effective_name)
-            {
-                targets.functions.push((effective_name.to_string(), info.clone()));
+            // Merge every function overload and its matching source declaration under the re-exported source name.
+            for entry in sub_data.functions.iter().filter(|entry| entry.name == item.name) {
+                let already_present = targets.functions.iter().any(|existing| {
+                    existing.name == effective_name && existing.info.emitted_name == entry.info.emitted_name
+                });
+                if !already_present {
+                    let mut entry = entry.clone();
+                    entry.name = effective_name.to_string();
+                    targets.functions.push(entry);
+                }
             }
 
             // Merge trait signature.
@@ -396,12 +502,28 @@ fn merge_reexported_metadata(
             {
                 targets.traits.push((effective_name.to_string(), info.clone()));
             }
+            if let Some((_, declaration)) = sub_data.trait_declarations.iter().find(|(name, _)| name == &item.name)
+                && !targets
+                    .trait_declarations
+                    .iter()
+                    .any(|(name, _)| name == effective_name)
+            {
+                targets
+                    .trait_declarations
+                    .push((effective_name.to_string(), declaration.clone()));
+            }
 
             // Merge type signature.
             if let Some((_, info)) = sub_data.types.iter().find(|(n, _)| n == &item.name)
                 && !targets.types.iter().any(|(n, _)| n == effective_name)
             {
                 targets.types.push((effective_name.to_string(), info.clone()));
+            }
+            if let Some(docstring) = sub_data.type_docstrings.get(&item.name) {
+                targets
+                    .type_docstrings
+                    .entry(effective_name.to_string())
+                    .or_insert_with(|| docstring.clone());
             }
 
             // Merge const signature.
@@ -555,61 +677,6 @@ fn lookup_type_method_decl_inner(
     result
 }
 
-/// Find a function declaration in a stdlib module, following prelude-style re-exports.
-fn lookup_function_decl_inner(
-    module_path: &[String],
-    function_name: &str,
-    loading: &mut HashSet<String>,
-) -> Option<ast::FunctionDecl> {
-    let key = module_path.join(".");
-    if !loading.insert(key.clone()) {
-        return None;
-    }
-    let result = load_stdlib_program(module_path).and_then(|program| {
-        find_function_decl_in_program(&program, function_name)
-            .or_else(|| find_reexported_function_decl(module_path, &program, function_name, loading))
-    });
-    loading.remove(&key);
-    result
-}
-
-/// Find a trait declaration in a stdlib module, following prelude-style re-exports.
-fn lookup_trait_decl_inner(
-    module_path: &[String],
-    trait_name: &str,
-    loading: &mut HashSet<String>,
-) -> Option<ast::TraitDecl> {
-    let key = module_path.join(".");
-    if !loading.insert(key.clone()) {
-        return None;
-    }
-    let result = load_stdlib_program(module_path).and_then(|program| {
-        find_trait_decl_in_program(&program, trait_name)
-            .or_else(|| find_reexported_trait_decl(module_path, &program, trait_name, loading))
-    });
-    loading.remove(&key);
-    result
-}
-
-/// Find a type docstring in a stdlib module, following prelude-style re-exports.
-#[cfg(feature = "lsp")]
-fn lookup_type_docstring_inner(
-    module_path: &[String],
-    type_name: &str,
-    loading: &mut HashSet<String>,
-) -> Option<String> {
-    let key = module_path.join(".");
-    if !loading.insert(key.clone()) {
-        return None;
-    }
-    let result = load_stdlib_program(module_path).and_then(|program| {
-        find_type_docstring_in_program(&program, type_name)
-            .or_else(|| find_reexported_type_docstring(module_path, &program, type_name, loading))
-    });
-    loading.remove(&key);
-    result
-}
-
 /// Parse a stdlib stub module into an AST program for metadata lookups that need source expressions.
 fn load_stdlib_program(module_path: &[String]) -> Option<ast::Program> {
     let relative = match stdlib::stdlib_stub_path(module_path) {
@@ -650,34 +717,6 @@ fn load_stdlib_program(module_path: &[String]) -> Option<ast::Program> {
     Some(ast)
 }
 
-/// Find a top-level function declaration directly in a parsed stdlib program.
-fn find_function_decl_in_program(program: &ast::Program, function_name: &str) -> Option<ast::FunctionDecl> {
-    program.declarations.iter().find_map(|decl| match &decl.node {
-        ast::Declaration::Function(func) if func.name == function_name => Some(func.clone()),
-        _ => None,
-    })
-}
-
-/// Find a top-level trait declaration directly in a parsed stdlib program.
-fn find_trait_decl_in_program(program: &ast::Program, trait_name: &str) -> Option<ast::TraitDecl> {
-    program.declarations.iter().find_map(|decl| match &decl.node {
-        ast::Declaration::Trait(trait_decl) if trait_decl.name == trait_name => Some(trait_decl.clone()),
-        _ => None,
-    })
-}
-
-/// Find a top-level type docstring directly in a parsed stdlib program.
-#[cfg(feature = "lsp")]
-fn find_type_docstring_in_program(program: &ast::Program, type_name: &str) -> Option<String> {
-    program.declarations.iter().find_map(|decl| match &decl.node {
-        ast::Declaration::Model(model) if model.name == type_name => model.docstring.clone(),
-        ast::Declaration::Class(class) if class.name == type_name => class.docstring.clone(),
-        ast::Declaration::Newtype(newtype) if newtype.name == type_name => newtype.docstring.clone(),
-        ast::Declaration::Enum(enum_decl) if enum_decl.name == type_name => enum_decl.docstring.clone(),
-        _ => None,
-    })
-}
-
 /// Find a method declaration directly in a parsed stdlib program.
 fn find_method_decl_in_program(program: &ast::Program, type_name: &str, method_name: &str) -> Option<ast::MethodDecl> {
     program.declarations.iter().find_map(|decl| match &decl.node {
@@ -699,97 +738,6 @@ fn find_method_decl(methods: &[ast::Spanned<ast::MethodDecl>], method_name: &str
         .iter()
         .find(|method| method.node.name == method_name)
         .map(|method| method.node.clone())
-}
-
-/// Follow stdlib `from std.x.y import function` re-exports while searching for the owning function declaration.
-fn find_reexported_function_decl(
-    current_module_path: &[String],
-    program: &ast::Program,
-    function_name: &str,
-    loading: &mut HashSet<String>,
-) -> Option<ast::FunctionDecl> {
-    program.declarations.iter().find_map(|decl| {
-        let ast::Declaration::Import(import) = &decl.node else {
-            return None;
-        };
-        let ast::ImportKind::From { module, items } = &import.kind else {
-            return None;
-        };
-        if module.segments.first().map(String::as_str) != Some(stdlib::STDLIB_ROOT) {
-            return None;
-        }
-        if !is_stdlib_metadata_reexport(current_module_path, program, import) {
-            return None;
-        }
-        items.iter().find_map(|item| {
-            let effective_name = item.alias.as_ref().unwrap_or(&item.name);
-            if effective_name != function_name {
-                return None;
-            }
-            lookup_function_decl_inner(&module.segments, &item.name, loading)
-        })
-    })
-}
-
-/// Follow stdlib `from std.x.y import Trait` re-exports while searching for the owning trait declaration.
-fn find_reexported_trait_decl(
-    current_module_path: &[String],
-    program: &ast::Program,
-    trait_name: &str,
-    loading: &mut HashSet<String>,
-) -> Option<ast::TraitDecl> {
-    program.declarations.iter().find_map(|decl| {
-        let ast::Declaration::Import(import) = &decl.node else {
-            return None;
-        };
-        let ast::ImportKind::From { module, items } = &import.kind else {
-            return None;
-        };
-        if module.segments.first().map(String::as_str) != Some(stdlib::STDLIB_ROOT) {
-            return None;
-        }
-        if !is_stdlib_metadata_reexport(current_module_path, program, import) {
-            return None;
-        }
-        items.iter().find_map(|item| {
-            let effective_name = item.alias.as_ref().unwrap_or(&item.name);
-            if effective_name != trait_name {
-                return None;
-            }
-            lookup_trait_decl_inner(&module.segments, &item.name, loading)
-        })
-    })
-}
-
-/// Follow stdlib `from std.x.y import Type` re-exports while searching for the owning type docstring.
-#[cfg(feature = "lsp")]
-fn find_reexported_type_docstring(
-    current_module_path: &[String],
-    program: &ast::Program,
-    type_name: &str,
-    loading: &mut HashSet<String>,
-) -> Option<String> {
-    program.declarations.iter().find_map(|decl| {
-        let ast::Declaration::Import(import) = &decl.node else {
-            return None;
-        };
-        let ast::ImportKind::From { module, items } = &import.kind else {
-            return None;
-        };
-        if module.segments.first().map(String::as_str) != Some(stdlib::STDLIB_ROOT) {
-            return None;
-        }
-        if !is_stdlib_metadata_reexport(current_module_path, program, import) {
-            return None;
-        }
-        items.iter().find_map(|item| {
-            let effective_name = item.alias.as_ref().unwrap_or(&item.name);
-            if effective_name != type_name {
-                return None;
-            }
-            lookup_type_docstring_inner(&module.segments, &item.name, loading)
-        })
-    })
 }
 
 /// Follow stdlib `from std.x.y import Type` re-exports while searching for the owning type declaration.
@@ -823,18 +771,23 @@ fn find_reexported_type_method_decl(
     })
 }
 
-/// Extract function signatures from a parsed stdlib `.incn` program.
+/// Extract paired function metadata from a parsed stdlib `.incn` program.
 ///
 /// Only top-level `def` declarations are extracted. Methods and other declarations are ignored.
-fn extract_function_signatures(program: &ast::Program) -> Vec<(String, FunctionInfo)> {
+fn extract_function_entries(program: &ast::Program) -> Vec<StdlibFunctionEntry> {
     let mut fns = Vec::new();
+    let stdlib_imports = stdlib_import_aliases(program);
     for decl in &program.declarations {
         if let ast::Declaration::Function(func) = &decl.node {
             if !matches!(func.visibility, ast::Visibility::Public) {
                 continue;
             }
-            let info = function_decl_to_info(func);
-            fns.push((func.name.clone(), info));
+            let info = function_decl_to_info(func, &stdlib_imports);
+            fns.push(StdlibFunctionEntry {
+                name: func.name.clone(),
+                info,
+                declaration: Some(func.clone()),
+            });
             continue;
         }
 
@@ -845,14 +798,31 @@ fn extract_function_signatures(program: &ast::Program) -> Vec<(String, FunctionI
             for item in items {
                 let local_name = item.alias.as_deref().unwrap_or(&item.name);
                 if let Some(info) = imported_runtime_function_info(local_name)
-                    && !fns.iter().any(|(name, _)| name == local_name)
+                    && !fns.iter().any(|entry| entry.name == local_name)
                 {
-                    fns.push((local_name.to_string(), info));
+                    fns.push(StdlibFunctionEntry {
+                        name: local_name.to_string(),
+                        info,
+                        declaration: None,
+                    });
                 }
             }
         }
     }
     fns
+}
+
+/// Assign provider Rust names to every member of a same-name source overload set.
+fn assign_function_overload_emitted_names(functions: &mut [StdlibFunctionEntry]) {
+    let mut counts = HashMap::<String, usize>::new();
+    for entry in functions.iter() {
+        *counts.entry(entry.name.clone()).or_default() += 1;
+    }
+    for entry in functions {
+        if counts.get(entry.name.as_str()).copied().unwrap_or_default() > 1 {
+            entry.info.emitted_name = Some(overloaded_function_emitted_name(&entry.name, &entry.info));
+        }
+    }
 }
 
 /// Extract public const bindings from a parsed stdlib `.incn` program.
@@ -985,6 +955,18 @@ fn extract_trait_signatures(program: &ast::Program) -> Vec<(String, TraitInfo)> 
         }
     }
     traits
+}
+
+/// Preserve source trait declarations alongside their resolved signatures.
+fn extract_trait_declarations(program: &ast::Program) -> Vec<(String, ast::TraitDecl)> {
+    program
+        .declarations
+        .iter()
+        .filter_map(|declaration| match &declaration.node {
+            ast::Declaration::Trait(trait_decl) => Some((trait_decl.name.clone(), trait_decl.clone())),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Extract public type metadata from a parsed stdlib `.incn` program.
@@ -1128,6 +1110,31 @@ fn extract_type_signatures(program: &ast::Program) -> Vec<(String, TypeInfo)> {
         }
     }
     types
+}
+
+/// Extract public type docstrings during the module's original parse.
+fn extract_type_docstrings(program: &ast::Program) -> HashMap<String, String> {
+    program
+        .declarations
+        .iter()
+        .filter_map(|declaration| match &declaration.node {
+            ast::Declaration::Model(model) if model.visibility == ast::Visibility::Public => {
+                model.docstring.clone().map(|docstring| (model.name.clone(), docstring))
+            }
+            ast::Declaration::Class(class) if class.visibility == ast::Visibility::Public => {
+                class.docstring.clone().map(|docstring| (class.name.clone(), docstring))
+            }
+            ast::Declaration::Newtype(newtype) if newtype.visibility == ast::Visibility::Public => newtype
+                .docstring
+                .clone()
+                .map(|docstring| (newtype.name.clone(), docstring)),
+            ast::Declaration::Enum(enum_decl) if enum_decl.visibility == ast::Visibility::Public => enum_decl
+                .docstring
+                .clone()
+                .map(|docstring| (enum_decl.name.clone(), docstring)),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Extract just the declared names from AST type parameters.
@@ -1336,7 +1343,7 @@ fn method_info_from_ast_method(
 }
 
 /// Convert an AST `FunctionDecl` to a typechecker `FunctionInfo`.
-fn function_decl_to_info(func: &ast::FunctionDecl) -> FunctionInfo {
+fn function_decl_to_info(func: &ast::FunctionDecl, stdlib_imports: &HashMap<String, Vec<String>>) -> FunctionInfo {
     // Extract just the type parameter names for type resolution.
     let tp_names: Vec<String> = func.type_params.iter().map(|tp| tp.name.clone()).collect();
     let tp_bounds: HashMap<String, Vec<String>> = func
@@ -1365,7 +1372,7 @@ fn function_decl_to_info(func: &ast::FunctionDecl) -> FunctionInfo {
                             .iter()
                             .map(|arg| ast_type_to_resolved(&arg.node, &tp_names))
                             .collect(),
-                        module_path: None,
+                        module_path: stdlib_imports.get(&bound.name).cloned(),
                     })
                     .collect(),
             )
@@ -1762,27 +1769,27 @@ mod tests {
         assert!(!fns.is_empty(), "should have extracted function signatures");
 
         // Check a few known functions.
-        let fail_fn = fns.iter().find(|(name, _)| name == "fail");
+        let fail_fn = fns.iter().find(|entry| entry.name == "fail");
         assert!(fail_fn.is_some(), "should find 'fail' function");
-        let fail_info = &fail_fn.ok_or("fail not found")?.1;
+        let fail_info = &fail_fn.ok_or("fail not found")?.info;
         assert_eq!(fail_info.params.len(), 1);
         assert_eq!(fail_info.params[0].name(), Some("msg"));
         assert!(matches!(fail_info.params[0].ty, ResolvedType::Str));
         assert!(fail_info.type_params.is_empty());
         assert!(matches!(fail_info.return_type, ResolvedType::Unit));
 
-        let fail_t_fn = fns.iter().find(|(name, _)| name == "fail_t");
+        let fail_t_fn = fns.iter().find(|entry| entry.name == "fail_t");
         assert!(fail_t_fn.is_some(), "should find 'fail_t' function");
-        let fail_t_info = &fail_t_fn.ok_or("fail_t not found")?.1;
+        let fail_t_info = &fail_t_fn.ok_or("fail_t not found")?.info;
         assert_eq!(fail_t_info.params.len(), 1);
         assert_eq!(fail_t_info.params[0].name(), Some("msg"));
         assert!(matches!(fail_t_info.params[0].ty, ResolvedType::Str));
         assert_eq!(fail_t_info.type_params, vec!["T".to_string()]);
         assert!(matches!(fail_t_info.return_type, ResolvedType::TypeVar(ref s) if s == "T"));
 
-        let assert_eq_fn = fns.iter().find(|(name, _)| name == "assert_eq");
+        let assert_eq_fn = fns.iter().find(|entry| entry.name == "assert_eq");
         assert!(assert_eq_fn.is_some(), "should find 'assert_eq' function");
-        let assert_eq_info = &assert_eq_fn.ok_or("assert_eq not found")?.1;
+        let assert_eq_info = &assert_eq_fn.ok_or("assert_eq not found")?.info;
         assert_eq!(assert_eq_info.params.len(), 3);
         assert_eq!(assert_eq_info.type_params, vec!["T".to_string()]);
         assert!(matches!(assert_eq_info.params[0].ty, ResolvedType::TypeVar(ref s) if s == "T"));
@@ -1930,7 +1937,7 @@ mod tests {
                 .ok_or_else(|| format!("failed to load stdlib/encoding/{module_name}.incn"))?;
             for expected in expected_functions {
                 assert!(
-                    module.functions.iter().any(|(name, _)| name == expected),
+                    module.functions.iter().any(|entry| entry.name == expected),
                     "std.encoding.{module_name} should export {expected}"
                 );
             }
@@ -1956,7 +1963,7 @@ mod tests {
         let functions = module
             .functions
             .iter()
-            .map(|(name, _)| name.as_str())
+            .map(|entry| entry.name.as_str())
             .collect::<std::collections::BTreeSet<_>>();
         for removed in [
             "parse",
@@ -2126,15 +2133,15 @@ pub enum Token with Convert[int], Convert[float]:
         let path = vec!["std".to_string(), "testing".to_string()];
 
         // First lookup loads the module.
-        let fail_info = cache.lookup_function(&path, "fail");
+        let fail_info = cache.lookup_function_symbol(&path, "fail");
         assert!(fail_info.is_some(), "should find 'fail' from cache");
 
         // Second lookup uses the cache.
-        let assert_eq_info = cache.lookup_function(&path, "assert_eq");
+        let assert_eq_info = cache.lookup_function_symbol(&path, "assert_eq");
         assert!(assert_eq_info.is_some(), "should find 'assert_eq' from cache");
 
         // Unknown function returns None.
-        let unknown = cache.lookup_function(&path, "nonexistent_function");
+        let unknown = cache.lookup_function_symbol(&path, "nonexistent_function");
         assert!(unknown.is_none(), "should not find unknown function");
 
         Ok(())
@@ -2157,9 +2164,11 @@ pub type File = rusttype RustFile:
         let program = crate::frontend::parser::parse(&tokens)
             .map_err(|errs| format!("synthetic std.fs source should parse: {errs:?}"))?;
         let module_data = StdlibModuleData {
-            functions: extract_function_signatures(&program),
+            functions: extract_function_entries(&program),
             traits: extract_trait_signatures(&program),
+            trait_declarations: extract_trait_declarations(&program),
             types: extract_type_signatures(&program),
+            type_docstrings: extract_type_docstrings(&program),
             constants: extract_const_signatures(&program),
             statics: extract_static_signatures(&program),
             derivable_traits: extract_derivable_traits(&program),
@@ -2219,9 +2228,9 @@ pub type File = rusttype RustFile:
         let module = load_stdlib_module_data(&path);
         let module = module.ok_or("failed to load stdlib/async/time.incn")?;
         let fns = &module.functions;
-        let sleep_fn = fns.iter().find(|(name, _)| name == "sleep");
+        let sleep_fn = fns.iter().find(|entry| entry.name == "sleep");
         assert!(sleep_fn.is_some(), "should find 'sleep' function");
-        let timeout_fn = fns.iter().find(|(name, _)| name == "timeout");
+        let timeout_fn = fns.iter().find(|entry| entry.name == "timeout");
         assert!(timeout_fn.is_some(), "should find 'timeout' function");
         let timeout_join_outcome = module
             .types
@@ -2245,9 +2254,9 @@ pub type File = rusttype RustFile:
         let path = vec!["std".to_string(), "async".to_string()];
         let module = load_stdlib_module_data(&path);
         let fns = module.ok_or("failed to load stdlib/async/prelude.incn")?.functions;
-        let sleep_fn = fns.iter().find(|(name, _)| name == "sleep");
+        let sleep_fn = fns.iter().find(|entry| entry.name == "sleep");
         assert!(sleep_fn.is_some(), "should resolve prelude re-export 'sleep'");
-        let spawn_fn = fns.iter().find(|(name, _)| name == "spawn");
+        let spawn_fn = fns.iter().find(|entry| entry.name == "spawn");
         assert!(spawn_fn.is_some(), "should resolve prelude re-export 'spawn'");
         Ok(())
     }
@@ -2259,9 +2268,9 @@ pub type File = rusttype RustFile:
 
         let fns = module.ok_or("failed to load stdlib/async/channel.incn")?.functions;
 
-        let channel_fn = fns.iter().find(|(name, _)| name == "channel");
+        let channel_fn = fns.iter().find(|entry| entry.name == "channel");
         assert!(channel_fn.is_some(), "should find 'channel' function");
-        let oneshot_fn = fns.iter().find(|(name, _)| name == "oneshot");
+        let oneshot_fn = fns.iter().find(|entry| entry.name == "oneshot");
         assert!(oneshot_fn.is_some(), "should find 'oneshot' function");
 
         Ok(())
@@ -2273,9 +2282,9 @@ pub type File = rusttype RustFile:
         let module = load_stdlib_module_data(&path);
         let fns = module.ok_or("failed to load stdlib/async/task.incn")?.functions;
 
-        assert!(fns.iter().any(|(name, _)| name == "spawn"));
-        assert!(fns.iter().any(|(name, _)| name == "spawn_blocking"));
-        assert!(fns.iter().any(|(name, _)| name == "yield_now"));
+        assert!(fns.iter().any(|entry| entry.name == "spawn"));
+        assert!(fns.iter().any(|entry| entry.name == "spawn_blocking"));
+        assert!(fns.iter().any(|entry| entry.name == "yield_now"));
         Ok(())
     }
 
@@ -2286,7 +2295,7 @@ pub type File = rusttype RustFile:
         let module = module.ok_or("failed to load stdlib/async/race.incn")?;
         let fns = module.functions;
 
-        let exported_names: Vec<&str> = fns.iter().map(|(name, _)| name.as_str()).collect();
+        let exported_names: Vec<&str> = fns.iter().map(|entry| entry.name.as_str()).collect();
         assert_eq!(exported_names, vec!["arm", "race", "race_timeout"]);
         assert!(module.types.iter().any(|(name, _)| name == "RaceArm"));
         Ok(())
@@ -2515,7 +2524,7 @@ pub type File = rusttype RustFile:
         );
 
         // Function lookup on a trait-only module returns None.
-        let no_fn = cache.lookup_function(&path, eq_name);
+        let no_fn = cache.lookup_function_symbol(&path, eq_name);
         assert!(no_fn.is_none(), "should not find Eq as a function");
 
         // Unknown trait returns None.

@@ -953,7 +953,7 @@ impl AstLowering {
 
             // ---- Method calls ----
             ast::Expr::MethodCall(o, m, type_args, args) => {
-                if self.imported_pub_method_callee_path(&o.node, m).is_some() {
+                if self.imported_module_function_callee_path(&o.node, m).is_some() {
                     let callee = ast::Spanned::new(ast::Expr::Field(o.clone(), m.clone()), expr_span);
                     return self
                         .lower_call_expr(&callee, type_args, args, expr_span)

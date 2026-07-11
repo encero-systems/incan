@@ -351,6 +351,9 @@ pub struct CheckedNewtypeExport {
     pub trait_adoptions: Vec<CheckedTypeBound>,
     pub is_rusttype: bool,
     pub underlying: ResolvedType,
+    pub checked_constructor: Option<String>,
+    pub constraints: Vec<crate::frontend::symbols::NewtypePrimitiveConstraint>,
+    pub implicit_coercion_enabled: bool,
     pub methods: Vec<CheckedMethod>,
 }
 
@@ -1203,17 +1206,19 @@ fn checked_enum_export(enum_decl: &EnumDecl, checker: &TypeChecker) -> Option<Ch
 /// Build a manifest-ready newtype export from the checked symbol metadata.
 fn checked_newtype_export(newtype_decl: &NewtypeDecl, checker: &TypeChecker) -> Option<CheckedNewtypeExport> {
     let symbol = checker.lookup_symbol(newtype_decl.name.as_str())?;
-    let SymbolKind::Type(TypeInfo::Newtype(NewtypeInfo {
+    let SymbolKind::Type(TypeInfo::Newtype(info)) = &symbol.kind else {
+        return None;
+    };
+    let NewtypeInfo {
         is_rusttype,
         underlying,
+        constraints,
+        implicit_coercion_enabled,
         traits,
         trait_adoptions,
         method_overloads,
         ..
-    })) = &symbol.kind
-    else {
-        return None;
-    };
+    } = info;
 
     Some(CheckedNewtypeExport {
         name: newtype_decl.name.clone(),
@@ -1222,6 +1227,9 @@ fn checked_newtype_export(newtype_decl: &NewtypeDecl, checker: &TypeChecker) -> 
         trait_adoptions: sorted_type_bounds(map_type_bound_infos(trait_adoptions)),
         is_rusttype: *is_rusttype,
         underlying: underlying.clone(),
+        checked_constructor: TypeChecker::validated_newtype_ctor_name(&newtype_decl.name, info),
+        constraints: constraints.clone(),
+        implicit_coercion_enabled: *implicit_coercion_enabled,
         methods: map_method_overloads_with_defaults(method_overloads, &newtype_decl.methods, checker),
     })
 }

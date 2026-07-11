@@ -13197,6 +13197,460 @@ pub def small_key_map_bytes() -> bytes:
     }
 
     #[test]
+    fn build_lib_preserves_std_environ_typed_reads_for_consumers() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let producer_root = tmp.path().join("environ_types_provider");
+        std::fs::create_dir_all(producer_root.join("src"))?;
+        std::fs::write(
+            producer_root.join("incan.toml"),
+            "[project]\nname = \"environ_types_core\"\nversion = \"0.1.0\"\n",
+        )?;
+        std::fs::write(
+            producer_root.join("src/types.incn"),
+            r#"from std.traits.convert import TryFrom
+
+pub model EnvToken with TryFrom[str]:
+  value: str
+
+  @classmethod
+  def try_from(cls, value: str) -> Result[Self, str]:
+    if len(value) == 0:
+      return Err("token must not be empty")
+    return Ok(EnvToken(value=value))
+
+pub model MultiToken with TryFrom[str], TryFrom[int]:
+  value: str
+
+  @classmethod
+  def try_from(cls, value: str) for TryFrom[str] -> Result[Self, str]:
+    if len(value) == 0:
+      return Err("token must not be empty")
+    return Ok(MultiToken(value=value))
+
+  @classmethod
+  def try_from(cls, value: int) for TryFrom[int] -> Result[Self, str]:
+    return Ok(MultiToken(value=f"{value}"))
+
+pub trait EnvReadable[T] with TryFrom[T]:
+  def source_name(self) -> str: ...
+
+pub model TraitToken with EnvReadable[str]:
+  value: str
+
+  @classmethod
+  def try_from(cls, value: str) -> Result[Self, str]:
+    return Ok(TraitToken(value=value))
+
+  def source_name(self) -> str:
+    return "environment"
+
+pub class EnvClass with TryFrom[str]:
+  pub value: str
+
+  @classmethod
+  def try_from(cls, value: str) -> Result[Self, str]:
+    return Ok(EnvClass(value=value))
+
+pub enum EnvMode with TryFrom[str]:
+  Dev
+  Prod
+
+  @classmethod
+  def try_from(cls, value: str) -> Result[Self, str]:
+    if value == "prod":
+      return Ok(EnvMode.Prod)
+    return Ok(EnvMode.Dev)
+
+pub type ExplicitLabel = newtype str with TryFrom[str]:
+  @classmethod
+  def try_from(cls, value: str) -> Result[Self, str]:
+    return Ok(ExplicitLabel(value))
+
+pub type Port = newtype int:
+  def from_underlying(value: int) -> Result[Self, ValidationError]:
+    if value < 1 or value > 65535:
+      return Err(ValidationError("port out of range"))
+    return Ok(Port(value))
+
+pub type WrappedPort = newtype Port
+pub type Positive = newtype int[gt=0]
+pub type PositiveBox = newtype Positive
+pub type Ratio = newtype float[ge=0, le=1]
+pub type Boxed[T] = newtype T
+pub type ClonedBox[T with Clone] = newtype T
+
+@no_implicit_coercion
+pub type StrictPort = newtype int
+"#,
+        )?;
+        std::fs::write(
+            producer_root.join("src/lib.incn"),
+            "pub from types import Boxed as PublicBoxed, ClonedBox, EnvClass, EnvMode, EnvReadable, EnvToken, ExplicitLabel, MultiToken, Port, Port as PublicPort, Positive as PublicPositive, PositiveBox as PublicPositiveBox, Ratio, StrictPort, TraitToken, WrappedPort\n",
+        )?;
+
+        let producer_build = run_build_lib(&producer_root)?;
+        assert!(
+            producer_build.status.success(),
+            "expected std.environ type provider to build.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&producer_build.stdout),
+            String::from_utf8_lossy(&producer_build.stderr)
+        );
+
+        let provider_manifest = LibraryManifest::read_from_path(
+            &producer_root
+                .join("target")
+                .join("lib")
+                .join("environ_types_core.incnlib"),
+        )?;
+        let positive = provider_manifest
+            .exports
+            .newtypes
+            .iter()
+            .find(|newtype| newtype.name == "PublicPositive")
+            .ok_or("missing aliased constrained newtype export")?;
+        assert_eq!(positive.constraints.len(), 1);
+        assert_eq!(positive.constraints[0].value, 0);
+        let positive_box = provider_manifest
+            .exports
+            .newtypes
+            .iter()
+            .find(|newtype| newtype.name == "PublicPositiveBox")
+            .ok_or("missing aliased composed newtype export")?;
+        assert_eq!(
+            positive_box.underlying,
+            TypeRef::Named {
+                name: "PublicPositive".to_string()
+            }
+        );
+        let boxed = provider_manifest
+            .exports
+            .newtypes
+            .iter()
+            .find(|newtype| newtype.name == "PublicBoxed")
+            .ok_or("missing aliased generic newtype export")?;
+        assert_eq!(boxed.type_params.len(), 1);
+        let strict = provider_manifest
+            .exports
+            .newtypes
+            .iter()
+            .find(|newtype| newtype.name == "StrictPort")
+            .ok_or("missing no-implicit-coercion newtype export")?;
+        assert!(!strict.implicit_coercion_enabled);
+
+        let consumer_root = tmp.path().join("environ_types_consumer");
+        let consumer_name = unique_test_project_name("environ_types_consumer");
+        std::fs::create_dir_all(consumer_root.join("src"))?;
+        std::fs::write(
+            consumer_root.join("incan.toml"),
+            format!(
+                "[project]\nname = \"{consumer_name}\"\n\n[dependencies]\nenviron_types = {{ path = \"../environ_types_provider\" }}\n"
+            ),
+        )?;
+        let consumer_main = consumer_root.join("src/main.incn");
+        std::fs::write(
+            &consumer_main,
+            r#"from std.environ import EnvironError, get_as
+from std.traits.convert import TryFrom
+from pub::environ_types import ClonedBox, EnvClass, EnvMode, EnvToken, ExplicitLabel, MultiToken, Port, PublicBoxed, PublicPort, PublicPositive, PublicPositiveBox, Ratio, StrictPort, TraitToken, WrappedPort
+
+def require[T with TryFrom[str]](key: str) -> Result[T, EnvironError]:
+  match get_as[T](key)?:
+    Some(value) => return Ok(value)
+    None => return Err(EnvironError.missing(key))
+
+def mode_name(mode: EnvMode) -> str:
+  match mode:
+    EnvMode.Dev => return "Dev"
+    EnvMode.Prod => return "Prod"
+
+def read_values() -> Result[None, EnvironError]:
+  token = require[EnvToken]("INCAN_PACKAGE_ENV_TOKEN")?
+  trait_token = require[TraitToken]("INCAN_PACKAGE_ENV_TRAIT_TOKEN")?
+  env_class = require[EnvClass]("INCAN_PACKAGE_ENV_CLASS")?
+  env_mode = require[EnvMode]("INCAN_PACKAGE_ENV_MODE")?
+  explicit_label = require[ExplicitLabel]("INCAN_PACKAGE_ENV_EXPLICIT_LABEL")?
+  port = require[Port]("INCAN_PACKAGE_ENV_PORT")?
+  public_port = require[PublicPort]("INCAN_PACKAGE_ENV_PUBLIC_PORT")?
+  wrapped = require[WrappedPort]("INCAN_PACKAGE_ENV_WRAPPED")?
+  multi = require[MultiToken]("INCAN_PACKAGE_ENV_MULTI")?
+  positive = require[PublicPositive]("INCAN_PACKAGE_ENV_POSITIVE")?
+  positive_box = require[PublicPositiveBox]("INCAN_PACKAGE_ENV_POSITIVE_BOX")?
+  boxed = require[PublicBoxed[int]]("INCAN_PACKAGE_ENV_BOXED")?
+  cloned = require[ClonedBox[str]]("INCAN_PACKAGE_ENV_CLONED")?
+  ratio = require[Ratio]("INCAN_PACKAGE_ENV_RATIO")?
+  strict = require[StrictPort]("INCAN_PACKAGE_ENV_STRICT")?
+  unwrapped = wrapped.0
+  positive_inner = positive_box.0
+  defaulted = get_as[Port]("INCAN_PACKAGE_ENV_MISSING", default=8080)?
+  println(f"{token.value}:{trait_token.value}:{env_class.value}:{mode_name(env_mode)}:{explicit_label.0}:{multi.value}:{port.0}:{public_port.0}:{unwrapped.0}:{positive.0}:{positive_inner.0}:{boxed.0}:{cloned.0}:{ratio.0}:{strict.0}:{defaulted.0}")
+  return Ok(None)
+
+def main() -> None:
+  match read_values():
+    Ok(_) => pass
+    Err(error) => println(f"unexpected:{error.kind_name()}")
+  match get_as[Port]("INCAN_PACKAGE_ENV_BAD_PORT"):
+    Ok(_) => println("invalid:unexpected")
+    Err(error) => println(f"invalid:{error.kind_name()}")
+  match get_as[PublicPositive]("INCAN_PACKAGE_ENV_NON_POSITIVE"):
+    Ok(_) => println("constrained:unexpected")
+    Err(error) => println(f"constrained:{error.kind_name()}")
+  match get_as[Ratio]("INCAN_PACKAGE_ENV_RATIO_HIGH"):
+    Ok(_) => println("ratio-high:unexpected")
+    Err(error) => println(f"ratio-high:{error.kind_name()}")
+"#,
+        )?;
+
+        let consumer_check = run_check(&consumer_main)?;
+        assert!(
+            consumer_check.status.success(),
+            "expected consumer typecheck to accept package typed environment reads.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&consumer_check.stdout),
+            String::from_utf8_lossy(&consumer_check.stderr)
+        );
+
+        let consumer_run = super::incan_command()
+            .args(["run", consumer_main.to_string_lossy().as_ref()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .env("INCAN_PACKAGE_ENV_TOKEN", "secret-token")
+            .env("INCAN_PACKAGE_ENV_TRAIT_TOKEN", "trait-token")
+            .env("INCAN_PACKAGE_ENV_CLASS", "class-token")
+            .env("INCAN_PACKAGE_ENV_MODE", "prod")
+            .env("INCAN_PACKAGE_ENV_EXPLICIT_LABEL", "explicit")
+            .env("INCAN_PACKAGE_ENV_PORT", "5432")
+            .env("INCAN_PACKAGE_ENV_PUBLIC_PORT", "5433")
+            .env("INCAN_PACKAGE_ENV_WRAPPED", "6543")
+            .env("INCAN_PACKAGE_ENV_MULTI", "multi-token")
+            .env("INCAN_PACKAGE_ENV_POSITIVE", "12")
+            .env("INCAN_PACKAGE_ENV_POSITIVE_BOX", "13")
+            .env("INCAN_PACKAGE_ENV_BOXED", "88")
+            .env("INCAN_PACKAGE_ENV_CLONED", "cloned")
+            .env("INCAN_PACKAGE_ENV_RATIO", "0.25")
+            .env("INCAN_PACKAGE_ENV_STRICT", "9090")
+            .env("INCAN_PACKAGE_ENV_BAD_PORT", "70000")
+            .env("INCAN_PACKAGE_ENV_NON_POSITIVE", "0")
+            .env("INCAN_PACKAGE_ENV_RATIO_HIGH", "1.5")
+            .env_remove("INCAN_PACKAGE_ENV_MISSING")
+            .output()?;
+        assert!(
+            consumer_run.status.success(),
+            "expected package typed environment reads to run.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&consumer_run.stdout),
+            String::from_utf8_lossy(&consumer_run.stderr)
+        );
+        assert_eq!(
+            String::from_utf8(consumer_run.stdout)?,
+            concat!(
+                "secret-token:trait-token:class-token:Prod:explicit:multi-token:5432:5433:6543:12:13:88:cloned:0.25:9090:8080\n",
+                "invalid:invalid_value\n",
+                "constrained:invalid_value\n",
+                "ratio-high:invalid_value\n",
+            )
+        );
+
+        let strict_default = consumer_root.join("src/strict_default.incn");
+        std::fs::write(
+            &strict_default,
+            r#"from std.environ import get_as
+from pub::environ_types import StrictPort
+
+def main() -> None:
+  get_as[StrictPort]("INCAN_PACKAGE_ENV_STRICT_DEFAULT", 8080)
+"#,
+        )?;
+        let strict_check = run_check(&strict_default)?;
+        assert!(
+            !strict_check.status.success(),
+            "expected package no-implicit-coercion policy to reject underlying default"
+        );
+        assert!(
+            String::from_utf8_lossy(&strict_check.stderr)
+                .contains("Implicit coercion into newtype 'StrictPort' is disabled"),
+            "expected package coercion diagnostic, got:\n{}",
+            String::from_utf8_lossy(&strict_check.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn std_environ_typed_reads_survive_facades_and_test_batches() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path();
+        let project_name = unique_test_project_name("environ_facade_test_batch");
+        std::fs::create_dir_all(project_root.join("src"))?;
+        std::fs::create_dir_all(project_root.join("tests"))?;
+        std::fs::write(
+            project_root.join("incan.toml"),
+            format!("[project]\nname = \"{project_name}\"\nversion = \"0.1.0\"\n"),
+        )?;
+        std::fs::write(
+            project_root.join("src/env_types.incn"),
+            r#"pub type Port = newtype int:
+  def from_underlying(value: int) -> Result[Self, ValidationError]:
+    if value < 1 or value > 65535:
+      return Err(ValidationError("port out of range"))
+    return Ok(Port(value))
+"#,
+        )?;
+        std::fs::write(
+            project_root.join("src/environ_facade.incn"),
+            "pub from env_types import Port\n",
+        )?;
+        let main_path = project_root.join("src/main.incn");
+        std::fs::write(
+            &main_path,
+            r#"from environ_facade import Port
+from std.environ import get_as
+
+def main() -> None:
+  match get_as[Port]("INCAN_ENVIRON_FACADE_MISSING", default=8080):
+    Ok(port) => println(port.0)
+    Err(error) => println(error.kind_name())
+"#,
+        )?;
+        std::fs::write(
+            project_root.join("tests/test_environ.incn"),
+            r#"from environ_facade import Port
+from std.environ import get_as
+from std.testing import assert_eq, fail
+
+def test_defaulted_port_through_facade() -> None:
+  match get_as[Port]("INCAN_ENVIRON_TEST_BATCH_MISSING", 9090):
+    Ok(port) => assert_eq(port.0, 9090)
+    Err(error) => fail(f"expected defaulted Port, got {error.kind_name()}")
+  match get_as[Port]("INCAN_ENVIRON_TEST_BATCH_INVALID"):
+    Ok(_) => fail("expected invalid facade Port to fail validation")
+    Err(error) => assert_eq(error.kind_name(), "invalid_value")
+"#,
+        )?;
+
+        let run_output = super::incan_command()
+            .args(["run", main_path.to_string_lossy().as_ref()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .env_remove("INCAN_ENVIRON_FACADE_MISSING")
+            .output()?;
+        assert!(
+            run_output.status.success(),
+            "expected facade typed environment read to run.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&run_output.stdout),
+            String::from_utf8_lossy(&run_output.stderr)
+        );
+        assert_eq!(String::from_utf8(run_output.stdout)?, "8080\n");
+
+        let test_output = super::incan_command()
+            .args(["test", project_root.join("tests").to_string_lossy().as_ref()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .env("INCAN_TEST_SHARED_TARGET_DIR", shared_test_runner_target_dir())
+            .env("INCAN_ENVIRON_TEST_BATCH_INVALID", "70000")
+            .env_remove("INCAN_ENVIRON_TEST_BATCH_MISSING")
+            .output()?;
+        assert!(
+            test_output.status.success(),
+            "expected test batch typed environment read to pass.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&test_output.stdout),
+            String::from_utf8_lossy(&test_output.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn std_environ_module_qualified_overloads_run() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path();
+        let project_name = unique_test_project_name("environ_module_qualified");
+        std::fs::create_dir_all(project_root.join("src"))?;
+        std::fs::write(
+            project_root.join("incan.toml"),
+            format!("[project]\nname = \"{project_name}\"\nversion = \"0.1.0\"\n"),
+        )?;
+        let main_path = project_root.join("src/main.incn");
+        std::fs::write(
+            &main_path,
+            r#"import std.environ as environ
+from std.environ import EnvironError
+
+
+def read_values() -> Result[None, EnvironError]:
+  present = environ.get_as[int]("INCAN_ENVIRON_QUALIFIED_PRESENT")?.unwrap_or(0)
+  fallback = environ.get_as[int]("INCAN_ENVIRON_QUALIFIED_MISSING", default=8080)?
+  println(f"{present}:{fallback}")
+  return Ok(None)
+
+
+def main() -> None:
+  match read_values():
+    Ok(_) => pass
+    Err(error) => println(error.kind_name())
+"#,
+        )?;
+
+        let output = super::incan_command()
+            .args(["run", main_path.to_string_lossy().as_ref()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .env("INCAN_ENVIRON_QUALIFIED_PRESENT", "42")
+            .env_remove("INCAN_ENVIRON_QUALIFIED_MISSING")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "expected module-qualified std.environ overloads to run.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(String::from_utf8(output.stdout)?, "42:8080\n");
+        Ok(())
+    }
+
+    #[test]
+    fn std_environ_overloads_run_through_source_facade() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path();
+        let project_name = unique_test_project_name("environ_function_facade");
+        std::fs::create_dir_all(project_root.join("src"))?;
+        std::fs::write(
+            project_root.join("incan.toml"),
+            format!("[project]\nname = \"{project_name}\"\nversion = \"0.1.0\"\n"),
+        )?;
+        std::fs::write(
+            project_root.join("src/environ_facade.incn"),
+            "pub from std.environ import EnvironError, get_as\n",
+        )?;
+        let main_path = project_root.join("src/main.incn");
+        std::fs::write(
+            &main_path,
+            r#"from environ_facade import EnvironError, get_as
+
+
+def read_values() -> Result[None, EnvironError]:
+  present = get_as[int]("INCAN_ENVIRON_FACADE_PRESENT")?.unwrap_or(0)
+  fallback = get_as[int]("INCAN_ENVIRON_FACADE_MISSING", 9090)?
+  println(f"{present}:{fallback}")
+  return Ok(None)
+
+
+def main() -> None:
+  match read_values():
+    Ok(_) => pass
+    Err(error) => println(error.kind_name())
+"#,
+        )?;
+
+        let output = super::incan_command()
+            .args(["run", main_path.to_string_lossy().as_ref()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .env("INCAN_ENVIRON_FACADE_PRESENT", "73")
+            .env_remove("INCAN_ENVIRON_FACADE_MISSING")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "expected std.environ overloads re-exported by a source facade to run.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(String::from_utf8(output.stdout)?, "73:9090\n");
+        Ok(())
+    }
+
+    #[test]
     fn check_pub_boundary_preserves_consumer_type_fidelity_cases() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         write_pub_boundary_type_fidelity_library(tmp.path())?;

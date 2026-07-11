@@ -50,6 +50,7 @@ use crate::frontend::typechecker::TypeCheckInfo;
 use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
 use decl::callable_docstring;
 use incan_core::lang::conventions;
+use incan_core::lang::decorators::{self, DecoratorId};
 use incan_core::lang::stdlib;
 use incan_core::lang::trait_capabilities;
 use incan_core::lang::traits::{self as core_traits, TraitId};
@@ -123,11 +124,11 @@ pub struct AstLowering {
     pub(super) type_info: Option<TypeCheckInfo>,
     /// Public dependency manifests used to rehydrate callable defaults across `pub::` boundaries.
     pub(super) library_manifest_index: Option<Arc<LibraryManifestIndex>>,
-    /// Newtype -> chosen validated constructor method name (e.g. "from_underlying", "from_str"),
-    /// used for checked construction lowering of `T(x)` at call sites.
-    pub(super) newtype_checked_ctor: HashMap<String, String>,
-    /// Newtype -> generated constrained-primitive predicates for checked construction when no explicit hook exists.
-    pub(super) newtype_constraints: HashMap<String, Vec<NewtypePrimitiveConstraint>>,
+    /// Newtype construction plans used by calls and generated bridges.
+    ///
+    /// Production lowering consumes typechecker-approved plans. Direct AST-lowering tests may use the conservative
+    /// fallback documented by `fallback_newtype_construction_plan`.
+    pub(super) newtype_construction: HashMap<String, super::IrNewtypeConstructionPlan>,
     /// When lowering methods inside an impl block, this tracks the current target type name.
     /// Used to avoid rewriting `T(x)` inside `impl T` bodies (e.g. inside `T.from_underlying`).
     pub(super) current_impl_type: Option<String>,
@@ -216,7 +217,8 @@ impl AstLowering {
             if collections::from_str(name.as_str()) != Some(CollectionTypeId::Result) || args.len() != 2 {
                 return false;
             }
-            matches!(&args[0].node, ast::Type::Simple(t) if t == newtype_name || t == "Self")
+            (matches!(&args[0].node, ast::Type::Simple(t) if t == newtype_name)
+                || matches!(&args[0].node, ast::Type::SelfType))
                 && matches!(&args[1].node, ast::Type::Simple(t) if t == "ValidationError")
         }
 
@@ -265,8 +267,7 @@ impl AstLowering {
             iterator_adopter_names: HashSet::new(),
             type_info: None,
             library_manifest_index: None,
-            newtype_checked_ctor: HashMap::new(),
-            newtype_constraints: HashMap::new(),
+            newtype_construction: HashMap::new(),
             current_impl_type: None,
             current_classmethod_constructor: None,
             struct_field_aliases: HashMap::new(),
@@ -458,6 +459,16 @@ impl AstLowering {
                 repr: constraint.node.value.repr.clone(),
             })
             .collect()
+    }
+
+    /// Return whether a raw newtype declaration permits ordinary implicit construction.
+    ///
+    /// Production lowering consumes the checked artifact. This fallback keeps direct lowering tests deterministic
+    /// when no [`TypeCheckInfo`] snapshot was supplied.
+    fn newtype_allows_implicit_coercion(decorators: &[ast::Spanned<ast::Decorator>]) -> bool {
+        !decorators.iter().any(|decorator| {
+            decorators::from_segments(&decorator.node.path.segments) == Some(DecoratorId::NoImplicitCoercion)
+        })
     }
 
     /// Build a keyword-to-expression map for one partial preset argument list.
@@ -1446,18 +1457,43 @@ impl AstLowering {
                 if n.is_rusttype {
                     continue;
                 }
-                // Track validation hook selection for checked construction lowering.
-                if let Some(ctor) = Self::select_newtype_checked_ctor(n) {
-                    self.newtype_checked_ctor.insert(n.name.clone(), ctor);
-                } else {
-                    let constraints = Self::newtype_constraints_from_ast(&n.underlying.node);
-                    if !constraints.is_empty() {
-                        self.newtype_constraints.insert(n.name.clone(), constraints);
+                let checked = self
+                    .type_info
+                    .as_ref()
+                    .and_then(|info| info.declarations.newtype_construction.get(&n.name));
+                let plan = if let Some(checked) = checked {
+                    super::IrNewtypeConstructionPlan {
+                        type_params: Self::lower_type_params(&n.type_params),
+                        underlying: self.lower_resolved_type(&checked.underlying),
+                        checked_constructor: checked.checked_constructor.clone(),
+                        constraints: checked.constraints.clone(),
+                        implicit_coercion_enabled: checked.implicit_coercion_enabled,
+                        supports_string_conversion: checked.supports_string_conversion,
                     }
-                }
+                } else {
+                    let underlying = self.lower_type(&n.underlying.node);
+                    let supports_string_conversion = matches!(
+                        underlying,
+                        IrType::Int
+                            | IrType::Float
+                            | IrType::Bool
+                            | IrType::String
+                            | IrType::Numeric(_)
+                            | IrType::Generic(_)
+                    );
+                    super::IrNewtypeConstructionPlan {
+                        type_params: Self::lower_type_params(&n.type_params),
+                        underlying,
+                        checked_constructor: Self::select_newtype_checked_ctor(n),
+                        constraints: Self::newtype_constraints_from_ast(&n.underlying.node),
+                        implicit_coercion_enabled: Self::newtype_allows_implicit_coercion(&n.decorators),
+                        supports_string_conversion,
+                    }
+                };
+                self.newtype_construction.insert(n.name.clone(), plan);
             }
         }
-        ir_program.newtype_checked_ctor = self.newtype_checked_ctor.clone();
+        ir_program.newtype_construction = self.newtype_construction.clone();
 
         // Pass 1.5: register module-level const names into the root scope for lookups.
         // (Type inference/refinement happens later; Unknown is fine for non-const contexts.)

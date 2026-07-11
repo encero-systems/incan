@@ -234,8 +234,8 @@ impl TypeChecker {
                 if let Some(kind) = self.source_dependency_member_symbol_kind(&module_path, member) {
                     return Some(kind);
                 }
-                if let Some(info) = self.stdlib_cache.lookup_function(&module_path, member) {
-                    return Some(SymbolKind::Function(info));
+                if let Some(kind) = self.stdlib_cache.lookup_function_symbol(&module_path, member) {
+                    return Some(kind);
                 }
                 if let Some(info) = self.stdlib_cache.lookup_type(&module_path, member) {
                     return Some(SymbolKind::Type(info));
@@ -1390,12 +1390,12 @@ impl TypeChecker {
         if let Some(existing_id) = existing_module_function_id
             && let Some(existing_symbol) = self.symbols.get_mut(existing_id)
         {
-            let emitted_name = Self::overloaded_function_emitted_name(&func.name, &info);
+            let emitted_name = overloaded_function_emitted_name(&func.name, &info);
             info.emitted_name = Some(emitted_name.clone());
             self.type_info.record_function_emitted_name(span, emitted_name);
             match &mut existing_symbol.kind {
                 SymbolKind::Function(existing_info) => {
-                    let existing_emitted_name = Self::overloaded_function_emitted_name(&func.name, existing_info);
+                    let existing_emitted_name = overloaded_function_emitted_name(&func.name, existing_info);
                     existing_info.emitted_name = Some(existing_emitted_name.clone());
                     self.type_info
                         .record_function_emitted_name(existing_symbol.span, existing_emitted_name);
@@ -1430,31 +1430,6 @@ impl TypeChecker {
         self.current_module_function_symbols
             .insert(func.name.clone(), symbol_id);
     }
-
-    /// Build the deterministic Rust symbol name used for one same-name source overload.
-    fn overloaded_function_emitted_name(name: &str, info: &FunctionInfo) -> String {
-        let mut signature = String::new();
-        signature.push_str(name);
-        signature.push('(');
-        for param in &info.params {
-            signature.push_str(&param.ty.to_string());
-            signature.push(';');
-        }
-        signature.push_str(")->");
-        signature.push_str(&info.return_type.to_string());
-        let hash = stable_fnv1a(signature.as_bytes());
-        crate::frontend::symbols::overload_emitted_name(name, hash)
-    }
-}
-
-/// Hash bytes with the FNV-1a variant used for deterministic generated symbol suffixes.
-fn stable_fnv1a(bytes: &[u8]) -> u64 {
-    let mut hash = 0xcbf29ce484222325u64;
-    for byte in bytes {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    hash
 }
 
 /// Returns one simple cycle (trait names), if the directed supertrait graph has a cycle.

@@ -59,6 +59,7 @@ Use it when deciding whether code should use an existing Incan surface before ad
 | `std.compression` codec workflows | Stdlib | 0.3 | Import from `std.compression` or one of its codec namespaces. | `from std.compression import gzip, decompress_auto`<br>`gzip.compress(payload)?`<br>`zstd.decompress_stream(source, target)?` | `std.compression` provides codec-explicit compression and decompression for byte payloads, streams, and file handles, with explicit decompression autodetection. | Backend-crate compression wrappers, implicit codec guesses, or ad hoc byte transforms for standard compression formats. | [std.compression](stdlib/compression.md), [Compress and decompress data](../how-to/compression.md), [RFC 061](../../RFCs/closed/implemented/061_std_compression.md), [Release 0.3](../../release_notes/0_3.md) |
 | `std.encoding` binary-text encodings | Stdlib | 0.3 | Import from `std.encoding`. | `from std.encoding import base64, hex`<br>`base64.urlsafe_b64encode(payload)`<br>`hex.decode(text)?` | `std.encoding` provides explicit binary-to-text encoding and strict decoding helpers for hex, base32, base58, base64, base85, and Bech32 formats. | Project-local encoding wrappers, hidden alphabet flags, or guessing formats from payload shape. | [std.encoding](stdlib/encoding.md), [Binary-text encoding](../how-to/binary_text_encoding.md), [RFC 064](../../RFCs/closed/implemented/064_std_encoding.md), [Release 0.3](../../release_notes/0_3.md) |
 | `std.hash` hashing primitives | Stdlib | 0.3 | Import from `std.hash`. | `from std.hash import sha256, file_digest`<br>`sha256.digest(payload)`<br>`xxh3_64.new()` | `std.hash` provides deterministic byte, file, reader, and incremental hashing through explicit cryptographic, compatibility, and non-cryptographic algorithm namespaces. | Ad hoc hashing shims, hidden default algorithms, or `std.checksum` when the caller needs hash rather than checksum semantics. | [std.hash](stdlib/hash.md), [Hashing data](../how-to/hashing_data.md), [RFC 065](../../RFCs/closed/implemented/065_std_hash.md), [Release 0.3](../../release_notes/0_3.md) |
+| `std.environ` runtime environment access | Stdlib | 0.5 | Import from `std.environ`. | `from std.environ import get, get_optional, get_or, get_as`<br>`token = get("API_TOKEN")?`<br>`port = get_as[Port]("PORT", default=8080)?` | `std.environ` provides redacted, read-only Unicode environment access through string helpers and typed `TryFrom[str]` reads for primitives, explicit adopters, and validated newtypes. | Direct `rust::std::env` imports or shell glue for ordinary runtime environment reads. | [std.environ](stdlib/environ.md), [RFC 089](../../RFCs/closed/implemented/089_std_environ.md), [Release 0.5](../../release_notes/0_5.md) |
 | `std.json` dynamic JSON values | Stdlib | 0.3 | Import from `std.json`. | `from std.json import JsonValue`<br>`JsonValue.parse(source)`<br>`value["key"]`<br>`value[0]` | `JsonValue` provides dynamic parse-inspect-transform JSON workflows with checked optional indexing, explicit shape inspection, mutation helpers, traversal, and typed-model interop. | Ad hoc dictionaries or over-modeled schemas for payloads whose shape is intentionally open. | [std.json](stdlib/json.md), [Derives: Serialization](derives/serialization.md), [Release 0.3](../../release_notes/0_3.md) |
 | `std.tempfile` temporary resources | Stdlib | 0.3 | Import from `std.tempfile`. | `NamedTemporaryFile.try_new()`<br>`TemporaryDirectory.try_new()`<br>`tmp.persist()` | Temporary files and directories are explicit resources with cleanup and persist semantics. | Manual random path generation or unchecked cleanup around temporary files. | [std.tempfile](stdlib/tempfile.md), [Release 0.3](../../release_notes/0_3.md) |
 | `std.datetime` temporal values | Stdlib | 0.3 | Import from `std.datetime` modules or prelude. | `Date.utc_today()`<br>`DateTime.utc_now()`<br>`TimeDelta(days=1)` | Temporal APIs cover runtime timing, civil dates/times, fixed offsets, parsing/formatting, intervals, and calendar arithmetic. | Raw strings or integer timestamps inside code that has date/time semantics. | [std.datetime](stdlib/datetime.md), [Dates and times](../tutorials/dates_and_times.md), [Dates and times how-to](../how-to/dates_and_times.md) |
@@ -846,6 +847,25 @@ Canonical forms:
 - `from std.hash import sha256, file_digest`
 - `sha256.digest(payload)`
 - `xxh3_64.new()`
+
+### `std.environ` runtime environment access
+
+- **Id:** `StdEnviron`
+- **Category:** `Stdlib`
+- **Since:** `0.5`
+- **RFC:** `RFC 089`
+- **Stability:** `Stable`
+- **Activation:** Import from `std.environ`.
+- **Use instead of:** Direct `rust::std::env` imports or shell glue for ordinary runtime environment reads.
+- **References:** [std.environ](stdlib/environ.md), [RFC 089](../../RFCs/closed/implemented/089_std_environ.md), [Release 0.5](../../release_notes/0_5.md)
+
+`std.environ` provides redacted, read-only Unicode environment access through string helpers and typed `TryFrom[str]` reads for primitives, explicit adopters, and validated newtypes.
+
+Canonical forms:
+
+- `from std.environ import get, get_optional, get_or, get_as`
+- `token = get("API_TOKEN")?`
+- `port = get_as[Port]("PORT", default=8080)?`
 
 ### `std.json` dynamic JSON values
 
