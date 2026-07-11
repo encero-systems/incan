@@ -1035,6 +1035,7 @@ pub(crate) fn compiled_builtin_stdlib_artifact_lock_payload(
     Ok(Some(payload))
 }
 
+/// Seed a generated consumer lockfile with the compiled built-in stdlib artifact closure.
 fn seed_builtin_stdlib_artifact_lock(lock_dir: &Path, requirements: &ProjectRequirements) -> CliResult<()> {
     let Some(payload) = compiled_builtin_stdlib_artifact_lock_payload(requirements)? else {
         return Ok(());
