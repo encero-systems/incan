@@ -144,9 +144,12 @@ pub fn internal_vocab_block_to_public(
 
 /// Classify one internal statement as a public vocab body item.
 ///
-/// Nested `VocabBlock` nodes do not all mean the same thing. Block-context keywords and sub-block keywords become
-/// `VocabBodyItem::Clause`, while declaration-shaped nested blocks remain full nested declarations. Ordinary
-/// statements are bridged through the public statement model instead.
+/// Nested `VocabBlock` nodes do not all mean the same thing. Blocks owned by a rich declaration's `ClauseSurface`
+/// become `VocabBodyItem::Clause`, while other nested blocks remain full nested declarations. The ownership bit is
+/// carried by parser metadata because low-level keyword surface kinds do not faithfully describe public AST ownership
+/// for compatibility registrations; the historical context/sub-block interpretation remains as a fallback for raw
+/// registrations that do not provide a rich surface. Ordinary statements are bridged through the public statement
+/// model instead.
 ///
 /// # Errors
 ///
@@ -156,10 +159,11 @@ fn internal_statement_to_body_item(
 ) -> Result<incan_vocab::VocabBodyItem, VocabAstBridgeError> {
     match &statement.node {
         ast::Statement::VocabBlock(nested)
-            if matches!(
-                nested.keyword_binding.surface_kind,
-                incan_vocab::KeywordSurfaceKind::BlockContextKeyword | incan_vocab::KeywordSurfaceKind::SubBlock
-            ) =>
+            if nested.keyword_binding.is_declaration_owned_clause
+                || matches!(
+                    nested.keyword_binding.surface_kind,
+                    incan_vocab::KeywordSurfaceKind::BlockContextKeyword | incan_vocab::KeywordSurfaceKind::SubBlock
+                ) =>
         {
             Ok(incan_vocab::VocabBodyItem::Clause(internal_vocab_clause_to_public(
                 nested,
@@ -177,8 +181,9 @@ fn internal_statement_to_body_item(
 
 /// Convert one nested internal vocab block into a public clause.
 ///
-/// Clauses reuse the same parsed `VocabBlockStmt` carrier as declarations on the internal side. The surface kind on
-/// the keyword binding decides that this block should be interpreted as clause syntax instead of a nested declaration.
+/// Clauses reuse the same parsed `VocabBlockStmt` carrier as declarations on the internal side. Rich declaration
+/// ownership metadata decides that this block should be interpreted as clause syntax instead of a nested declaration;
+/// legacy block-context and sub-block registrations retain their existing clause interpretation.
 ///
 /// # Errors
 ///
@@ -1197,6 +1202,7 @@ mod tests {
 
     fn default_keyword_binding(surface_kind: incan_vocab::KeywordSurfaceKind) -> ast::VocabKeywordBinding {
         ast::VocabKeywordBinding {
+            is_declaration_owned_clause: false,
             dependency_key: "demo".to_string(),
             activation_namespace: "demo.dsl".to_string(),
             surface_kind,
@@ -1208,6 +1214,7 @@ mod tests {
 
     fn expression_list_clause_binding() -> ast::VocabKeywordBinding {
         ast::VocabKeywordBinding {
+            is_declaration_owned_clause: true,
             surface_kind: incan_vocab::KeywordSurfaceKind::BlockContextKeyword,
             placement: incan_vocab::KeywordPlacement::in_block(["query"]),
             clause_body_kind: Some(incan_vocab::ClauseBodyKind::ExpressionList),
@@ -1251,6 +1258,76 @@ mod tests {
                 return Err(format!("expected clause body item, got {other:?}").into());
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn bridges_owned_clause_even_when_compatibility_metadata_uses_block_declaration()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let clause_block = ast::VocabBlockStmt {
+            keyword: "FROM".to_string(),
+            keyword_binding: ast::VocabKeywordBinding {
+                is_declaration_owned_clause: true,
+                placement: incan_vocab::KeywordPlacement::in_block(["query"]),
+                ..default_keyword_binding(incan_vocab::KeywordSurfaceKind::BlockDeclaration)
+            },
+            decorators: Vec::new(),
+            header_args: Vec::new(),
+            body: vec![ast::Spanned::new(
+                ast::Statement::Expr(ast::Spanned::new(
+                    ast::Expr::Ident("orders".to_string()),
+                    ast::Span::default(),
+                )),
+                ast::Span::default(),
+            )],
+            body_item_trailing_commas: vec![false],
+        };
+        let window_clause_block = ast::VocabBlockStmt {
+            keyword: "WINDOW".to_string(),
+            keyword_binding: ast::VocabKeywordBinding {
+                is_declaration_owned_clause: true,
+                placement: incan_vocab::KeywordPlacement::in_block(["query"]),
+                ..default_keyword_binding(incan_vocab::KeywordSurfaceKind::BlockDeclaration)
+            },
+            decorators: Vec::new(),
+            header_args: Vec::new(),
+            body: Vec::new(),
+            body_item_trailing_commas: Vec::new(),
+        };
+        let declaration_block = ast::VocabBlockStmt {
+            keyword: "query".to_string(),
+            keyword_binding: default_keyword_binding(incan_vocab::KeywordSurfaceKind::BlockDeclaration),
+            decorators: Vec::new(),
+            header_args: Vec::new(),
+            body: vec![
+                ast::Spanned::new(ast::Statement::VocabBlock(clause_block), ast::Span::default()),
+                ast::Spanned::new(
+                    ast::Statement::Expr(ast::Spanned::new(
+                        ast::Expr::Ident("retained".to_string()),
+                        ast::Span::default(),
+                    )),
+                    ast::Span::default(),
+                ),
+                ast::Spanned::new(ast::Statement::VocabBlock(window_clause_block), ast::Span::default()),
+            ],
+            body_item_trailing_commas: vec![false, false, false],
+        };
+
+        let bridged = internal_vocab_block_to_public(&declaration_block, ast::Span::default())?;
+        let [
+            incan_vocab::VocabBodyItem::Clause(clause),
+            incan_vocab::VocabBodyItem::Statement(_),
+            incan_vocab::VocabBodyItem::Clause(window),
+        ] = bridged.body.as_slice()
+        else {
+            return Err(format!("expected an owned clause, got {:?}", bridged.body).into());
+        };
+        assert_eq!(clause.keyword, "FROM");
+        assert_eq!(
+            clause.body,
+            incan_vocab::VocabClauseBody::Expression(incan_vocab::IncanExpr::Name("orders".to_string()))
+        );
+        assert_eq!(window.keyword, "WINDOW");
         Ok(())
     }
 

@@ -12044,6 +12044,65 @@ pub def display[T](data: DataSet[T]) -> None:
         Ok(())
     }
 
+    /// Write a package whose rich clause ownership disagrees with legacy low-level keyword surface kinds.
+    ///
+    /// This preserves the compatibility shape used by existing vocab packages: parser activation still receives raw
+    /// keyword registrations, while the richer `DslSurface` is the authority on which nested blocks are clauses.
+    fn write_pub_library_with_mixed_expression_clause_desugarer(
+        root: &Path,
+        desugarer_bytes: &[u8],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let artifact_root = root.join("deps").join("querykit").join("target").join("lib");
+        std::fs::create_dir_all(artifact_root.join("desugarers"))?;
+        write_minimal_library_crate(&artifact_root, "querykit_core")?;
+        let desugarer_path = artifact_root.join("desugarers").join("querykit_desugarer.wasm");
+        std::fs::write(&desugarer_path, desugarer_bytes)?;
+
+        let metadata = incan_vocab::VocabRegistration::new()
+            .with_keyword_registration(incan_vocab::KeywordRegistration {
+                activation: incan_vocab::KeywordActivation::OnImport {
+                    namespace: "querykit.query".to_string(),
+                },
+                keywords: vec![
+                    incan_vocab::KeywordSpec::block("query"),
+                    incan_vocab::KeywordSpec::block("FROM").in_block("query"),
+                    incan_vocab::KeywordSpec::block("WINDOW").in_block("query"),
+                ],
+                valid_decorators: Vec::new(),
+            })
+            .with_surface(
+                incan_vocab::DslSurface::on_import("querykit.query").with_declaration(
+                    incan_vocab::DeclarationSurface::named("query")
+                        .with_mixed_body()
+                        .desugars_to_expression()
+                        .with_clauses([
+                            incan_vocab::ClauseSurface::expr("FROM").required(),
+                            incan_vocab::ClauseSurface::nested_items("WINDOW").optional(),
+                        ]),
+                ),
+            )
+            .metadata();
+        let mut manifest = LibraryManifest::new("querykit_core", "0.1.0");
+        manifest.vocab = Some(incan::library_manifest::VocabExports {
+            crate_path: "vocab_companion".to_string(),
+            package_name: "vocab_companion".to_string(),
+            keyword_registrations: metadata.keyword_registrations,
+            dsl_surfaces: metadata.dsl_surfaces,
+            provider_manifest: incan_vocab::LibraryManifest::default(),
+            desugarer_artifact: Some(incan::library_manifest::VocabDesugarerArtifact {
+                artifact_kind: incan_vocab::DesugarerArtifactKind::WasmModule,
+                abi_version: incan_vocab::WASM_DESUGAR_ABI_VERSION,
+                relative_path: "desugarers/querykit_desugarer.wasm".to_string(),
+                target: "wasm32-wasip1".to_string(),
+                profile: "release".to_string(),
+                entrypoint: "desugar_block".to_string(),
+                sha256: hex::encode(Sha256::digest(desugarer_bytes)),
+            }),
+        });
+        manifest.write_to_path(&artifact_root.join("querykit_core.incnlib"))?;
+        Ok(())
+    }
+
     fn write_pub_library_with_vocab_desugarer_and_filter_helper(
         root: &Path,
         dependency_key: &str,
@@ -14604,6 +14663,85 @@ def test_dependency_vocab_query_block() -> None:
         assert!(
             test_output.status.success(),
             "expected incan test to parse and run dependency-activated vocab in a test file.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&test_output.stdout),
+            String::from_utf8_lossy(&test_output.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn consumer_build_and_test_desugars_mixed_expression_vocab_clauses_issue813()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let response = incan_vocab::DesugarResponse::expression(incan_vocab::IncanExpr::Int(7));
+        let output_payload = serde_json::to_string(&response)?;
+        let wasm = compile_desugarer_wasm_requiring_request_substring(
+            &output_payload,
+            "mixed expression vocab body did not expose FROM as a clause",
+            r#""body":[{"Clause":{"keyword":"FROM""#,
+        )?;
+        write_pub_library_with_mixed_expression_clause_desugarer(tmp.path(), &wasm)?;
+
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nquerykit = { path = \"deps/querykit\" }\n",
+            r#"import pub::querykit
+
+def main() -> None:
+  selected: int = query:
+    FROM:
+      42
+    let retained = 1
+    WINDOW:
+      marker = retained
+  assert selected == 7
+"#,
+        )?;
+        let tests_dir = tmp.path().join("tests");
+        std::fs::create_dir_all(&tests_dir)?;
+        let test_path = tests_dir.join("test_mixed_query.incn");
+        std::fs::write(
+            &test_path,
+            r#"import pub::querykit
+
+def test_mixed_expression_vocab_result() -> None:
+  selected: int = query:
+    FROM:
+      42
+    let retained = 1
+    WINDOW:
+      marker = retained
+  assert selected == 7
+"#,
+        )?;
+
+        let check_output = run_check(&main_path)?;
+        assert!(
+            check_output.status.success(),
+            "expected mixed expression vocab declaration to typecheck.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&check_output.stdout),
+            String::from_utf8_lossy(&check_output.stderr)
+        );
+
+        let out_dir = tmp.path().join("out");
+        let build_output = run_build(&main_path, &out_dir)?;
+        let generated_main = std::fs::read_to_string(out_dir.join("src/main.rs"))?;
+        assert!(
+            build_output.status.success(),
+            "expected generated Rust build for the mixed expression vocab declaration to succeed.\ngenerated main.rs:\n{}\nstdout:\n{}\nstderr:\n{}",
+            generated_main,
+            String::from_utf8_lossy(&build_output.stdout),
+            String::from_utf8_lossy(&build_output.stderr)
+        );
+        assert!(
+            generated_main.contains("selected"),
+            "expected generated Rust to retain the desugared typed assignment.\ngenerated main.rs:\n{generated_main}"
+        );
+
+        let test_output = run_test(&test_path)?;
+        assert!(
+            test_output.status.success(),
+            "expected incan test to execute a typed result from the mixed expression vocab declaration.\nstdout:\n{}\nstderr:\n{}",
             String::from_utf8_lossy(&test_output.stdout),
             String::from_utf8_lossy(&test_output.stderr)
         );

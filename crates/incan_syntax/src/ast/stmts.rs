@@ -226,6 +226,11 @@ pub struct SurfaceStmt {
 /// Parser metadata describing how a raw vocab block keyword was resolved.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VocabKeywordBinding {
+    /// Whether the rich imported DSL metadata declares this nested block as a clause owned by its parent declaration.
+    ///
+    /// Low-level keyword surface kinds only select parser entrypoints. The public vocab AST must preserve this richer
+    /// ownership fact so desugaring does not confuse compatibility registrations with nested declarations.
+    pub is_declaration_owned_clause: bool,
     pub dependency_key: String,
     pub activation_namespace: String,
     pub surface_kind: incan_vocab::KeywordSurfaceKind,
