@@ -58,6 +58,8 @@ static PREPARED_BUILTIN_STDLIB_ARTIFACTS: LazyLock<Mutex<HashSet<PathBuf>>> =
 pub(crate) const INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV: &str = "INCAN_INTERNAL_LIBRARY_ARTIFACT_ONLY";
 /// Internal marker selecting canonical local module paths while compiling the built-in stdlib artifact itself.
 pub(crate) const INTERNAL_BUILTIN_STDLIB_ARTIFACT_BUILD_ENV: &str = "INCAN_INTERNAL_BUILTIN_STDLIB_ARTIFACT_BUILD";
+/// Internal path override for the Cargo.lock payload used while producing a compiler-owned artifact.
+pub(crate) const INTERNAL_CARGO_LOCK_PAYLOAD_PATH_ENV: &str = "INCAN_INTERNAL_CARGO_LOCK_PAYLOAD_PATH";
 
 /// One compiler diagnostic with enough source context for either human or machine-readable rendering.
 #[derive(Debug, Clone)]
@@ -223,19 +225,23 @@ fn builtin_stdlib_artifact_builder_executable(
     })
 }
 
-/// Seed a development built-in stdlib artifact from its enclosing workspace lockfile.
+/// Find the verified workspace Cargo.lock available to a development built-in stdlib artifact.
 ///
 /// A standalone artifact crate otherwise resolves its own newest compatible
 /// versions, which can differ from the compiler workspace's verified offline
 /// cache. Installed SDK layouts need not contain a workspace lockfile, so they
 /// deliberately retain normal Cargo resolution.
-fn seed_builtin_stdlib_artifact_workspace_lock(stdlib_root: &Path, artifact_root: &Path) -> CliResult<()> {
-    let Some(workspace_lock) = stdlib_root
+fn builtin_stdlib_artifact_workspace_lock(stdlib_root: &Path) -> Option<PathBuf> {
+    stdlib_root
         .ancestors()
         .skip(1)
         .map(|parent| parent.join("Cargo.lock"))
         .find(|path| path.is_file())
-    else {
+}
+
+/// Seed a development built-in stdlib artifact from the verified enclosing workspace lockfile.
+fn seed_builtin_stdlib_artifact_workspace_lock(workspace_lock: Option<&Path>, artifact_root: &Path) -> CliResult<()> {
+    let Some(workspace_lock) = workspace_lock else {
         return Ok(());
     };
     fs::create_dir_all(artifact_root).map_err(|error| {
@@ -244,13 +250,21 @@ fn seed_builtin_stdlib_artifact_workspace_lock(stdlib_root: &Path, artifact_root
             artifact_root.display()
         ))
     })?;
-    fs::copy(&workspace_lock, artifact_root.join("Cargo.lock")).map_err(|error| {
+    fs::copy(workspace_lock, artifact_root.join("Cargo.lock")).map_err(|error| {
         CliError::failure(format!(
             "failed to seed compiled built-in stdlib artifact lock from {}: {error}",
             workspace_lock.display()
         ))
     })?;
     Ok(())
+}
+
+/// Return whether a cached artifact already carries the active development workspace lock closure.
+fn builtin_stdlib_artifact_lock_is_current(workspace_lock: Option<&Path>, artifact_root: &Path) -> bool {
+    let Some(workspace_lock) = workspace_lock else {
+        return true;
+    };
+    fs::read(workspace_lock).ok() == fs::read(artifact_root.join("Cargo.lock")).ok()
 }
 
 /// Build the local built-in stdlib library artifact when a consumer imports a migrated module.
@@ -269,7 +283,12 @@ fn prepare_builtin_stdlib_artifact() -> CliResult<LibraryArtifactMetadata> {
         stdlib::BUILTIN_STDLIB_ARTIFACT_CRATE,
         artifact_root,
     );
-    if metadata.manifest_path.is_file() && metadata.cargo_toml_path.is_file() && metadata.crate_lib_path.is_file() {
+    let workspace_lock = builtin_stdlib_artifact_workspace_lock(&stdlib_root);
+    if metadata.manifest_path.is_file()
+        && metadata.cargo_toml_path.is_file()
+        && metadata.crate_lib_path.is_file()
+        && builtin_stdlib_artifact_lock_is_current(workspace_lock.as_deref(), &metadata.crate_root)
+    {
         return Ok(metadata);
     }
 
@@ -285,7 +304,7 @@ fn prepare_builtin_stdlib_artifact() -> CliResult<LibraryArtifactMetadata> {
         }
     }
 
-    seed_builtin_stdlib_artifact_workspace_lock(&stdlib_root, &metadata.crate_root)?;
+    seed_builtin_stdlib_artifact_workspace_lock(workspace_lock.as_deref(), &metadata.crate_root)?;
 
     eprintln!(
         "Preparing compiled built-in stdlib artifact with `incan build --lib` in {}",
@@ -297,20 +316,23 @@ fn prepare_builtin_stdlib_artifact() -> CliResult<LibraryArtifactMetadata> {
         .filter(|path| !path.is_empty())
         .map(PathBuf::from);
     let executable = builtin_stdlib_artifact_builder_executable(cargo_test_binary, current_exe);
-    let status = Command::new(executable)
+    let mut command = Command::new(executable);
+    command
         .args(["build", "--lib"])
         .current_dir(&stdlib_root)
         .env_remove(INTERNAL_MANIFEST_OVERRIDE_ENV)
         .env_remove(INTERNAL_PROJECT_ROOT_OVERRIDE_ENV)
         .env(INTERNAL_BUILTIN_STDLIB_ARTIFACT_BUILD_ENV, "1")
-        .env(INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, "1")
-        .status()
-        .map_err(|error| {
-            CliError::failure(format!(
-                "failed to run `incan build --lib` for built-in stdlib artifact at {}: {error}",
-                stdlib_root.display()
-            ))
-        })?;
+        .env(INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, "1");
+    if let Some(workspace_lock) = workspace_lock {
+        command.env(INTERNAL_CARGO_LOCK_PAYLOAD_PATH_ENV, workspace_lock);
+    }
+    let status = command.status().map_err(|error| {
+        CliError::failure(format!(
+            "failed to run `incan build --lib` for built-in stdlib artifact at {}: {error}",
+            stdlib_root.display()
+        ))
+    })?;
     if !status.success() {
         return Err(CliError::failure(format!(
             "failed to prepare compiled built-in stdlib artifact at {}",
@@ -2570,12 +2592,36 @@ mod tests {
         fs::create_dir_all(&stdlib_root)?;
         fs::write(workspace.join("Cargo.lock"), "workspace lock payload")?;
 
-        seed_builtin_stdlib_artifact_workspace_lock(&stdlib_root, &artifact_root)?;
+        let workspace_lock = builtin_stdlib_artifact_workspace_lock(&stdlib_root);
+        seed_builtin_stdlib_artifact_workspace_lock(workspace_lock.as_deref(), &artifact_root)?;
 
         assert_eq!(
             fs::read_to_string(artifact_root.join("Cargo.lock"))?,
             "workspace lock payload"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn builtin_stdlib_artifact_lock_currentness_rejects_a_stale_cached_closure()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = tempfile::tempdir()?;
+        let workspace_lock = temp_dir.path().join("Cargo.lock");
+        let artifact_root = temp_dir.path().join("artifact");
+        fs::create_dir_all(&artifact_root)?;
+        fs::write(&workspace_lock, "workspace lock")?;
+        fs::write(artifact_root.join("Cargo.lock"), "stale artifact lock")?;
+
+        assert!(!builtin_stdlib_artifact_lock_is_current(
+            Some(&workspace_lock),
+            &artifact_root
+        ));
+        fs::copy(&workspace_lock, artifact_root.join("Cargo.lock"))?;
+        assert!(builtin_stdlib_artifact_lock_is_current(
+            Some(&workspace_lock),
+            &artifact_root
+        ));
+        assert!(builtin_stdlib_artifact_lock_is_current(None, &artifact_root));
         Ok(())
     }
 

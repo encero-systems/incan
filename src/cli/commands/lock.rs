@@ -24,10 +24,10 @@ use crate::lockfile::{CargoFeatureSelection, IncanLock, compute_deps_fingerprint
 use crate::manifest::ProjectManifest;
 
 use super::common::{
-    CargoPolicy, ProjectRequirements, build_source_map, cargo_command_flags, cargo_lockfile_flags, collect_modules,
-    collect_project_requirements, collect_rust_dependency_uses, enforce_project_toolchain_constraint,
-    format_dependency_error, merge_project_requirement_dependencies, merge_project_requirements,
-    merge_resolved_dependencies,
+    CargoPolicy, INTERNAL_BUILTIN_STDLIB_ARTIFACT_BUILD_ENV, INTERNAL_CARGO_LOCK_PAYLOAD_PATH_ENV, ProjectRequirements,
+    build_source_map, cargo_command_flags, cargo_lockfile_flags, collect_modules, collect_project_requirements,
+    collect_rust_dependency_uses, enforce_project_toolchain_constraint, format_dependency_error,
+    merge_project_requirement_dependencies, merge_project_requirements, merge_resolved_dependencies,
 };
 #[cfg(feature = "rust_inspect")]
 use super::common::{collect_rust_inspect_query_paths, ensure_rust_inspect_workspace, prewarm_rust_inspect_workspace};
@@ -134,6 +134,20 @@ pub(crate) struct LockResolutionRequest<'a> {
     pub cargo_policy: &'a CargoPolicy,
     #[cfg(feature = "rust_inspect")]
     pub rust_inspect_query_paths: &'a [String],
+}
+
+/// Read the compiler-owned Cargo.lock payload override used while building an internal artifact.
+fn cargo_lock_payload_override(path: Option<PathBuf>) -> CliResult<Option<String>> {
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    let payload = fs::read_to_string(&path).map_err(|error| {
+        CliError::failure(format!(
+            "failed to read internal Cargo.lock payload override {}: {error}",
+            path.display()
+        ))
+    })?;
+    Ok(Some(crate::lockfile::normalize_cargo_lock_payload(&payload)))
 }
 
 #[cfg(feature = "rust_inspect")]
@@ -268,6 +282,16 @@ pub(crate) fn resolve_lock_payload(request: LockResolutionRequest<'_>) -> CliRes
 
     if manifest.is_none() {
         return Ok(None);
+    }
+
+    if std::env::var_os(INTERNAL_BUILTIN_STDLIB_ARTIFACT_BUILD_ENV).is_some()
+        && let Some(payload) = cargo_lock_payload_override(
+            std::env::var_os(INTERNAL_CARGO_LOCK_PAYLOAD_PATH_ENV)
+                .filter(|path| !path.is_empty())
+                .map(PathBuf::from),
+        )?
+    {
+        return Ok(Some(payload));
     }
 
     let project_context = if let Some(manifest) = manifest {
@@ -1173,6 +1197,19 @@ mod tests {
         assert!(!parse_lock_dependency_preheat_env(Some("0")));
         assert!(!parse_lock_dependency_preheat_env(Some("false")));
         assert!(!parse_lock_dependency_preheat_env(Some(" off ")));
+    }
+
+    #[test]
+    fn cargo_lock_payload_override_normalizes_the_supplied_workspace_lock() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = tempfile::tempdir()?;
+        let lock_path = temp_dir.path().join("Cargo.lock");
+        fs::write(&lock_path, "version = 4\r\n")?;
+
+        assert_eq!(
+            cargo_lock_payload_override(Some(lock_path))?,
+            Some("version = 4\n".to_string())
+        );
+        Ok(())
     }
 
     #[test]
