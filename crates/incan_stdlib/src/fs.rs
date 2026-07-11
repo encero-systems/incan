@@ -20,6 +20,7 @@ pub struct RawFileLock {
 }
 
 #[cfg(unix)]
+/// Derive the stable sibling lock-file location for one protected logical path.
 fn lock_path(path: &str) -> io::Result<PathBuf> {
     let protected = Path::new(path);
     let parent = protected.parent().unwrap_or_else(|| Path::new("."));
@@ -34,6 +35,7 @@ fn lock_path(path: &str) -> io::Result<PathBuf> {
 }
 
 #[cfg(unix)]
+/// Open or create the persistent sibling file that owns an advisory lock identity.
 fn open_lock(path: &str) -> io::Result<File> {
     OpenOptions::new()
         .read(true)
@@ -44,6 +46,7 @@ fn open_lock(path: &str) -> io::Result<File> {
 }
 
 #[cfg(unix)]
+/// Acquire the requested host advisory lock and retain its owning descriptor.
 fn lock(path: &str, operation: FlockOperation) -> io::Result<RawFileLock> {
     let file = open_lock(path)?;
     flock(&file, operation)?;
@@ -126,6 +129,7 @@ mod tests {
     const LOCK_READY_ENV: &str = "INCAN_FS_LOCK_TEST_READY";
     const LOCK_MODE_ENV: &str = "INCAN_FS_LOCK_TEST_MODE";
 
+    /// Produce a collision-resistant temporary test-directory suffix.
     fn timestamp_suffix() -> Result<u128, io::Error> {
         Ok(SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -206,6 +210,7 @@ mod tests {
     }
 
     #[test]
+    /// Confirms an exclusive lock held by another process rejects a second exclusive claim.
     fn exclusive_lock_rejects_other_process() -> Result<(), Box<dyn std::error::Error>> {
         let root = env::temp_dir().join(format!(
             "incan_stdlib_fs_lock_{}_{}",
