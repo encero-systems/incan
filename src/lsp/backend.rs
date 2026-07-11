@@ -44,8 +44,8 @@ use crate::frontend::contract_metadata::{
 use crate::frontend::diagnostics::{CompileError, DiagnosticPhase, phase_for_typecheck_span};
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::{SourceModuleImportResolution, resolve_program_source_imports};
-use crate::frontend::symbols::{ResolvedType, SymbolKind as FrontendSymbolKind, TypeInfo};
-use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
+use crate::frontend::symbols::{FunctionInfo, ResolvedType, SymbolKind as FrontendSymbolKind, TypeInfo};
+use crate::frontend::typechecker::stdlib_loader::{StdlibAstCache, StdlibFunctionLspMetadata};
 use crate::frontend::{lexer, parser, typechecker};
 use crate::library_manifest::{
     EnumValueExport, EnumValueTypeExport, FieldExport, ParamExport, ParamKindExport, ReceiverExport, TypeBoundExport,
@@ -2977,6 +2977,7 @@ fn classmethod_cls_detail(context: &ClassmethodContext) -> String {
 enum StdlibPublicItemKind {
     Class,
     Enum,
+    Function,
     Model,
     Type,
     Trait,
@@ -2996,6 +2997,7 @@ fn stdlib_item_kind_label(kind: StdlibPublicItemKind) -> &'static str {
     match kind {
         StdlibPublicItemKind::Class => "stdlib class",
         StdlibPublicItemKind::Enum => "stdlib enum",
+        StdlibPublicItemKind::Function => "stdlib function",
         StdlibPublicItemKind::Model => "stdlib model",
         StdlibPublicItemKind::Type => "stdlib type",
         StdlibPublicItemKind::Trait => "stdlib trait",
@@ -3007,6 +3009,7 @@ fn stdlib_item_completion_kind(kind: StdlibPublicItemKind) -> CompletionItemKind
     match kind {
         StdlibPublicItemKind::Class => CompletionItemKind::CLASS,
         StdlibPublicItemKind::Enum => CompletionItemKind::ENUM,
+        StdlibPublicItemKind::Function => CompletionItemKind::FUNCTION,
         StdlibPublicItemKind::Model => CompletionItemKind::STRUCT,
         StdlibPublicItemKind::Type => CompletionItemKind::TYPE_PARAMETER,
         StdlibPublicItemKind::Trait => CompletionItemKind::INTERFACE,
@@ -3026,15 +3029,38 @@ fn stdlib_text_segments_match(actual: &[&str], expected: &[&str]) -> bool {
 /// Load public stdlib item metadata for one module from the stdlib source cache.
 fn stdlib_public_items_for_module(module_segments: &[String]) -> Vec<StdlibPublicItemMetadata> {
     let mut cache = StdlibAstCache::new();
+    let metadata = cache.lsp_metadata(module_segments);
     let mut items = Vec::new();
-    for (name, info) in cache.list_types(module_segments) {
+    let mut functions = std::collections::BTreeMap::<String, Vec<StdlibFunctionLspMetadata>>::new();
+    for overload in metadata.functions {
+        functions.entry(overload.name.clone()).or_default().push(overload);
+    }
+    for (name, overloads) in functions {
+        let signatures = overloads
+            .iter()
+            .map(|overload| stdlib_function_signature(&name, &overload.info))
+            .collect::<Vec<_>>();
+        let detail = match signatures.as_slice() {
+            [signature] => signature.clone(),
+            _ => format!("{name}: {} stdlib function overloads", signatures.len()),
+        };
+        let docs = stdlib_function_docs(&name, &overloads);
+        items.push(StdlibPublicItemMetadata {
+            module_segments: module_segments.to_vec(),
+            name,
+            kind: StdlibPublicItemKind::Function,
+            detail,
+            docs,
+        });
+    }
+    for (name, info) in metadata.types {
         let kind = match info {
             TypeInfo::Class(_) => StdlibPublicItemKind::Class,
             TypeInfo::Enum(_) => StdlibPublicItemKind::Enum,
             TypeInfo::Model(_) => StdlibPublicItemKind::Model,
             TypeInfo::Newtype(_) | TypeInfo::TypeAlias | TypeInfo::Builtin => StdlibPublicItemKind::Type,
         };
-        let docs = cache.lookup_type_docstring(module_segments, &name);
+        let docs = metadata.type_docstrings.get(&name).cloned();
         items.push(StdlibPublicItemMetadata {
             module_segments: module_segments.to_vec(),
             detail: stdlib_type_detail(&name, kind),
@@ -3043,10 +3069,13 @@ fn stdlib_public_items_for_module(module_segments: &[String]) -> Vec<StdlibPubli
             kind,
         });
     }
-    for (name, _info) in cache.list_traits(module_segments) {
-        let docs = cache
-            .lookup_trait_decl(module_segments, &name)
-            .and_then(|decl| decl.docstring);
+    let trait_docstrings = metadata
+        .trait_declarations
+        .into_iter()
+        .filter_map(|(name, declaration)| declaration.docstring.map(|docstring| (name, docstring)))
+        .collect::<HashMap<_, _>>();
+    for (name, _info) in metadata.traits {
+        let docs = trait_docstrings.get(&name).cloned();
         items.push(StdlibPublicItemMetadata {
             module_segments: module_segments.to_vec(),
             detail: stdlib_type_detail(&name, StdlibPublicItemKind::Trait),
@@ -3057,6 +3086,116 @@ fn stdlib_public_items_for_module(module_segments: &[String]) -> Vec<StdlibPubli
     }
     items.sort_by(|left, right| left.name.cmp(&right.name));
     items
+}
+
+/// Render every stdlib overload with the docstring from its matching source declaration.
+fn stdlib_function_docs(name: &str, overloads: &[StdlibFunctionLspMetadata]) -> String {
+    let mut has_docstring = false;
+    let sections = overloads
+        .iter()
+        .map(|overload| {
+            let signature = stdlib_function_signature(name, &overload.info);
+            let mut section = format!("```incan\n{signature}\n```");
+            if let Some(docstring) = overload.declaration.as_ref().and_then(stdlib_function_docstring) {
+                let docstring = docstring.trim();
+                if !docstring.is_empty() {
+                    has_docstring = true;
+                    section.push_str("\n\n");
+                    section.push_str(docstring);
+                }
+            }
+            section
+        })
+        .collect::<Vec<_>>();
+    if has_docstring {
+        sections.join("\n\n---\n\n")
+    } else {
+        format!(
+            "{}\n\nPublic stdlib function exported by this module.",
+            sections.join("\n\n---\n\n")
+        )
+    }
+}
+
+/// Extract a source function's leading string-literal docstring for stdlib tooling.
+fn stdlib_function_docstring(function: &crate::frontend::ast::FunctionDecl) -> Option<String> {
+    let first = function.body.first()?;
+    let Statement::Expr(expr) = &first.node else {
+        return None;
+    };
+    let Expr::Literal(crate::frontend::ast::Literal::String(docstring)) = &expr.node else {
+        return None;
+    };
+    Some(docstring.clone())
+}
+
+/// Render a source-facing signature from checked stdlib function metadata.
+fn stdlib_function_signature(name: &str, info: &FunctionInfo) -> String {
+    let mut signature = String::new();
+    if info.is_async {
+        signature.push_str("async ");
+    }
+    signature.push_str("def ");
+    signature.push_str(name);
+    if !info.type_params.is_empty() {
+        let params = info
+            .type_params
+            .iter()
+            .map(|type_param| {
+                let bounds = info
+                    .type_param_bound_details
+                    .get(type_param)
+                    .into_iter()
+                    .flatten()
+                    .map(|bound| {
+                        if bound.type_args.is_empty() {
+                            bound.name.clone()
+                        } else {
+                            format!(
+                                "{}[{}]",
+                                bound.name,
+                                bound
+                                    .type_args
+                                    .iter()
+                                    .map(ToString::to_string)
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            )
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                if bounds.is_empty() {
+                    type_param.clone()
+                } else {
+                    format!("{type_param} with {}", bounds.join(" + "))
+                }
+            })
+            .collect::<Vec<_>>();
+        signature.push('[');
+        signature.push_str(&params.join(", "));
+        signature.push(']');
+    }
+    signature.push('(');
+    signature.push_str(
+        &info
+            .params
+            .iter()
+            .map(|param| {
+                let prefix = match param.kind {
+                    ParamKind::Normal => "",
+                    ParamKind::RestPositional => "*",
+                    ParamKind::RestKeyword => "**",
+                };
+                let name = param.name.as_deref().unwrap_or("value");
+                let default = if param.has_default { " = ..." } else { "" };
+                format!("{prefix}{name}: {}{default}", param.ty)
+            })
+            .collect::<Vec<_>>()
+            .join(", "),
+    );
+    signature.push_str(") -> ");
+    signature.push_str(&info.return_type.to_string());
+    signature
 }
 
 /// Return the completion detail text for a stdlib public type or trait.
@@ -5857,6 +5996,21 @@ mod completion_tests {
     }
 
     #[test]
+    fn stdlib_module_completions_include_std_environ() -> Result<(), String> {
+        let items = stdlib_module_completions("from std.en")
+            .ok_or_else(|| "expected stdlib completions for `from std.en`".to_string())?;
+        assert!(
+            items.iter().any(|item| {
+                item.label == "environ"
+                    && item.kind == Some(CompletionItemKind::MODULE)
+                    && item.detail.as_deref() == Some("std.environ module")
+            }),
+            "expected std.environ root-module completion: {items:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn stdlib_collections_import_completions_include_ordinal_map_surface() -> Result<(), String> {
         let items = stdlib_import_item_completions("from std.collections import Ord")
             .ok_or_else(|| "expected std.collections item completions".to_string())?;
@@ -5895,6 +6049,107 @@ mod completion_tests {
             markdown.contains("lookup verifies canonical key bytes"),
             "expected exact lookup detail in hover markdown: {markdown}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn stdlib_environ_completions_cover_the_public_module_surface() -> Result<(), String> {
+        let items = stdlib_import_item_completions("from std.environ import ")
+            .ok_or_else(|| "expected std.environ item completions".to_string())?;
+        assert_eq!(items.len(), 6, "expected one completion per public item: {items:?}");
+        let completions = items
+            .iter()
+            .map(|item| (item.label.as_str(), item.kind))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(
+            completions.keys().copied().collect::<Vec<_>>(),
+            vec![
+                "EnvironError",
+                "EnvironErrorKind",
+                "get",
+                "get_as",
+                "get_optional",
+                "get_or"
+            ]
+        );
+        assert_eq!(completions.get("EnvironError"), Some(&Some(CompletionItemKind::CLASS)));
+        assert_eq!(
+            completions.get("EnvironErrorKind"),
+            Some(&Some(CompletionItemKind::ENUM))
+        );
+        for function in ["get", "get_as", "get_optional", "get_or"] {
+            assert_eq!(
+                completions.get(function),
+                Some(&Some(CompletionItemKind::FUNCTION)),
+                "expected {function} function completion: {items:?}"
+            );
+        }
+        let get_as = items
+            .iter()
+            .find(|item| item.label == "get_as")
+            .ok_or_else(|| "missing get_as completion".to_string())?;
+        assert_eq!(get_as.detail.as_deref(), Some("get_as: 2 stdlib function overloads"));
+        Ok(())
+    }
+
+    #[test]
+    fn stdlib_environ_get_as_hover_shows_both_signatures() -> Result<(), String> {
+        let source = "from std.environ import get_as\n";
+        let ast = parse_source(source)?;
+        let start = source
+            .find("get_as")
+            .ok_or_else(|| "expected get_as in fixture".to_string())?;
+        let (markdown, span) =
+            stdlib_import_item_hover(&ast, source, start).ok_or_else(|| "expected get_as import hover".to_string())?;
+        assert_eq!(span, Span::new(start, start + "get_as".len()));
+        assert!(
+            markdown.contains("def get_as[T with TryFrom[str]](key: str) -> Result[Option[T], EnvironError]"),
+            "expected optional get_as signature: {markdown}"
+        );
+        assert!(
+            markdown.contains("def get_as[T with TryFrom[str]](key: str, default: T) -> Result[T, EnvironError]"),
+            "expected defaulted get_as signature: {markdown}"
+        );
+        assert!(
+            markdown.contains("conversion failures"),
+            "expected source docstring in get_as hover: {markdown}"
+        );
+        assert!(
+            markdown.contains("never fall back to `default`"),
+            "expected second overload docstring in get_as hover: {markdown}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn stdlib_environ_error_hovers_include_type_kind_and_docs() -> Result<(), String> {
+        for (name, kind, docs) in [
+            ("EnvironError", "stdlib class", "observed environment value"),
+            (
+                "EnvironErrorKind",
+                "stdlib enum",
+                "Stable categories for environment read failures",
+            ),
+        ] {
+            let source = format!("from std.environ import {name}\n");
+            let ast = parse_source(&source)?;
+            let start = source.find(name).ok_or_else(|| format!("expected {name} in fixture"))?;
+            let (markdown, span) = stdlib_import_item_hover(&ast, &source, start)
+                .ok_or_else(|| format!("expected {name} import hover"))?;
+            assert_eq!(span, Span::new(start, start + name.len()));
+            assert!(
+                markdown.contains(&format!("from std.environ import {name}")),
+                "expected import signature in {name} hover: {markdown}"
+            );
+            assert!(
+                markdown.contains(&format!("*{kind}*")),
+                "expected {kind} label in {name} hover: {markdown}"
+            );
+            assert!(
+                markdown.contains(docs),
+                "expected source docs in {name} hover: {markdown}"
+            );
+        }
         Ok(())
     }
 
