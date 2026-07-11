@@ -1,56 +1,91 @@
 # `std.environ`
 
-`std.environ` reads current-process environment variables at runtime. The current surface is read-only and centered on Unicode string reads:
+`std.environ` provides read-only runtime access to current-process environment variables as Unicode strings or typed values converted through `TryFrom[str]`. Structured errors distinguish missing, invalid, non-Unicode, and malformed values without exposing observed environment contents.
 
 ```incan
 from std.environ import get, get_optional, get_or, get_as
-from std.traits.convert import TryFrom
 
 token = get("API_TOKEN")?
 mode = get_optional("APP_MODE").unwrap_or("dev")
 region = get_or("APP_REGION", "eu-west-1")
+port = get_as[int]("PORT", default=8080)?
 ```
 
-## Functions
+## String reads
 
-`get(key: str) -> Result[str, EnvironError]` returns a required Unicode value or an `EnvironError`.
+`get(key: str) -> Result[str, EnvironError]` returns a required Unicode value. Missing keys, empty keys, and non-Unicode host values return distinct errors.
 
-`get_optional(key: str) -> Option[str]` returns `Some(value)` for a present Unicode value and `None` otherwise. Use `get()` when code needs to distinguish missing variables from invalid keys or non-Unicode host values.
+`get_optional(key: str) -> Option[str]` returns `Some(value)` for a present Unicode value and `None` for missing, invalid-key, or non-Unicode reads. Use `get()` when code needs the precise failure category.
 
-`get_or(key: str, default: str) -> str` returns the present Unicode value or `default`.
+`get_or(key: str, default: str) -> str` returns the present Unicode value or `default` when no Unicode value is available. It has the same deliberately lossy error behavior as `get_optional()`.
 
-`get_as[T with TryFrom[str]](key: str) -> Result[Option[T], EnvironError]` reads a Unicode value and converts it through the target type's `TryFrom[str]` implementation. It returns `Ok(None)` when the key is absent and `Err(EnvironError)` when the key is invalid, the host value is not Unicode, or the target conversion rejects the present value.
+## Typed reads
+
+`get_as[T with TryFrom[str]](key: str) -> Result[Option[T], EnvironError]` returns `Ok(None)` when the key is absent. A present value is converted through `TryFrom[str]`; parse or validation failure returns `invalid_value`.
+
+`get_as[T with TryFrom[str]](key: str, default: T) -> Result[T, EnvironError]` returns the default only when the key is absent. The default can be positional or named:
+
+```incan
+from std.environ import get_as
+
+port = get_as[int]("PORT", 8080)?
+timeout = get_as[float]("TIMEOUT", default=2.5)?
+```
+
+A malformed present value never falls back to the default. For example, `PORT=not-a-number` returns `invalid_value` even when a default is supplied.
+
+The compiler provides `TryFrom[str]` conversion for `str`, `bool`, `int`, `float`, and the exact signed, unsigned, and binary floating-point numeric types. Boolean values use the canonical `true` and `false` spellings. Numeric values follow the lexical and range rules of their target type.
+
+User-defined models, classes, enums, and newtypes can opt in by implementing `TryFrom[str]` explicitly:
 
 ```incan
 from std.environ import get_as
 from std.traits.convert import TryFrom
 
-model Port with TryFrom[str]:
-    value: int
+model Deployment with TryFrom[str]:
+    name: str
 
     @classmethod
     def try_from(cls, value: str) -> Result[Self, str]:
-        port = int(value)
-        if port < 1 or port > 65535:
-            return Err("port out of range")
-        return Ok(Port(value=port))
+        if len(value) == 0:
+            return Err("deployment must not be empty")
+        return Ok(Deployment(name=value))
 
 
-port: Option[Port] = get_as[Port]("PORT")?
+deployment = get_as[Deployment]("DEPLOYMENT")?
 ```
+
+## Validated newtypes
+
+Concrete newtypes compose automatically when their underlying type supports `TryFrom[str]`. If a newtype defines `from_underlying`, typed reads use that checked constructor after parsing:
+
+```incan
+from std.environ import get_as
+
+type Port = newtype int:
+    def from_underlying(value: int) -> Result[Self, ValidationError]:
+        if value < 1 or value > 65535:
+            return Err(ValidationError("port must be between 1 and 65535"))
+        return Ok(Port(value))
+
+
+port = get_as[Port]("PORT", default=8080)?
+```
+
+`PORT=70000` fails validation. When `PORT` is absent, the integer default is converted through the ordinary checked newtype coercion path, so an invalid default does not bypass `from_underlying`.
 
 ## Errors
 
-`EnvironError` has a stable `kind()` / `kind_name()` category, the requested `key`, and a redacted `detail` message. The current categories are:
+`EnvironError` exposes `kind()` and `kind_name()`, the requested `key`, and a redacted `detail` message. The stable categories are:
 
 - `missing`: the key is not present.
 - `invalid_key`: the key is empty.
 - `invalid_value`: a typed read could not parse or validate the present value.
 - `not_unicode`: the host value cannot be represented as Unicode text.
-- `other`: reserved for unexpected host failures.
+- `other`: an unexpected host failure.
 
-Error details include the key name where useful, but never include the observed environment value.
+Error details may include the key and expected target type. They never include the observed environment value.
 
-## Scope
+## Runtime scope
 
-The current `get_as` surface is trait-based. It supports targets that explicitly implement `TryFrom[str]`; it does not yet provide the full RFC 089 primitive parsing and defaulted overload surface such as `get_as[int]("PORT", default=8080)`. Bytes-oriented access and current-process environment mutation are also outside the current surface.
+Environment reads are runtime operations and are rejected in `const` initializers. The module does not mutate the current process environment and does not expose a byte-oriented host environment API. Use `std.process` environment controls when configuring child processes.
