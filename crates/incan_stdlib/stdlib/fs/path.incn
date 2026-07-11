@@ -1039,6 +1039,8 @@ pub def _io_error(path: Path, message: str) -> IoError:
     """
     if message.contains("No such file") or message.contains("not found"):
         return _fs_error(path, "not_found", message)
+    elif message.contains("unsupported") or message.contains("Unsupported"):
+        return _fs_error(path, "unsupported", message)
     elif message.contains("cross-device") or message.contains("Cross-device"):
         return _fs_error(path, "cross_device", message)
     elif message.contains("Permission"):

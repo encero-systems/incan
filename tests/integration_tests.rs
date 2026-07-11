@@ -3200,6 +3200,18 @@ def run() -> Result[None, IoError]:
     staged.replace(published)?
     root.sync_directory()?
     println(published.read_text("utf-8", "strict")?)
+    match published.sync_directory():
+        Ok(_) => println("bad")
+        Err(err) => println(err.kind)
+    rejected_staged = root.joinpath("rejected.next")
+    rejected_target = root.joinpath("rejected-directory")
+    rejected_staged.write_text("new", "utf-8", "strict", None)?
+    rejected_target.mkdir(false, false)?
+    match rejected_staged.replace(rejected_target):
+        Ok(_) => println("bad")
+        Err(err) => println(err.kind)
+    println(rejected_target.is_dir())
+    println(rejected_staged.exists())
     held_lock = published.lock_exclusive()?
     match published.try_lock_exclusive()?:
         Some(_) => println("bad")
@@ -3290,6 +3302,10 @@ def main() -> None:
                 "true",
                 "true",
                 "published",
+                "invalid_input",
+                "invalid_input",
+                "true",
+                "true",
                 "contended",
                 "hello",
                 "world",

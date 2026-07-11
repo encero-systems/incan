@@ -62,7 +62,7 @@ staged_file = staged.open("rb")?
 staged_file.sync()?
 
 staged.replace(target)?
-target.parent.sync_directory()?
+target.parent().sync_directory()?
 ```
 
 When more than one command can publish the same logical state, cooperating publishers acquire an exclusive lock before preparing and replacing it. Readers that need a stable multi-step view may acquire a shared lock. The guard is released when it leaves scope; programs must keep the guard live for the complete critical section.
@@ -95,7 +95,7 @@ The file handle and guard follow ordinary scope-based resource lifetime. Applica
 ### Durability requests
 
 - `Path.sync_directory() -> Result[None, IoError]` must request synchronization of the directory represented by the path. It must fail with `IoError(kind="invalid_input")` when the receiver is not a directory.
-- A publisher that requires the strongest local crash-durability request must write and synchronize the staged file, call `replace`, then call `target.parent.sync_directory()` in that order.
+- A publisher that requires the strongest local crash-durability request must write and synchronize the staged file, call `replace`, then call `target.parent().sync_directory()` in that order.
 - A successful `replace` guarantees atomic visibility only. It must not claim that replacement contents or the directory entry have survived a power loss unless the caller has requested the relevant synchronization operations and the host reports success.
 - A successful synchronization is a request to the host filesystem, not a guarantee against defective hardware, kernel bugs, remote filesystem semantics, or power-loss behavior outside the host's documented durability model.
 
@@ -203,22 +203,22 @@ Implementations should map the public contract to the host's native replace, syn
 
 ### Stdlib / Runtime
 
-- [ ] Provide the public directory-synchronization surface.
-- [ ] Provide shared, exclusive, and non-blocking advisory file-lock guards.
-- [ ] Implement non-destructive same-filesystem replacement.
-- [ ] Preserve typed unsupported and cross-device failures without destructive fallback.
+- [x] Provide the public directory-synchronization surface.
+- [x] Provide shared, exclusive, and non-blocking advisory file-lock guards.
+- [x] Implement non-destructive same-filesystem replacement.
+- [x] Preserve typed unsupported and cross-device failures without destructive fallback.
 
 ### Tests
 
-- [ ] Cover complete old-or-new reader visibility during replacement.
-- [ ] Cover target preservation when replacement fails.
-- [ ] Cover directory synchronization errors and supported-host behavior.
-- [ ] Cover multi-process shared/exclusive lock contention on Linux and macOS.
+- [x] Cover complete old-or-new reader visibility during replacement.
+- [x] Cover target preservation when replacement fails.
+- [x] Cover directory synchronization errors and supported-host behavior.
+- [x] Cover multi-process shared/exclusive lock contention on Linux and macOS.
 
 ### Docs
 
-- [ ] Update the user-facing `std.fs` reference with the publication recipe and migration guidance.
-- [ ] Add a 0.5 release-note entry.
+- [x] Update the user-facing `std.fs` reference with the publication recipe and migration guidance.
+- [x] Add a 0.5 release-note entry.
 
 ## Design Decisions
 
