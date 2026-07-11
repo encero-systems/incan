@@ -46,6 +46,10 @@ Reference document for AI agents. These are hard-won insights from past RFC impl
 - **Test both `From` and `RustFrom` import forms** when changing import handling — they share `parse_import_items(rust_item_names)`; only `RustFrom` passes `true` so Rust symbols may be Incan keywords (e.g. `import type as proto_type`). Incan `from m import ...` keeps `rust_item_names=false`.
 - **Vocab packages need full toolchain tests**: scoped vocab fixes must be verified through parse/check, `fmt`, `fmt --check`, `incan test`, package consumers, and nested consumers; formatter and test-runner activation can drift from ordinary `--check` even when the desugarer itself is correct. (Issues #724/#727/#729/#730/#735/#756, v0.3)
 
+## Agent orchestration
+
+- **Loop identity gates resumes**: Ralph-loop state must record the active repo, issue/RFC/milestone allowlist, and verification-only downstream repos; on resume, filter stale slices before scheduling work or consumer-repo validation can turn into unrelated implementation. (Incan 0.5 Ralph-loop scope drift, July 2026)
+
 ## Parser and lexer patterns
 
 - **Parser warning infrastructure**: `Parser.warnings` stores non-fatal warnings as `Vec<CompileError>`. On success they move into `Program.warnings`; on error they fold into the error vec with `ErrorKind::Warning`. This is the canonical way to add syntax nudges without blocking compilation.
