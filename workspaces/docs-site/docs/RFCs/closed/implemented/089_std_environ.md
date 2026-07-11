@@ -302,7 +302,7 @@ This feature is additive. Existing code using Rust interop, project lifecycle en
 
 ## Implementation architecture
 
-*(Non-normative.)* The Incan source module should own the public API, error model, and missing/default control flow. The host boundary should only read current-process Unicode values and return stable, non-secret failure categories. `get_as[T]` should reuse the source-owned `TryFrom[str]` contract, with compiler-provided implementations for supported primitives and validated newtypes. Newtype conversion should reuse RFC 017 checked-construction metadata rather than adding an environment-specific validation path.
+*(Non-normative.)* The Incan source module should own the public API, error model, and missing/default control flow. It should import `std::env::var` and `VarError` through ordinary `rust::std::env` interop, match non-Unicode payloads without formatting them, and return stable, non-secret failure categories. `get_as[T]` should reuse the source-owned `TryFrom[str]` contract, with compiler-provided implementations for supported primitives and validated newtypes. Newtype conversion should reuse RFC 017 checked-construction metadata rather than adding an environment-specific validation path.
 
 ## Layers affected
 
@@ -315,10 +315,10 @@ This feature is additive. Existing code using Rust interop, project lifecycle en
 
 ## Implementation Plan
 
-### Phase 1: source and host boundary
+### Phase 1: source and direct interop boundary
 
 - Expose the read-only string accessors and structured, redacted environment errors from `std.environ`.
-- Keep the Rust host boundary limited to current-process Unicode reads and stable failure categories.
+- Keep direct Rust interop limited to current-process Unicode reads and stable failure categories.
 
 ### Phase 2: typed conversion contract
 

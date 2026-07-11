@@ -15,8 +15,7 @@ Example:
     ```
 """
 
-rust.module("incan_stdlib::environ")
-
+from rust::std::env import VarError, var as env_var
 from std.traits.error import Error
 from std.traits.convert import TryFrom
 
@@ -129,17 +128,23 @@ pub class EnvironError with Error:
         return self.detail
 
 
-@rust.extern
-def _get_raw(key: str) -> Result[str, str]:
+def _get_raw(key: str) -> Result[str, EnvironErrorKind]:
     """
-    Read a raw current-process environment value through the Rust host boundary.
+    Read a raw current-process environment value through direct Rust interop.
 
     Returns:
-        `Ok(value)` for a present Unicode value, or `Err(kind)` with exactly `missing`, `invalid_key`, or `not_unicode`.
-        The Rust side never returns the observed environment value in an error. Unknown future categories are mapped
-        to `EnvironErrorKind.Other` by the source adapter.
+        `Ok(value)` for a present Unicode value, or `Err(kind)` with a stable `EnvironErrorKind`.
+        The non-Unicode error payload is discarded without being formatted, so observed environment values never
+        appear in an error. Unknown future categories map to `EnvironErrorKind.Other`.
     """
-    pass
+    if len(key) == 0 or key.contains("=") or key.contains("\0"):
+        return Err(EnvironErrorKind.InvalidKey)
+
+    match env_var(key):
+        Ok(value) => return Ok(value)
+        Err(VarError.NotPresent) => return Err(EnvironErrorKind.Missing)
+        Err(VarError.NotUnicode(_)) => return Err(EnvironErrorKind.NotUnicode)
+        Err(_) => return Err(EnvironErrorKind.Other)
 
 
 pub def get(key: str) -> Result[str, EnvironError]:
@@ -226,20 +231,20 @@ pub def get_as[T with TryFrom[str]](key: str, default: T) -> Result[T, EnvironEr
     return Ok(get_as[T](key)?.unwrap_or(default))
 
 
-def _error_from_raw_kind(key: str, kind: str) -> EnvironError:
+def _error_from_raw_kind(key: str, kind: EnvironErrorKind) -> EnvironError:
     """
-    Convert a stable Rust-side category into a public environment error.
+    Convert a stable interop category into a public environment error.
 
     Args:
         key: Environment key used for redacted error context.
-        kind: Raw host category from `_get_raw`.
+        kind: Typed interop category from `_get_raw`.
 
     Returns:
         Typed public error. Unknown categories map to `Other` for forward compatibility.
     """
-    match EnvironErrorKind.from_value(kind):
-        Some(EnvironErrorKind.Missing) => return EnvironError.missing(key)
-        Some(EnvironErrorKind.InvalidKey) => return EnvironError.invalid_key(key)
-        Some(EnvironErrorKind.NotUnicode) => return EnvironError.not_unicode(key)
+    match kind:
+        EnvironErrorKind.Missing => return EnvironError.missing(key)
+        EnvironErrorKind.InvalidKey => return EnvironError.invalid_key(key)
+        EnvironErrorKind.NotUnicode => return EnvironError.not_unicode(key)
         _ => pass
     return EnvironError.from_kind(EnvironErrorKind.Other, key, f"environment variable `{key}` could not be read")

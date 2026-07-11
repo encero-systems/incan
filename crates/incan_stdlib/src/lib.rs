@@ -11,7 +11,6 @@
 
 pub mod collections;
 pub mod conversions;
-pub mod environ;
 pub mod errors;
 pub mod frozen;
 pub mod iter;

@@ -179,6 +179,9 @@ def main() -> None:
   match get("A=B"):
     Ok(value) => println(value)
     Err(err) => println(f"{err.kind_name()}:{err.detail}")
+  match get("A\0B"):
+    Ok(value) => println(value)
+    Err(err) => println(f"nul:{err.kind_name()}")
 "#,
     )?;
 
@@ -206,6 +209,7 @@ def main() -> None:
             "invalid-fallback\n",
             "invalid_key\n",
             "invalid_key:environment variable key must not be empty or contain `=` or NUL\n",
+            "nul:invalid_key\n",
         ),
     );
 
@@ -684,6 +688,11 @@ def main() -> None:
     assert_eq!(
         String::from_utf8(output.stdout)?,
         "not_unicode:INCAN_ENVIRON_NON_UNICODE\n"
+    );
+    assert!(
+        !String::from_utf8_lossy(&output.stderr).contains("secret"),
+        "non-Unicode environment values must not appear in diagnostics:\n{}",
+        String::from_utf8_lossy(&output.stderr)
     );
     Ok(())
 }
