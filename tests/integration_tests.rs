@@ -3336,7 +3336,9 @@ def main() -> None:
         let target_root = shared_memory.join(format!(
             "incan_std_fs_cross_device_{}_{}",
             std::process::id(),
-            TEST_PROJECT_COUNTER.fetch_add(1, Ordering::Relaxed)
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
         ));
         fs::create_dir_all(&target_root)?;
         let staged = source_root.path().join("staged.txt");
