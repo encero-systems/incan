@@ -200,8 +200,9 @@ impl<'a> IrEmitter<'a> {
             ResultMethodId::Map | ResultMethodId::MapErr | ResultMethodId::AndThen | ResultMethodId::OrElse => {
                 if self.result_value_combinator_can_use_stdlib_helper(callback) {
                     let callback_tokens = self.emit_expr(callback)?;
+                    let helper_path = Self::result_stdlib_helper_path();
                     return Ok(quote! {
-                        crate::__incan_std::result::#method_ident(#receiver_tokens, #callback_tokens)
+                        #helper_path::#method_ident(#receiver_tokens, #callback_tokens)
                     });
                 }
                 if matches!(callback.kind, IrExprKind::Closure { .. }) {
@@ -223,8 +224,9 @@ impl<'a> IrEmitter<'a> {
                 };
                 if self.result_observer_can_use_stdlib_helper(callback) {
                     let callback_tokens = self.emit_result_observer_stdlib_callback_arg(callback, &observed_ty)?;
+                    let helper_path = Self::result_stdlib_helper_path();
                     return Ok(quote! {
-                        crate::__incan_std::result::#method_ident(#receiver_tokens, #callback_tokens)
+                        #helper_path::#method_ident(#receiver_tokens, #callback_tokens)
                     });
                 }
                 let body = self.emit_result_observer_callback_call(callback, &observed_ty)?;
@@ -241,6 +243,18 @@ impl<'a> IrEmitter<'a> {
             }
         };
         Ok(call)
+    }
+
+    /// Return the Result helper module for the current generated crate.
+    ///
+    /// Normal consumers link the compiled stdlib artifact, while the artifact
+    /// build itself still uses its crate-local compatibility facade.
+    fn result_stdlib_helper_path() -> TokenStream {
+        if std::env::var_os("INCAN_INTERNAL_BUILTIN_STDLIB_ARTIFACT_BUILD").is_some() {
+            quote! { crate::__incan_std::result }
+        } else {
+            quote! { incan_builtin_stdlib::result }
+        }
     }
 
     /// Return whether a value-transforming Result combinator can dogfood the pure Incan std.result helper.
@@ -274,6 +288,21 @@ impl<'a> IrEmitter<'a> {
                 arg.ty,
                 IrType::String | IrType::StaticStr | IrType::StrRef | IrType::FrozenStr
             ) || is_string_buffer_type(&arg.ty))
+    }
+
+    /// Return whether `std::path::Path.new` should preserve a literal `&str` argument.
+    ///
+    /// Rust's `Path::new` takes a generic `S: AsRef<OsStr>`. The direct literal
+    /// provides the necessary inference shape; adding `.into()` introduces an
+    /// unconstrained intermediate target once consumer dependencies provide
+    /// additional `AsRef<OsStr>` implementations.
+    fn std_path_new_preserves_string_literal(receiver: &TypedExpr, method: &str, arg: &TypedExpr) -> bool {
+        method == "new"
+            && matches!(&receiver.ty, IrType::Struct(path) if path == "std::path::Path")
+            && matches!(
+                arg.kind,
+                IrExprKind::String(_) | IrExprKind::Literal(super::super::super::expr::Literal::StaticStr(_))
+            )
     }
 
     /// Emit method-call arguments with Rust-boundary borrowing and union wrapping applied from callable metadata.
@@ -375,24 +404,30 @@ impl<'a> IrEmitter<'a> {
                     context.base_use_site,
                     ValueUseSite::ExternalCallArg { .. } | ValueUseSite::MethodArg
                 );
-                let arg_use_site = match (context.base_use_site, param) {
-                    (ValueUseSite::ExternalCallArg { .. }, Some(param))
-                        if context.infer_unresolved_generic_args
-                            && Self::unresolved_external_generic_should_infer_from_string_arg(arg, &param.ty) =>
-                    {
-                        ValueUseSite::ExternalInferredGenericArg {
-                            target_ty: Some(&param.ty),
+                let arg_use_site = if matches!(context.base_use_site, ValueUseSite::ExternalCallArg { .. })
+                    && Self::std_path_new_preserves_string_literal(receiver, method, arg)
+                {
+                    ValueUseSite::MethodArg
+                } else {
+                    match (context.base_use_site, param) {
+                        (ValueUseSite::ExternalCallArg { .. }, Some(param))
+                            if context.infer_unresolved_generic_args
+                                && Self::unresolved_external_generic_should_infer_from_string_arg(arg, &param.ty) =>
+                        {
+                            ValueUseSite::ExternalInferredGenericArg {
+                                target_ty: Some(&param.ty),
+                            }
                         }
+                        (ValueUseSite::ExternalCallArg { .. }, Some(param)) => ValueUseSite::ExternalCallArg {
+                            target_ty: Some(&param.ty),
+                        },
+                        (ValueUseSite::IncanCallArg { in_return, .. }, Some(param)) => ValueUseSite::IncanCallArg {
+                            target_ty: Some(&param.ty),
+                            callee_param: Some(param),
+                            in_return,
+                        },
+                        _ => context.base_use_site,
                     }
-                    (ValueUseSite::ExternalCallArg { .. }, Some(param)) => ValueUseSite::ExternalCallArg {
-                        target_ty: Some(&param.ty),
-                    },
-                    (ValueUseSite::IncanCallArg { in_return, .. }, Some(param)) => ValueUseSite::IncanCallArg {
-                        target_ty: Some(&param.ty),
-                        callee_param: Some(param),
-                        in_return,
-                    },
-                    _ => context.base_use_site,
                 };
                 let previous_qualify = if *from_default {
                     Some(self.qualify_internal_canonical_paths.replace(true))

@@ -44,8 +44,8 @@ use super::common::{
     module_key_index, resolve_project_root, typecheck_modules_with_import_graph, validate_output_dir,
 };
 use super::lock::{
-    GeneratedLibraryDependencyPreheatRequest, LockResolutionRequest, resolve_lock_payload,
-    run_generated_library_dependency_preheat,
+    GeneratedLibraryDependencyPreheatRequest, LockResolutionRequest, compiled_builtin_stdlib_artifact_lock_payload,
+    resolve_lock_payload, run_generated_library_dependency_preheat,
 };
 #[cfg(feature = "rust_inspect")]
 use super::lock::{RustInspectWorkspaceRequest, prepare_rust_inspect_workspace};
@@ -881,7 +881,8 @@ fn prepare_project_with_options(
         cargo_policy,
         #[cfg(feature = "rust_inspect")]
         rust_inspect_query_paths: &metadata_query_paths,
-    })?;
+    })?
+    .or(compiled_builtin_stdlib_artifact_lock_payload(&project_requirements)?);
     #[cfg(feature = "rust_inspect")]
     let rust_inspect_manifest_dir = {
         let rust_inspect_manifest_dir = prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {

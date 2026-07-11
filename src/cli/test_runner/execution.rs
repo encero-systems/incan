@@ -3180,7 +3180,19 @@ pub(super) fn run_file_tests_batch(
             #[cfg(feature = "rust_inspect")]
             rust_inspect_query_paths: &metadata_query_paths,
         }) {
-            Ok(payload) => payload,
+            Ok(payload) => match payload {
+                Some(payload) => Some(payload),
+                None => match commands::lock::compiled_builtin_stdlib_artifact_lock_payload(&lock_project_requirements)
+                {
+                    Ok(payload) => payload,
+                    Err(err) => {
+                        return tests
+                            .iter()
+                            .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), err.message.clone())))
+                            .collect();
+                    }
+                },
+            },
             Err(err) => {
                 return tests
                     .iter()

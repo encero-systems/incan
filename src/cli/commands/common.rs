@@ -172,6 +172,9 @@ fn uses_compiled_builtin_stdlib_artifact(modules: &[ParsedModule]) -> bool {
         }
     }
     modules.iter().any(|module| {
+        if stdlib::is_compiled_builtin_stdlib_emission_path(&module.path_segments) {
+            return true;
+        }
         module.ast.declarations.iter().any(|decl| {
             let crate::frontend::ast::Declaration::Import(import) = &decl.node else {
                 return false;
@@ -206,7 +209,18 @@ fn builtin_stdlib_artifact_builder_executable(
     cargo_test_binary: Option<PathBuf>,
     current_executable: PathBuf,
 ) -> PathBuf {
-    cargo_test_binary.unwrap_or(current_executable)
+    cargo_test_binary.unwrap_or_else(|| {
+        let cargo_test_binary = current_executable
+            .parent()
+            .filter(|parent| parent.file_name().is_some_and(|name| name == "deps"))
+            .and_then(|deps| deps.parent())
+            .map(|target_dir| {
+                let mut cli = target_dir.join("incan");
+                cli.set_extension(std::env::consts::EXE_EXTENSION);
+                cli
+            });
+        cargo_test_binary.unwrap_or(current_executable)
+    })
 }
 
 /// Build the local built-in stdlib library artifact when a consumer imports a migrated module.
@@ -2508,6 +2522,10 @@ mod tests {
         assert_eq!(
             builtin_stdlib_artifact_builder_executable(None, PathBuf::from("/usr/local/bin/incan")),
             PathBuf::from("/usr/local/bin/incan")
+        );
+        assert_eq!(
+            builtin_stdlib_artifact_builder_executable(None, PathBuf::from("/tmp/target/debug/deps/incan-abc123"),),
+            PathBuf::from("/tmp/target/debug/incan")
         );
     }
 

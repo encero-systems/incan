@@ -950,6 +950,7 @@ pub(crate) fn generate_lockfile(
     generator
         .generate(rust_code)
         .map_err(|e| CliError::failure(format!("Failed to generate lock project: {}", e)))?;
+    seed_builtin_stdlib_artifact_lock(&lock_dir, project_requirements)?;
 
     let mut command = Command::new("cargo");
     command.arg("generate-lockfile");
@@ -998,6 +999,51 @@ pub(crate) fn generate_lockfile(
         .map_err(|e| CliError::failure(format!("Failed to write incan.lock: {}", e)))?;
 
     Ok(lock)
+}
+
+/// Seed a generated consumer lockfile from the compiled built-in stdlib artifact.
+///
+/// Cargo does not use a path dependency's lockfile while resolving its parent.
+/// Seeding a fresh generated lock workspace from the artifact's verified lock
+/// retains the transitive stdlib closure for offline consumers without exposing
+/// implementation crates as Incan source dependencies.
+pub(crate) fn compiled_builtin_stdlib_artifact_lock_payload(
+    requirements: &ProjectRequirements,
+) -> CliResult<Option<String>> {
+    let artifact_root = requirements.dependencies.iter().find_map(|dependency| {
+        if dependency.crate_name != incan_core::lang::stdlib::BUILTIN_STDLIB_ARTIFACT_CRATE {
+            return None;
+        }
+        match &dependency.source {
+            crate::manifest::DependencySource::Path { path } => Some(path),
+            _ => None,
+        }
+    });
+    let Some(artifact_root) = artifact_root else {
+        return Ok(None);
+    };
+    let artifact_lock = artifact_root.join("Cargo.lock");
+    if !artifact_lock.is_file() {
+        return Ok(None);
+    }
+    let payload = fs::read_to_string(&artifact_lock).map_err(|error| {
+        CliError::failure(format!(
+            "failed to read compiled built-in stdlib lock {}: {error}",
+            artifact_lock.display()
+        ))
+    })?;
+    Ok(Some(payload))
+}
+
+fn seed_builtin_stdlib_artifact_lock(lock_dir: &Path, requirements: &ProjectRequirements) -> CliResult<()> {
+    let Some(payload) = compiled_builtin_stdlib_artifact_lock_payload(requirements)? else {
+        return Ok(());
+    };
+    fs::write(lock_dir.join("Cargo.lock"), payload).map_err(|error| {
+        CliError::failure(format!(
+            "failed to seed generated lockfile from compiled built-in stdlib artifact: {error}"
+        ))
+    })
 }
 
 /// Collect inline Rust crate imports and stdlib/provider requirements from test files for lock resolution.
@@ -1145,6 +1191,33 @@ mod tests {
         let mut requirements = empty_project_requirements();
         requirements.stdlib_features.push("json".to_string());
         assert!(should_preheat_lockfile_dependencies(&empty_resolved(), &requirements));
+    }
+
+    #[test]
+    fn compiled_builtin_stdlib_artifact_lock_payload_reads_the_artifact_closure()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = tempfile::tempdir()?;
+        let artifact_root = temp_dir.path().join("incan_builtin_stdlib");
+        fs::create_dir_all(&artifact_root)?;
+        fs::write(artifact_root.join("Cargo.lock"), "version = 4\n")?;
+        let requirements = ProjectRequirements {
+            stdlib_features: Vec::new(),
+            dependencies: vec![DependencySpec {
+                crate_name: incan_core::lang::stdlib::BUILTIN_STDLIB_ARTIFACT_CRATE.to_string(),
+                version: None,
+                features: Vec::new(),
+                default_features: true,
+                source: DependencySource::Path { path: artifact_root },
+                optional: false,
+                package: None,
+            }],
+        };
+
+        assert_eq!(
+            compiled_builtin_stdlib_artifact_lock_payload(&requirements)?,
+            Some("version = 4\n".to_string())
+        );
+        Ok(())
     }
 
     #[test]
