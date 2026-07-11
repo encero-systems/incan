@@ -1,6 +1,6 @@
 # RFC 077: workspace and multi-package projects
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-04-26
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -12,8 +12,8 @@
     - RFC 076 (project mutation policy and recovery)
     - RFC 078 (tool execution and typed workflow actions)
     - RFC 079 (`incan.pub` artifact graph)
-- **Issue:** https://github.com/encero-systems/incan/issues/405
-- **RFC PR:** —
+- **Issue:** [#405](https://github.com/encero-systems/incan/issues/405)
+- **RFC PR:** [#830](https://github.com/encero-systems/incan/pull/830)
 - **Written against:** v0.3
 - **Shipped in:** —
 
@@ -23,15 +23,17 @@ This RFC defines a first-class workspace model for Incan projects that contain m
 
 ## Core model
 
-Read this RFC as seven foundations:
+Read this RFC as nine foundations:
 
 1. **Topology is explicit:** a workspace declares its root and members instead of relying on ad-hoc directory conventions.
 2. **Members remain ordinary projects:** each member can have its own package metadata, source tree, dependencies, envs, scripts, capabilities, and publish settings.
-3. **The root coordinates shared concerns:** a workspace may provide shared lock state, shared policy, shared dependency overrides, shared metadata, shared tooling, and shared catalog configuration.
-4. **Commands select a scope:** lifecycle commands must know whether they apply to the current member, selected members, default members, or the whole workspace.
-5. **Envs compose with topology:** RFC 015 envs still describe execution context, but workspace commands decide which members receive that context.
-6. **Capabilities are scoped:** starters and capability packs may target one member, multiple members, or workspace-level metadata, and must show that scope in mutation plans.
-7. **The workspace is publish-aware:** publication, documentation, artifact discovery, and policy may need workspace-level views without forcing every member to publish together.
+3. **Root identity is structural:** when `[project]` and `[workspace]` coexist in the root manifest, the root project is a workspace member automatically; a root with only `[workspace]` is virtual.
+4. **Resolution is workspace-wide:** one canonical root lockfile represents the dependency graph of every member, independent of which members a command executes.
+5. **Commands select a scope:** lifecycle commands must know whether they apply to the current member, selected members, default members, or the whole workspace.
+6. **Inheritance is explicit and refinable:** members opt into shared dependency and environment declarations; inherited Rust dependencies may add usage-specific features and optionality without changing shared dependency identity.
+7. **Envs compose with topology:** RFC 015 envs still describe execution context, but workspace commands decide which members receive that context.
+8. **Capabilities are scoped:** starters and capability packs may target one member, multiple members, or workspace-level metadata, and must show that scope in mutation plans.
+9. **The workspace is publish-aware:** publication, documentation, artifact discovery, and policy may need workspace-level views without forcing every member to publish or version together.
 
 ## Motivation
 
@@ -42,8 +44,10 @@ Cargo and uv both make workspaces a central scaling primitive. Incan should have
 ## Goals
 
 - Define workspace root discovery and workspace member declaration.
-- Allow members to be selected by name, path, glob, default set, or all-members mode.
-- Define shared workspace lock and dependency resolution expectations.
+- Allow non-root members to be declared by path or glob and resolved members to be selected by name, path, default set, or all-members mode.
+- Allow an existing root project to become the implicit root member without relocating its source tree or repeating `"."` in `members`.
+- Define one shared workspace lock and deterministic whole-workspace dependency resolution.
+- Define explicit inheritance for shared Incan dependencies, refinable Rust dependencies, and environments.
 - Define how RFC 015 envs and RFC 073 matrices apply across members.
 - Define workspace-level policy and catalog/source configuration hooks for RFC 076.
 - Define how RFC 075 starters and capabilities can apply to one member, selected members, or workspace-level metadata.
@@ -56,69 +60,127 @@ Cargo and uv both make workspaces a central scaling primitive. Incan should have
 - Replacing RFC 015 envs or RFC 073 matrices.
 - Requiring every project to be a workspace.
 - Requiring all workspace members to share one package version.
+- Inferring workspace membership from path dependencies.
+- Supporting nested workspaces or members outside the workspace root.
+- Providing atomic multi-package publication; publication remains a per-member operation.
 - Defining registry hosting behavior for workspace artifacts.
-- Defining exact CLI flag spelling for every member-selection operation.
+
+## Terminology and mental model
+
+- A **project** or **package** is an independently named and versioned unit described by `[project]`; it can declare dependencies and may be published.
+- A **member** is a project that belongs to one workspace. Membership says that projects are managed together; it does not imply that they depend on one another.
+- A **workspace** is the repository-level coordination boundary for members, dependency resolution, locking, policy, and command selection. It is not itself a package or compiled artifact.
+- An **environment** describes how commands run: toolchain constraints, variables, scripts, dependency overlays, and matrices. Workspace selection determines which members run; environment selection determines the execution context for each selected member.
 
 ## Guide-level explanation
 
 ### Declaring a workspace
 
-A repository may declare a workspace at the root:
+A repository may add a workspace to an existing root project without moving that project:
 
 ```toml
+[project]
+name = "query_core"
+version = "0.4.0"
+
 [workspace]
-members = ["packages/core", "packages/cli", "examples/*"]
-default-members = ["packages/core", "packages/cli"]
+members = ["packages/storage_backend", "examples/*"]
+exclude = ["examples/experimental"]
 
 [workspace.dependencies]
-json = "1.2.0"
-http = "0.8.0"
+query_core = { path = "." }
 
-[workspace.policy]
-source-policy = "strict"
+[workspace.rust-dependencies]
+serde = { version = "1", default-features = false }
 ```
 
-Each member remains an ordinary Incan project:
+Each non-root member remains an ordinary Incan project and opts into shared declarations explicitly:
+
+```toml
+[project]
+name = "storage_backend"
+version = "0.1.0"
+
+[dependencies]
+query_core = { workspace = true }
+
+[rust-dependencies]
+serde = { workspace = true, features = ["derive", "std"] }
+```
+
+The member inherits Serde's version, source, and default-feature policy from the workspace, then adds the `derive` and `std` features for its own use. A member may also mark an inherited Rust dependency as `optional`; it cannot replace the inherited version or source.
+
+The resulting repository keeps independent package boundaries:
 
 ```text
 repo/
   incan.toml
   incan.lock
+  src/
+    lib.incn
   packages/
-    core/
+    storage_backend/
       incan.toml
       src/lib.incn
-    cli/
+  examples/
+    demo/
       incan.toml
       src/main.incn
 ```
 
-The root is not magic source code. It coordinates member discovery, shared dependency resolution, shared lock state, shared policy, and shared tooling.
+The root coordinates member discovery, dependency resolution, shared lock state, policy, and tooling. Because the same manifest contains `[project]` and `[workspace]`, `query_core` is the root member automatically. A manifest containing `[workspace]` without `[project]` instead defines a virtual workspace root.
 
 ### Running across members
 
 A user can run commands against the current member, the default members, or the whole workspace:
 
-```text
+```bash
 incan test
 incan test --workspace
-incan test --member cli
-incan run --member cli --env ci
+incan test --member storage_backend
+incan run --member demo
+incan workspace inspect --format json
 ```
 
-The exact flags are not normative. The requirement is that command scope must be explicit in diagnostics and machine-readable output.
+With no explicit selector, a command run inside a member targets that member. The workspace-root directory is the exception: it targets `default-members` when configured, otherwise the implicit root member in a rooted workspace, or every member in a virtual workspace. A command below the root but outside every non-root member belongs to the implicit root member. `--workspace` selects every member, while one or more `--member` flags select named members or member paths.
+
+Commands that inherently operate on one project, such as `run` or `version`, must reject a scope containing multiple members and ask for an explicit member. Commands such as `check`, `build`, `test`, and `fmt` may operate across a selected member set. `lock` is workspace-wide whenever a workspace is active because the root lock represents every member.
+
+### Sharing environments explicitly
+
+The workspace may define reusable RFC 015 environment fragments:
+
+```toml
+[workspace.envs.ci]
+requires-incan = ">=0.5,<0.6"
+
+[workspace.envs.ci.env-vars]
+CI = "true"
+```
+
+A member inherits that environment only by naming the workspace-qualified environment in its local `extends` list:
+
+```toml
+[tool.incan.envs.ci]
+extends = ["workspace:ci"]
+
+[tool.incan.envs.ci.scripts]
+test = ["incan", "test"]
+```
+
+Workspace environments therefore remove duplication without becoming ambient configuration that silently changes unrelated members.
 
 ### Applying capabilities in a workspace
 
 A capability can target one member:
 
-```text
+```bash
 incan capability add cli --member packages/cli --dry-run
 ```
 
 Or a workspace-level capability can add coordinated metadata:
 
-```text
+```bash
 incan capability add workspace.ci --workspace --dry-run
 ```
 
@@ -126,69 +188,146 @@ The dry-run plan must show which member receives each file, manifest entry, depe
 
 ## Reference-level explanation
 
-### Workspace root and members
+### Workspace manifest schema
 
-A workspace root is a directory containing a manifest with a `[workspace]` table. Implementations should search parent directories for a workspace root when executing member-aware commands.
+A workspace root is a directory whose `incan.toml` contains a top-level `[workspace]` table. When the same manifest also contains `[project]`, that project is the implicit root member. A manifest with `[workspace]` but no `[project]` is a virtual workspace root.
 
-Workspace members are project roots selected by explicit paths, globs, or other stable member selectors. A member must contain a project manifest unless a later RFC defines generated or virtual members.
+`[workspace]` has these fields:
 
-Member names must be stable within one workspace. If two members declare the same package name, workspace inspection must report the ambiguity and member selection must require path or another disambiguator.
+- `members: list[str]` contains explicit root-relative paths or glob patterns for non-root members. It may be omitted or empty when an implicit root member exists; a virtual workspace must expand at least one member.
+- `default-members: list[str]` is optional and names the members selected when a command starts at the workspace root without an explicit selector.
+- `exclude: list[str]` is optional and removes root-relative non-root paths from the expanded member set.
+
+The implicit root member must have a non-empty `[project].name` and is not repeated in `members`. A literal `"."`, or a path or glob that canonicalizes to the workspace root, is invalid in `members` and `exclude`; diagnostics must explain that `[project]` already establishes root membership. The root may still be selected by project name or `"."` in `default-members`, `--member`, and machine-readable tooling.
+
+A path dependency on a project does not make that project a workspace member, and declaring a shared dependency does not make its target a member. All non-root membership therefore comes from `members` after applying `exclude`.
+
+Every expanded non-root member path must resolve to a directory containing an `incan.toml` with a non-empty `[project].name`. Member paths must remain beneath the canonical workspace root after resolving `.` components and symbolic links. Nested workspaces and external members are not supported by this RFC.
+
+Member globs must be expanded in deterministic lexical order. Exclusions are applied after expansion, duplicate canonical paths are removed, and a literal member path that does not contain a manifest is an error. A glob that matches no members should produce a warning so temporary repository states remain inspectable without silently hiding a likely typo.
+
+The implicit root member, when present, is first in deterministic workspace order. Expanded non-root members follow in canonical lexical path order.
+
+The final workspace graph, including the implicit root member when present, must be non-empty.
+
+Member names, including the implicit root member's name, must be unique within one workspace. Duplicate names make the workspace invalid; commands must not silently choose one by path order.
+
+Every `default-members` entry must resolve to one member by name or root-relative path. Missing, excluded, or ambiguous defaults make the workspace invalid. When `default-members` is absent, commands started at the workspace root default to the implicit root member in a rooted workspace and to every member in a virtual workspace.
+
+### Workspace discovery and member identity
+
+Project discovery continues to locate the nearest `incan.toml` as defined by RFC 015. Workspace discovery then searches that manifest and its ancestors for the nearest `[workspace]` whose member graph contains the discovered project. The root project is contained structurally by `[project]` in the workspace manifest; non-root projects must be present in the expanded `members` set. An ancestor workspace that does not contain the project has no authority over it.
+
+When a command starts at a virtual workspace root, the workspace is still a valid command context even though the root has no project identity. When the root manifest has both sections, the root has both workspace identity and member identity automatically.
+
+Each workspace graph must record the canonical root, root manifest, ordered members, member names and manifests, root-member status, defaults, exclusions, and the relationship between each member and its path dependencies. A member must belong to at most one active workspace graph.
 
 ### Command scope
 
-Workspace-aware commands must decide their scope before reading or mutating member manifests. Scope may be:
+Workspace-aware commands must resolve scope before compiling, executing, locking, or mutating member state. The standard selectors are:
 
-- current member
-- workspace root
-- default members
-- selected members
-- all members
+- `--workspace` selects every member and conflicts with `--member`.
+- `--member <name-or-path>` selects one member and may be repeated by commands that support multiple members.
+- no selector inside a member selects that member. The workspace-root directory is the exception: it selects `default-members` when configured, otherwise the implicit root member in a rooted workspace, or every member in a virtual workspace. A descendant not contained by a non-root member belongs to the implicit root member.
 
-Diagnostics and machine-readable output must include the selected scope. A command that mutates files or manifests must not silently apply to more members than the user requested.
+Explicit selectors take precedence over current-directory inference. Unknown names, paths outside the workspace, ambiguous selections, and an empty selected set are errors.
+
+Commands such as `check`, `build`, `test`, and `fmt` may support multiple members and must process the selected set in deterministic workspace order. Commands whose semantics require one project, including `run` and `version`, must reject a multi-member scope with a diagnostic that requests `--member`. `incan lock` must resolve and write the complete workspace graph regardless of the current member or selector.
+
+Diagnostics, progress output, build reports, and machine-readable results must identify the workspace root, selected scope, and member associated with each result. A command that mutates files or manifests must not silently apply to more members than the resolved scope.
+
+### Shared dependencies and explicit inheritance
+
+The workspace root may declare shared dependency specifications under `[workspace.dependencies]`, `[workspace.rust-dependencies]`, and `[workspace.rust-dev-dependencies]`. Paths in these tables are resolved relative to the workspace root.
+
+A shared declaration is a reusable specification, not an activated dependency. Every member, including the implicit root member, inherits one only by declaring the same key with `{ workspace = true }` in the corresponding member table.
+
+For Incan library dependencies under `[workspace.dependencies]`, the current dependency schema has no member-level usage refinements. An inheriting `[dependencies]` entry therefore contains only `workspace = true`.
+
+For Rust dependencies, an inherited member entry may contain only `workspace`, `features`, and `optional`. The workspace owns dependency identity and the member owns package-local usage:
+
+- The workspace declaration owns the version requirement, registry/git/path source, git reference, package rename, and `default-features` baseline. A member must not override those fields while inheriting.
+- A member may add `features`; its feature set is the deterministic union of workspace and member features.
+- A member may set `optional` because optionality belongs to the consuming package. Workspace Rust dependency declarations must not set `optional`.
+- Refinement is additive. A member cannot remove a workspace feature or disable defaults enabled by the workspace. When the workspace disables default features, a member may add the dependency's `default` feature explicitly.
+
+For example:
+
+```toml
+# Workspace root
+[workspace.rust-dependencies]
+serde = { version = "1", default-features = false }
+
+# Member
+[rust-dependencies]
+serde = { workspace = true, features = ["derive", "std"], optional = true }
+```
+
+If a member needs a different version, source, package rename, or default-feature baseline, it must stop inheriting and declare a complete member-local dependency instead. Workspace dependency entries should therefore define the smallest baseline shared by their inheriting members.
+
+Missing workspace keys, dependency-kind mismatches, inheritance cycles, and prohibited refinements are manifest errors. Inspection and diagnostics must distinguish workspace-owned fields, member refinements, and the effective dependency. For Rust features, tooling must report the workspace baseline, each member's additions, and the effective feature set so cross-member feature activation is attributable rather than ambient. When a selected build graph causes Cargo to unify requests from multiple members, the build report must identify every member that enabled each resulting feature.
 
 ### Shared lock state
 
-A workspace may use a shared lockfile at the root. If a shared lockfile exists, dependency resolution should consider all selected members and shared workspace dependency declarations.
+A declared workspace has one canonical `incan.lock` at the workspace root. Lock generation must resolve the union of every member's effective dependency graph after inheritance and refinement, regardless of the execution scope of the command that triggered locking. An unused shared declaration is inspectable configuration but does not activate or resolve a package. Member selection must never change the root lock fingerprint.
 
-Commands that require locked or frozen operation must fail if the shared lockfile would need to change. If only one member is selected, the toolchain must still respect shared workspace constraints.
+Project-aware commands run from any member must consult the root lock. A member-local `incan.lock` inside a declared workspace is not authoritative and must not be read as a fallback. Workspace inspection must report stale member-local lockfiles so migration is visible, but tooling must not delete them without an explicit mutation operation.
 
-### Shared dependencies and overrides
+Commands that require locked or frozen operation must fail if the root lock is absent, stale for any member, or inconsistent with any effective inherited declaration. A command targeting one member must still respect the whole-workspace lock contract.
 
-The workspace root may declare shared dependency requirements, dev-dependencies, overrides, patches, or source configuration. Member manifests may opt into shared dependencies using a stable encoding defined by the implementation.
+### Environments and matrices
 
-The toolchain must make it clear whether a dependency requirement came from a member manifest or from workspace-level shared configuration.
+RFC 015 environments and RFC 073 matrices remain execution-context features. Workspaces add reusable environment definitions and member selection without changing the meaning of one resolved environment.
 
-### Envs and matrices
+The workspace root may declare environment fragments under `[workspace.envs.<name>]`. A member opts into a fragment by including `workspace:<name>` in a local environment's `extends` list. Workspace environments are never inherited by name coincidence or by being present at the root.
 
-RFC 015 envs and RFC 073 matrices remain execution-context features. Workspaces add member selection on top of those contexts.
+Workspace-qualified and member-local environment layers are resolved in declared `extends` order using RFC 015 merge rules. Cycles across workspace and member environments are errors. Matrix expansion occurs after member selection and is reported separately for each selected member.
 
-When an env is declared at the workspace root, members may inherit it if inheritance is explicitly enabled. Member envs may override or extend workspace envs only through deterministic merge rules.
+### Workspace mutation plans and policy
 
-### Workspace mutation plans
+Any workspace-scoped mutation plan must include member scope. For each planned change, the plan must state whether it affects the workspace root, one member, selected members, or every member.
 
-Any workspace-scoped mutation plan must include member scope. For each planned change, the plan must state whether it affects the workspace root, one member, selected members, or all members.
+Workspace mutation plans must be compatible with RFC 076 policy. Policy may require additional approval for cross-member changes, shared dependency changes, shared environment changes, shared lock changes, or workspace-level source policy changes. When workspace and member policy both apply, the more restrictive outcome wins.
 
-Workspace mutation plans must be compatible with RFC 076 policy. Policy may require additional approval for cross-member changes, shared dependency changes, shared env changes, or workspace-level source policy changes.
+Workspace-aware capability application from RFC 075 requires, at minimum, a validated workspace graph, deterministic member selection, machine-readable inspection, scoped mutation planning, and policy evaluation. Until all five are available, capability commands must remain member-local rather than approximating whole-workspace behavior.
 
 ### Machine-readable inspection
 
-The CLI must expose a machine-readable workspace view containing:
+The CLI must expose `incan workspace inspect` with a JSON output mode. The machine-readable workspace view must contain:
 
-- workspace root
-- members and member paths
-- default members
-- selected scope for a command
-- shared dependency declarations
-- shared envs and inherited envs
-- shared policy and source configuration
-- member capabilities and provenance summaries
-- lock state and lockfile location
+- a schema version;
+- workspace root and manifest path;
+- members, canonical paths, names, and root-member status;
+- default members and exclusions;
+- selected scope for the current invocation;
+- shared dependency declarations, member refinements, effective specifications, and feature-enablement provenance;
+- shared environments and member inheritance provenance;
+- shared policy and source configuration;
+- member capabilities and provenance summaries;
+- root lock state, fingerprint, and lockfile location; and
+- warnings such as unmatched globs, unused shared declarations, and stale member-local lockfiles.
+
+Inspection must remain available when the active toolchain does not satisfy a member's `requires-incan` constraint, although the result must report that incompatibility.
+
+### Publication and versions
+
+Workspace members keep independent `[project].version` values and are published independently. A future convenience command may orchestrate publication of several selected members, but each publication remains a separately validated operation with its own artifact identity and result. This RFC does not define an atomic workspace release.
+
+### Compatibility and migration
+
+Manifests without `[workspace]` retain RFC 015 single-project behavior. Existing projects become implicit root members by adding `[workspace]`; they do not list `"."`, move their source tree, or change package identity.
+
+When separate projects adopt one workspace, they must generate a canonical root lockfile. Existing member-local lockfiles cease to be authoritative and should be removed through an explicit reviewed change after workspace inspection confirms the new root lock.
 
 ## Design details
 
 ### Relationship to RFC 015
 
-RFC 015 owns single-project lifecycle commands, manifest metadata, envs, scripts, and root discovery. This RFC extends root discovery to workspace topology and defines how lifecycle commands select member scope.
+RFC 015 owns single-project lifecycle commands, manifest metadata, envs, scripts, and nearest-project discovery. This RFC preserves that project identity and adds an ancestor workspace graph when the project is the implicit root member or an explicitly listed non-root member.
+
+### Relationship to RFC 020
+
+RFC 020 owns locked and frozen dependency policy. This RFC changes the lock ownership boundary for a declared workspace: the root lock covers every member and is the only lock consulted by workspace members.
 
 ### Relationship to RFC 073
 
@@ -196,7 +335,7 @@ RFC 073 owns matrix expansion and toolchain constraints. Workspace member select
 
 ### Relationship to RFC 075
 
-Starter and capability descriptors may be workspace-aware. A descriptor that mutates multiple members must report member scope in its dry-run and machine-readable plan.
+Starter and capability descriptors may be workspace-aware only after workspace graph validation, selection, inspection, scoped mutation planning, and policy evaluation are available. A descriptor that mutates multiple members must report member scope in its dry-run and machine-readable plan.
 
 ### Relationship to RFC 076
 
@@ -205,6 +344,10 @@ Workspace-level policy may be stricter than member-level policy. If multiple pol
 ### Relationship to RFC 079
 
 The artifact graph may represent workspace relationships: root project, member packages, examples, docs, generated artifacts, AI assets, and publishable units. This RFC defines the local topology that a future registry can mirror.
+
+### Why root membership follows manifest identity
+
+`[project]` already declares a project at the workspace root, so repeating `"."` in `members` adds ceremony without adding identity. More importantly, a root project outside its colocated workspace would compete with that workspace for the same root command context and canonical `incan.lock`. Treating the root as an automatic member removes that incoherent state while keeping every non-root member explicit. A virtual root remains unambiguous because it omits `[project]`.
 
 ## Alternatives considered
 
@@ -216,6 +359,26 @@ Rejected because envs describe execution context, while workspaces describe proj
 
 Rejected because real projects often need multiple related packages, examples, tools, and applications in one repository.
 
+### Infer members from path dependencies
+
+Rejected because dependency edges and workspace ownership are different relationships. Automatic membership would make an unrelated nested project join workspace commands, policy, and lock resolution merely because one package references it.
+
+### Require `"."` for root membership
+
+Rejected because `[project]` in the workspace manifest already declares the root project explicitly. Requiring a second marker creates an omission footgun, while permitting the omission to exclude the root creates ambiguous command and lock ownership.
+
+### Allow a root project outside its colocated workspace
+
+Rejected because the project and workspace would both claim the same root command context and `incan.lock` path while describing different dependency graphs. A repository that needs a virtual workspace root should omit `[project]` there and keep every project in an explicit member directory.
+
+### Keep one lockfile per member
+
+Rejected because independently resolved member locks cannot represent shared dependency constraints or guarantee that a workspace-wide command sees one coherent dependency graph. Per-member locks would also make results depend on command entrypoint and selection.
+
+### Require moving the root package under `packages/`
+
+Rejected because directory layout should not determine whether a package can participate in a workspace. Implicit root membership provides the same boundary without forcing repository-wide path churn.
+
 ### Make every project a workspace
 
 Rejected because it would add unnecessary conceptual overhead to small projects. Single-project behavior should remain simple.
@@ -224,31 +387,34 @@ Rejected because it would add unnecessary conceptual overhead to small projects.
 
 - Workspaces add another layer of command scope that users must understand.
 - Shared dependency and env inheritance can become confusing without strong diagnostics.
+- Additive Rust features requested by several selected members may broaden the effective feature set through Cargo feature unification; build reports must make that provenance visible.
 - Cross-member mutation plans increase the importance of machine-readable output and policy review.
-- Workspace support may force lifecycle commands to reason about more project topology than v1 strictly needs.
+- Whole-workspace locking means a stale dependency declaration in an unselected member can block a locked command in another member.
+- First-class workspace support requires lifecycle commands, the test runner, build reports, and editor tooling to carry member identity consistently.
 
 ## Implementation architecture
 
-The recommended implementation shape is to build a workspace graph before command planning. The graph contains the root, members, shared configuration, lock state, and selected scope. Existing lifecycle commands can then operate on one or more member project contexts rather than special-casing workspace behavior throughout the toolchain.
+The implementation should build one validated workspace graph before command planning. The graph contains the root, ordered members, shared declarations, member refinements, effective dependency specifications, root lock state, and selected scope. Existing project commands can then operate on one or more member project contexts while preserving RFC 015 behavior for projects outside a workspace.
 
 ## Layers affected
 
-- **Manifest schema / configuration validation:** manifests need workspace root, member, default-member, shared dependency, shared env, and shared policy fields.
+- **Manifest schema / configuration validation:** manifests need workspace root, implicit root-member, non-root member, default-member, shared dependency, member refinement, shared env, and shared policy fields.
 - **CLI / tooling:** lifecycle commands need member selection, workspace discovery, workspace inspection, and workspace-scoped mutation plans.
 - **Locking / dependency resolution:** shared lockfiles and shared dependency constraints must be understood by project resolution.
+- **Build / test / format orchestration:** multi-member commands must fan out deterministically while preserving member-local source roots, diagnostics, reports, and generated artifacts.
 - **LSP / IDE tooling:** editor tooling should surface workspace members, default members, selected command scope, and member-specific diagnostics.
 - **Agentic tooling:** agents may use workspace topology to select relevant project skills, but must respect member scope and policy.
 - **Documentation:** docs must explain the difference between envs, members, workspace roots, and project packages.
 
-## Unresolved questions
+## Design Decisions
 
-- Should workspace members be discovered only from explicit `members`, or should path dependencies under the root become members automatically?
-- Should shared dependencies be inherited explicitly by each member or applied implicitly across all members?
-- Should a workspace always have one shared lockfile, or should per-member lockfiles be allowed?
-- How should workspace env inheritance be encoded?
-- Should package publication happen per member, per selected group, or through a workspace publish command?
-- Should generated examples and docs be first-class workspace members or ordinary files?
-- What is the minimum workspace support needed before RFC 075 capabilities can target multiple members?
-
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- `[project]` in the workspace manifest creates an implicit root member; `[workspace]` without `[project]` creates a virtual root.
+- All non-root membership comes only from explicit `members` paths and globs. Path dependencies never create membership.
+- Non-root members and their canonical paths must remain beneath the workspace root. Nested and external workspaces are deferred.
+- Shared Incan, Rust, and Rust dev dependencies require `{ workspace = true }` in each member that inherits them. Rust members may add features by set union and choose member-local optionality; version, source, package rename, and default-feature policy remain workspace-owned.
+- One root `incan.lock` covers every member's effective dependency graph. Unused shared declarations do not activate packages, and command selection does not narrow dependency resolution or change the lock fingerprint.
+- Workspace environments are inherited explicitly through `workspace:<name>` entries in member-local `extends` lists.
+- `--workspace` selects every member, repeatable `--member` selects named members or paths, and current-directory/default-member rules define unqualified scope.
+- Publication and versions remain per member. A workspace publication command may orchestrate those operations later but does not make them atomic or lockstep.
+- Non-root examples, documentation tools, and generated projects are members only when they have their own project manifest and are selected explicitly by `members`.
+- Workspace-aware capabilities require graph validation, deterministic selection, machine-readable inspection, scoped mutation planning, and policy evaluation. Until that foundation exists, capabilities remain member-local.

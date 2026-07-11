@@ -103,6 +103,8 @@ The 0.5 milestone begins deprecating the Rust-source backend as the semantic pat
 
 Stdlib RFC/work is allowed in this lane. Hees.ai is also allowed, but only as a constrained commercial and dogfood proof path that validates compiler, stdlib, runtime, and tooling direction. Hees.ai work should consume general Incan surfaces, not quietly become broad product scope inside the language milestone.
 
+RFC 077 workspace foundations are a targeted tooling dependency in 0.5 rather than a general lifecycle reopening. The InQL and InQL-DB monorepo direction needs explicit root/member topology, shared dependency and lock semantics, deterministic member selection, machine-readable inspection, and lifecycle command fan-out. Pulling that foundation forward lets the monorepo begin with stable package boundaries; registry publication, nested workspaces, remote execution, and broad workspace product surfaces remain outside this exception.
+
 Core tracking issues:
 
 - [#634](https://github.com/encero-systems/incan/issues/634): v1.0 middle-end foundation umbrella.
@@ -115,6 +117,7 @@ Core tracking issues:
 - [#224](https://github.com/encero-systems/incan/issues/224): `CompilationSession` semantic database transition.
 - [#549](https://github.com/encero-systems/incan/issues/549): Hees.ai governed workbench demo.
 - [#651](https://github.com/encero-systems/incan/issues/651): Hees.ai dependency inventory and guardrails.
+- [#405](https://github.com/encero-systems/incan/issues/405): RFC 077 workspace and multi-package project foundations.
 
 Phase-0 references:
 
