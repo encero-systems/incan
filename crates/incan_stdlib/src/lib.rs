@@ -13,6 +13,7 @@ pub mod collections;
 pub mod conversions;
 pub mod errors;
 pub mod frozen;
+pub mod fs;
 pub mod iter;
 pub mod num;
 pub mod prelude;

@@ -29,6 +29,7 @@ from rust::std::time import SystemTime
 from rust::rustix::fs @ "1.1" with ["fs"] import statvfs
 from std.fs.file import File, _decode_text, _encode_text, _open_file, _validate_open_options
 from std.fs.glob import matches
+from std.fs.locking import FileLock, exclusive as lock_exclusive, shared as lock_shared, sync_directory as rust_sync_directory, try_exclusive as try_lock_exclusive, try_shared as try_lock_shared
 from std.fs.metadata import DirEntry, PathStat, DiskUsage
 from std.io import IoError
 
@@ -596,9 +597,11 @@ pub type Path = newtype str:
 
     def replace(self, target: Union[Path, str]) -> Result[Path, IoError]:
         """
-        Replace `target` with this path.
+        Atomically replace `target` with this file on the same filesystem.
 
-        Existing target directories are removed recursively; existing files and symlinks are unlinked before moving.
+        This is a publication primitive: readers observe either the previous complete target or this complete source.
+        It never unlinks the target before replacement and never falls back to copy-delete behavior. Use `move()` for
+        ordinary cross-filesystem transport or explicit directory operations when replacing a directory is intended.
 
         Args:
             target: Destination path to replace.
@@ -606,13 +609,51 @@ pub type Path = newtype str:
         Returns:
             The destination path after replacement.
         """
+        if self.is_dir():
+            return Err(_fs_error(self, "invalid_input", "replace only publishes non-directory entries"))
         dest = _as_path(target)
-        if dest.exists():
-            if dest.is_dir() and not dest.is_symlink():
-                dest.remove_tree()?
-            else:
-                dest.unlink()?
-        return self.move(dest)
+        if dest.exists() and dest.is_dir() and not dest.is_symlink():
+            return Err(_fs_error(dest, "invalid_input", "replace cannot overwrite a directory"))
+        match rust_rename(RustPath.new(self.0), RustPath.new(dest.0)):
+            Ok(_) => return Ok(dest)
+            Err(err) => return Err(_io_error(dest, err))
+
+    def sync_directory(self) -> Result[None, IoError]:
+        """
+        Request durable persistence of directory-entry changes.
+
+        Call this on the target parent after synchronizing a staged file and publishing it with `replace()`. A successful
+        replacement alone guarantees atomic visibility, not crash durability.
+        """
+        if not self.is_dir():
+            return Err(_fs_error(self, "invalid_input", "sync_directory requires a directory path"))
+        match rust_sync_directory(self.0):
+            Ok(_) => return Ok(None)
+            Err(err) => return Err(_io_error(self, err))
+
+    def lock_shared(self) -> Result[FileLock, IoError]:
+        """Acquire a blocking shared advisory lock for this path's stable sibling lock entry."""
+        match lock_shared(self.0):
+            Ok(lock) => return Ok(lock)
+            Err(err) => return Err(_io_error(self, err))
+
+    def lock_exclusive(self) -> Result[FileLock, IoError]:
+        """Acquire a blocking exclusive advisory lock for this path's stable sibling lock entry."""
+        match lock_exclusive(self.0):
+            Ok(lock) => return Ok(lock)
+            Err(err) => return Err(_io_error(self, err))
+
+    def try_lock_shared(self) -> Result[Option[FileLock], IoError]:
+        """Try to acquire a shared advisory lock without blocking."""
+        match try_lock_shared(self.0):
+            Ok(lock) => return Ok(lock)
+            Err(err) => return Err(_io_error(self, err))
+
+    def try_lock_exclusive(self) -> Result[Option[FileLock], IoError]:
+        """Try to acquire an exclusive advisory lock without blocking."""
+        match try_lock_exclusive(self.0):
+            Ok(lock) => return Ok(lock)
+            Err(err) => return Err(_io_error(self, err))
 
     def resolve(self) -> Result[Path, IoError]:
         """
@@ -998,6 +1039,8 @@ pub def _io_error(path: Path, message: str) -> IoError:
     """
     if message.contains("No such file") or message.contains("not found"):
         return _fs_error(path, "not_found", message)
+    elif message.contains("cross-device") or message.contains("Cross-device"):
+        return _fs_error(path, "cross_device", message)
     elif message.contains("Permission"):
         return _fs_error(path, "permission_denied", message)
     elif message.contains("exists"):

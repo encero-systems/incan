@@ -417,7 +417,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         name: "fs",
         feature: None,
         extra_crate_deps: &[],
-        submodules: &["path", "file", "metadata", "glob", "prelude"],
+        submodules: &["path", "file", "locking", "metadata", "glob", "prelude"],
         typechecker_only: false,
     },
     StdlibNamespace {

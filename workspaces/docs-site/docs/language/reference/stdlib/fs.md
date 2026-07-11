@@ -3,7 +3,7 @@
 `std.fs` is the standard-library module for filesystem paths, directory operations, metadata, and file handles.
 
 ```incan
-from std.fs import DirEntry, DiskUsage, File, IoError, OpenFileMode, OpenOptions, Path, PathStat
+from std.fs import DirEntry, DiskUsage, File, FileLock, IoError, OpenFileMode, OpenOptions, Path, PathStat
 ```
 
 The public surface is path-centric. Construct a `Path`, then call path or file-handle methods from there. Host failures return `Result[..., IoError]`; the error includes the affected `path`, a normalized `kind`, and a human-readable `message()`.
@@ -56,6 +56,7 @@ Use `try_exists()` when "missing" and "could not check" lead to different behavi
 | `path.rmdir()`                              | `Result[None, IoError]`           | Remove an empty directory.                                          |
 | `path.remove_tree()`                        | `Result[None, IoError]`           | Remove a directory tree; files and symlinks are errors.             |
 | `path.touch(exist_ok: bool)`                | `Result[None, IoError]`           | Create the file if needed, or update access and modification times. |
+| `path.sync_directory()`                     | `Result[None, IoError]`           | Request persistence of directory-entry updates.                     |
 
 `glob()` and `rglob()` support `*`, `?`, and bracket character classes such as `[abc]`, `[!abc]`, and `[a-z]`. `remove_tree()` is deliberately not "delete anything"; use `unlink()` for files.
 
@@ -93,7 +94,7 @@ Whole-file helpers are for small payloads. Use `open(...)` when memory bounds or
 | `path.move(target: Path \| str)`                                                          | `Result[Path, IoError]` | Move or rename, with copy-delete fallback when required. |
 | `path.move_into(target_dir: Path \| str)`                                                 | `Result[Path, IoError]` | Move into an existing directory.                         |
 | `path.rename(target: Path \| str)`                                                        | `Result[Path, IoError]` | Rename and return the new path.                          |
-| `path.replace(target: Path \| str)`                                                       | `Result[Path, IoError]` | Replace the target when supported.                       |
+| `path.replace(target: Path \| str)`                                                       | `Result[Path, IoError]` | Atomically replace a same-filesystem non-directory target. |
 | `path.symlink_to(target: Path \| str)`                                                    | `Result[None, IoError]` | Create a symlink at this path.                           |
 | `path.hardlink_to(target: Path \| str)`                                                   | `Result[None, IoError]` | Create a hard link at this path.                         |
 | `path.chmod(readonly: bool)`                                                              | `Result[None, IoError]` | Set or clear readonly permissions.                       |
@@ -102,6 +103,24 @@ Whole-file helpers are for small payloads. Use `open(...)` when memory bounds or
 | `path.expanduser()`                                                                       | `Result[Path, IoError]` | Expand a leading `~`.                                    |
 
 Metadata preservation during copy preserves permissions plus modification and access times where the host platform exposes them. Ownership, ACLs, flags, and extended attributes remain host-sensitive and best-effort.
+
+`replace()` is a publication operation, not a general move: it never unlinks the destination first and does not use a copy-delete fallback. It returns `IoError(kind="cross_device")` when the host cannot perform same-filesystem replacement. A successful replace gives atomic reader visibility, but it does not by itself request persistence across power loss.
+
+## Crash-safe publication and advisory locks
+
+Publish an authoritative local file by writing a unique sibling staging file, synchronizing its handle, atomically replacing the target, then synchronizing the target directory:
+
+```incan
+target = Path("incan.lock")
+staged = Path(".incan.lock.next")
+staged.write_bytes(rendered_lockfile)?
+staged_file = staged.open("rb")?
+staged_file.sync()?
+staged.replace(target)?
+target.parent().sync_directory()?
+```
+
+Use `path.lock_shared()` or `path.lock_exclusive()` to acquire a blocking advisory `FileLock`; `try_lock_shared()` and `try_lock_exclusive()` return `Ok(None)` when a conflicting lock is held. Locks apply to a stable sibling lock entry and are released when their guard leaves scope. They coordinate cooperative processes only, so they are not an authorization or mandatory-locking mechanism. Do not hold a blocking file lock across unrelated work or asynchronous suspension.
 
 ## File
 

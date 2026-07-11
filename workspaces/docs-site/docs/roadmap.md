@@ -118,6 +118,7 @@ Core tracking issues:
 - [#549](https://github.com/encero-systems/incan/issues/549): Hees.ai governed workbench demo.
 - [#651](https://github.com/encero-systems/incan/issues/651): Hees.ai dependency inventory and guardrails.
 - [#405](https://github.com/encero-systems/incan/issues/405): RFC 077 workspace and multi-package project foundations.
+- [#829](https://github.com/encero-systems/incan/issues/829): crash-safe local publication and file coordination (RFC 112 planned).
 
 Phase-0 references:
 

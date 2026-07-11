@@ -3194,6 +3194,17 @@ def run() -> Result[None, IoError]:
     usage = moved.disk_usage()?
     println(usage.total > 0 and usage.free > 0)
 
+    staged = root.joinpath("published.next")
+    published = root.joinpath("published.txt")
+    staged.write_text("published", "utf-8", "strict", None)?
+    staged.replace(published)?
+    root.sync_directory()?
+    println(published.read_text("utf-8", "strict")?)
+    held_lock = published.lock_exclusive()?
+    match published.try_lock_exclusive()?:
+        Some(_) => println("bad")
+        None => println("contended")
+
     file = NamedTemporaryFile.try_new_with("incan-", ".txt", None)?
     path = file.path()
     path.write_text("hello", "utf-8", "strict", None)?
@@ -3278,6 +3289,8 @@ def main() -> None:
                 "true",
                 "true",
                 "true",
+                "published",
+                "contended",
                 "hello",
                 "world",
                 "false",
@@ -3290,6 +3303,66 @@ def main() -> None:
                 "true"
             ],
             "unexpected std.fs output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_std_fs_replace_rejects_cross_device_without_losing_target() -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::MetadataExt;
+
+        let source_root = tempfile::tempdir()?;
+        let shared_memory = Path::new("/dev/shm");
+        if !shared_memory.is_dir() || fs::metadata(source_root.path())?.dev() == fs::metadata(shared_memory)?.dev() {
+            return Ok(());
+        }
+        let target_root = shared_memory.join(format!(
+            "incan_std_fs_cross_device_{}_{}",
+            std::process::id(),
+            TEST_PROJECT_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&target_root)?;
+        let staged = source_root.path().join("staged.txt");
+        let target = target_root.join("published.txt");
+        let source = format!(
+            r#"
+from std.fs import IoError, Path
+
+def run() -> Result[None, IoError]:
+    staged = Path("{staged}")
+    target = Path("{target}")
+    staged.write_text("new", "utf-8", "strict", None)?
+    target.write_text("old", "utf-8", "strict", None)?
+    match staged.replace(target):
+        Ok(_) => println("bad")
+        Err(err) => println(err.kind)
+    println(target.read_text("utf-8", "strict")?)
+    println(staged.exists())
+    return Ok(None)
+
+def main() -> None:
+    run()?
+"#,
+            staged = staged.display(),
+            target = target.display(),
+        );
+        let output = incan_command()
+            .args(["run", "-c", source.as_str()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        let _ = fs::remove_dir_all(&target_root);
+        assert!(
+            output.status.success(),
+            "cross-device replace smoke failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).lines().collect::<Vec<_>>(),
+            vec!["cross_device", "old", "true"],
+            "cross-device replacement must preserve the target and staged source"
         );
         Ok(())
     }

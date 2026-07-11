@@ -1563,6 +1563,7 @@ dependencies = [
  "incan_core",
  "incan_derive",
  "inventory",
+ "rustix",
  "serde",
  "serde_json",
  "tokio",

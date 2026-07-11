@@ -1,0 +1,63 @@
+"""OS-backed advisory file locks for coordinated local publication."""
+
+rust.module("incan_stdlib::fs")
+
+from rust::incan_stdlib::fs import RawFileLock
+
+
+pub type FileLock = newtype RawFileLock:
+    """
+    Scoped shared or exclusive advisory file lock.
+
+    The guard keeps an OS-backed lock on a stable sibling lock entry and releases it when it leaves scope. Locks
+    coordinate only cooperative processes; they do not prevent unrelated programs from changing the protected path.
+    """
+
+
+@rust.extern
+def raw_lock_shared(path: str) -> Result[RawFileLock, str]:
+    ...
+
+
+@rust.extern
+def raw_lock_exclusive(path: str) -> Result[RawFileLock, str]:
+    ...
+
+
+@rust.extern
+def raw_try_lock_shared(path: str) -> Result[Option[RawFileLock], str]:
+    ...
+
+
+@rust.extern
+def raw_try_lock_exclusive(path: str) -> Result[Option[RawFileLock], str]:
+    ...
+
+
+@rust.extern
+pub def sync_directory(path: str) -> Result[None, str]:
+    ...
+
+
+pub def shared(path: str) -> Result[FileLock, str]:
+    """Acquire a blocking shared advisory lock for `path`."""
+    return Ok(FileLock(raw_lock_shared(path)?))
+
+
+pub def exclusive(path: str) -> Result[FileLock, str]:
+    """Acquire a blocking exclusive advisory lock for `path`."""
+    return Ok(FileLock(raw_lock_exclusive(path)?))
+
+
+pub def try_shared(path: str) -> Result[Option[FileLock], str]:
+    """Try to acquire a shared advisory lock without blocking."""
+    match raw_try_lock_shared(path)?:
+        Some(lock) => return Ok(Some(FileLock(lock)))
+        None => return Ok(None)
+
+
+pub def try_exclusive(path: str) -> Result[Option[FileLock], str]:
+    """Try to acquire an exclusive advisory lock without blocking."""
+    match raw_try_lock_exclusive(path)?:
+        Some(lock) => return Ok(Some(FileLock(lock)))
+        None => return Ok(None)
