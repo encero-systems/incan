@@ -3218,6 +3218,63 @@ pub def by_index(data: JsonValue) -> Option[JsonValue]:
     );
 }
 
+/// Issue #815: explicit `Index[K, V]` adoption on a generic carrier must produce a Rust trait impl.
+#[test]
+fn test_issue815_generic_index_adoption_emits_trait_impl() {
+    let source = r#"
+from std.traits.indexing import Index
+
+class GenericBox[T with Clone] with Index[str, str]:
+  pub label: str
+  pub witness: list[T]
+
+  def __getitem__(self, key: str) for Index[str, str] -> str:
+    return key
+
+pub def indexed_label[T with Clone](box: GenericBox[T]) -> str:
+  return box["amount"]
+"#;
+    let rust_code = generate_rust(source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("impl<T:Clone>Index<String,String>forGenericBox<T>"),
+        "generic Index adoption must emit a parameterized Rust trait impl; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains(
+            "crate::__incan_std::traits::indexing::Index::<String,String,>::__getitem__(&r#box,\"amount\".to_string())"
+        ),
+        "generic index access must dispatch through the adopted Index implementation; generated:\n{rust_code}"
+    );
+}
+
+/// Issue #815: `Self` in an adopted Index output must become the concrete carrier in an impl header and call site.
+#[test]
+fn test_issue815_self_returning_index_adoption_uses_owner_type() {
+    let source = r#"
+from std.traits.indexing import Index
+
+class PlainBox with Index[list[str], Self]:
+  pub label: str
+
+  def __getitem__(self, key: list[str]) for Index[list[str], Self] -> Self:
+    return self
+
+pub def nested_box(box: PlainBox) -> PlainBox:
+  return box[["name"]]
+"#;
+    let rust_code = generate_rust(source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("implIndex<Vec<String>,PlainBox>forPlainBox"),
+        "Self in an adopted Index target must emit as the owner type; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("Index::<Vec<String>,PlainBox,>::__getitem__(&r#box,vec![\"name\".to_string()])"),
+        "Self-returning index access must use the concrete Index instantiation; generated:\n{rust_code}"
+    );
+}
+
 #[test]
 fn test_enum_multi_instantiation_trait_methods_codegen_trait_impls_only() {
     let source = r#"

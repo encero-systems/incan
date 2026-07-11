@@ -1713,9 +1713,11 @@ impl AstLowering {
 
                             // Generate trait impls for each trait this model implements
                             for trait_ref in &m.traits {
-                                for (trait_name, trait_type_args) in
-                                    self.trait_impl_targets_for_adopted_trait_bound(&trait_ref.node, &m.type_params)
-                                {
+                                for (trait_name, trait_type_args) in self.trait_impl_targets_for_adopted_trait_bound(
+                                    &trait_ref.node,
+                                    &struct_ir.name,
+                                    &m.type_params,
+                                ) {
                                     match self.lower_trait_impl(TraitImplLoweringInput {
                                         type_name: &struct_ir.name,
                                         type_params: &m.type_params,
@@ -1800,9 +1802,11 @@ impl AstLowering {
 
                             // Generate trait impls for each trait this class implements
                             for trait_ref in &c.traits {
-                                for (trait_name, trait_type_args) in
-                                    self.trait_impl_targets_for_adopted_trait_bound(&trait_ref.node, &c.type_params)
-                                {
+                                for (trait_name, trait_type_args) in self.trait_impl_targets_for_adopted_trait_bound(
+                                    &trait_ref.node,
+                                    &struct_ir.name,
+                                    &c.type_params,
+                                ) {
                                     match self.lower_trait_impl(TraitImplLoweringInput {
                                         type_name: &struct_ir.name,
                                         type_params: &c.type_params,
@@ -1853,9 +1857,11 @@ impl AstLowering {
                             if self.rusttype_forwarding_satisfied_by_alias(&n.name, &trait_ref.node.name) {
                                 continue;
                             }
-                            for (trait_name, trait_type_args) in
-                                self.trait_impl_targets_for_adopted_trait_bound(&trait_ref.node, &n.type_params)
-                            {
+                            for (trait_name, trait_type_args) in self.trait_impl_targets_for_adopted_trait_bound(
+                                &trait_ref.node,
+                                &n.name,
+                                &n.type_params,
+                            ) {
                                 match self.lower_trait_impl(TraitImplLoweringInput {
                                     type_name: &n.name,
                                     type_params: &n.type_params,
@@ -1903,9 +1909,11 @@ impl AstLowering {
                                 }
                             }
                             for trait_ref in &n.traits {
-                                for (trait_name, trait_type_args) in
-                                    self.trait_impl_targets_for_adopted_trait_bound(&trait_ref.node, &n.type_params)
-                                {
+                                for (trait_name, trait_type_args) in self.trait_impl_targets_for_adopted_trait_bound(
+                                    &trait_ref.node,
+                                    &struct_ir.name,
+                                    &n.type_params,
+                                ) {
                                     match self.lower_trait_impl(TraitImplLoweringInput {
                                         type_name: &struct_ir.name,
                                         type_params: &n.type_params,
@@ -1948,9 +1956,11 @@ impl AstLowering {
                         }
 
                         for trait_ref in &e.traits {
-                            for (trait_name, trait_type_args) in
-                                self.trait_impl_targets_for_adopted_trait_bound(&trait_ref.node, &e.type_params)
-                            {
+                            for (trait_name, trait_type_args) in self.trait_impl_targets_for_adopted_trait_bound(
+                                &trait_ref.node,
+                                &enum_ir.name,
+                                &e.type_params,
+                            ) {
                                 match self.lower_trait_impl(TraitImplLoweringInput {
                                     type_name: &enum_ir.name,
                                     type_params: &e.type_params,
