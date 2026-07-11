@@ -25,10 +25,10 @@ use crate::frontend::module::canonicalize_source_module_segments;
 use crate::frontend::typechecker::{ConstValue, TypeChecker};
 use crate::library_manifest::{
     ClassExport, EnumExport, EnumValueExport, EnumValueTypeExport, EnumVariantAliasExport, EnumVariantExport,
-    FieldExport, FieldRequirementExport, FunctionExport, MethodExport, ModelExport, NewtypeExport, ParamExport,
-    PartialExport, PartialPresetExport, PartialTargetKindExport, PresetDictEntryExport, PresetModelFieldExport,
-    PresetValueExport, ReceiverExport, TraitExport, TypeAliasExport, TypeBoundExport, TypeParamExport, TypeRef,
-    params_from_checked, type_ref_from_resolved,
+    FieldExport, FieldRequirementExport, FunctionExport, MethodExport, ModelExport, NewtypeConstraintExport,
+    NewtypeExport, ParamExport, PartialExport, PartialPresetExport, PartialTargetKindExport, PresetDictEntryExport,
+    PresetModelFieldExport, PresetValueExport, ReceiverExport, TraitExport, TypeAliasExport, TypeBoundExport,
+    TypeParamExport, TypeRef, params_from_checked, type_ref_from_resolved,
 };
 
 pub const CHECKED_API_METADATA_SCHEMA_VERSION: u32 = 1;
@@ -195,7 +195,18 @@ pub struct ApiNewtype {
     pub trait_adoptions: Vec<TypeBoundExport>,
     pub is_rusttype: bool,
     pub underlying: TypeRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked_constructor: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub constraints: Vec<NewtypeConstraintExport>,
+    #[serde(default = "default_newtype_implicit_coercion")]
+    pub implicit_coercion_enabled: bool,
     pub methods: Vec<ApiMethod>,
+}
+
+/// Preserve the pre-field API metadata behavior when older payloads omit the coercion flag.
+fn default_newtype_implicit_coercion() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -427,6 +438,9 @@ pub(crate) fn newtype_export_from_api(newtype: &ApiNewtype) -> NewtypeExport {
         trait_adoptions: newtype.trait_adoptions.clone(),
         is_rusttype: newtype.is_rusttype,
         underlying: newtype.underlying.clone(),
+        checked_constructor: newtype.checked_constructor.clone(),
+        constraints: newtype.constraints.clone(),
+        implicit_coercion_enabled: newtype.implicit_coercion_enabled,
         methods: newtype.methods.iter().map(method_export_from_api).collect(),
     }
 }
@@ -1082,6 +1096,13 @@ fn api_newtype(
         trait_adoptions: export.trait_adoptions.iter().map(type_bound).collect(),
         is_rusttype: export.is_rusttype,
         underlying: type_ref_from_resolved(&export.underlying),
+        checked_constructor: export.checked_constructor.clone(),
+        constraints: export
+            .constraints
+            .iter()
+            .map(NewtypeConstraintExport::from_checked)
+            .collect(),
+        implicit_coercion_enabled: export.implicit_coercion_enabled,
         methods: methods(&newtype.methods, &export.methods, checker, module_path, &export.name),
     }
 }

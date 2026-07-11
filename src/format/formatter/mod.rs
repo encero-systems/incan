@@ -194,13 +194,30 @@ impl Formatter {
         let mut prev_decl: Option<Declaration> = None;
         let mut idx = 0usize;
 
+        if let Some(Declaration::Docstring(doc)) = program.declarations.first().map(|decl| &decl.node) {
+            self.format_docstring(doc);
+            prev_decl = Some(Declaration::Docstring(doc.clone()));
+            first = false;
+            idx = 1;
+        }
+
+        if let Some(rust_module_path) = &program.rust_module_path {
+            if !first {
+                self.writer.blank_lines(1);
+            }
+            self.writer.write("rust.module(\"");
+            self.writer.write(&rust_module_path.node);
+            self.writer.writeln("\")");
+            first = false;
+        }
+
         while idx < program.declarations.len() {
             let (decl, consumed) = self.coalesce_top_level_decl(&program.declarations, idx);
             if !first {
                 let extra_newlines = prev_decl
                     .as_ref()
                     .map(|prev| self.top_level_spacing(prev, &decl))
-                    .unwrap_or_default();
+                    .unwrap_or_else(|| usize::from(program.rust_module_path.is_some()));
                 self.writer.blank_lines(extra_newlines);
             }
 

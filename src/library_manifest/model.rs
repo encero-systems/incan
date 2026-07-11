@@ -18,7 +18,7 @@ use crate::frontend::library_exports::{
     CheckedPartialTargetKind, CheckedPresetValue, CheckedStaticExport, CheckedTraitExport, CheckedTypeAliasExport,
     CheckedTypeBound, CheckedTypeParam,
 };
-use crate::frontend::symbols::{CallableParam, ValueEnumBacking, ValueEnumValue};
+use crate::frontend::symbols::{CallableParam, NewtypePrimitiveConstraint, ValueEnumBacking, ValueEnumValue};
 use incan_core::interop::RustItemMetadata;
 
 /// Errors surfaced while reading, writing, parsing, serializing, or validating `.incnlib` manifests.
@@ -740,7 +740,71 @@ pub struct NewtypeExport {
     pub is_rusttype: bool,
     /// Underlying wrapped type.
     pub underlying: TypeRef,
+    /// Canonical checked-construction hook selected by the producer typechecker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked_constructor: Option<String>,
+    /// Checked RFC 017 constrained-primitive predicates.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub constraints: Vec<NewtypeConstraintExport>,
+    /// Whether ordinary implicit construction from the underlying value is allowed.
+    #[serde(default = "default_newtype_implicit_coercion")]
+    pub implicit_coercion_enabled: bool,
     pub methods: Vec<MethodExport>,
+}
+
+/// Serialized comparison key for one constrained-newtype predicate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NewtypeConstraintKeyExport {
+    Ge,
+    Gt,
+    Le,
+    Lt,
+}
+
+/// One checked constrained-primitive predicate exported for package consumers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NewtypeConstraintExport {
+    pub key: NewtypeConstraintKeyExport,
+    pub value: i64,
+    pub repr: String,
+}
+
+impl NewtypeConstraintExport {
+    /// Convert a checked frontend predicate into its stable manifest representation.
+    pub(crate) fn from_checked(constraint: &NewtypePrimitiveConstraint) -> Self {
+        let key = match constraint.key {
+            crate::frontend::ast::TypeConstraintKey::Ge => NewtypeConstraintKeyExport::Ge,
+            crate::frontend::ast::TypeConstraintKey::Gt => NewtypeConstraintKeyExport::Gt,
+            crate::frontend::ast::TypeConstraintKey::Le => NewtypeConstraintKeyExport::Le,
+            crate::frontend::ast::TypeConstraintKey::Lt => NewtypeConstraintKeyExport::Lt,
+        };
+        Self {
+            key,
+            value: constraint.value,
+            repr: constraint.repr.clone(),
+        }
+    }
+
+    /// Reconstruct the checked frontend predicate represented by this manifest entry.
+    pub(crate) fn to_checked(&self) -> NewtypePrimitiveConstraint {
+        let key = match self.key {
+            NewtypeConstraintKeyExport::Ge => crate::frontend::ast::TypeConstraintKey::Ge,
+            NewtypeConstraintKeyExport::Gt => crate::frontend::ast::TypeConstraintKey::Gt,
+            NewtypeConstraintKeyExport::Le => crate::frontend::ast::TypeConstraintKey::Le,
+            NewtypeConstraintKeyExport::Lt => crate::frontend::ast::TypeConstraintKey::Lt,
+        };
+        NewtypePrimitiveConstraint {
+            key,
+            value: self.value,
+            repr: self.repr.clone(),
+        }
+    }
+}
+
+/// Preserve the pre-field manifest behavior when older manifests omit the coercion flag.
+fn default_newtype_implicit_coercion() -> bool {
+    true
 }
 
 /// Exported constant metadata.
@@ -786,6 +850,9 @@ impl LibraryManifest {
         let mut manifest = Self::new(name.clone(), version);
         manifest.exports = LibraryExports::from_checked_exports(checked_exports);
         manifest.contract_metadata.identity_graph = LibraryIdentityGraph::from_checked_exports(&name, checked_exports);
+        manifest
+            .exports
+            .rewrite_newtype_underlying_names_to_public_exports(checked_exports);
         for enum_export in &mut manifest.exports.enums {
             if enum_export.value_type.is_some() && enum_export.ordinal_type_identity.is_none() {
                 enum_export.ordinal_type_identity = Some(format!("{name}.{}", enum_export.name));
@@ -890,6 +957,126 @@ impl LibraryExports {
         self.newtypes.sort_by(|left, right| left.name.cmp(&right.name));
         self.consts.sort_by(|left, right| left.name.cmp(&right.name));
         self.statics.sort_by(|left, right| left.name.cmp(&right.name));
+    }
+
+    /// Rewrite newtype composition references through the public identity graph selected for this package.
+    fn rewrite_newtype_underlying_names_to_public_exports(&mut self, exports: &[CheckedNamedExport]) {
+        let mut public_names_by_source: std::collections::HashMap<Vec<String>, Vec<String>> =
+            std::collections::HashMap::new();
+        for export in exports {
+            if !matches!(
+                &export.kind,
+                CheckedExportKind::Model(_)
+                    | CheckedExportKind::Class(_)
+                    | CheckedExportKind::Enum(_)
+                    | CheckedExportKind::Newtype(_)
+            ) {
+                continue;
+            }
+            let source_path = match &export.identity.projection {
+                CheckedExportProjection::Direct => &export.identity.source_path,
+                CheckedExportProjection::Alias { target_path } | CheckedExportProjection::Reexport { target_path } => {
+                    target_path
+                }
+                CheckedExportProjection::Partial { .. } => continue,
+            };
+            public_names_by_source
+                .entry(source_path.clone())
+                .or_default()
+                .push(export.name.clone());
+        }
+        let public_names = public_names_by_source
+            .into_iter()
+            .filter_map(|(source_path, mut names)| {
+                let source_name = source_path.last()?;
+                names.sort();
+                names.dedup();
+                let preferred = names
+                    .iter()
+                    .find(|name| *name == source_name)
+                    .cloned()
+                    .unwrap_or_else(|| names[0].clone());
+                Some((source_path, preferred))
+            })
+            .collect::<std::collections::HashMap<_, _>>();
+        let mut source_paths_by_leaf: std::collections::HashMap<String, Vec<Vec<String>>> =
+            std::collections::HashMap::new();
+        for source_path in public_names.keys() {
+            if let Some(source_name) = source_path.last() {
+                source_paths_by_leaf
+                    .entry(source_name.clone())
+                    .or_default()
+                    .push(source_path.clone());
+            }
+        }
+        for newtype in &mut self.newtypes {
+            let owner_module_path = exports
+                .iter()
+                .find(|export| export.name == newtype.name && matches!(&export.kind, CheckedExportKind::Newtype(_)))
+                .map(|export| match &export.identity.projection {
+                    CheckedExportProjection::Direct => export.identity.source_path.as_slice(),
+                    CheckedExportProjection::Alias { target_path }
+                    | CheckedExportProjection::Reexport { target_path } => target_path.as_slice(),
+                    CheckedExportProjection::Partial { .. } => export.identity.source_path.as_slice(),
+                })
+                .and_then(|path| path.split_last().map(|(_, module_path)| module_path.to_vec()))
+                .unwrap_or_default();
+            rewrite_type_ref_names(
+                &mut newtype.underlying,
+                &owner_module_path,
+                &public_names,
+                &source_paths_by_leaf,
+            );
+        }
+    }
+}
+
+/// Rewrite source-owned type references to the selected public export names.
+fn rewrite_type_ref_names(
+    ty: &mut TypeRef,
+    owner_module_path: &[String],
+    public_names: &std::collections::HashMap<Vec<String>, String>,
+    source_paths_by_leaf: &std::collections::HashMap<String, Vec<Vec<String>>>,
+) {
+    let public_name_for = |name: &str| {
+        let mut local_source_path = owner_module_path.to_vec();
+        local_source_path.push(name.to_string());
+        public_names.get(&local_source_path).or_else(|| {
+            let candidates = source_paths_by_leaf.get(name)?;
+            (candidates.len() == 1)
+                .then(|| public_names.get(&candidates[0]))
+                .flatten()
+        })
+    };
+    match ty {
+        TypeRef::Named { name } => {
+            if let Some(public_name) = public_name_for(name) {
+                *name = public_name.clone();
+            }
+        }
+        TypeRef::Applied { name, args } => {
+            if let Some(public_name) = public_name_for(name) {
+                *name = public_name.clone();
+            }
+            for arg in args {
+                rewrite_type_ref_names(arg, owner_module_path, public_names, source_paths_by_leaf);
+            }
+        }
+        TypeRef::Function { params, return_type } => {
+            for param in params {
+                rewrite_type_ref_names(param, owner_module_path, public_names, source_paths_by_leaf);
+            }
+            rewrite_type_ref_names(return_type, owner_module_path, public_names, source_paths_by_leaf);
+        }
+        TypeRef::TypeToken { inner } | TypeRef::Ref { inner } => {
+            rewrite_type_ref_names(inner, owner_module_path, public_names, source_paths_by_leaf);
+        }
+        TypeRef::Tuple { elements } => {
+            for element in elements {
+                rewrite_type_ref_names(element, owner_module_path, public_names, source_paths_by_leaf);
+            }
+        }
+        TypeRef::TypeParam { .. } | TypeRef::SelfType | TypeRef::RustPath { .. } | TypeRef::Unknown => {}
     }
 }
 
@@ -1283,6 +1470,13 @@ fn newtype_export_from_checked(export: &CheckedNewtypeExport) -> NewtypeExport {
         trait_adoptions: export.trait_adoptions.iter().map(type_bound_from_checked).collect(),
         is_rusttype: export.is_rusttype,
         underlying: type_ref_from_resolved(&export.underlying),
+        checked_constructor: export.checked_constructor.clone(),
+        constraints: export
+            .constraints
+            .iter()
+            .map(NewtypeConstraintExport::from_checked)
+            .collect(),
+        implicit_coercion_enabled: export.implicit_coercion_enabled,
         methods: export.methods.iter().map(method_from_checked).collect(),
     }
 }

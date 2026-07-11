@@ -2920,14 +2920,28 @@ impl TypeChecker {
             if let Some(info) = self.resolve_imported_module_constant_member(&module_path, field) {
                 return info.ty;
             }
-            if let Some(info) = self.resolve_imported_module_function_member(&module_path, field) {
+            if let Some(kind) = self.resolve_imported_module_function_member(&module_path, field) {
                 let callable = format!("{module_name}.{field}");
-                if !info.type_params.is_empty() {
-                    self.errors
-                        .push(errors::generic_function_reference(callable.as_str(), span));
-                    return ResolvedType::Unknown;
+                match kind {
+                    SymbolKind::Function(info) => {
+                        if !info.type_params.is_empty() {
+                            self.errors
+                                .push(errors::generic_function_reference(callable.as_str(), span));
+                            return ResolvedType::Unknown;
+                        }
+                        return Self::function_info_to_resolved_function_type(&info);
+                    }
+                    SymbolKind::FunctionOverloads(_) => {
+                        self.errors.push(CompileError::type_error(
+                            format!(
+                                "Cannot use overloaded function '{callable}' as a value; call it directly so an overload can be selected"
+                            ),
+                            span,
+                        ));
+                        return ResolvedType::Unknown;
+                    }
+                    _ => {}
                 }
-                return Self::function_info_to_resolved_function_type(&info);
             }
         }
 
@@ -3273,16 +3287,27 @@ impl TypeChecker {
         }
 
         if let Some((module_name, module_path)) = self.imported_module_for_expr(base) {
-            if let Some(info) = self.resolve_imported_module_function_member(&module_path, method) {
+            if let Some(kind) = self.resolve_imported_module_function_member(&module_path, method) {
                 let callable = format!("{module_name}.{method}");
-                return self.validate_stdlib_module_function_call(
-                    callable.as_str(),
-                    &info,
-                    type_args,
-                    args,
-                    span,
-                    expected_return_ty,
-                );
+                return match kind {
+                    SymbolKind::Function(info) => self.validate_stdlib_module_function_call(
+                        callable.as_str(),
+                        &info,
+                        type_args,
+                        args,
+                        span,
+                        expected_return_ty,
+                    ),
+                    SymbolKind::FunctionOverloads(overloads) => self.validate_function_overload_call(
+                        callable.as_str(),
+                        &overloads,
+                        type_args,
+                        args,
+                        span,
+                        expected_return_ty,
+                    ),
+                    _ => ResolvedType::Unknown,
+                };
             }
             self.errors
                 .push(errors::missing_method(module_name.as_str(), method, span));

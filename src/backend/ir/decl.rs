@@ -218,6 +218,10 @@ pub struct IrImpl {
     pub type_params: Vec<IrTypeParam>,
     /// The trait being implemented, if any.
     pub trait_name: Option<String>,
+    /// Canonical source module that owns the implemented trait, when known.
+    pub trait_module_path: Option<Vec<String>>,
+    /// Canonical source declaration name before local import aliasing, when known.
+    pub trait_source_name: Option<String>,
     /// Concrete type arguments for the implemented trait (e.g. `impl<T> Boxed<T> for Cell<T>`), RFC 042.
     pub trait_type_args: Vec<IrType>,
     /// Associated type items emitted inside trait impl blocks.

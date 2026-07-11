@@ -3092,7 +3092,7 @@ mod tests {
             function_registry: FunctionRegistry::new(),
             function_reexports: Vec::new(),
             rust_module_path: None,
-            newtype_checked_ctor: Default::default(),
+            newtype_construction: Default::default(),
         }
     }
 
@@ -3132,6 +3132,8 @@ mod tests {
                 target_type: "Boxed".to_string(),
                 type_params: vec![IrTypeParam::bare("T")],
                 trait_name: None,
+                trait_module_path: None,
+                trait_source_name: None,
                 trait_type_args: Vec::new(),
                 associated_types: Vec::new(),
                 methods: vec![method],
@@ -3141,7 +3143,7 @@ mod tests {
             function_registry: FunctionRegistry::new(),
             function_reexports: Vec::new(),
             rust_module_path: None,
-            newtype_checked_ctor: Default::default(),
+            newtype_construction: Default::default(),
         };
 
         infer_trait_bounds(&mut program);

@@ -77,7 +77,7 @@ The current backend and stdlib assume a hosted Rust `std` environment in many pl
 | Assumption                         | Current examples                                                                   | Future owner                                                   |
 | ---------------------------------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------- |
 | Filesystem access                  | `std.fs`, toolchain cache, generated project emission, diagnostics source loading. | Runtime-service metadata, target profiles.                     |
-| Process/environment access         | CLI commands, toolchain installer, `std.environ` candidate work, release scripts.  | Runtime-service metadata, issue #557 / future target profiles. |
+| Process/environment access         | CLI commands, toolchain installer, `std.environ`, release scripts.                 | Runtime-service metadata and future target profiles.           |
 | Default allocator                  | Collections, strings, generated project runtime, many stdlib helpers.              | ABI v0 hooks, `IncanType`, future allocator policy.            |
 | Panic behavior                     | Generated panic hooks, test runner, runtime helper failures.                       | ABI v0 hooks, panic-strategy metadata.                         |
 | Threads/async runtime              | LSP, async stdlib, task/channel/sync helpers.                                      | Runtime-service metadata, std.async contracts.                 |

@@ -55,6 +55,12 @@
       "expected_fingerprint": "0xcedb21689b86932d"
     },
     {
+      "path": "src/backend/ir/codegen/capability_bridge.rs",
+      "category": "serialized trait capability argument matching",
+      "expected_count": 1,
+      "expected_fingerprint": "0xaa404d9a8890213a"
+    },
+    {
       "path": "src/backend/ir/codegen/dependency_metadata.rs",
       "category": "dependency metadata compatibility and web route preservation",
       "expected_count": 2,
@@ -141,8 +147,8 @@
     {
       "path": "src/backend/ir/emit/program.rs",
       "category": "callable source-name metadata use analysis",
-      "expected_count": 2,
-      "expected_fingerprint": "0x497886b639dd72c9"
+      "expected_count": 4,
+      "expected_fingerprint": "0x9cbc492d11b61ac2"
     },
     {
       "path": "src/backend/ir/emit/types.rs",
@@ -188,9 +194,9 @@
     },
     {
       "path": "src/backend/ir/lower/expr/calls.rs",
-      "category": "public dependency call/default lowering, checked API target paths, and assert-raises policy",
-      "expected_count": 5,
-      "expected_fingerprint": "0x2a9295afdba175d8"
+      "category": "public dependency call/default lowering and assert-raises policy",
+      "expected_count": 4,
+      "expected_fingerprint": "0xa034f1c6f0c7e658"
     },
     {
       "path": "src/backend/ir/lower/expr/mod.rs",
@@ -200,9 +206,9 @@
     },
     {
       "path": "src/backend/ir/lower/mod.rs",
-      "category": "newtype, derive, and validation lowering compatibility",
-      "expected_count": 5,
-      "expected_fingerprint": "0xefce60e6312a0c70"
+      "category": "derive and validation lowering compatibility",
+      "expected_count": 4,
+      "expected_fingerprint": "0xae0c6d1c895333e6"
     },
     {
       "path": "src/backend/ir/lower/stmt.rs",

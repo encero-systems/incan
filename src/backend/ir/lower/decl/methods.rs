@@ -1,6 +1,6 @@
 //! Method lowering: model methods, class methods, trait impl methods, and general method lowering.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::super::super::decl::{FunctionParam, IrAssociatedType, IrDecl, IrDeclKind, IrFunction, IrImpl, Visibility};
 use super::super::super::expr::{IrCallArg, IrCallArgKind, IrExprKind, VarAccess, VarRefKind};
@@ -11,7 +11,6 @@ use super::super::AstLowering;
 use super::super::TraitImplLoweringInput;
 use super::super::errors::LoweringError;
 use crate::frontend::ast::{self, Spanned};
-use crate::frontend::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::frontend::symbols::ResolvedType;
 use incan_core::lang::decorators::{self, DecoratorId};
 use incan_core::lang::keywords::{self, KeywordId};
@@ -133,21 +132,15 @@ impl AstLowering {
     fn collect_trait_impl_targets_recursive(
         &self,
         trait_name: &str,
-        trait_args: &[ResolvedType],
+        trait_args: &[IrType],
         seen: &mut HashSet<String>,
         out: &mut Vec<(String, Vec<IrType>)>,
     ) {
-        let key = format!(
-            "{trait_name}<{}>",
-            trait_args.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(",")
-        );
+        let key = format!("{trait_name}<{trait_args:?}>");
         if !seen.insert(key) {
             return;
         }
-        out.push((
-            trait_name.to_string(),
-            trait_args.iter().map(|arg| self.lower_resolved_type(arg)).collect(),
-        ));
+        out.push((trait_name.to_string(), trait_args.to_vec()));
 
         let Some(type_info) = &self.type_info else {
             return;
@@ -158,12 +151,16 @@ impl AstLowering {
         let Some(param_names) = self.trait_type_param_names(trait_name) else {
             return;
         };
-        let subst = type_param_subst_map(&param_names, trait_args);
+        let subst = param_names
+            .iter()
+            .cloned()
+            .zip(trait_args.iter().cloned())
+            .collect::<HashMap<_, _>>();
 
         for (supertrait_name, supertrait_args) in direct_supertraits {
             let instantiated_args = supertrait_args
                 .iter()
-                .map(|arg| substitute_resolved_type(arg, &subst))
+                .map(|arg| Self::substitute_ir_type_params(self.lower_resolved_type(arg), &subst))
                 .collect::<Vec<_>>();
             self.collect_trait_impl_targets_recursive(supertrait_name, &instantiated_args, seen, out);
         }
@@ -175,7 +172,11 @@ impl AstLowering {
         trait_name: &str,
         type_params: &[ast::TypeParam],
     ) -> Vec<(String, Vec<IrType>)> {
-        let direct_args = self.infer_trait_impl_resolved_args(trait_name, type_params);
+        let direct_args = self
+            .infer_trait_impl_resolved_args(trait_name, type_params)
+            .iter()
+            .map(|arg| self.lower_resolved_type(arg))
+            .collect::<Vec<_>>();
         let mut seen = HashSet::new();
         let mut out = Vec::new();
         self.collect_trait_impl_targets_recursive(trait_name, &direct_args, &mut seen, &mut out);
@@ -184,9 +185,8 @@ impl AstLowering {
 
     /// Lower an adopted trait bound into the direct Rust impl target(s) required for codegen.
     ///
-    /// Explicit type arguments on adopter bounds (for example `with From[int]`) are preserved directly from the AST.
-    /// Recursive instantiated supertrait expansion is only available on the older positional-adoption path, which is
-    /// sufficient for the current stdlib conversion hooks.
+    /// Explicit type arguments on adopter bounds (for example `with From[int]`) are preserved directly from the AST
+    /// and substituted through the complete supertrait closure.
     pub(in crate::backend::ir::lower) fn trait_impl_targets_for_adopted_trait_bound(
         &self,
         bound: &ast::TraitBound,
@@ -196,15 +196,15 @@ impl AstLowering {
             return self.trait_impl_targets_for_adopted_trait(&bound.name, type_params);
         }
         let type_param_names: std::collections::HashSet<&str> = type_params.iter().map(|tp| tp.name.as_str()).collect();
-
-        vec![(
-            bound.name.clone(),
-            bound
-                .type_args
-                .iter()
-                .map(|arg| self.lower_type_with_type_params(&arg.node, Some(&type_param_names)))
-                .collect(),
-        )]
+        let direct_args = bound
+            .type_args
+            .iter()
+            .map(|arg| self.lower_type_with_type_params(&arg.node, Some(&type_param_names)))
+            .collect::<Vec<_>>();
+        let mut seen = HashSet::new();
+        let mut out = Vec::new();
+        self.collect_trait_impl_targets_recursive(&bound.name, &direct_args, &mut seen, &mut out);
+        out
     }
 
     /// Return whether the typechecker proved a body-less rusttype Rust-trait adoption is satisfied by the backing type.
@@ -259,10 +259,36 @@ impl AstLowering {
             target_type: type_name.to_string(),
             type_params: Self::lower_type_params(type_params),
             trait_name: None,
+            trait_module_path: None,
+            trait_source_name: None,
             trait_type_args: Vec::new(),
             associated_types: Vec::new(),
             methods: lowered_methods,
         })
+    }
+
+    /// Resolve a visible trait spelling to its canonical source identity.
+    fn canonical_trait_identity(&self, visible_name: &str) -> (Option<Vec<String>>, Option<String>) {
+        if let Some(path) = self.import_aliases.get(visible_name)
+            && let Some((source_name, module_path)) = path.split_last()
+        {
+            return (Some(module_path.to_vec()), Some(source_name.clone()));
+        }
+        if let Some((module_name, source_name)) = visible_name.rsplit_once('.')
+            && let Some(module_path) = self.import_aliases.get(module_name)
+        {
+            return (Some(module_path.clone()), Some(source_name.to_string()));
+        }
+        let module_path = self.current_source_module_name.as_ref().map(|name| {
+            name.split('.')
+                .filter(|segment| !segment.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        });
+        (
+            module_path,
+            Some(visible_name.rsplit('.').next().unwrap_or(visible_name).to_string()),
+        )
     }
 
     /// Lower a property return type into the comparable IR shape used for trait override matching.
@@ -828,6 +854,7 @@ impl AstLowering {
             impl_properties,
             impl_associated_types,
         } = input;
+        let (trait_module_path, trait_source_name) = self.canonical_trait_identity(trait_name);
         let type_param_names: std::collections::HashSet<&str> = type_params.iter().map(|tp| tp.name.as_str()).collect();
         let prev = self.current_impl_type.replace(type_name.to_string());
         let lowered_result = (|| {
@@ -875,6 +902,8 @@ impl AstLowering {
                     target_type: type_name.to_string(),
                     type_params: Self::lower_type_params(type_params),
                     trait_name: Some(trait_name.to_string()),
+                    trait_module_path: trait_module_path.clone(),
+                    trait_source_name: trait_source_name.clone(),
                     trait_type_args,
                     associated_types,
                     methods,
@@ -987,6 +1016,8 @@ impl AstLowering {
                 target_type: type_name.to_string(),
                 type_params: Self::lower_type_params(type_params),
                 trait_name: Some(trait_name.to_string()),
+                trait_module_path,
+                trait_source_name,
                 trait_type_args,
                 associated_types,
                 methods,
@@ -1131,6 +1162,8 @@ impl AstLowering {
             target_type: type_name.to_string(),
             type_params: Self::lower_type_params(type_params),
             trait_name: None,
+            trait_module_path: None,
+            trait_source_name: None,
             trait_type_args: Vec::new(),
             associated_types: Vec::new(),
             methods: lowered_methods,
@@ -1162,6 +1195,8 @@ impl AstLowering {
             target_type: type_name.to_string(),
             type_params: Self::lower_type_params(type_params),
             trait_name: None,
+            trait_module_path: None,
+            trait_source_name: None,
             trait_type_args: Vec::new(),
             associated_types: Vec::new(),
             methods: lowered_methods,

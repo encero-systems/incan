@@ -33,6 +33,30 @@ pub(crate) fn overload_emitted_name(source_name: &str, hash: u64) -> String {
     format!("{source_name}{OVERLOAD_EMITTED_NAME_SEPARATOR}{hash:016x}")
 }
 
+/// Build the deterministic Rust symbol name for one same-name source overload.
+pub(crate) fn overloaded_function_emitted_name(source_name: &str, info: &FunctionInfo) -> String {
+    let mut signature = String::new();
+    signature.push_str(source_name);
+    signature.push('(');
+    for param in &info.params {
+        signature.push_str(&param.ty.to_string());
+        signature.push(';');
+    }
+    signature.push_str(")->");
+    signature.push_str(&info.return_type.to_string());
+    overload_emitted_name(source_name, stable_fnv1a(signature.as_bytes()))
+}
+
+/// Hash bytes with the FNV-1a variant used for deterministic generated symbol suffixes.
+fn stable_fnv1a(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
 /// Return the generated Rust symbol prefix shared by all overload implementations for one source binding.
 pub(crate) fn overload_emitted_name_prefix(source_name: &str) -> String {
     format!("{source_name}{OVERLOAD_EMITTED_NAME_SEPARATOR}")

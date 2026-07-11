@@ -200,17 +200,23 @@ impl<'a> IrEmitter<'a> {
             .derives
             .iter()
             .any(|derive| derive == derives::INCAN_CLASS_DERIVE_NAME);
+        let has_type_class_name = has_class_name || self.newtype_construction.contains_key(&s.name);
         let has_field_metadata = s.derives.iter().any(|derive| derive == derives::FIELD_INFO_DERIVE_NAME);
 
-        let class_name_impl = if has_class_name {
-            let class_name = s.name.as_str();
+        let value_class_name_impl = if has_class_name {
             quote! {
                 impl #generics incan_stdlib::reflection::HasClassName for #name #generics_bare {
                     fn __class_name__(&self) -> &'static str {
                         <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
                     }
                 }
-
+            }
+        } else {
+            quote! {}
+        };
+        let type_class_name_impl = if has_type_class_name {
+            let class_name = s.name.as_str();
+            quote! {
                 impl #generics incan_stdlib::reflection::HasTypeClassName for #name #generics_bare {
                     fn __class_name__() -> &'static str {
                         #class_name
@@ -282,7 +288,8 @@ impl<'a> IrEmitter<'a> {
         };
 
         Ok(quote! {
-            #class_name_impl
+            #value_class_name_impl
+            #type_class_name_impl
             #field_metadata_impl
             #field_value_reflection_impl
         })
@@ -464,6 +471,14 @@ impl<'a> IrEmitter<'a> {
         // RFC 023: emit generic type parameters with trait bounds (declaration) and bare names (type positions).
         let generics = self.emit_type_params(&e.type_params);
         let generics_bare = self.emit_type_params_bare(&e.type_params);
+        let class_name = e.name.as_str();
+        let type_class_name_impl = quote! {
+            impl #generics incan_stdlib::reflection::HasTypeClassName for #name #generics_bare {
+                fn __class_name__() -> &'static str {
+                    #class_name
+                }
+            }
+        };
         let value_enum_helpers = self.emit_value_enum_helpers(e, &name, &generics, &generics_bare)?;
         let message_impl = if self.should_emit_enum_message_method(&e.name, &e.visibility) {
             let variant_match_arms: Vec<TokenStream> = e
@@ -508,6 +523,7 @@ impl<'a> IrEmitter<'a> {
                 #(#variants),*
             }
 
+            #type_class_name_impl
             #message_impl
             #value_enum_helpers
         })

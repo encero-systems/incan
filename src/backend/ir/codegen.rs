@@ -46,9 +46,11 @@ use super::scanners::{
 };
 use super::{AstLowering, EmitError, EmitService, FunctionRegistry, IrEmitter, IrProgram, LoweringErrors};
 
+mod capability_bridge;
 mod dependency_metadata;
 mod ordinal_bridge;
 mod serde_activation;
+mod string_try_from_bridge;
 
 use dependency_metadata::{
     DependencySymbolMetadata, collect_dependency_symbol_metadata, collect_externally_reachable_items_by_module,
@@ -57,6 +59,9 @@ use dependency_metadata::{
 };
 use ordinal_bridge::{OrdinalBridgeConfig, compilation_imports_std_ordinal_contract, imports_std_ordinal_contract};
 use serde_activation::{add_serde_to_newtypes, collect_serde_derives};
+use string_try_from_bridge::{
+    StringTryFromBridgeConfig, compilation_imports_std_string_try_from_contract, imports_std_string_try_from_contract,
+};
 
 /// Error during Rust code generation.
 ///
@@ -430,12 +435,34 @@ impl<'a> IrCodegen<'a> {
         OrdinalBridgeConfig::for_crate_root(uses_std_ordinal_contract, self.library_manifest_index.as_ref())
     }
 
+    /// Collect `TryFrom[str]` bridge facts needed at the generated crate root.
+    fn string_try_from_bridge_config(&self, uses_contract: bool) -> StringTryFromBridgeConfig {
+        StringTryFromBridgeConfig::for_crate_root(uses_contract, self.library_manifest_index.as_ref())
+    }
+
     /// Apply collected OrdinalKey bridge metadata to a freshly created emitter.
     fn apply_ordinal_bridge_config(&self, emitter: &mut IrEmitter, config: &OrdinalBridgeConfig) {
         emitter.set_emit_std_ordinal_value_enum_impls(config.emit_std_ordinal_value_enum_impls);
         emitter.set_external_ordinal_value_enums(config.external_value_enums.clone());
         emitter.set_external_ordinal_custom_keys(config.external_custom_keys.clone());
         emitter.set_public_ordinal_type_identities(self.public_ordinal_type_identities.clone());
+    }
+
+    /// Apply compiler-provided `TryFrom[str]` bridge metadata to a freshly created emitter.
+    fn apply_string_try_from_bridge_config(&self, emitter: &mut IrEmitter, config: &StringTryFromBridgeConfig) {
+        emitter.set_emit_std_string_try_from_newtype_impls(config.emit_local_newtype_impls);
+        emitter.set_external_string_try_from_types(config.external_types.clone());
+    }
+
+    /// Apply every temporary source-owned capability bridge to a freshly created emitter.
+    fn apply_capability_bridge_configs(
+        &self,
+        emitter: &mut IrEmitter,
+        ordinal: &OrdinalBridgeConfig,
+        string_conversion: &StringTryFromBridgeConfig,
+    ) {
+        self.apply_ordinal_bridge_config(emitter, ordinal);
+        self.apply_string_try_from_bridge_config(emitter, string_conversion);
     }
 
     /// Set whether non-stdlib dependency modules preserve their public API surface during emission.
@@ -657,8 +684,9 @@ impl<'a> IrCodegen<'a> {
     ///
     /// ## Errors
     ///
-    /// Returns `GenerationError::Lowering` if AST lowering fails, or
-    /// `GenerationError::Emission` if IR emission fails.
+    /// Returns `GenerationError::TypeCheck` if the module or one of its participating dependencies fails
+    /// typechecking, `GenerationError::Lowering` if AST lowering fails, or `GenerationError::Emission` if IR emission
+    /// fails.
     ///
     /// ## Examples
     ///
@@ -719,6 +747,9 @@ impl<'a> IrCodegen<'a> {
         let dependency_symbol_metadata = collect_dependency_symbol_metadata(&dependency_modules);
         let uses_std_ordinal_contract = compilation_imports_std_ordinal_contract(program, &dependency_modules);
         let ordinal_bridge = self.ordinal_bridge_config(uses_std_ordinal_contract);
+        let string_try_from_bridge = self.string_try_from_bridge_config(
+            compilation_imports_std_string_try_from_contract(program, &dependency_modules),
+        );
         let (needs_serialize, needs_deserialize) = collect_serde_derives(program, &deps);
 
         // Typecheck to obtain reusable type information for lowering.
@@ -849,7 +880,7 @@ impl<'a> IrCodegen<'a> {
             inner.set_external_rust_functions(self.external_rust_functions.clone());
             inner.set_strict_generated_lints(self.strict_generated_lints);
             inner.set_externally_reachable_items(self.externally_reachable_items.clone());
-            self.apply_ordinal_bridge_config(inner, &ordinal_bridge);
+            self.apply_capability_bridge_configs(inner, &ordinal_bridge, &string_try_from_bridge);
             inner.set_qualify_union_types_from_crate(options.qualify_union_types_from_crate);
             inner.set_generated_union_types(options.generated_union_types);
             inner.set_canonical_function_registry(canonical_registry.clone());
@@ -876,7 +907,7 @@ impl<'a> IrCodegen<'a> {
             emitter.set_external_rust_functions(self.external_rust_functions.clone());
             emitter.set_strict_generated_lints(self.strict_generated_lints);
             emitter.set_externally_reachable_items(self.externally_reachable_items.clone());
-            self.apply_ordinal_bridge_config(&mut emitter, &ordinal_bridge);
+            self.apply_capability_bridge_configs(&mut emitter, &ordinal_bridge, &string_try_from_bridge);
             emitter.set_qualify_union_types_from_crate(options.qualify_union_types_from_crate);
             emitter.set_generated_union_types(options.generated_union_types);
             emitter.set_canonical_function_registry(canonical_registry.clone());
@@ -957,11 +988,11 @@ impl<'a> IrCodegen<'a> {
             if dep_name == module_name {
                 continue;
             }
+            let dep_key = Self::dependency_module_key(dep_name, &dep_path_segments);
             let dep_type_info = {
                 use crate::frontend::typechecker::TypeChecker;
                 let mut tc = TypeChecker::new();
                 self.configure_typechecker(&mut tc);
-                let dep_key = Self::dependency_module_key(dep_name, &dep_path_segments);
                 let typecheck_deps =
                     Self::imported_dependency_modules_for_program(dep_ast, &dependency_modules, Some(&dep_key));
                 let result = match tc.check_with_imports_allow_private(dep_ast, &typecheck_deps) {
@@ -1002,13 +1033,15 @@ impl<'a> IrCodegen<'a> {
             .collect();
 
         let ordinal_bridge = OrdinalBridgeConfig::for_internal_module(imports_std_ordinal_contract(program));
+        let string_try_from_bridge =
+            StringTryFromBridgeConfig::for_internal_module(imports_std_string_try_from_contract(program));
         let use_emit_service = env::var("INCAN_EMIT_SERVICE").ok().as_deref() == Some("1");
         if use_emit_service {
             let mut svc = EmitService::new_from_program(&ir_program);
             let inner = svc.inner_mut();
             inner.set_internal_module_roots(internal_roots);
             inner.set_externally_reachable_items(self.externally_reachable_items.clone());
-            self.apply_ordinal_bridge_config(inner, &ordinal_bridge);
+            self.apply_capability_bridge_configs(inner, &ordinal_bridge, &string_try_from_bridge);
             Ok(svc.emit_program(&ir_program)?)
         } else {
             let mut emitter = IrEmitter::new(&ir_program.function_registry);
@@ -1018,7 +1051,7 @@ impl<'a> IrCodegen<'a> {
             }
             emitter.set_needs_serde(self.needs_serde);
             emitter.set_externally_reachable_items(self.externally_reachable_items.clone());
-            self.apply_ordinal_bridge_config(&mut emitter, &ordinal_bridge);
+            self.apply_capability_bridge_configs(&mut emitter, &ordinal_bridge, &string_try_from_bridge);
             Ok(emitter.emit_program(&ir_program)?)
         }
     }
@@ -1080,6 +1113,9 @@ impl<'a> IrCodegen<'a> {
         let dependency_symbol_metadata = collect_dependency_symbol_metadata(&dependency_modules);
         let uses_std_ordinal_contract = compilation_imports_std_ordinal_contract(program, &dependency_modules);
         let ordinal_bridge = OrdinalBridgeConfig::for_internal_module(uses_std_ordinal_contract);
+        let string_try_from_bridge = StringTryFromBridgeConfig::for_internal_module(
+            compilation_imports_std_string_try_from_contract(program, &dependency_modules),
+        );
         let mut dependency_reachable_items = collect_externally_reachable_items_by_module(program, &dependency_modules);
 
         // Generate module files
@@ -1212,7 +1248,7 @@ impl<'a> IrCodegen<'a> {
                 inner.set_callable_name_current_module_path(module_path.clone());
                 inner.set_callable_name_resolutions(callable_name_resolutions.clone());
                 inner.set_callable_name_used_signature_keys(callable_name_used_signature_keys.clone());
-                self.apply_ordinal_bridge_config(inner, &ordinal_bridge);
+                self.apply_capability_bridge_configs(inner, &ordinal_bridge, &string_try_from_bridge);
                 for (_, _, dep_ir) in &lowered_modules {
                     inner.seed_dependency_nominal_metadata_from_program(dep_ir);
                 }
@@ -1234,7 +1270,7 @@ impl<'a> IrCodegen<'a> {
                 emitter.set_callable_name_current_module_path(module_path.clone());
                 emitter.set_callable_name_resolutions(callable_name_resolutions.clone());
                 emitter.set_callable_name_used_signature_keys(callable_name_used_signature_keys.clone());
-                self.apply_ordinal_bridge_config(&mut emitter, &ordinal_bridge);
+                self.apply_capability_bridge_configs(&mut emitter, &ordinal_bridge, &string_try_from_bridge);
                 for (_, _, dep_ir) in &lowered_modules {
                     emitter.seed_dependency_nominal_metadata_from_program(dep_ir);
                 }
@@ -1320,6 +1356,9 @@ impl<'a> IrCodegen<'a> {
         let dependency_symbol_metadata = collect_dependency_symbol_metadata(&dependency_modules);
         let uses_std_ordinal_contract = compilation_imports_std_ordinal_contract(program, &dependency_modules);
         let ordinal_bridge = OrdinalBridgeConfig::for_internal_module(uses_std_ordinal_contract);
+        let string_try_from_bridge = StringTryFromBridgeConfig::for_internal_module(
+            compilation_imports_std_string_try_from_contract(program, &dependency_modules),
+        );
         let mut dependency_reachable_items = collect_externally_reachable_items_by_module(program, &dependency_modules);
 
         // Generate module files by path
@@ -1452,7 +1491,7 @@ impl<'a> IrCodegen<'a> {
                 inner.set_callable_name_current_module_path(path.clone());
                 inner.set_callable_name_resolutions(callable_name_resolutions.clone());
                 inner.set_callable_name_used_signature_keys(callable_name_used_signature_keys.clone());
-                self.apply_ordinal_bridge_config(inner, &ordinal_bridge);
+                self.apply_capability_bridge_configs(inner, &ordinal_bridge, &string_try_from_bridge);
                 for (_, dep_ir) in &lowered_modules {
                     inner.seed_dependency_nominal_metadata_from_program(dep_ir);
                 }
@@ -1474,7 +1513,7 @@ impl<'a> IrCodegen<'a> {
                 emitter.set_callable_name_current_module_path(path.clone());
                 emitter.set_callable_name_resolutions(callable_name_resolutions.clone());
                 emitter.set_callable_name_used_signature_keys(callable_name_used_signature_keys.clone());
-                self.apply_ordinal_bridge_config(&mut emitter, &ordinal_bridge);
+                self.apply_capability_bridge_configs(&mut emitter, &ordinal_bridge, &string_try_from_bridge);
                 for (_, dep_ir) in &lowered_modules {
                     emitter.seed_dependency_nominal_metadata_from_program(dep_ir);
                 }
@@ -4482,6 +4521,28 @@ pub def run() -> int:
         assert!(
             code.contains("pair_map::<i64, i64>") || code.contains("pair_map :: < i64 , i64 >"),
             "expected full turbofish for mixed explicit/`_` call-site generics, got:\n{code}"
+        );
+    }
+
+    #[test]
+    fn try_generate_module_uses_checked_composed_newtype_conversion_plan() {
+        let ast = parse_program(
+            r#"
+from std.environ import get_as
+from std.traits.convert import TryFrom
+
+type Port = newtype int
+type WrappedPort = newtype Port
+
+def read() -> None:
+  get_as[WrappedPort]("PORT")
+"#,
+        );
+        let mut codegen = IrCodegen::new();
+        let code = must_ok(codegen.try_generate_module("env_types", &ast));
+        assert!(
+            code.contains("for WrappedPort"),
+            "expected checked composed-newtype bridge in generated module:\n{code}"
         );
     }
 }

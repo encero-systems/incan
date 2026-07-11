@@ -89,6 +89,7 @@ use incan_core::lang::decorators::{self as core_decorators, DecoratorId};
 use incan_core::lang::surface::functions::SurfaceFnId;
 use incan_core::lang::surface::types as surface_types;
 use incan_core::lang::surface::types::{SurfaceTypeId, SurfaceTypeKind};
+use incan_core::lang::trait_capabilities;
 use incan_core::lang::traits::{self as builtin_traits, TraitId};
 use incan_core::lang::types::collections::CollectionTypeId;
 use incan_core::lang::types::numerics::{self, NumericFamily, NumericTypeId};
@@ -1699,14 +1700,16 @@ impl TypeChecker {
         if candidate == expected {
             return true;
         }
-        let source_name = |name: &str| {
-            self.import_aliases
-                .get(name)
-                .and_then(|path| path.last())
-                .cloned()
-                .unwrap_or_else(|| name.rsplit('.').next().unwrap_or(name).to_string())
-        };
-        source_name(candidate) == source_name(expected)
+        match (
+            self.resolve_bound_trait_path(candidate),
+            self.resolve_bound_trait_path(expected),
+        ) {
+            (Some(candidate), Some(expected)) => candidate == expected,
+            (Some(_), None) | (None, Some(_)) => false,
+            (None, None) => {
+                candidate.rsplit('.').next().unwrap_or(candidate) == expected.rsplit('.').next().unwrap_or(expected)
+            }
+        }
     }
 
     /// Instantiate `supertrait_name`'s type arguments when `subtrait_name` is known with `subtrait_args`.
@@ -1938,9 +1941,11 @@ impl TypeChecker {
         self.type_info.traits.direct_supertraits.clear();
         self.type_info.traits.type_params.clear();
         self.type_info.declarations.type_method_rebindings.clear();
+        self.type_info.declarations.newtype_construction.clear();
         self.type_info.derivations.derivable_modules = self.dependency_derivable_modules.clone();
         self.type_info.derivations.trait_rust_derive_paths = self.dependency_trait_rust_derive_paths.clone();
         let mut method_rebindings = Vec::new();
+        let mut newtype_construction = Vec::new();
         for sym in self.symbols.all_symbols() {
             match &sym.kind {
                 SymbolKind::Trait(info) => {
@@ -1964,6 +1969,9 @@ impl TypeChecker {
                     let mut aliases = info.method_rebindings.clone();
                     aliases.extend(info.method_aliases.clone());
                     method_rebindings.push((sym.name.clone(), aliases));
+                    if !info.is_rusttype {
+                        newtype_construction.push((sym.name.clone(), info.clone()));
+                    }
                 }
                 _ => {}
             }
@@ -1975,6 +1983,31 @@ impl TypeChecker {
                     .type_method_rebindings
                     .insert(type_name, aliases);
             }
+        }
+        let string_conversion = trait_capabilities::string_try_from();
+        for (name, info) in newtype_construction {
+            let concrete_type = if info.type_params.is_empty() {
+                ResolvedType::Named(name.clone())
+            } else {
+                ResolvedType::Generic(
+                    name.clone(),
+                    info.type_params.iter().cloned().map(ResolvedType::TypeVar).collect(),
+                )
+            };
+            let supports_string_conversion = self
+                .temporary_trait_capability_supports_type(string_conversion, &concrete_type)
+                .unwrap_or(false);
+            self.type_info.declarations.newtype_construction.insert(
+                name.clone(),
+                crate::frontend::typechecker::type_info::NewtypeConstructionInfo {
+                    type_params: info.type_params.clone(),
+                    underlying: info.underlying.clone(),
+                    checked_constructor: Self::validated_newtype_ctor_name(&name, &info),
+                    constraints: info.constraints.clone(),
+                    implicit_coercion_enabled: info.implicit_coercion_enabled,
+                    supports_string_conversion,
+                },
+            );
         }
     }
 
@@ -3948,7 +3981,7 @@ impl TypeChecker {
             member_projections.extend(direct_projections.clone());
         }
         for (exported_name, module, item_name) in Self::dependency_source_reexport_targets(module_ast) {
-            if let Some(kind) = self.dependency_member_symbol_for_path(&module, &item_name) {
+            if let Some(kind) = self.dependency_reexported_function_symbol(&module, &item_name) {
                 member_symbols.insert(exported_name.clone(), kind);
             }
             if let Some(mut projection) = self.dependency_member_partial_projection_for_path(&module, &item_name) {
@@ -3960,6 +3993,18 @@ impl TypeChecker {
             .insert(module_name.to_string(), member_symbols);
         self.dependency_member_partial_projections
             .insert(module_name.to_string(), member_projections);
+    }
+
+    /// Resolve a function re-export from either another source dependency or the compiler-owned stdlib metadata.
+    fn dependency_reexported_function_symbol(&mut self, module: &ImportPath, item_name: &str) -> Option<SymbolKind> {
+        if let Some(kind) = self.dependency_member_symbol_for_path(module, item_name) {
+            return Some(kind);
+        }
+        let module_path = canonicalize_source_module_segments(&module.segments);
+        if module_path.first().map(String::as_str) != Some(incan_core::lang::stdlib::STDLIB_ROOT) {
+            return None;
+        }
+        self.stdlib_cache.lookup_function_symbol(&module_path, item_name)
     }
 
     /// Cache direct declarations owned by one dependency module.
@@ -4486,8 +4531,8 @@ impl TypeChecker {
         }
         steps.push(ValidatedNewtypeCoercionStep {
             newtype_name: target_name.clone(),
-            ctor: self.validated_newtype_ctor_name(target_name, &newtype),
-            constraints: if self.validated_newtype_ctor_name(target_name, &newtype).is_some() {
+            ctor: Self::validated_newtype_ctor_name(target_name, &newtype),
+            constraints: if Self::validated_newtype_ctor_name(target_name, &newtype).is_some() {
                 Vec::new()
             } else {
                 newtype.constraints.clone()
@@ -4503,7 +4548,7 @@ impl TypeChecker {
     }
 
     /// Return the canonical checked-construction hook for a newtype when the collected method shape is usable.
-    fn validated_newtype_ctor_name(&self, newtype_name: &str, newtype: &NewtypeInfo) -> Option<String> {
+    pub(crate) fn validated_newtype_ctor_name(newtype_name: &str, newtype: &NewtypeInfo) -> Option<String> {
         let method = newtype.methods.get(conventions::NEWTYPE_FROM_UNDERLYING_METHOD)?;
         if method.receiver.is_some() || method.params.len() != 1 {
             return None;

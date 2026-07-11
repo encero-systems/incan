@@ -9,6 +9,7 @@ use std::collections::HashSet;
 use incan_core::lang::conventions;
 use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::magic_methods;
+use incan_core::lang::trait_capabilities;
 use incan_core::lang::traits::{self as core_traits, TraitId};
 
 use super::super::super::types::{IR_UNION_TYPE_NAME, IrType};
@@ -40,7 +41,13 @@ impl<'a> IrEmitter<'a> {
 
             let method_is_needed = self.should_emit_method(&impl_block.target_type, &method.name, &method.visibility)
                 || !method.lint_allows.is_empty()
-                || !method.rust_attributes.is_empty();
+                || !method.rust_attributes.is_empty()
+                || (self.emit_std_string_try_from_newtype_impls
+                    && self
+                        .newtype_construction
+                        .get(&impl_block.target_type)
+                        .and_then(|plan| plan.checked_constructor.as_ref())
+                        == Some(&method.name));
             match magic_methods::from_str(method.name.as_str()) {
                 Some(magic_methods::MagicMethodId::Eq) => {
                     let body_stmts = self.emit_stmts(&method.body)?;
@@ -194,7 +201,7 @@ impl<'a> IrEmitter<'a> {
                     }
                 });
             }
-            if Self::is_convert_from_trait_name(trait_name)
+            if Self::is_std_convert_trait_impl(impl_block, TraitId::From)
                 && !impl_block.methods.iter().any(|method| method.name == "from")
                 && let Some(source_ty) = impl_block.trait_type_args.first()
             {
@@ -205,7 +212,7 @@ impl<'a> IrEmitter<'a> {
                     }
                 });
             }
-            if Self::is_convert_try_from_trait_name(trait_name)
+            if Self::is_std_convert_trait_impl(impl_block, TraitId::TryFrom)
                 && !impl_block.methods.iter().any(|method| method.name == "try_from")
                 && let Some(source_ty) = impl_block.trait_type_args.first()
             {
@@ -250,27 +257,19 @@ impl<'a> IrEmitter<'a> {
         })
     }
 
-    /// Return the final path segment of a trait name.
-    fn trait_short_name(trait_name: &str) -> &str {
-        trait_name
-            .rsplit(['.', ':'])
-            .find(|segment| !segment.is_empty())
-            .unwrap_or(trait_name)
-    }
-
-    /// Resolve a trait impl target through the builtin trait registry.
-    fn builtin_trait_id(trait_name: &str) -> Option<TraitId> {
-        core_traits::from_str(trait_name).or_else(|| core_traits::from_str(Self::trait_short_name(trait_name)))
-    }
-
-    /// Return whether a trait impl target names the stdlib conversion `From` trait.
-    fn is_convert_from_trait_name(trait_name: &str) -> bool {
-        Self::builtin_trait_id(trait_name) == Some(TraitId::From)
-    }
-
-    /// Return whether a trait impl target names the stdlib conversion `TryFrom` trait.
-    fn is_convert_try_from_trait_name(trait_name: &str) -> bool {
-        Self::builtin_trait_id(trait_name) == Some(TraitId::TryFrom)
+    /// Return whether an impl targets one canonical `std.traits.convert` trait.
+    fn is_std_convert_trait_impl(impl_block: &super::super::super::decl::IrImpl, expected: TraitId) -> bool {
+        let Some(module_path) = impl_block.trait_module_path.as_deref() else {
+            return false;
+        };
+        if !trait_capabilities::module_path_matches(trait_capabilities::string_try_from(), module_path) {
+            return false;
+        }
+        let source_name = impl_block
+            .trait_source_name
+            .as_deref()
+            .or(impl_block.trait_name.as_deref());
+        source_name.and_then(core_traits::from_str) == Some(expected)
     }
 
     /// Emit compiler-generated field overlay methods for a struct, independent of source impl blocks.

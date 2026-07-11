@@ -1,0 +1,250 @@
+"""
+Read current-process environment variables at runtime.
+
+Use `get()` for required Unicode text, `get_optional()` or `get_or()` for deliberately lossy string reads, and
+`get_as[T]()` for optional or defaulted values converted through `TryFrom[str]`. Typed reads support the built-in
+primitive and exact numeric conversions, explicit `TryFrom[str]` adopters, and newtype instantiations whose underlying
+value can be converted from text. The module is read-only, and errors never include observed environment values.
+
+Example:
+    Read a required token and use a typed default for an optional port:
+
+    ```incan
+    token = get("API_TOKEN")?
+    port = get_as[int]("PORT", default=8080)?
+    ```
+"""
+
+from rust::std::env import VarError, var as env_var
+from std.traits.error import Error
+from std.traits.convert import TryFrom
+
+
+pub enum EnvironErrorKind(str):
+    """
+    Stable categories for environment read failures.
+
+    `Missing` reports an absent key, `InvalidKey` reports a key rejected before host lookup, `InvalidValue` reports a
+    typed conversion failure, `NotUnicode` reports a host value that cannot be represented as text, and `Other`
+    preserves forward compatibility with an unknown host category.
+    """
+
+    Missing = "missing"
+    InvalidKey = "invalid_key"
+    InvalidValue = "invalid_value"
+    NotUnicode = "not_unicode"
+    Other = "other"
+
+    def as_str(self) -> str:
+        """
+        Return the stable lowercase category spelling.
+
+        Returns:
+            One of `missing`, `invalid_key`, `invalid_value`, `not_unicode`, or `other`.
+        """
+        return self.value()
+
+
+@derive(Clone)
+pub class EnvironError with Error:
+    """
+    Structured failure returned by required string reads and typed environment reads.
+
+    Categories distinguish missing keys, invalid keys, non-Unicode host values, conversion failures, and unexpected
+    host failures. `detail` never includes the observed environment value. Branch on `kind()` or `kind_name()` when
+    callers need a stable category.
+    """
+
+    _kind: EnvironErrorKind = EnvironErrorKind.Other
+    pub key: str
+    pub detail: str
+
+    @staticmethod
+    def from_kind(kind: EnvironErrorKind, key: str, detail: str) -> Self:
+        """
+        Build an environment error from a stable category.
+
+        Args:
+            kind: Typed category callers can inspect without parsing text.
+            key: Requested environment key; it may appear in diagnostics.
+            detail: Redacted human-readable explanation that must not contain the observed value.
+
+        Returns:
+            Structured environment error carrying the supplied category and context.
+        """
+        return EnvironError(_kind=kind, key=key, detail=detail)
+
+    @staticmethod
+    def missing(key: str) -> Self:
+        """Build the standard missing-variable error for `key`."""
+        return EnvironError.from_kind(EnvironErrorKind.Missing, key, f"environment variable `{key}` is not set")
+
+    @staticmethod
+    def invalid_key(key: str) -> Self:
+        """Build the standard error for an empty or host-invalid key."""
+        return EnvironError.from_kind(
+            EnvironErrorKind.InvalidKey,
+            key,
+            "environment variable key must not be empty or contain `=` or NUL",
+        )
+
+    @staticmethod
+    def not_unicode(key: str) -> Self:
+        """Build the standard error for a host value that is not Unicode text."""
+        return EnvironError.from_kind(
+            EnvironErrorKind.NotUnicode,
+            key,
+            f"environment variable `{key}` cannot be represented as Unicode text",
+        )
+
+    @staticmethod
+    def invalid_value(key: str, target: str) -> Self:
+        """
+        Build the standard typed-read conversion error.
+
+        Args:
+            key: Requested environment key.
+            target: Concise source type name expected by the typed read.
+
+        Returns:
+            Redacted parse or validation error that names the key and target but not the observed value.
+        """
+        return EnvironError.from_kind(
+            EnvironErrorKind.InvalidValue,
+            key,
+            f"environment variable `{key}` could not be parsed or validated as `{target}`",
+        )
+
+    def kind(self) -> EnvironErrorKind:
+        """Return the typed stable error category for branch-oriented handling."""
+        return self._kind
+
+    def kind_name(self) -> str:
+        """Return the stable lowercase error category spelling."""
+        return self._kind.as_str()
+
+    def message(self) -> str:
+        """Return the redacted human-readable error detail."""
+        return self.detail
+
+
+def _get_raw(key: str) -> Result[str, EnvironErrorKind]:
+    """
+    Read a raw current-process environment value through direct Rust interop.
+
+    Returns:
+        `Ok(value)` for a present Unicode value, or `Err(kind)` with a stable `EnvironErrorKind`.
+        The non-Unicode error payload is discarded without being formatted, so observed environment values never
+        appear in an error. Unknown future categories map to `EnvironErrorKind.Other`.
+    """
+    if len(key) == 0 or key.contains("=") or key.contains("\0"):
+        return Err(EnvironErrorKind.InvalidKey)
+
+    match env_var(key):
+        Ok(value) => return Ok(value)
+        Err(VarError.NotPresent) => return Err(EnvironErrorKind.Missing)
+        Err(VarError.NotUnicode(_)) => return Err(EnvironErrorKind.NotUnicode)
+        Err(_) => return Err(EnvironErrorKind.Other)
+
+
+pub def get(key: str) -> Result[str, EnvironError]:
+    """
+    Return a required current-process environment variable.
+
+    Args:
+        key: Environment key to read. Empty keys and keys containing `=` or NUL are invalid.
+
+    Returns:
+        `Ok(value)` when `key` is present and Unicode, or `Err(EnvironError)` for missing, invalid, or non-Unicode
+        variables.
+    """
+    return _get_raw(key).map_err((kind) => _error_from_raw_kind(key, kind))
+
+
+pub def get_optional(key: str) -> Option[str]:
+    """
+    Return an optional current-process environment variable.
+
+    Args:
+        key: Environment key to read.
+
+    Returns:
+        `Some(value)` when `key` is present and Unicode. Returns `None` for missing, invalid-key, or non-Unicode
+        reads. Use `get()` when callers need the precise error category.
+    """
+    match _get_raw(key):
+        Ok(value) => return Some(value)
+        Err(_) => return None
+
+
+pub def get_or(key: str, default: str) -> str:
+    """
+    Return a current-process environment variable or a string default.
+
+    Args:
+        key: Environment key to read.
+        default: Value returned for every missing, invalid-key, or non-Unicode read.
+
+    Returns:
+        The present Unicode value for `key`, or `default` when no Unicode value is available.
+    """
+    match get_optional(key):
+        Some(value) => return value
+        None => return default
+
+
+pub def get_as[T with TryFrom[str]](key: str) -> Result[Option[T], EnvironError]:
+    """
+    Return an optional current-process environment variable converted through `TryFrom[str]`.
+
+    Args:
+        key: Environment key to read and convert.
+
+    Returns:
+        `Ok(Some(value))` when `key` is present, Unicode, and the target type accepts the string value. Returns
+        `Ok(None)` when `key` is absent. Returns `Err(EnvironError)` for invalid keys, non-Unicode values, and target
+        conversion failures.
+    """
+    match get(key):
+        Ok(value) =>
+            match T.try_from(value):
+                Ok(parsed) => return Ok(Some(parsed))
+                Err(_) => return Err(EnvironError.invalid_value(key, T.__class_name__()))
+        Err(error) =>
+            if error.kind() == EnvironErrorKind.Missing:
+                return Ok(None)
+            return Err(error)
+
+
+pub def get_as[T with TryFrom[str]](key: str, default: T) -> Result[T, EnvironError]:
+    """
+    Return a typed current-process environment value or a default when the key is absent.
+
+    Args:
+        key: Environment key to read and convert.
+        default: Typed value returned only when `key` is absent.
+
+    Returns:
+        `Ok(value)` when the key is present and converts successfully, or `Ok(default)` when the key is absent.
+        Invalid keys, non-Unicode values, and conversion failures remain errors and never fall back to `default`.
+    """
+    return Ok(get_as[T](key)?.unwrap_or(default))
+
+
+def _error_from_raw_kind(key: str, kind: EnvironErrorKind) -> EnvironError:
+    """
+    Convert a stable interop category into a public environment error.
+
+    Args:
+        key: Environment key used for redacted error context.
+        kind: Typed interop category from `_get_raw`.
+
+    Returns:
+        Typed public error. Unknown categories map to `Other` for forward compatibility.
+    """
+    match kind:
+        EnvironErrorKind.Missing => return EnvironError.missing(key)
+        EnvironErrorKind.InvalidKey => return EnvironError.invalid_key(key)
+        EnvironErrorKind.NotUnicode => return EnvironError.not_unicode(key)
+        _ => pass
+    return EnvironError.from_kind(EnvironErrorKind.Other, key, f"environment variable `{key}` could not be read")
