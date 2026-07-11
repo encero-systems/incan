@@ -196,6 +196,19 @@ fn uses_compiled_builtin_stdlib_artifact(modules: &[ParsedModule]) -> bool {
     })
 }
 
+/// Select the Incan CLI executable that prepares the built-in stdlib artifact.
+///
+/// Cargo integration tests run inside a test executable, so `current_exe()` is
+/// not the `incan` CLI there. Cargo exposes the actual binary through
+/// `CARGO_BIN_EXE_incan`; installed SDKs do not set that variable and correctly
+/// fall back to their current CLI executable.
+fn builtin_stdlib_artifact_builder_executable(
+    cargo_test_binary: Option<PathBuf>,
+    current_executable: PathBuf,
+) -> PathBuf {
+    cargo_test_binary.unwrap_or(current_executable)
+}
+
 /// Build the local built-in stdlib library artifact when a consumer imports a migrated module.
 ///
 /// The artifact project lives beside the `.incn` sources so development and installed SDK layouts use the same
@@ -234,7 +247,11 @@ fn prepare_builtin_stdlib_artifact() -> CliResult<LibraryArtifactMetadata> {
     );
     let current_exe = env::current_exe()
         .map_err(|error| CliError::failure(format!("failed to resolve current incan executable: {error}")))?;
-    let status = Command::new(current_exe)
+    let cargo_test_binary = env::var_os("CARGO_BIN_EXE_incan")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from);
+    let executable = builtin_stdlib_artifact_builder_executable(cargo_test_binary, current_exe);
+    let status = Command::new(executable)
         .args(["build", "--lib"])
         .current_dir(&stdlib_root)
         .env_remove(INTERNAL_MANIFEST_OVERRIDE_ENV)
@@ -2477,6 +2494,21 @@ mod tests {
             source: source.to_string(),
             ast,
         })
+    }
+
+    #[test]
+    fn builtin_stdlib_artifact_builder_uses_cargo_cli_binary_in_integration_tests() {
+        assert_eq!(
+            builtin_stdlib_artifact_builder_executable(
+                Some(PathBuf::from("/tmp/incan-cli")),
+                PathBuf::from("/tmp/integration-test"),
+            ),
+            PathBuf::from("/tmp/incan-cli")
+        );
+        assert_eq!(
+            builtin_stdlib_artifact_builder_executable(None, PathBuf::from("/usr/local/bin/incan")),
+            PathBuf::from("/usr/local/bin/incan")
+        );
     }
 
     fn registry_dependency(crate_name: &str, version: &str) -> DependencySpec {

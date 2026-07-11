@@ -500,7 +500,6 @@ impl<'a> IrEmitter<'a> {
                 }
             })
             .collect();
-
         *self.current_function_return_type.borrow_mut() = Some(func.return_type.clone());
         let body_stmts = self.emit_stmts(&func.body)?;
         *self.current_function_return_type.borrow_mut() = None;
@@ -638,6 +637,18 @@ impl<'a> IrEmitter<'a> {
                 quote! { #pname: #pty }
             })
             .collect();
+        // Proc-macro decorator markers deliberately do not forward their
+        // parameters to a Rust function. Prefix their generated bindings so
+        // artifact consumers remain warning-clean under `-D warnings`.
+        let unused_params: Vec<TokenStream> = func
+            .params
+            .iter()
+            .map(|p| {
+                let pname = Self::rust_ident(&format!("_{}", p.name));
+                let pty = self.emit_type(&p.ty);
+                quote! { #pname: #pty }
+            })
+            .collect();
 
         // Build the fully-qualified call path: `incan_stdlib::testing::fail`.
         let path_segments: Vec<_> = module_path.split("::").collect();
@@ -684,7 +695,7 @@ impl<'a> IrEmitter<'a> {
                 return Ok(quote! {
                     #(#doc_attrs)*
                     #(#lint_allows)*
-                    #vis #async_kw fn #name #generics (#(#params),*) {
+                    #vis #async_kw fn #name #generics (#(#unused_params),*) {
                         incan_stdlib::errors::__private::raise_runtime_misuse(#panic_message)
                     }
                 });
@@ -694,7 +705,7 @@ impl<'a> IrEmitter<'a> {
             return Ok(quote! {
                 #(#doc_attrs)*
                 #(#lint_allows)*
-                #vis #async_kw fn #name #generics (#(#params),*) -> #ret_ty {
+                #vis #async_kw fn #name #generics (#(#unused_params),*) -> #ret_ty {
                     incan_stdlib::errors::__private::raise_runtime_misuse(#panic_message)
                 }
             });

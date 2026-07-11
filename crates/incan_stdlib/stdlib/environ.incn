@@ -135,7 +135,7 @@ def _get_raw(key: str) -> Result[str, EnvironErrorKind]:
     Returns:
         `Ok(value)` for a present Unicode value, or `Err(kind)` with a stable `EnvironErrorKind`.
         The non-Unicode error payload is discarded without being formatted, so observed environment values never
-        appear in an error. Unknown future categories map to `EnvironErrorKind.Other`.
+        appear in an error. `EnvironErrorKind.Other` remains reserved for future host mappings.
     """
     if len(key) == 0 or key.contains("=") or key.contains("\0"):
         return Err(EnvironErrorKind.InvalidKey)
@@ -144,7 +144,6 @@ def _get_raw(key: str) -> Result[str, EnvironErrorKind]:
         Ok(value) => return Ok(value)
         Err(VarError.NotPresent) => return Err(EnvironErrorKind.Missing)
         Err(VarError.NotUnicode(_)) => return Err(EnvironErrorKind.NotUnicode)
-        Err(_) => return Err(EnvironErrorKind.Other)
 
 
 pub def get(key: str) -> Result[str, EnvironError]:

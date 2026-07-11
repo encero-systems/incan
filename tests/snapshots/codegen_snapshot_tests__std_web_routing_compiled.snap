@@ -27,7 +27,7 @@ incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 ///     path: URL path pattern (e.g., "/users/{id}").
 ///           Path parameters use {name} syntax.
 ///     methods: List of HTTP methods this route handles (default: [GET]).
-pub fn route(path: String, methods: Vec<String>) {
+pub fn route(_path: String, _methods: Vec<String>) {
     incan_stdlib::errors::__private::raise_runtime_misuse(
         "decorator marker 'incan_web_macros::route' cannot be called at runtime",
     )
