@@ -6,6 +6,15 @@
 
 use crate::ast::Span;
 
+/// A secondary source location that explains one compiler diagnostic.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelatedSpan {
+    /// Source range associated with the diagnostic.
+    pub span: Span,
+    /// Compiler-owned explanation of why this location is related.
+    pub label: String,
+}
+
 /// A compile-time error with location information.
 ///
 /// Every diagnostic produced by the Incan compiler is represented as a
@@ -24,6 +33,12 @@ pub struct CompileError {
     pub notes: Vec<String>,
     /// Actionable suggestions ("= hint: …") rendered after the notes.
     pub hints: Vec<String>,
+    /// Compiler-owned secondary locations retained for structured tooling projections.
+    pub related_spans: Vec<RelatedSpan>,
+    /// Expected value or type when the diagnostic has a structured expectation.
+    pub expected: Option<String>,
+    /// Actual value or type when the diagnostic has a structured expectation.
+    pub actual: Option<String>,
 }
 
 impl CompileError {
@@ -35,6 +50,9 @@ impl CompileError {
             kind: ErrorKind::Error,
             notes: Vec::new(),
             hints: Vec::new(),
+            related_spans: Vec::new(),
+            expected: None,
+            actual: None,
         }
     }
 
@@ -46,6 +64,9 @@ impl CompileError {
             kind: ErrorKind::Syntax,
             notes: Vec::new(),
             hints: Vec::new(),
+            related_spans: Vec::new(),
+            expected: None,
+            actual: None,
         }
     }
 
@@ -57,6 +78,9 @@ impl CompileError {
             kind: ErrorKind::Type,
             notes: Vec::new(),
             hints: Vec::new(),
+            related_spans: Vec::new(),
+            expected: None,
+            actual: None,
         }
     }
 
@@ -71,6 +95,9 @@ impl CompileError {
             kind: ErrorKind::Warning,
             notes: Vec::new(),
             hints: Vec::new(),
+            related_spans: Vec::new(),
+            expected: None,
+            actual: None,
         }
     }
 
@@ -83,6 +110,22 @@ impl CompileError {
     /// Append an actionable hint ("= hint: …") to this error.
     pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
         self.hints.push(hint.into());
+        self
+    }
+
+    /// Attach a second compiler-owned source location to this diagnostic.
+    pub fn with_related_span(mut self, span: Span, label: impl Into<String>) -> Self {
+        self.related_spans.push(RelatedSpan {
+            span,
+            label: label.into(),
+        });
+        self
+    }
+
+    /// Attach structured expected and actual values without requiring tooling to parse prose.
+    pub fn with_expected_actual(mut self, expected: impl Into<String>, actual: impl Into<String>) -> Self {
+        self.expected = Some(expected.into());
+        self.actual = Some(actual.into());
         self
     }
 }

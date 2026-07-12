@@ -500,8 +500,8 @@ impl TypeChecker {
     ) -> (Option<&'a Spanned<Expr>>, Option<&'a Spanned<Expr>>, bool) {
         let helper = BuiltinCollectionHelperId::ListRepeat;
         let callee = collection_helpers::full_name(helper);
-        let mut value = None;
-        let mut count = None;
+        let mut value: Option<&Spanned<Expr>> = None;
+        let mut count: Option<&Spanned<Expr>> = None;
         let mut valid = true;
         let mut positional_index = 0usize;
 
@@ -515,9 +515,13 @@ impl TypeChecker {
                     };
                     positional_index += 1;
                     if let Some((slot, name)) = target {
-                        if slot.is_some() {
-                            self.errors
-                                .push(errors::duplicate_call_argument(callee, name, expr.span));
+                        if let Some(first_expr) = *slot {
+                            self.errors.push(errors::duplicate_call_argument(
+                                callee,
+                                name,
+                                first_expr.span,
+                                expr.span,
+                            ));
                             self.check_expr(expr);
                             valid = false;
                         } else {
@@ -535,9 +539,13 @@ impl TypeChecker {
                         _ => None,
                     };
                     if let Some(slot) = slot {
-                        if slot.is_some() {
-                            self.errors
-                                .push(errors::duplicate_call_argument(callee, name, expr.span));
+                        if let Some(first_expr) = *slot {
+                            self.errors.push(errors::duplicate_call_argument(
+                                callee,
+                                name,
+                                first_expr.span,
+                                expr.span,
+                            ));
                             self.check_expr(expr);
                             valid = false;
                         } else {

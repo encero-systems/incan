@@ -58,6 +58,9 @@ pub fn unused_rust_module(span: Span) -> CompileError {
         hints: vec![
             "Remove it if this module is pure Incan, or add `@rust.extern` to Rust-backed functions".to_string(),
         ],
+        related_spans: Vec::new(),
+        expected: None,
+        actual: None,
     }
 }
 

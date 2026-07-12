@@ -666,8 +666,12 @@ impl TypeChecker {
                     let param = &params[positional_index];
                     if let Some(bound_span) = bound_spans[positional_index] {
                         let name = param.name.as_deref().unwrap_or("<positional>");
-                        self.errors
-                            .push(errors::duplicate_call_argument(callable_display, name, bound_span));
+                        self.errors.push(errors::duplicate_call_argument(
+                            callable_display,
+                            name,
+                            bound_span,
+                            arg_span,
+                        ));
                     } else {
                         bound_spans[positional_index] = Some(arg_span);
                         bindings.push(RustCallArgBinding { arg, arg_ty, param });
@@ -676,17 +680,25 @@ impl TypeChecker {
                 }
                 CallArg::Named(name, _) => {
                     if let Some(first_span) = named_seen.insert(name.as_str(), arg_span) {
-                        self.errors
-                            .push(errors::duplicate_call_argument(callable_display, name, first_span));
+                        self.errors.push(errors::duplicate_call_argument(
+                            callable_display,
+                            name,
+                            first_span,
+                            arg_span,
+                        ));
                     }
                     let Some(param_index) = params_by_name.get(name.as_str()).copied() else {
                         self.errors
                             .push(errors::unknown_keyword_argument(callable_display, name, arg_span));
                         continue;
                     };
-                    if bound_spans[param_index].is_some() {
-                        self.errors
-                            .push(errors::duplicate_call_argument(callable_display, name, arg_span));
+                    if let Some(first_span) = bound_spans[param_index] {
+                        self.errors.push(errors::duplicate_call_argument(
+                            callable_display,
+                            name,
+                            first_span,
+                            arg_span,
+                        ));
                         continue;
                     }
                     let param = &params[param_index];
