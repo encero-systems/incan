@@ -22,7 +22,7 @@ pub(crate) use module_graph::collect_source_modules_for_test;
 pub use reporter::{ConsoleReporter, TestReporter};
 pub use types::{
     DiscoveryResult, FixtureInfo, FixtureScope, ParametrizeCall, ParametrizeCase, TestInfo, TestMarker,
-    TestOutputFormat, TestResult, TestRunConfig, TestSummary,
+    TestOutputFormat, TestResult, TestRunConfig, TestSummary, TestWorkspaceContext,
 };
 
 use discovery::{
@@ -309,7 +309,7 @@ fn marker_names(test: &TestInfo) -> BTreeSet<String> {
 }
 
 /// Emit one JSON Lines result record for a test case.
-fn emit_json_result(test: &TestInfo, result: &TestResult, root: &Path) {
+fn emit_json_result(test: &TestInfo, result: &TestResult, root: &Path, workspace: Option<&TestWorkspaceContext>) {
     let mut record = serde_json::json!({
         "schema_version": "incan.test.v1",
         "test_id": stable_test_id(test, root),
@@ -333,6 +333,16 @@ fn emit_json_result(test: &TestInfo, result: &TestResult, root: &Path) {
                 obj.insert("reason".to_string(), serde_json::Value::String(reason.clone()));
             }
             TestResult::Passed(_) | TestResult::XPassed(_) => {}
+        }
+        if let Some(workspace) = workspace {
+            obj.insert(
+                "workspace".to_string(),
+                serde_json::json!({
+                    "root": workspace.root,
+                    "selected_members": workspace.selected_members,
+                    "member": workspace.member,
+                }),
+            );
         }
     }
     println!("{record}");
@@ -1057,6 +1067,7 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
         cargo_features,
         cargo_no_default_features,
         cargo_all_features,
+        workspace_context,
     } = config;
 
     let start_time = Instant::now();
@@ -1363,7 +1374,7 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
         if report_format == TestOutputFormat::Console {
             print_test_result(&test, &result, verbose, use_color);
         } else {
-            emit_json_result(&test, &result, &stable_id_root);
+            emit_json_result(&test, &result, &stable_id_root, workspace_context.as_ref());
         }
         results.push((test, result));
     }
@@ -1443,7 +1454,12 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
                     "xpassed": xpassed,
                     "duration_ms": total_time.as_millis(),
                     "shuffle_seed": shuffle_seed,
-                }
+                },
+                "workspace": workspace_context.as_ref().map(|workspace| serde_json::json!({
+                    "root": workspace.root,
+                    "selected_members": workspace.selected_members,
+                    "member": workspace.member,
+                })),
             })
         );
     }

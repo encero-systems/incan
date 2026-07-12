@@ -890,6 +890,7 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             cargo_features,
             cargo_no_default_features,
             cargo_all_features,
+            workspace_context: None,
         }),
         Some(Command::Version {
             bump,

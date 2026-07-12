@@ -169,4 +169,14 @@ pub struct TestRunConfig<'a> {
     pub cargo_features: Vec<String>,
     pub cargo_no_default_features: bool,
     pub cargo_all_features: bool,
+    /// RFC 077 workspace identity included in every machine-readable record for a member-scoped run.
+    pub workspace_context: Option<TestWorkspaceContext>,
+}
+
+/// Stable workspace identity for one member test invocation.
+#[derive(Debug, Clone)]
+pub struct TestWorkspaceContext {
+    pub root: PathBuf,
+    pub selected_members: Vec<String>,
+    pub member: String,
 }
