@@ -60,6 +60,36 @@ incan workspace inspect --member storage --member examples/demo --format json
 incan workspace inspect --workspace --format json
 ```
 
+### Workspace-scoped commands
+
+The project commands `build`, `check`, `test`, `fmt`, `run`, and `version` accept `--workspace` or one or more
+`--member <NAME_OR_PATH>` selectors when the current directory is inside a validated workspace. A selector is
+resolved before any member is compiled, tested, formatted, or mutated. Member order always follows the workspace
+manifest, not command-line selector order.
+
+Without a selector, a command run inside a member selects that member. At a workspace root it selects
+`default-members` when configured, the implicit root member for a rooted workspace, or all members for a virtual
+workspace.
+
+| Command | Multi-member behavior |
+| --- | --- |
+| `incan build` | Builds each selected member. Default output directories remain separated by member package name. `--report json` emits one workspace envelope containing one compiler build report per member; a single explicit `OUTPUT_DIR` is rejected for several members. |
+| `incan check` | Type-checks each selected member. `--format json` emits one workspace envelope with root, selected members, and a canonical diagnostic report per member. |
+| `incan test` | Runs each selected member in deterministic order. JSON Lines test records and summaries include `workspace.root`, `workspace.selected_members`, and `workspace.member`. `--junit` requires one selected member so reports cannot overwrite each other. |
+| `incan fmt` | `--check` may inspect an inferred multi-member scope. Formatting several members in place requires explicit `--workspace` or `--member` selection. |
+| `incan run` and `incan version` | Require exactly one member. Use `--member api`; `--workspace` is rejected if it selects more than one. Run scope is printed to stderr so program stdout remains available to the program. |
+
+Examples:
+
+```bash
+incan test --workspace --format json
+incan check . --member packages/api --format json
+incan build --workspace --report json
+incan fmt --workspace --check
+incan run --member cli
+incan version patch --member api --dry-run
+```
+
 ## Global options
 
 - `--no-banner`: suppress the ASCII logo banner when a command would otherwise show it (also via `INCAN_NO_BANNER=1`).

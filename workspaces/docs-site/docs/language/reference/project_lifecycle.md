@@ -27,6 +27,24 @@ incan run -c "import this"
 
 Project-level features such as manifest dependencies, version management, and named environments require `incan.toml`.
 
+## Workspaces
+
+A workspace root has an `incan.toml` with `[workspace]` and coordinates several ordinary member projects. A rooted
+workspace also has `[project]`; that root project is an implicit member. A virtual workspace has only `[workspace]`
+and names its members explicitly.
+
+```toml title="incan.toml"
+[workspace]
+members = ["packages/*"]
+default-members = ["packages/api", "packages/cli"]
+```
+
+Run `incan workspace inspect --format json` to validate the member graph, effective inherited dependencies, canonical
+root `incan.lock`, and the current selection. Lifecycle commands can select a scope with `--workspace` or repeated
+`--member <name-or-path>`. Build, check, test, and formatter checks can fan out deterministically; `run` and
+`version` require exactly one selected member. See the [CLI workspace command reference](../../tooling/reference/cli_reference.md#workspace-scoped-commands)
+for report and mutation behavior.
+
 ## `incan.toml`
 
 `incan.toml` is the project manifest. It is intended to be edited and committed.
