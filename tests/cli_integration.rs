@@ -2241,12 +2241,25 @@ fn workspace_build_selection_fans_out_without_shared_outputs() -> Result<(), Box
     );
 
     let report = run_incan(tmp.path(), &["build", "--workspace", "--report", "json"])?;
-    assert_failure(&report, "multi-member workspace build report");
-    assert!(
-        String::from_utf8_lossy(&report.stderr).contains("multi-member build reports are not available yet"),
-        "report guard should explain the unsupported machine output:\n{}",
-        String::from_utf8_lossy(&report.stderr)
+    assert_success(&report, "multi-member workspace build report");
+    let report = parse_json_stdout(&report)?;
+    assert_eq!(report["schema_version"], serde_json::json!(1));
+    assert_eq!(report["ok"], serde_json::json!(true));
+    assert_eq!(
+        report["workspace"]["selected_members"],
+        serde_json::json!(["alpha", "beta"])
     );
+    assert_eq!(report["members"].as_array().map(Vec::len), Some(2));
+    for (member, name) in report["members"]
+        .as_array()
+        .ok_or("workspace report members were not an array")?
+        .iter()
+        .zip(["alpha", "beta"])
+    {
+        assert_eq!(member["member"], serde_json::json!(name));
+        assert_eq!(member["ok"], serde_json::json!(true));
+        assert_eq!(member["report"]["project"]["name"], serde_json::json!(name));
+    }
     Ok(())
 }
 

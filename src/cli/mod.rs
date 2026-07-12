@@ -44,6 +44,7 @@ use std::fmt;
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 use std::process;
+use std::sync::{Arc, Mutex};
 
 use crate::manifest::ProjectManifest;
 use crate::workspace::WorkspaceGraph;
@@ -601,6 +602,24 @@ struct WorkspaceMemberCheckReport {
     report: commands::diagnostics::DiagnosticReport,
 }
 
+#[derive(Serialize)]
+struct WorkspaceBuildReport {
+    schema_version: u32,
+    ok: bool,
+    workspace: WorkspaceCheckScope,
+    members: Vec<WorkspaceMemberBuildReport>,
+}
+
+#[derive(Serialize)]
+struct WorkspaceMemberBuildReport {
+    member: String,
+    ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    report: Option<commands::build_report::BuildReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
 /// Resolve the source entrypoint used by a workspace-level check for one member.
 ///
 /// The single-project `check` command deliberately accepts a file. Workspace selection names projects instead, so
@@ -900,6 +919,23 @@ fn execute_single_build(
     }
 }
 
+/// Emit one workspace-scoped build report after all member reports have been captured.
+fn emit_workspace_build_report(report: &WorkspaceBuildReport, options: &BuildReportOptions) -> CliResult<()> {
+    let json = serde_json::to_string_pretty(report)
+        .map_err(|error| CliError::failure(format!("failed to serialize workspace build report: {error}")))?;
+    if let Some(path) = &options.output_path {
+        std::fs::write(path, json).map_err(|error| {
+            CliError::failure(format!(
+                "failed to write workspace build report {}: {error}",
+                path.display()
+            ))
+        })?;
+    } else {
+        println!("{json}");
+    }
+    Ok(())
+}
+
 /// Resolve RFC 077 scope before executing build work for each selected member in stable workspace order.
 fn execute_build(
     file: Option<PathBuf>,
@@ -943,30 +979,74 @@ fn execute_build(
             "an explicit OUTPUT_DIR cannot be shared by multiple workspace members; select one member or omit OUTPUT_DIR",
         ));
     }
-    if selected.len() > 1 && report_options.enabled() {
-        return Err(CliError::failure(
-            "multi-member build reports are not available yet; select one member or omit --report",
-        ));
-    }
-
+    let selected_members = selected.iter().map(|member| member.name.clone()).collect::<Vec<_>>();
     let mut first_failure = None;
+    let mut member_reports = Vec::with_capacity(selected.len());
     for member in selected {
-        println!("== workspace {} / member {} ==", graph.root().display(), member.name);
+        if report_options.enabled() {
+            eprintln!("== workspace {} / member {} ==", graph.root().display(), member.name);
+        } else {
+            println!("== workspace {} / member {} ==", graph.root().display(), member.name);
+        }
         let entry = workspace_member_build_entry(&graph, member, lib_mode)?;
-        if let Err(error) = execute_single_build(
+        let captured_reports = Arc::new(Mutex::new(Vec::new()));
+        let member_report_options = if report_options.enabled() {
+            report_options.with_capture(Arc::clone(&captured_reports))
+        } else {
+            report_options.clone()
+        };
+        let result = execute_single_build(
             Some(entry),
             lib_mode,
             output_dir.as_ref(),
             build_options.clone(),
-            report_options.clone(),
-        ) {
-            if !error.message.is_empty() {
-                eprintln!("{}", error.message);
-            }
-            if first_failure.is_none() {
-                first_failure = Some(CliError::new("", error.exit_code));
+            member_report_options,
+        );
+        let captured_report = if report_options.enabled() {
+            captured_reports
+                .lock()
+                .map_err(|_| CliError::failure("failed to lock captured workspace build report"))?
+                .pop()
+        } else {
+            None
+        };
+        match result {
+            Ok(_) => member_reports.push(WorkspaceMemberBuildReport {
+                member: member.name.clone(),
+                ok: true,
+                report: captured_report,
+                error: None,
+            }),
+            Err(error) => {
+                let message = error.message.clone();
+                member_reports.push(WorkspaceMemberBuildReport {
+                    member: member.name.clone(),
+                    ok: false,
+                    report: captured_report,
+                    error: (!message.is_empty()).then_some(message),
+                });
+                if !error.message.is_empty() {
+                    eprintln!("{}", error.message);
+                }
+                if first_failure.is_none() {
+                    first_failure = Some(CliError::new("", error.exit_code));
+                }
             }
         }
+    }
+    if report_options.enabled() {
+        emit_workspace_build_report(
+            &WorkspaceBuildReport {
+                schema_version: commands::build_report::BUILD_REPORT_SCHEMA_VERSION,
+                ok: first_failure.is_none(),
+                workspace: WorkspaceCheckScope {
+                    root: graph.root().to_path_buf(),
+                    selected_members,
+                },
+                members: member_reports,
+            },
+            &report_options,
+        )?;
     }
     first_failure.map_or(Ok(ExitCode::SUCCESS), Err)
 }
@@ -1208,10 +1288,7 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             cargo_passthrough,
         }) => {
             let out = output_dir.map(|p| p.to_string_lossy().to_string());
-            let report_options = BuildReportOptions {
-                format: report,
-                output_path: report_output,
-            };
+            let report_options = BuildReportOptions::new(report, report_output);
             let cargo_policy = CargoPolicy::from_cli_and_env(
                 CargoPolicyCliFlags {
                     offline,

@@ -6,6 +6,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use clap::ValueEnum;
 use serde::Serialize;
@@ -31,12 +32,32 @@ pub enum BuildReportFormat {
 pub struct BuildReportOptions {
     pub format: Option<BuildReportFormat>,
     pub output_path: Option<PathBuf>,
+    /// Compiler-owned collector for a workspace command that emits one aggregate report after all member builds.
+    captured_reports: Option<Arc<Mutex<Vec<BuildReport>>>>,
 }
 
 impl BuildReportOptions {
+    /// Construct CLI report options without exposing compiler-internal capture state.
+    pub fn new(format: Option<BuildReportFormat>, output_path: Option<PathBuf>) -> Self {
+        Self {
+            format,
+            output_path,
+            captured_reports: None,
+        }
+    }
+
     /// Return whether the caller requested any build report output.
     pub(crate) fn enabled(&self) -> bool {
         self.format.is_some()
+    }
+
+    /// Preserve normal report formatting semantics while collecting a completed member report instead of emitting it.
+    pub(crate) fn with_capture(&self, captured_reports: Arc<Mutex<Vec<BuildReport>>>) -> Self {
+        Self {
+            format: self.format,
+            output_path: self.output_path.clone(),
+            captured_reports: Some(captured_reports),
+        }
     }
 }
 
@@ -228,6 +249,13 @@ pub struct RustFileReport {
 
 /// Write or print a build report according to CLI options.
 pub(crate) fn emit_build_report(report: &BuildReport, options: &BuildReportOptions) -> CliResult<()> {
+    if let Some(captured_reports) = &options.captured_reports {
+        captured_reports
+            .lock()
+            .map_err(|_| CliError::failure("failed to lock captured workspace build reports"))?
+            .push(report.clone());
+        return Ok(());
+    }
     let Some(format) = options.format else {
         return Ok(());
     };
