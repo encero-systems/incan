@@ -2228,6 +2228,18 @@ fn workspace_build_selection_fans_out_without_shared_outputs() -> Result<(), Box
         );
     }
 
+    let selected = run_incan(tmp.path(), &["build", "--member", "beta"])?;
+    assert_success(&selected, "selected workspace member build");
+    let selected_stdout = String::from_utf8_lossy(&selected.stdout);
+    assert!(
+        selected_stdout.contains("member beta"),
+        "missing beta scope:\n{selected_stdout}"
+    );
+    assert!(
+        !selected_stdout.contains("member alpha"),
+        "selected build should not build alpha:\n{selected_stdout}"
+    );
+
     let report = run_incan(tmp.path(), &["build", "--workspace", "--report", "json"])?;
     assert_failure(&report, "multi-member workspace build report");
     assert!(
