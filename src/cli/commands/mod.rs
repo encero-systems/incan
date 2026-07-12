@@ -28,6 +28,7 @@ pub mod lock;
 pub mod stdlib_loader;
 pub mod tools;
 pub(crate) mod vocab_extraction;
+pub mod workspace;
 
 // Re-export public API so callers can use `commands::build_file()` etc.
 pub use build::{build_file, build_library, inspect_rust, run_file, run_inline_source};
@@ -43,6 +44,7 @@ pub use tools::{
     ToolsDoctorFormat, ToolsMetadataFormat, ToolsModelMetadataFormat, tools_doctor, tools_metadata_api,
     tools_metadata_model,
 };
+pub use workspace::inspect_workspace;
 
 // Crate-internal API (used by test_runner and other CLI modules)
 pub(crate) use lock::{LockResolutionRequest, resolve_lock_payload};

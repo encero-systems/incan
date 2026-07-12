@@ -350,6 +350,12 @@ pub enum Command {
         command: InspectCommand,
     },
 
+    /// Inspect validated RFC 077 workspace topology
+    Workspace {
+        #[command(subcommand)]
+        command: WorkspaceCommand,
+    },
+
     /// Run tests (pytest-style)
     Test {
         /// Path to test file or directory
@@ -543,6 +549,30 @@ pub enum InspectCommand {
         #[arg(long = "allow-errors")]
         allow_errors: bool,
     },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum WorkspaceCommand {
+    /// Emit the validated workspace topology and current implicit member scope
+    Inspect {
+        /// File or directory used to discover the active workspace
+        #[arg(value_name = "PATH", default_value = ".")]
+        path: PathBuf,
+        /// Output format. RFC 077 starts with the machine-readable contract only.
+        #[arg(long = "format", value_enum, default_value = "json")]
+        format: WorkspaceInspectionFormat,
+        /// Select every workspace member instead of the implicit current scope.
+        #[arg(long, conflicts_with = "member")]
+        workspace: bool,
+        /// Select one member by name or workspace-relative path. May be repeated.
+        #[arg(long = "member", value_name = "NAME_OR_PATH")]
+        member: Vec<String>,
+    },
+}
+
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkspaceInspectionFormat {
+    Json,
 }
 
 #[derive(Subcommand, Debug)]
@@ -747,6 +777,14 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 format,
                 allow_errors,
             } => commands::inspect_codegraph(&path, format, allow_errors),
+        },
+        Some(Command::Workspace { command }) => match command {
+            WorkspaceCommand::Inspect {
+                path,
+                format: WorkspaceInspectionFormat::Json,
+                workspace,
+                member,
+            } => commands::inspect_workspace(&path, workspace, &member),
         },
         Some(Command::Run {
             file,
@@ -1156,6 +1194,44 @@ mod tests {
         };
         assert!(file.is_none());
         assert!(lib_mode);
+        Ok(())
+    }
+
+    #[test]
+    fn test_cli_parse_workspace_inspect_json() -> Result<(), clap::Error> {
+        let cli = parse_cli(["incan", "workspace", "inspect", "packages/storage", "--format", "json"])?;
+        let Some(Command::Workspace {
+            command:
+                WorkspaceCommand::Inspect {
+                    path,
+                    format: WorkspaceInspectionFormat::Json,
+                    workspace,
+                    member,
+                },
+        }) = cli.command
+        else {
+            return Err(expected_command("workspace inspect"));
+        };
+        assert_eq!(path, PathBuf::from("packages/storage"));
+        assert!(!workspace);
+        assert!(member.is_empty());
+
+        let cli = parse_cli([
+            "incan",
+            "workspace",
+            "inspect",
+            "--member",
+            "storage",
+            "--member",
+            "examples/demo",
+        ])?;
+        let Some(Command::Workspace {
+            command: WorkspaceCommand::Inspect { member, .. },
+        }) = cli.command
+        else {
+            return Err(expected_command("workspace inspect member selection"));
+        };
+        assert_eq!(member, ["storage", "examples/demo"]);
         Ok(())
     }
 

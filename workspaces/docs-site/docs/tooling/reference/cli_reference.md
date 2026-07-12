@@ -20,6 +20,7 @@ Commands:
 - `explain` - Explain a stable diagnostic code
 - `build` - Compile to Rust and build an executable
 - `inspect` - Inspect compiler artifacts such as generated Rust output
+- `workspace` - Inspect validated workspace topology and the selected member scope
 - `run` - Compile and run a program
 - `fmt` - Format Incan source files
 - `test` - Run tests (pytest-style)
@@ -35,6 +36,29 @@ Commands:
 Incan 0.4 exposes several machine-readable inspection commands that are meant to agree on schema version, compiler version, project identity, source-file breadcrumbs, generated artifact paths, diagnostics, and provenance where their scopes overlap. Use `incan check --format json` for the stable diagnostic plane, `incan build --report json` for successful build and artifact metadata, `incan inspect rust --format json` for current generated Rust output, and `incan inspect codegraph --format jsonl` for source-structure graph facts.
 
 These commands are intentionally not a single full semantic database yet. They are the 0.4 baseline for the broader RFC 102 semantic inspection direction: stable public JSON surfaces that tools can join without scraping terminal prose, generated Rust, or source text independently. When a fact appears in more than one surface, consumers should prefer compiler-owned identity fields, source paths, schema versions, and explicit degraded-state or diagnostic records over human output.
+
+### `incan workspace inspect`
+
+Usage:
+
+```text
+incan workspace inspect [PATH] [--workspace | --member <NAME_OR_PATH>...] --format json
+```
+
+Emits the validated RFC 077 workspace topology as JSON. The report includes the canonical root and root manifest, deterministic member order, implicit-root membership, default selection, shared declarations, effective inherited dependencies, root lock state, stale member-local lockfile warnings, and the member scope selected for `PATH`.
+
+`--workspace` selects every member. Repeat `--member` to select named members or workspace-relative paths. Without a selector, the command reports the scope implied by the current location: a member when inside one, `default-members` at the workspace root when configured, the implicit root member in a rooted workspace, or every member in a virtual workspace.
+
+This command validates and reports topology only. It does not build, test, publish, or mutate member manifests.
+
+Examples:
+
+```bash
+incan workspace inspect --format json
+incan workspace inspect packages/storage --format json
+incan workspace inspect --member storage --member examples/demo --format json
+incan workspace inspect --workspace --format json
+```
 
 ## Global options
 
