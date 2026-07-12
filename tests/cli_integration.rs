@@ -2313,6 +2313,46 @@ fn workspace_run_requires_one_member_and_preserves_program_stdout() -> Result<()
 }
 
 #[test]
+fn workspace_version_requires_one_member_before_mutating() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    fs::write(
+        tmp.path().join("incan.toml"),
+        "[workspace]\nmembers = [\"packages/*\"]\n",
+    )?;
+    for name in ["alpha", "beta"] {
+        let member = tmp.path().join("packages").join(name);
+        fs::create_dir_all(&member)?;
+        fs::write(
+            member.join("incan.toml"),
+            format!("[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n"),
+        )?;
+    }
+
+    let multiple = run_incan(tmp.path(), &["version", "patch", "--workspace", "--dry-run"])?;
+    assert_failure(&multiple, "multi-member workspace version");
+    assert!(
+        String::from_utf8_lossy(&multiple.stderr).contains("requires exactly one workspace member"),
+        "multi-member version should explain the selector requirement:\n{}",
+        String::from_utf8_lossy(&multiple.stderr)
+    );
+
+    let selected = run_incan(tmp.path(), &["version", "patch", "--member", "beta", "--dry-run"])?;
+    assert_success(&selected, "selected workspace member version dry run");
+    let stdout = String::from_utf8_lossy(&selected.stdout);
+    assert!(stdout.contains("member beta"), "missing selected scope:\n{stdout}");
+    assert!(
+        stdout.contains("packages/beta/incan.toml"),
+        "version plan targeted the wrong manifest:\n{stdout}"
+    );
+    assert_eq!(
+        fs::read_to_string(tmp.path().join("packages/beta/incan.toml"))?,
+        "[project]\nname = \"beta\"\nversion = \"0.1.0\"\n",
+        "dry run must not mutate the selected member manifest"
+    );
+    Ok(())
+}
+
+#[test]
 fn lock_preheats_dependency_graph_for_path_dependencies() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let helper_dir = tmp.path().join("preheat_helper");

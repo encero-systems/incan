@@ -345,6 +345,12 @@ pub enum Command {
         /// Version bump to apply
         #[arg(value_enum)]
         bump: Option<VersionBumpArg>,
+        /// Select every workspace member. `incan version` requires this to resolve to exactly one member.
+        #[arg(long, conflicts_with_all = ["member", "project"])]
+        workspace: bool,
+        /// Select one workspace member by name or workspace-relative path.
+        #[arg(long = "member", value_name = "NAME_OR_PATH", conflicts_with = "project")]
+        member: Vec<String>,
         /// Explicit SemVer version to set
         #[arg(long = "set", value_name = "VERSION")]
         set: Option<String>,
@@ -1462,17 +1468,23 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
         ),
         Some(Command::Version {
             bump,
+            workspace,
+            member,
             set,
             dry_run,
             keep_prerelease,
             project,
-        }) => commands::version_project(commands::lifecycle::VersionCommandOptions {
-            bump,
-            set,
-            dry_run,
-            keep_prerelease,
-            project,
-        }),
+        }) => execute_workspace_version(
+            commands::lifecycle::VersionCommandOptions {
+                bump,
+                set,
+                dry_run,
+                keep_prerelease,
+                project,
+            },
+            workspace,
+            &member,
+        ),
         Some(Command::Env { command }) => match command {
             EnvCommand::List { format, project } => commands::env_list(format, project.as_deref()),
             EnvCommand::Show { env, format, project } => commands::env_show(env.as_deref(), format, project.as_deref()),
@@ -1663,6 +1675,39 @@ fn execute_workspace_run(
         },
         options,
     )
+}
+
+/// Resolve a version request to exactly one RFC 077 workspace member before it mutates a manifest.
+fn execute_workspace_version(
+    mut options: commands::lifecycle::VersionCommandOptions,
+    workspace: bool,
+    members: &[String],
+) -> CliResult<ExitCode> {
+    if options.project.is_some() {
+        return commands::version_project(options);
+    }
+    let cwd =
+        env::current_dir().map_err(|error| CliError::failure(format!("failed to read current directory: {error}")))?;
+    let Some(graph) = WorkspaceGraph::discover(&cwd).map_err(|error| CliError::failure(error.to_string()))? else {
+        if workspace || !members.is_empty() {
+            return Err(CliError::failure(format!(
+                "workspace selection requires a validated workspace containing {}",
+                cwd.display()
+            )));
+        }
+        return commands::version_project(options);
+    };
+    let selected = graph
+        .select_members(&cwd, workspace, members)
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    let [member] = selected.as_slice() else {
+        return Err(CliError::failure(
+            "incan version requires exactly one workspace member; pass one --member selector",
+        ));
+    };
+    println!("== workspace {} / member {} ==", graph.root().display(), member.name);
+    options.project = Some(member.path.clone());
+    commands::version_project(options)
 }
 
 /// Handle the `run` subcommand with its various forms.
@@ -2139,6 +2184,17 @@ mod tests {
         };
         assert_eq!(bump, Some(VersionBumpArg::Patch));
         assert!(dry_run);
+        Ok(())
+    }
+
+    #[test]
+    fn test_cli_parse_workspace_version_selection() -> Result<(), clap::Error> {
+        let cli = parse_cli(["incan", "version", "patch", "--member", "beta", "--dry-run"])?;
+        let Some(Command::Version { workspace, member, .. }) = cli.command else {
+            return Err(expected_command("version"));
+        };
+        assert!(!workspace);
+        assert_eq!(member, vec!["beta"]);
         Ok(())
     }
 
