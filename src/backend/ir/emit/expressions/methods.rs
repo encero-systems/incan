@@ -290,10 +290,10 @@ impl<'a> IrEmitter<'a> {
             ) || is_string_buffer_type(&arg.ty))
     }
 
-    /// Return whether `std::path::Path.new` should preserve a literal/static string argument shape.
+    /// Return whether `std::path::Path.new` should preserve its source string shape for a borrowed generic parameter.
     ///
     /// Rust's `Path::new` takes a generic `S: AsRef<OsStr>`. A direct literal
-    /// or static string provides the necessary inference shape; adding `.into()`
+    /// or compiler-managed static string provides the necessary inference shape; adding `.into()`
     /// introduces an unconstrained intermediate target once consumer dependencies
     /// provide additional `AsRef<OsStr>` implementations. Owned runtime strings must instead follow the ordinary
     /// external borrow boundary and emit `&value` for Path's `&S` parameter.
@@ -302,16 +302,41 @@ impl<'a> IrEmitter<'a> {
         method: &str,
         arg: &TypedExpr,
     ) -> bool {
+        Self::is_std_path_new_call(receiver, method)
+            && (Self::static_string_source_shape(arg)
+                || matches!(
+                    arg.ty,
+                    IrType::String | IrType::StaticStr | IrType::StrRef | IrType::FrozenStr
+                ))
+    }
+
+    /// Return whether this associated call is the Rust standard-library `Path::new` constructor.
+    fn is_std_path_new_call(receiver: &TypedExpr, method: &str) -> bool {
         method == "new"
             && matches!(
                 &receiver.ty,
-                IrType::Struct(path) | IrType::RustDisplay(path)
+                IrType::Struct(path) | IrType::RustDisplay(path) | IrType::NamedGeneric(path, _)
                     if matches!(path.as_str(), "std::path::Path" | "Path")
             )
-            && matches!(
-                arg.kind,
-                IrExprKind::String(_) | IrExprKind::Literal(super::super::super::expr::Literal::StaticStr(_))
-            )
+    }
+
+    /// Return whether an expression is a literal or compiler-static string after transparent interop coercions.
+    ///
+    /// Const bindings can be wrapped while their declared Incan `str` type is reconciled with an external method
+    /// parameter. The wrapper must not turn the source into an owned `String`: `Path::new(CONST.into())` leaves Rust
+    /// with no concrete generic target, whereas the original static string is already a valid `AsRef<OsStr>` input.
+    fn static_string_source_shape(expr: &TypedExpr) -> bool {
+        match &expr.kind {
+            IrExprKind::String(_) | IrExprKind::Literal(super::super::super::expr::Literal::StaticStr(_)) => true,
+            IrExprKind::StaticRead { .. }
+            | IrExprKind::StaticBinding { .. }
+            | IrExprKind::Var {
+                ref_kind: VarRefKind::StaticBinding,
+                ..
+            } => true,
+            IrExprKind::InteropCoerce { expr, .. } => Self::static_string_source_shape(expr),
+            _ => false,
+        }
     }
 
     /// Emit method-call arguments with Rust-boundary borrowing and union wrapping applied from callable metadata.
@@ -479,6 +504,13 @@ impl<'a> IrEmitter<'a> {
                 let mut emitted = emitted?;
                 if direct_mut_trait_receiver {
                     return Ok(quote! { &mut #emitted });
+                }
+                if Self::is_std_path_new_call(receiver, method)
+                    && matches!(arg.ty, IrType::String)
+                    && !Self::static_string_source_shape(arg)
+                    && !expr_has_rust_reference_shape(arg)
+                {
+                    emitted = quote! { &#emitted };
                 }
                 if idx == 0
                     && method == "take"
