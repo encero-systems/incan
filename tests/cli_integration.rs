@@ -2264,6 +2264,55 @@ fn workspace_build_selection_fans_out_without_shared_outputs() -> Result<(), Box
 }
 
 #[test]
+fn workspace_run_requires_one_member_and_preserves_program_stdout() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    fs::write(
+        tmp.path().join("incan.toml"),
+        "[workspace]\nmembers = [\"packages/*\"]\n",
+    )?;
+    for name in ["alpha", "beta"] {
+        let member = tmp.path().join("packages").join(name);
+        fs::create_dir_all(member.join("src"))?;
+        fs::write(
+            member.join("incan.toml"),
+            format!(
+                "[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"
+            ),
+        )?;
+        fs::write(
+            member.join("src/main.incn"),
+            format!("def main() -> None:\n    println(\"{name}\")\n"),
+        )?;
+    }
+
+    let multiple = run_incan(tmp.path(), &["run", "--workspace"])?;
+    assert_failure(&multiple, "multi-member workspace run");
+    assert!(
+        String::from_utf8_lossy(&multiple.stderr).contains("requires exactly one workspace member"),
+        "multi-member run should explain the selector requirement:\n{}",
+        String::from_utf8_lossy(&multiple.stderr)
+    );
+
+    let selected = run_incan(tmp.path(), &["run", "--member", "beta"])?;
+    assert_success(&selected, "selected workspace member run");
+    let stdout = String::from_utf8_lossy(&selected.stdout);
+    assert!(
+        stdout.lines().any(|line| line == "beta"),
+        "selected member output missing:\n{stdout}"
+    );
+    let stderr = String::from_utf8_lossy(&selected.stderr);
+    assert!(
+        stderr.contains("member beta"),
+        "scope should be emitted on stderr:\n{stderr}"
+    );
+    assert!(
+        !stdout.contains("member beta"),
+        "scope must not contaminate program stdout:\n{stdout}"
+    );
+    Ok(())
+}
+
+#[test]
 fn lock_preheats_dependency_graph_for_path_dependencies() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let helper_dir = tmp.path().join("preheat_helper");

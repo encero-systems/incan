@@ -274,6 +274,12 @@ pub enum Command {
         /// Source file to run
         #[arg(value_name = "FILE", conflicts_with = "command")]
         file: Option<PathBuf>,
+        /// Select every workspace member. `incan run` requires this to resolve to exactly one member.
+        #[arg(long, conflicts_with = "member")]
+        workspace: bool,
+        /// Select one workspace member by name or workspace-relative path.
+        #[arg(long = "member", value_name = "NAME_OR_PATH")]
+        member: Vec<String>,
         /// Run inline source code
         #[arg(short = 'c', long = "command", value_name = "CODE")]
         command: Option<String>,
@@ -1335,6 +1341,8 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
         },
         Some(Command::Run {
             file,
+            workspace,
+            member,
             command,
             locked,
             offline,
@@ -1348,7 +1356,7 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             cargo_all_features,
             release,
             cargo_passthrough,
-        }) => execute_run(
+        }) => execute_workspace_run(
             RunInput { file, code: command },
             RunOptions {
                 cargo_policy: CargoPolicy::from_cli_and_env(
@@ -1368,6 +1376,8 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 cargo_all_features,
                 release,
             },
+            workspace,
+            &member,
         ),
         Some(Command::Fmt {
             path,
@@ -1604,6 +1614,55 @@ fn resolve_build_entry_file(file: Option<PathBuf>) -> CliResult<PathBuf> {
 /// Resolve the run target for `incan run`, falling back to project metadata when available.
 fn resolve_run_entry_file(file: Option<PathBuf>) -> CliResult<PathBuf> {
     resolve_main_script_entry_file(file, "run", "a file path, -c/--command")
+}
+
+/// Resolve a run request to exactly one RFC 077 workspace member before program execution.
+///
+/// Scope is written to stderr because stdout belongs to the program being run. An inline command or explicit source
+/// file already identifies its target and cannot be multiplied across members implicitly.
+fn execute_workspace_run(
+    input: RunInput,
+    options: RunOptions,
+    workspace: bool,
+    members: &[String],
+) -> CliResult<ExitCode> {
+    if (input.file.is_some() || input.code.is_some()) && (workspace || !members.is_empty()) {
+        return Err(CliError::failure(
+            "a source FILE or -c/--command identifies one run target; omit it when selecting a workspace member",
+        ));
+    }
+    if input.file.is_some() || input.code.is_some() {
+        return execute_run(input, options);
+    }
+
+    let cwd =
+        env::current_dir().map_err(|error| CliError::failure(format!("failed to read current directory: {error}")))?;
+    let Some(graph) = WorkspaceGraph::discover(&cwd).map_err(|error| CliError::failure(error.to_string()))? else {
+        if workspace || !members.is_empty() {
+            return Err(CliError::failure(format!(
+                "workspace selection requires a validated workspace containing {}",
+                cwd.display()
+            )));
+        }
+        return execute_run(input, options);
+    };
+    let selected = graph
+        .select_members(&cwd, workspace, members)
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    let [member] = selected.as_slice() else {
+        return Err(CliError::failure(
+            "incan run requires exactly one workspace member; pass one --member selector",
+        ));
+    };
+    eprintln!("== workspace {} / member {} ==", graph.root().display(), member.name);
+    let entry = workspace_member_build_entry(&graph, member, false)?;
+    execute_run(
+        RunInput {
+            file: Some(entry),
+            code: None,
+        },
+        options,
+    )
 }
 
 /// Handle the `run` subcommand with its various forms.
@@ -1884,6 +1943,17 @@ mod tests {
             return Err(expected_command("run"));
         };
         assert!(!release, "run should default to debug profile");
+        Ok(())
+    }
+
+    #[test]
+    fn test_cli_parse_workspace_run_selection() -> Result<(), clap::Error> {
+        let cli = parse_cli(["incan", "run", "--member", "alpha"])?;
+        let Some(Command::Run { workspace, member, .. }) = cli.command else {
+            return Err(expected_command("run"));
+        };
+        assert!(!workspace);
+        assert_eq!(member, vec!["alpha"]);
         Ok(())
     }
 
