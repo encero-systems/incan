@@ -3281,7 +3281,21 @@ impl TypeChecker {
             return self.check_builtin_list_repeat_call(args, span);
         }
 
-        let base_ty = self.check_type_receiver_expr(base);
+        let mut base_ty = self.check_type_receiver_expr(base);
+        if let Some(expected) = expected_return_ty
+            && matches!(method, "unwrap" | "unwrap_or")
+            && matches!(&base.node, Expr::Call(_, _, _))
+            && matches!(
+                &base_ty,
+                ResolvedType::Generic(name, args)
+                    if collection_type_id(name.as_str()) == Some(CollectionTypeId::Result)
+                        && args.first().is_some_and(Self::contains_unbound_rust_type_var)
+            )
+        {
+            let expected_result =
+                ResolvedType::Generic("Result".to_string(), vec![expected.clone(), ResolvedType::Unknown]);
+            base_ty = self.check_expr_with_expected(base, Some(&expected_result));
+        }
 
         // If the receiver type is Unknown, be permissive and do not error on methods.
         if matches!(base_ty, ResolvedType::Unknown) {

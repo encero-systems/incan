@@ -10822,6 +10822,45 @@ mod rfc031_pub_import_integration_tests {
             .output()?)
     }
 
+    #[test]
+    fn consumer_build_infers_rust_generic_return_from_unwrap_context_issue852() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let tmp = tempfile::tempdir()?;
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"generic_json_return_repro\"\n\n[rust-dependencies.serde_json]\nversion = \"1.0\"\n",
+            r#"from rust::serde_json import Value
+from rust::serde_json import from_str as json_parse
+
+
+def parse_value() -> Value:
+    return json_parse("{}").unwrap()
+
+
+def main() -> None:
+    value: Value = parse_value()
+"#,
+        )?;
+
+        let check_output = run_check(&main_path)?;
+        assert!(
+            check_output.status.success(),
+            "expected generic Rust JSON parser result to infer through unwrap context.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&check_output.stdout),
+            String::from_utf8_lossy(&check_output.stderr)
+        );
+
+        let out_dir = tmp.path().join("out");
+        let build_output = run_build(&main_path, &out_dir)?;
+        assert!(
+            build_output.status.success(),
+            "expected generated Rust to compile for the inferred generic JSON result.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&build_output.stdout),
+            String::from_utf8_lossy(&build_output.stderr)
+        );
+        Ok(())
+    }
+
     fn run_run(main_path: &Path) -> Result<std::process::Output, Box<dyn std::error::Error>> {
         Ok(super::incan_command()
             .args(["run", main_path.to_string_lossy().as_ref()])
