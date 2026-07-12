@@ -7792,9 +7792,9 @@
 <td style="text-align: right;">0.3</td>
 <td>Import from <code>std.fs</code> or submodules such as <code>std.fs.path</code>.</td>
 <td><code>from std.fs import Path</code><br><code>Path("data").join("orders.csv")</code></td>
-<td>Path-centric filesystem APIs cover paths, files, metadata, traversal, globbing, copy/move/delete, and durability syncs.</td>
+<td>Path-centric filesystem APIs cover paths, files, metadata, traversal, globbing, copy/move/delete, and crash-safe publication with directory synchronization and advisory locks.</td>
 <td>One-off Rust filesystem wrappers for ordinary path and file work.</td>
-<td><a href="../stdlib/fs/">std.fs</a>, <a href="../../how-to/file_io/">File IO</a>, <a href="../../../release_notes/0_3/">Release 0.3</a></td>
+<td><a href="../stdlib/fs/">std.fs</a>, <a href="../../how-to/file_io/">File IO</a>, <a href="../../../RFCs/closed/implemented/055_std_fs/">RFC 055</a>, <a href="../../../RFCs/closed/implemented/112_crash_safe_publication_and_file_coordination/">RFC 112</a>, <a href="../../../release_notes/0_5/">Release 0.5</a></td>
 </tr>
 <tr>
 <td><code>std.io</code> in-memory binary streams</td>
@@ -8669,9 +8669,9 @@
 <li><strong>Stability:</strong> <code>Stable</code></li>
 <li><strong>Activation:</strong> Import from <code>std.fs</code> or submodules such as <code>std.fs.path</code>.</li>
 <li><strong>Use instead of:</strong> One-off Rust filesystem wrappers for ordinary path and file work.</li>
-<li><strong>References:</strong> <a href="../stdlib/fs/">std.fs</a>, <a href="../../how-to/file_io/">File IO</a>, <a href="../../../release_notes/0_3/">Release 0.3</a></li>
+<li><strong>References:</strong> <a href="../stdlib/fs/">std.fs</a>, <a href="../../how-to/file_io/">File IO</a>, <a href="../../../RFCs/closed/implemented/055_std_fs/">RFC 055</a>, <a href="../../../RFCs/closed/implemented/112_crash_safe_publication_and_file_coordination/">RFC 112</a>, <a href="../../../release_notes/0_5/">Release 0.5</a></li>
 </ul>
-<p>Path-centric filesystem APIs cover paths, files, metadata, traversal, globbing, copy/move/delete, and durability syncs.</p>
+<p>Path-centric filesystem APIs cover paths, files, metadata, traversal, globbing, copy/move/delete, durability syncs, and crash-safe publication through same-filesystem replacement, directory synchronization, and advisory locks.</p>
 <p>Canonical forms:</p>
 <ul>
 <li><code>from std.fs import Path</code></li>
