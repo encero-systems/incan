@@ -306,6 +306,12 @@ pub enum Command {
         /// File or directory to format
         #[arg(value_name = "PATH", default_value = ".")]
         path: PathBuf,
+        /// Select every workspace member instead of the implicit current scope.
+        #[arg(long, conflicts_with = "member")]
+        workspace: bool,
+        /// Select one workspace member by name or workspace-relative path. May be repeated.
+        #[arg(long = "member", value_name = "NAME_OR_PATH")]
+        member: Vec<String>,
         /// Check formatting without modifying files
         #[arg(long)]
         check: bool,
@@ -736,6 +742,47 @@ pub fn run() {
     }
 }
 
+/// Resolve RFC 077 scope before formatting each selected member in stable workspace order.
+///
+/// Formatting normally writes source files. A virtual workspace root can imply several members, so that mutation
+/// requires an explicit `--workspace` or `--member` selection; `--check` remains safe to fan out over the inferred
+/// read-only scope.
+fn execute_format(path: &PathBuf, workspace: bool, members: &[String], check: bool, diff: bool) -> CliResult<ExitCode> {
+    let Some(graph) = WorkspaceGraph::discover(path).map_err(|error| CliError::failure(error.to_string()))? else {
+        if workspace || !members.is_empty() {
+            return Err(CliError::failure(format!(
+                "workspace selection requires a validated workspace containing {}",
+                path.display()
+            )));
+        }
+        return commands::format_files(&path.to_string_lossy(), check, diff);
+    };
+
+    let selected = graph
+        .select_members(path, workspace, members)
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    if selected.len() > 1 && !check && !workspace && members.is_empty() {
+        return Err(CliError::failure(
+            "formatting this workspace would modify multiple members; pass --workspace or one or more --member selectors",
+        ));
+    }
+
+    let mut first_failure = None;
+    for member in selected {
+        println!("== workspace {} / member {} ==", graph.root().display(), member.name);
+        if let Err(error) = commands::format_files(&member.path.to_string_lossy(), check, diff) {
+            if !error.message.is_empty() {
+                eprintln!("{}", error.message);
+            }
+            if first_failure.is_none() {
+                first_failure = Some(CliError::new("", error.exit_code));
+            }
+        }
+    }
+
+    first_failure.map_or(Ok(ExitCode::SUCCESS), Err)
+}
+
 /// Resolve RFC 077 scope before test discovery or execution, then run each selected member in workspace order.
 ///
 /// The runner deliberately remains member-oriented: it already owns test discovery, generated batch compilation,
@@ -972,7 +1019,13 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 release,
             },
         ),
-        Some(Command::Fmt { path, check, diff }) => commands::format_files(&path.to_string_lossy(), check, diff),
+        Some(Command::Fmt {
+            path,
+            workspace,
+            member,
+            check,
+            diff,
+        }) => execute_format(&path, workspace, &member, check, diff),
         Some(Command::Test {
             path,
             workspace,
@@ -1575,6 +1628,17 @@ mod tests {
             return Err(expected_command("fmt"));
         };
         assert!(check);
+        Ok(())
+    }
+
+    #[test]
+    fn test_cli_parse_workspace_format_selection() -> Result<(), clap::Error> {
+        let cli = parse_cli(["incan", "fmt", "--workspace", "--check"])?;
+        let Some(Command::Fmt { workspace, member, .. }) = cli.command else {
+            return Err(expected_command("fmt"));
+        };
+        assert!(workspace);
+        assert!(member.is_empty());
         Ok(())
     }
 

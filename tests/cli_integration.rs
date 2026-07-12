@@ -2116,6 +2116,41 @@ fn workspace_test_selection_fans_out_with_member_scoped_json() -> Result<(), Box
 }
 
 #[test]
+fn workspace_format_selection_requires_explicit_cross_member_mutation() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    fs::write(
+        tmp.path().join("incan.toml"),
+        "[workspace]\nmembers = [\"packages/*\"]\n",
+    )?;
+    for name in ["alpha", "beta"] {
+        let member = tmp.path().join("packages").join(name);
+        fs::create_dir_all(member.join("src"))?;
+        fs::write(
+            member.join("incan.toml"),
+            format!(
+                "[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"
+            ),
+        )?;
+        fs::write(member.join("src/main.incn"), "def main() -> None:\n    return\n")?;
+    }
+
+    let implicit = run_incan(tmp.path(), &["fmt"])?;
+    assert_failure(&implicit, "implicit virtual-workspace formatting");
+    assert!(
+        String::from_utf8_lossy(&implicit.stderr).contains("would modify multiple members"),
+        "implicit cross-member formatting should explain the required selector:\n{}",
+        String::from_utf8_lossy(&implicit.stderr)
+    );
+
+    let checked = run_incan(tmp.path(), &["fmt", "--workspace", "--check"])?;
+    assert_success(&checked, "explicit workspace formatting check");
+    let stdout = String::from_utf8_lossy(&checked.stdout);
+    assert!(stdout.contains("member alpha"), "missing alpha scope:\n{stdout}");
+    assert!(stdout.contains("member beta"), "missing beta scope:\n{stdout}");
+    Ok(())
+}
+
+#[test]
 fn lock_preheats_dependency_graph_for_path_dependencies() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let helper_dir = tmp.path().join("preheat_helper");
