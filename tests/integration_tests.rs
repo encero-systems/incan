@@ -2681,8 +2681,9 @@ mod codegen_tests {
     use incan::frontend::{lexer, parser, typechecker};
     use std::fs;
     use std::path::Path;
-    use std::process::Command;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::process::{Command, Stdio};
+    use std::thread;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     fn run_incan_source(source: &str) -> std::process::Output {
         incan_command()
@@ -3383,6 +3384,91 @@ def main() -> Result[None, IoError]:
             vec!["cross_device", "old", "true"],
             "cross-device replacement must preserve the target and staged source"
         );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_std_fs_locks_coordinate_between_incan_processes() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let target = root.path().join("published.lock");
+        let ready = root.path().join("holder-ready");
+        let holder_source = format!(
+            r#"
+from std.fs import IoError, Path
+from rust::std::thread import sleep
+from rust::std::time import Duration
+
+def hold() -> Result[None, IoError]:
+    guard = Path("{target}").lock_shared()?
+    Path("{ready}").write_text("ready", "utf-8", "strict", None)?
+    sleep(Duration.from_secs(30))
+    return Ok(None)
+
+def main() -> None:
+    match hold():
+        Ok(_) => pass
+        Err(err) => println(err.message())
+"#,
+            target = target.display(),
+            ready = ready.display(),
+        );
+        let mut holder = incan_command()
+            .args(["run", "-c", holder_source.as_str()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+
+        let mut holder_ready = false;
+        for _ in 0..1200 {
+            if ready.exists() {
+                holder_ready = true;
+                break;
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+        if !holder_ready {
+            let _ = holder.kill();
+            let output = holder.wait_with_output()?;
+            return Err(format!(
+                "Incan lock holder did not become ready. stdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            )
+            .into());
+        }
+
+        let probes = format!(
+            r#"
+from std.fs import IoError, Path
+
+def main() -> None:
+    match Path("{target}").try_lock_shared():
+        Ok(Some(_)) => println("shared")
+        Ok(None) => println("blocked")
+        Err(err) => println(err.message())
+    match Path("{target}").try_lock_exclusive():
+        Ok(Some(_)) => println("acquired")
+        Ok(None) => println("contended")
+        Err(err) => println(err.message())
+"#,
+            target = target.display(),
+        );
+        let probes = incan_command()
+            .args(["run", "-c", probes.as_str()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        let _ = holder.kill();
+        let _ = holder.wait();
+
+        assert!(
+            probes.status.success(),
+            "lock probes failed. stdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&probes.stdout),
+            String::from_utf8_lossy(&probes.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&probes.stdout).trim(), "shared\ncontended");
         Ok(())
     }
 

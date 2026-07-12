@@ -201,6 +201,10 @@ impl TypeChecker {
     /// Return whether a Rust type display names a generic type parameter.
     fn is_rust_generic_type_param_display(rust_ty: &str) -> bool {
         let normalized = rust_ty.trim().replace(' ', "");
+        if let Some(tail) = normalized.strip_prefix("impl") {
+            return !tail.is_empty()
+                && (tail.contains("::") || tail.chars().next().is_some_and(|ch| ch.is_ascii_uppercase()));
+        }
         let mut chars = normalized.chars();
         let Some(first) = chars.next() else {
             return false;

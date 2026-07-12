@@ -18,7 +18,6 @@ axum = { version = "0.8", optional = true }
 tokio = { version = "1", optional = true, features = ["rt-multi-thread", "macros", "time", "sync", "net"] }
 inventory = { version = "0.3", optional = true }
 xxhash_rust = { package = "xxhash-rust", version = "0.8", features = ["xxh3"] }
-rustix = { version = "1.1", features = ["fs"] }
 
 [features]
 default = []

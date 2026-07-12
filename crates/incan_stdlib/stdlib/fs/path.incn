@@ -29,7 +29,7 @@ from rust::std::time import SystemTime
 from rust::rustix::fs @ "1.1" with ["fs"] import statvfs
 from std.fs.file import File, _decode_text, _encode_text, _open_file, _validate_open_options
 from std.fs.glob import matches
-from std.fs.locking import FileLock, exclusive as lock_exclusive, shared as lock_shared, sync_directory as rust_sync_directory, try_exclusive as try_lock_exclusive, try_shared as try_lock_shared
+from std.fs.locking import FileLock, exclusive as lock_exclusive, shared as lock_shared, try_exclusive as try_lock_exclusive, try_shared as try_lock_shared
 from std.fs.metadata import DirEntry, PathStat, DiskUsage
 from std.io import IoError
 
@@ -627,8 +627,11 @@ pub type Path = newtype str:
         """
         if not self.is_dir():
             return Err(_fs_error(self, "invalid_input", "sync_directory requires a directory path"))
-        match rust_sync_directory(self.0):
-            Ok(_) => return Ok(None)
+        match RustFile.open(RustPath.new(self.0)):
+            Ok(directory) =>
+                match directory.sync_all():
+                    Ok(_) => return Ok(None)
+                    Err(err) => return Err(_io_error(self, err))
             Err(err) => return Err(_io_error(self, err))
 
     def lock_shared(self) -> Result[FileLock, IoError]:
