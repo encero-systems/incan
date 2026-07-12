@@ -921,6 +921,7 @@ impl<'a> Parser<'a> {
         Ok(VocabBlockStmt {
             keyword: keyword_name,
             keyword_binding: VocabKeywordBinding {
+                is_declaration_owned_clause: spec.is_declaration_owned_clause,
                 dependency_key: spec.dependency_key,
                 activation_namespace: spec.activation_namespace,
                 surface_kind: spec.surface_kind,
@@ -1067,6 +1068,7 @@ impl<'a> Parser<'a> {
         Ok(VocabBlockStmt {
             keyword: keyword_name,
             keyword_binding: VocabKeywordBinding {
+                is_declaration_owned_clause: spec.is_declaration_owned_clause,
                 dependency_key: spec.dependency_key,
                 activation_namespace: spec.activation_namespace,
                 surface_kind: spec.surface_kind,

@@ -2779,6 +2779,7 @@ def add(a: int, b: int) -> int:
         let raw_vocab_default = spanned(ast::Expr::VocabBlock(Box::new(ast::VocabBlockStmt {
             keyword: "query".to_string(),
             keyword_binding: ast::VocabKeywordBinding {
+                is_declaration_owned_clause: false,
                 dependency_key: "fixture".to_string(),
                 activation_namespace: "fixture".to_string(),
                 surface_kind: incan_vocab::KeywordSurfaceKind::BlockDeclaration,
