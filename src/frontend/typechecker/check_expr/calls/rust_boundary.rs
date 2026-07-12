@@ -229,6 +229,55 @@ impl TypeChecker {
         }
     }
 
+    /// Substitute inspected Rust generic placeholders from a compatible expected result shape.
+    ///
+    /// Rust metadata names unbound function generics T, U, and similar. These are not Incan type variables, but an
+    /// expected result such as Result[Value, _] supplies an unambiguous binding for the matching return position.
+    fn refine_unbound_rust_return_type_with_expected(actual: &ResolvedType, expected: &ResolvedType) -> ResolvedType {
+        match actual {
+            ResolvedType::RustPath(path) if Self::rust_display_type_var_name(path.trim()).is_some() => expected.clone(),
+            ResolvedType::Ref(inner) => match expected {
+                ResolvedType::Ref(expected_inner) => ResolvedType::Ref(Box::new(
+                    Self::refine_unbound_rust_return_type_with_expected(inner, expected_inner),
+                )),
+                _ => actual.clone(),
+            },
+            ResolvedType::RefMut(inner) => match expected {
+                ResolvedType::RefMut(expected_inner) => ResolvedType::RefMut(Box::new(
+                    Self::refine_unbound_rust_return_type_with_expected(inner, expected_inner),
+                )),
+                _ => actual.clone(),
+            },
+            ResolvedType::Generic(name, args) => match expected {
+                ResolvedType::Generic(expected_name, expected_args)
+                    if name == expected_name && args.len() == expected_args.len() =>
+                {
+                    ResolvedType::Generic(
+                        name.clone(),
+                        args.iter()
+                            .zip(expected_args)
+                            .map(|(actual, expected)| {
+                                Self::refine_unbound_rust_return_type_with_expected(actual, expected)
+                            })
+                            .collect(),
+                    )
+                }
+                _ => actual.clone(),
+            },
+            ResolvedType::Tuple(items) => match expected {
+                ResolvedType::Tuple(expected_items) if items.len() == expected_items.len() => ResolvedType::Tuple(
+                    items
+                        .iter()
+                        .zip(expected_items)
+                        .map(|(actual, expected)| Self::refine_unbound_rust_return_type_with_expected(actual, expected))
+                        .collect(),
+                ),
+                _ => actual.clone(),
+            },
+            _ => actual.clone(),
+        }
+    }
+
     /// Record an ownership conversion for borrowed Rust scalar-like returns that Incan exposes as owned values.
     pub(in crate::frontend::typechecker) fn record_rust_return_coercion_from_display(
         &mut self,
@@ -865,12 +914,25 @@ impl TypeChecker {
     }
 
     /// Validate a direct Rust function call (`rust::path::item(...)`) and record boundary coercions.
+    #[cfg(test)]
     pub(in crate::frontend::typechecker::check_expr) fn validate_rust_function_call(
         &mut self,
         path: &str,
         sig: &RustFunctionSig,
         args: &[CallArg],
         span: Span,
+    ) -> ResolvedType {
+        self.validate_rust_function_call_with_expected(path, sig, args, span, None)
+    }
+
+    /// Validate a direct Rust function call while using an expected result type to bind return-only generics.
+    pub(in crate::frontend::typechecker::check_expr) fn validate_rust_function_call_with_expected(
+        &mut self,
+        path: &str,
+        sig: &RustFunctionSig,
+        args: &[CallArg],
+        span: Span,
+        expected_return_ty: Option<&ResolvedType>,
     ) -> ResolvedType {
         if sig.is_async {
             self.type_info
@@ -901,6 +963,9 @@ impl TypeChecker {
         }
 
         let ret = self.resolved_rust_call_type_from_sig(sig, path, span);
+        let ret = expected_return_ty
+            .map(|expected| Self::refine_unbound_rust_return_type_with_expected(&ret, expected))
+            .unwrap_or(ret);
         self.record_rust_return_coercion_from_display(sig.return_type.as_str(), &ret, span);
         ret
     }
