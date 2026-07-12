@@ -2680,7 +2680,7 @@ mod codegen_tests {
     use incan::backend::IrCodegen;
     use incan::frontend::{lexer, parser, typechecker};
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::process::{Command, Stdio};
     use std::thread;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -2691,6 +2691,36 @@ mod codegen_tests {
             .env("CARGO_NET_OFFLINE", "true")
             .output()
             .unwrap_or_else(|e| panic!("failed to run incan source: {e}"))
+    }
+
+    /// Build an Incan source fixture and return its compiler-reported executable artifact.
+    fn build_incan_source_binary(source: &Path, output_dir: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        let source_arg = source.to_str().ok_or("source path was not valid UTF-8")?;
+        let output_arg = output_dir.to_str().ok_or("output path was not valid UTF-8")?;
+        let output = incan_command()
+            .args(["build", source_arg, output_arg, "--report", "json"])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        if !output.status.success() {
+            return Err(format!(
+                "Incan build failed for {}. stdout:\n{}\nstderr:\n{}",
+                source.display(),
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            )
+            .into());
+        }
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+        let binary = report["artifacts"]
+            .as_array()
+            .and_then(|artifacts| artifacts.iter().find(|artifact| artifact["kind"] == "binary"))
+            .and_then(|artifact| artifact["path"].as_str())
+            .ok_or("build report did not contain a binary artifact")?;
+        let binary = PathBuf::from(binary);
+        if !binary.is_file() {
+            return Err(format!("reported binary does not exist: {}", binary.display()).into());
+        }
+        Ok(binary)
     }
 
     fn rustc_compile_ok(source: &str) -> Result<(), String> {
@@ -3393,6 +3423,7 @@ def main() -> Result[None, IoError]:
         let root = tempfile::tempdir()?;
         let target = root.path().join("published.lock");
         let ready = root.path().join("holder-ready");
+        let holder_path = root.path().join("holder.incn");
         let holder_source = format!(
             r#"
 from std.fs import IoError, Path
@@ -3402,9 +3433,8 @@ from rust::std::time import Duration
 def hold() -> Result[None, IoError]:
     guard = Path("{target}").lock_shared()?
     Path("{ready}").write_text("ready", "utf-8", "strict", None)?
-    # Keep the proven holder alive while a fresh child compiler process builds the probe. The Rust
-    # harness terminates this process immediately after the probe, so this is a liveness ceiling,
-    # not test latency.
+    # The Rust harness terminates this generated program after the direct probe finishes, so this
+    # is a liveness ceiling rather than test latency.
     sleep(Duration.from_secs(300))
     return Ok(None)
 
@@ -3416,9 +3446,30 @@ def main() -> None:
             target = target.display(),
             ready = ready.display(),
         );
-        let mut holder = incan_command()
-            .args(["run", "-c", holder_source.as_str()])
-            .env("CARGO_NET_OFFLINE", "true")
+        fs::write(&holder_path, holder_source)?;
+        let holder_binary = build_incan_source_binary(&holder_path, &root.path().join("holder-build"))?;
+
+        let probe_path = root.path().join("probe.incn");
+        let probe_source = format!(
+            r#"
+from std.fs import IoError, Path
+
+def main() -> None:
+    match Path("{target}").try_lock_shared():
+        Ok(Some(_)) => println("shared")
+        Ok(None) => println("blocked")
+        Err(err) => println(err.message())
+    match Path("{target}").try_lock_exclusive():
+        Ok(Some(_)) => println("acquired")
+        Ok(None) => println("contended")
+        Err(err) => println(err.message())
+"#,
+            target = target.display(),
+        );
+        fs::write(&probe_path, probe_source)?;
+        let probe_binary = build_incan_source_binary(&probe_path, &root.path().join("probe-build"))?;
+
+        let mut holder = Command::new(&holder_binary)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()?;
@@ -3442,34 +3493,18 @@ def main() -> None:
             .into());
         }
 
-        let probes = format!(
-            r#"
-from std.fs import IoError, Path
-
-def main() -> None:
-    match Path("{target}").try_lock_shared():
-        Ok(Some(_)) => println("shared")
-        Ok(None) => println("blocked")
-        Err(err) => println(err.message())
-    match Path("{target}").try_lock_exclusive():
-        Ok(Some(_)) => println("acquired")
-        Ok(None) => println("contended")
-        Err(err) => println(err.message())
-"#,
-            target = target.display(),
-        );
-        let probes = incan_command()
-            .args(["run", "-c", probes.as_str()])
-            .env("CARGO_NET_OFFLINE", "true")
-            .output()?;
+        let probes = Command::new(&probe_binary).output();
         let _ = holder.kill();
-        let _ = holder.wait();
+        let holder_output = holder.wait_with_output()?;
+        let probes = probes?;
 
         assert!(
             probes.status.success(),
-            "lock probes failed. stdout:\n{}\nstderr:\n{}",
+            "lock probes failed. stdout:\n{}\nstderr:\n{}\nholder stdout:\n{}\nholder stderr:\n{}",
             String::from_utf8_lossy(&probes.stdout),
-            String::from_utf8_lossy(&probes.stderr)
+            String::from_utf8_lossy(&probes.stderr),
+            String::from_utf8_lossy(&holder_output.stdout),
+            String::from_utf8_lossy(&holder_output.stderr),
         );
         assert_eq!(String::from_utf8_lossy(&probes.stdout).trim(), "shared\ncontended");
         Ok(())
