@@ -517,6 +517,27 @@ impl ProjectManifest {
         self.workspace.as_ref()
     }
 
+    /// Return a copy whose dependency tables have been resolved by a validated workspace graph.
+    ///
+    /// Dependency inheritance is intentionally resolved outside this parser because it needs the workspace root and
+    /// every member manifest. Consumers that need one member's effective build or lock inputs must use this view,
+    /// rather than treating `{ workspace = true }` as an empty local declaration.
+    pub fn with_effective_workspace_dependencies(
+        &self,
+        library_dependencies: BTreeMap<String, LibraryDependencySpec>,
+        rust_dependencies: BTreeMap<String, DependencySpec>,
+        rust_dev_dependencies: BTreeMap<String, DependencySpec>,
+    ) -> Self {
+        let mut resolved = self.clone();
+        resolved.library_dependencies = library_dependencies.into_iter().collect();
+        resolved.rust_dependencies = rust_dependencies.into_iter().collect();
+        resolved.rust_dev_dependencies = rust_dev_dependencies.into_iter().collect();
+        resolved.workspace_library_dependencies.clear();
+        resolved.workspace_rust_dependencies.clear();
+        resolved.workspace_rust_dev_dependencies.clear();
+        resolved
+    }
+
     /// RFC 048 model bundle JSON paths declared under `[tool.incan.metadata]`.
     pub fn contract_model_bundle_paths(&self) -> Vec<String> {
         self.incan_tool()

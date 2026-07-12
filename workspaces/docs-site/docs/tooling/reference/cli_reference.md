@@ -541,6 +541,10 @@ Resolves all dependencies (manifest + inline + test files) and generates or upda
 
 If `FILE` is omitted, uses the `[project.scripts].main` entry from `incan.toml`.
 
+Within an RFC 077 workspace, `incan lock` resolves every workspace member and writes the single authoritative
+`incan.lock` at the workspace root, even when invoked from a member directory. `incan build` and `incan test` use
+that same root lock automatically; member-local lockfiles are not authoritative.
+
 Options:
 
 - `--cargo-features <FEATURES>`: Enable specific Cargo features for resolution.

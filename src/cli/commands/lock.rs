@@ -22,6 +22,7 @@ use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::{diagnostics, lexer, parser};
 use crate::lockfile::{CargoFeatureSelection, IncanLock, compute_deps_fingerprint};
 use crate::manifest::ProjectManifest;
+use crate::workspace::WorkspaceGraph;
 
 use super::common::{
     CargoPolicy, ProjectRequirements, build_source_map, cargo_command_flags, cargo_lockfile_flags, collect_modules,
@@ -72,6 +73,16 @@ pub fn lock_project(
     let start_dir = entry_file
         .and_then(|p| p.parent().map(|p| p.to_path_buf()))
         .unwrap_or_else(|| PathBuf::from("."));
+    if let Some(workspace) =
+        WorkspaceGraph::discover(&start_dir).map_err(|error| CliError::failure(error.to_string()))?
+    {
+        return lock_workspace(
+            &workspace,
+            cargo_features,
+            cargo_no_default_features,
+            cargo_all_features,
+        );
+    }
     let manifest = ProjectManifest::discover(&start_dir)
         .map_err(|e| CliError::failure(e.to_string()))?
         .ok_or_else(|| CliError::failure("No incan.toml found (run `incan init`)"))?;
@@ -115,6 +126,38 @@ pub fn lock_project(
         &context.rust_inspect_query_paths,
     )?;
 
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Resolve every member into one root-owned workspace lockfile.
+///
+/// RFC 077 makes lock scope independent of the caller's current member: an invocation from any contained member must
+/// produce the same root `incan.lock`, including dependency requirements discovered from every selected project.
+fn lock_workspace(
+    workspace: &WorkspaceGraph,
+    cargo_features: Vec<String>,
+    cargo_no_default_features: bool,
+    cargo_all_features: bool,
+) -> CliResult<ExitCode> {
+    let cargo_features = CargoFeatureSelection {
+        cargo_features,
+        cargo_no_default_features,
+        cargo_all_features,
+    }
+    .normalized();
+    let context = collect_workspace_lock_context(workspace, &cargo_features)?;
+    let cargo_policy = CargoPolicy::explicit(false, false, false, Vec::new());
+    generate_lockfile(
+        workspace.root(),
+        "incan_workspace",
+        context.rust_edition,
+        &context.resolved,
+        &context.project_requirements,
+        &cargo_features,
+        &cargo_policy,
+        #[cfg(feature = "rust_inspect")]
+        &context.rust_inspect_query_paths,
+    )?;
     Ok(ExitCode::SUCCESS)
 }
 
@@ -270,6 +313,37 @@ pub(crate) fn resolve_lock_payload(request: LockResolutionRequest<'_>) -> CliRes
         return Ok(None);
     }
 
+    // A workspace lock is root-owned even when a build starts from one of its members. Resolve
+    // every member here as `incan lock` does, so ordinary build/test commands neither create nor
+    // consult a member-local lockfile.
+    if let Some(workspace) =
+        WorkspaceGraph::discover(project_root).map_err(|error| CliError::failure(error.to_string()))?
+    {
+        let context = collect_workspace_lock_context(&workspace, cargo_features)?;
+        let mut resolved = merge_resolved_dependencies(resolved, &context.resolved)?;
+        let project_requirements = merge_project_requirements(project_requirements, &context.project_requirements)?;
+        merge_project_requirement_dependencies(&mut resolved, &project_requirements)?;
+        #[cfg(feature = "rust_inspect")]
+        let rust_inspect_query_paths = {
+            let mut query_paths = BTreeSet::new();
+            query_paths.extend(rust_inspect_query_paths.iter().cloned());
+            query_paths.extend(context.rust_inspect_query_paths);
+            query_paths.into_iter().collect::<Vec<_>>()
+        };
+        return resolve_lock_for_inputs(
+            workspace.root(),
+            "incan_workspace",
+            context.rust_edition,
+            &resolved,
+            &project_requirements,
+            cargo_features,
+            cargo_policy,
+            #[cfg(feature = "rust_inspect")]
+            &rust_inspect_query_paths,
+        )
+        .map(|lock| Some(lock.cargo_lock_payload));
+    }
+
     let project_context = if let Some(manifest) = manifest {
         collect_project_lock_context(manifest, None, cargo_features)?
     } else {
@@ -293,19 +367,49 @@ pub(crate) fn resolve_lock_payload(request: LockResolutionRequest<'_>) -> CliRes
         .map(|context| context.rust_inspect_query_paths.as_slice())
         .unwrap_or(rust_inspect_query_paths);
 
-    let lock_path = project_root.join("incan.lock");
     let rust_edition = manifest.and_then(|m| m.build.as_ref().and_then(|b| b.rust_edition.clone()));
     let mut resolved_with_requirements = resolved.clone();
     merge_project_requirement_dependencies(&mut resolved_with_requirements, project_requirements)?;
-    let fingerprint = compute_deps_fingerprint(
-        &resolved_with_requirements.dependencies,
-        &resolved_with_requirements.dev_dependencies,
+    resolve_lock_for_inputs(
+        project_root,
+        project_name,
+        rust_edition,
+        &resolved_with_requirements,
+        project_requirements,
         cargo_features,
-        Some(project_root),
+        cargo_policy,
+        #[cfg(feature = "rust_inspect")]
+        rust_inspect_query_paths,
+    )
+    .map(|lock| Some(lock.cargo_lock_payload))
+}
+
+/// Load or create one lockfile after its complete dependency surface has been assembled.
+///
+/// Callers merge project requirements into `resolved` first. Keeping that rule outside this helper
+/// lets a single project and an aggregate workspace use the same freshness and strict-mode
+/// behavior while retaining their different collection scopes.
+#[allow(clippy::too_many_arguments)]
+fn resolve_lock_for_inputs(
+    lock_root: &Path,
+    project_name: &str,
+    rust_edition: Option<String>,
+    resolved: &ResolvedDependencies,
+    project_requirements: &ProjectRequirements,
+    cargo_features: &CargoFeatureSelection,
+    cargo_policy: &CargoPolicy,
+    #[cfg(feature = "rust_inspect")] rust_inspect_query_paths: &[String],
+) -> CliResult<IncanLock> {
+    let lock_path = lock_root.join("incan.lock");
+    let fingerprint = compute_deps_fingerprint(
+        &resolved.dependencies,
+        &resolved.dev_dependencies,
+        cargo_features,
+        Some(lock_root),
     );
 
     let strict = cargo_policy.locked || cargo_policy.frozen;
-    if strict && let Some(message) = strict_git_source_error(&resolved_with_requirements) {
+    if strict && let Some(message) = strict_git_source_error(resolved) {
         return Err(CliError::failure(message));
     }
     if lock_path.exists() {
@@ -332,9 +436,9 @@ pub(crate) fn resolve_lock_payload(request: LockResolutionRequest<'_>) -> CliRes
                 "warning: incan.lock is out of date; using the existing lock payload without rewriting it. \
                  Run `incan lock` to refresh it."
             );
-            return Ok(Some(lock.cargo_lock_payload));
+            return Ok(lock);
         }
-        return Ok(Some(lock.cargo_lock_payload));
+        return Ok(lock);
     }
 
     if strict {
@@ -342,17 +446,17 @@ pub(crate) fn resolve_lock_payload(request: LockResolutionRequest<'_>) -> CliRes
     }
 
     let lock = generate_lockfile(
-        project_root,
+        lock_root,
         project_name,
         rust_edition,
-        &resolved_with_requirements,
+        resolved,
         project_requirements,
         cargo_features,
         cargo_policy,
         #[cfg(feature = "rust_inspect")]
         rust_inspect_query_paths,
     )?;
-    Ok(Some(lock.cargo_lock_payload))
+    Ok(lock)
 }
 
 /// Fully collected dependency inputs that define a manifest project's lock freshness surface.
@@ -360,6 +464,15 @@ struct ProjectLockContext {
     modules: Vec<ParsedModule>,
     resolved: ResolvedDependencies,
     project_requirements: ProjectRequirements,
+    #[cfg(feature = "rust_inspect")]
+    rust_inspect_query_paths: Vec<String>,
+}
+
+/// Fully merged lock inputs for every member of one validated workspace.
+struct WorkspaceLockContext {
+    resolved: ResolvedDependencies,
+    project_requirements: ProjectRequirements,
+    rust_edition: Option<String>,
     #[cfg(feature = "rust_inspect")]
     rust_inspect_query_paths: Vec<String>,
 }
@@ -381,7 +494,68 @@ fn project_lock_entry_paths(manifest: &ProjectManifest, explicit_entry_file: Opt
     if let Some(file) = explicit_entry_file {
         paths.insert(file.to_path_buf());
     }
+    if paths.is_empty() {
+        let library_root = manifest.project_root().join("src").join("lib.incn");
+        let application_root = manifest.project_root().join("src").join("main.incn");
+        if library_root.is_file() {
+            paths.insert(library_root);
+        } else if application_root.is_file() {
+            paths.insert(application_root);
+        }
+    }
     paths.into_iter().collect()
+}
+
+/// Collect and validate the complete dependency context represented by a workspace root lock.
+///
+/// Each member is loaded through [`WorkspaceGraph::effective_manifest_for`] so explicit workspace inheritance reaches
+/// ordinary dependency and library-manifest resolution. The resulting context is deterministic in member order and
+/// rejects incompatible crate identities rather than allowing one member to overwrite another in the root lock.
+fn collect_workspace_lock_context(
+    workspace: &WorkspaceGraph,
+    cargo_features: &CargoFeatureSelection,
+) -> CliResult<WorkspaceLockContext> {
+    let mut resolved = ResolvedDependencies {
+        dependencies: Vec::new(),
+        dev_dependencies: Vec::new(),
+    };
+    let mut project_requirements = ProjectRequirements::default();
+    let mut rust_edition = None;
+    #[cfg(feature = "rust_inspect")]
+    let mut rust_inspect_query_paths = BTreeSet::new();
+
+    for member in workspace.members() {
+        let manifest = workspace
+            .effective_manifest_for(member)
+            .map_err(|error| CliError::failure(error.to_string()))?;
+        enforce_project_toolchain_constraint(&manifest)?;
+        let Some(context) = collect_project_lock_context(&manifest, None, cargo_features)? else {
+            continue;
+        };
+        resolved = merge_resolved_dependencies(&resolved, &context.resolved)?;
+        project_requirements = merge_project_requirements(&project_requirements, &context.project_requirements)?;
+        let member_edition = manifest.build.as_ref().and_then(|build| build.rust_edition.clone());
+        if let (Some(expected), Some(actual)) = (&rust_edition, &member_edition)
+            && expected != actual
+        {
+            return Err(CliError::failure(format!(
+                "workspace members require conflicting Rust editions: {expected} and {actual}; align [build].rust-edition before generating one workspace lock"
+            )));
+        }
+        if rust_edition.is_none() {
+            rust_edition = member_edition;
+        }
+        #[cfg(feature = "rust_inspect")]
+        rust_inspect_query_paths.extend(context.rust_inspect_query_paths);
+    }
+
+    Ok(WorkspaceLockContext {
+        resolved,
+        project_requirements,
+        rust_edition,
+        #[cfg(feature = "rust_inspect")]
+        rust_inspect_query_paths: rust_inspect_query_paths.into_iter().collect(),
+    })
 }
 
 /// Collect the project-wide script and test dependency inputs used for both lock generation and freshness checks.
@@ -1116,6 +1290,63 @@ mod tests {
             optional: false,
             package: None,
         }
+    }
+
+    fn write_workspace_member(
+        root: &Path,
+        name: &str,
+        rust_edition: Option<&str>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let member_root = root.join("packages").join(name);
+        fs::create_dir_all(member_root.join("src"))?;
+        let edition = rust_edition
+            .map(|edition| format!("\n[build]\nrust-edition = \"{edition}\"\n"))
+            .unwrap_or_default();
+        fs::write(
+            member_root.join("incan.toml"),
+            format!("[project]\nname = \"{name}\"\n[project.scripts]\nmain = \"src/main.incn\"{edition}"),
+        )?;
+        fs::write(member_root.join("src/main.incn"), "def main() -> None:\n    return\n")?;
+        Ok(())
+    }
+
+    #[test]
+    fn workspace_lock_context_collects_every_member_and_uses_one_edition() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        fs::write(
+            temp.path().join("incan.toml"),
+            "[workspace]\nmembers = [\"packages/*\"]\n",
+        )?;
+        write_workspace_member(temp.path(), "alpha", Some("2024"))?;
+        write_workspace_member(temp.path(), "beta", Some("2024"))?;
+
+        let graph = WorkspaceGraph::discover(temp.path())?.ok_or("workspace should be discovered")?;
+        let context = collect_workspace_lock_context(&graph, &CargoFeatureSelection::default())?;
+
+        assert!(context.resolved.dependencies.is_empty());
+        assert!(context.resolved.dev_dependencies.is_empty());
+        assert!(context.project_requirements.dependencies.is_empty());
+        assert_eq!(context.rust_edition.as_deref(), Some("2024"));
+        Ok(())
+    }
+
+    #[test]
+    fn workspace_lock_context_rejects_conflicting_member_editions() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        fs::write(
+            temp.path().join("incan.toml"),
+            "[workspace]\nmembers = [\"packages/*\"]\n",
+        )?;
+        write_workspace_member(temp.path(), "alpha", Some("2021"))?;
+        write_workspace_member(temp.path(), "beta", Some("2024"))?;
+
+        let graph = WorkspaceGraph::discover(temp.path())?.ok_or("workspace should be discovered")?;
+        let error = collect_workspace_lock_context(&graph, &CargoFeatureSelection::default())
+            .err()
+            .ok_or("conflicting workspace Rust editions must fail")?;
+
+        assert!(error.message.contains("conflicting Rust editions"));
+        Ok(())
     }
 
     #[test]

@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use globset::Glob;
+use globset::{Glob, GlobBuilder};
 use serde::Serialize;
 
 use crate::lockfile::IncanLock;
@@ -370,6 +370,26 @@ impl WorkspaceGraph {
         self.effective_rust_dev_dependencies.get(&member.path)
     }
 
+    /// Load one member manifest with its explicit workspace dependency opt-ins resolved.
+    ///
+    /// Commands must consume this view when they resolve source, Cargo, or lock inputs. Reading the raw member
+    /// manifest would discard `{ workspace = true }` declarations and create a dependency graph that disagrees with
+    /// inspection and the workspace root lock.
+    pub fn effective_manifest_for(&self, member: &WorkspaceMember) -> Result<ProjectManifest, WorkspaceError> {
+        let manifest = read_manifest(&member.manifest_path)?;
+        Ok(manifest.with_effective_workspace_dependencies(
+            self.effective_library_dependencies_for(member)
+                .cloned()
+                .unwrap_or_default(),
+            self.effective_rust_dependencies_for(member)
+                .cloned()
+                .unwrap_or_default(),
+            self.effective_rust_dev_dependencies_for(member)
+                .cloned()
+                .unwrap_or_default(),
+        ))
+    }
+
     /// Resolve the member scope implied by `start` before any command execution.
     pub fn selected_members_for(&self, start: &Path) -> Result<Vec<&WorkspaceMember>, WorkspaceError> {
         let start = canonical_start_path(start)?;
@@ -558,7 +578,9 @@ fn expand_patterns(
             ));
         }
         if contains_glob(pattern) {
-            let glob = Glob::new(pattern)
+            let glob = GlobBuilder::new(pattern)
+                .literal_separator(true)
+                .build()
                 .map_err(|error| {
                     invalid(
                         manifest,

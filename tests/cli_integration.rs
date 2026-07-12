@@ -1940,6 +1940,60 @@ fn lock_generates_lockfile_for_manifest_project() -> Result<(), Box<dyn std::err
 }
 
 #[test]
+fn lock_from_workspace_member_publishes_only_the_root_lockfile() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    fs::write(
+        tmp.path().join("incan.toml"),
+        "[workspace]\nmembers = [\"packages/*\"]\n",
+    )?;
+    for name in ["alpha", "beta"] {
+        let member = tmp.path().join("packages").join(name);
+        fs::create_dir_all(member.join("src"))?;
+        fs::write(
+            member.join("incan.toml"),
+            format!(
+                "[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"
+            ),
+        )?;
+        fs::write(member.join("src/main.incn"), "def main() -> None:\n    return\n")?;
+    }
+
+    let output = run_incan(&tmp.path().join("packages/alpha"), &["lock"])?;
+    assert_success(&output, "workspace lock");
+    assert!(tmp.path().join("incan.lock").is_file());
+    assert!(!tmp.path().join("packages/alpha/incan.lock").exists());
+    assert!(!tmp.path().join("packages/beta/incan.lock").exists());
+    Ok(())
+}
+
+#[test]
+fn build_from_workspace_member_uses_the_root_lockfile() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    fs::write(
+        tmp.path().join("incan.toml"),
+        "[workspace]\nmembers = [\"packages/*\"]\n",
+    )?;
+    for name in ["alpha", "beta"] {
+        let member = tmp.path().join("packages").join(name);
+        fs::create_dir_all(member.join("src"))?;
+        fs::write(
+            member.join("incan.toml"),
+            format!(
+                "[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"
+            ),
+        )?;
+        fs::write(member.join("src/main.incn"), "def main() -> None:\n    return\n")?;
+    }
+
+    let output = run_incan(&tmp.path().join("packages/alpha"), &["build"])?;
+    assert_success(&output, "workspace member build");
+    assert!(tmp.path().join("incan.lock").is_file());
+    assert!(!tmp.path().join("packages/alpha/incan.lock").exists());
+    assert!(!tmp.path().join("packages/beta/incan.lock").exists());
+    Ok(())
+}
+
+#[test]
 fn lock_preheats_dependency_graph_for_path_dependencies() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let helper_dir = tmp.path().join("preheat_helper");
