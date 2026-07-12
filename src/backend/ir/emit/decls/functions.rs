@@ -570,7 +570,11 @@ impl<'a> IrEmitter<'a> {
         }
 
         let ret_ty_is_unit = matches!(func.return_type, IrType::Unit);
-        if is_main || ret_ty_is_unit {
+        // Rust only permits a non-unit process entrypoint for `Result` return types. Preserve that fallible source
+        // contract so `?` and `return Ok(...)` in a synchronous Incan `main` lower into valid Rust; historical
+        // non-Result entrypoint annotations continue to use the unit process entrypoint convention.
+        let main_returns_result = is_main && matches!(func.return_type, IrType::Result(_, _));
+        if ret_ty_is_unit || (is_main && !main_returns_result) {
             Ok(quote! {
                 #(#doc_attrs)*
                 #(#lint_allows)*
