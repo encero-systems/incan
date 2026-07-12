@@ -347,16 +347,36 @@ fn prepare_builtin_stdlib_artifact() -> CliResult<LibraryArtifactMetadata> {
     let mut command = Command::new(executable);
     command.current_dir(&stdlib_root);
     configure_builtin_stdlib_artifact_builder(&mut command, workspace_lock.as_deref());
-    let status = command.status().map_err(|error| {
+    // This is an implementation detail of the consumer compile. Never inherit its successful stdout into the
+    // program being run: `incan run` must reserve stdout for the user's program, and JSON/reporting callers need
+    // the same boundary. Preserve both streams when the nested artifact build actually fails.
+    let output = command.output().map_err(|error| {
         CliError::failure(format!(
             "failed to run `incan build --lib` for built-in stdlib artifact at {}: {error}",
             stdlib_root.display()
         ))
     })?;
-    if !status.success() {
+    if !output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let mut diagnostics = String::new();
+        if !stderr.trim().is_empty() {
+            diagnostics.push_str(stderr.trim_end());
+        }
+        if !stdout.trim().is_empty() {
+            if !diagnostics.is_empty() {
+                diagnostics.push('\n');
+            }
+            diagnostics.push_str(stdout.trim_end());
+        }
         return Err(CliError::failure(format!(
-            "failed to prepare compiled built-in stdlib artifact at {}",
-            stdlib_root.display()
+            "failed to prepare compiled built-in stdlib artifact at {}{}",
+            stdlib_root.display(),
+            if diagnostics.is_empty() {
+                String::new()
+            } else {
+                format!("\n{diagnostics}")
+            }
         )));
     }
     publish_builtin_stdlib_artifact_resolved_lock(&stdlib_root, &metadata.crate_root)?;
