@@ -1751,12 +1751,17 @@ impl TypeChecker {
                     return Some(ResolvedType::Unknown);
                 };
                 if !type_args.is_empty() {
-                    let method_has_generic = sig
-                        .params
-                        .iter()
-                        .any(|param| param.type_display.contains('T') || param.type_display.contains("impl"));
                     let types_has_generic = self.is_type_generic(rust_path)?;
-                    if !method_has_generic && !types_has_generic {
+                    if !sig.type_params.is_empty() && type_args.len() != sig.type_params.len() {
+                        self.errors.push(errors::explicit_type_arg_arity(
+                            method,
+                            sig.type_params.len(),
+                            type_args.len(),
+                            span,
+                        ));
+                        return Some(ResolvedType::Unknown);
+                    }
+                    if sig.type_params.is_empty() && !types_has_generic {
                         self.errors
                             .push(errors::explicit_call_site_type_args_not_supported(span));
                         return Some(ResolvedType::Unknown);

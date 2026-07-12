@@ -317,6 +317,7 @@ pub fn metadata_free_method_signature(rust_path: &str, method: &str) -> Option<R
         .iter()
         .find(|rule| rule.receiver_path == rust_path && rule.method == method)?;
     Some(RustFunctionSig {
+        type_params: Vec::new(),
         params: rule
             .params
             .iter()
@@ -339,6 +340,7 @@ pub fn metadata_free_function_signature(rust_path: &str) -> Option<RustFunctionS
         .iter()
         .find(|rule| rule.path == rust_path)?;
     Some(RustFunctionSig {
+        type_params: Vec::new(),
         params: rule
             .params
             .iter()
@@ -365,6 +367,13 @@ pub struct RustParam {
 /// Callable signature extracted from rust-analyzer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RustFunctionSig {
+    /// Method or function type parameters in source declaration order.
+    ///
+    /// Rust permits type arguments on a callable independently from generics on its receiver type. Retaining this
+    /// declaration-level arity lets Incan reject incomplete explicit method turbofishes before generated Rust reaches
+    /// rustc.
+    #[serde(default)]
+    pub type_params: Vec<String>,
     pub params: Vec<RustParam>,
     pub return_type: String,
     pub is_async: bool,

@@ -3497,6 +3497,7 @@ pub def forward(value: Thing) -> None:
                     definition_path: Some("demo::takes_ref".to_string()),
                     visibility: RustVisibility::Public,
                     kind: RustItemKind::Function(RustFunctionSig {
+                        type_params: Vec::new(),
                         params: vec![RustParam {
                             name: Some("value".to_string()),
                             type_display: "&demo::Thing".to_string(),
@@ -3770,6 +3771,7 @@ pub def forward(payload: Payload) -> int:
                             RustMethodSig {
                                 name: "new".to_string(),
                                 signature: RustFunctionSig {
+                                    type_params: Vec::new(),
                                     params: Vec::new(),
                                     return_type: "demo::Builder".to_string(),
                                     is_async: false,
@@ -3779,6 +3781,7 @@ pub def forward(payload: Payload) -> int:
                             RustMethodSig {
                                 name: "json".to_string(),
                                 signature: RustFunctionSig {
+                                    type_params: Vec::new(),
                                     params: vec![RustParam {
                                         name: Some("value".to_string()),
                                         type_display: "&T".to_string(),
@@ -3950,6 +3953,7 @@ pub async def run(state: State, plan: Plan) -> None:
                     definition_path: Some("demo::consume".to_string()),
                     visibility: RustVisibility::Public,
                     kind: RustItemKind::Function(RustFunctionSig {
+                        type_params: Vec::new(),
                         params: vec![
                             RustParam {
                                 name: Some("state".to_string()),
@@ -4034,6 +4038,7 @@ pub async def register_csv() -> None:
                             RustMethodSig {
                                 name: "new".to_string(),
                                 signature: RustFunctionSig {
+                                    type_params: Vec::new(),
                                     params: Vec::new(),
                                     return_type: "demo::SessionContext".to_string(),
                                     is_async: false,
@@ -4043,6 +4048,7 @@ pub async def register_csv() -> None:
                             RustMethodSig {
                                 name: "register_csv".to_string(),
                                 signature: RustFunctionSig {
+                                    type_params: Vec::new(),
                                     params: vec![
                                         RustParam {
                                             name: Some("self".to_string()),
@@ -4087,6 +4093,7 @@ pub async def register_csv() -> None:
                         methods: vec![RustMethodSig {
                             name: "new".to_string(),
                             signature: RustFunctionSig {
+                                type_params: Vec::new(),
                                 params: Vec::new(),
                                 return_type: "demo::CsvReadOptions".to_string(),
                                 is_async: false,
@@ -4108,6 +4115,7 @@ pub async def register_csv() -> None:
                     definition_path: Some("demo::make_context".to_string()),
                     visibility: RustVisibility::Public,
                     kind: RustItemKind::Function(RustFunctionSig {
+                        type_params: Vec::new(),
                         params: Vec::new(),
                         return_type: "demo::SessionContext".to_string(),
                         is_async: false,
@@ -4124,6 +4132,7 @@ pub async def register_csv() -> None:
                     definition_path: Some("demo::make_options".to_string()),
                     visibility: RustVisibility::Public,
                     kind: RustItemKind::Function(RustFunctionSig {
+                        type_params: Vec::new(),
                         params: Vec::new(),
                         return_type: "demo::CsvReadOptions".to_string(),
                         is_async: false,

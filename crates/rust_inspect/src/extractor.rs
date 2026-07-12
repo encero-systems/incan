@@ -16,7 +16,7 @@ use ra_ap_hir::{
 use ra_ap_ide_db::RootDatabase;
 use ra_ap_syntax::{
     AstNode,
-    ast::{self, HasModuleItem, HasName},
+    ast::{self, HasGenericParams, HasModuleItem, HasName},
 };
 
 use super::error::RustMetadataError;
@@ -611,6 +611,19 @@ fn source_function_param_type_display(f: Function, param: &ra_ap_hir::Param<'_>,
     source_function_type_display(f, text.as_str(), db)
 }
 
+/// Return source-declared type parameters in their Rust turbofish order.
+fn source_function_type_params(f: Function, db: &RootDatabase) -> Vec<String> {
+    f.source(db)
+        .into_iter()
+        .flat_map(|source| source.value.generic_param_list())
+        .flat_map(|params| params.generic_params())
+        .filter_map(|param| match param {
+            ast::GenericParam::TypeParam(param) => param.name().map(|name| name.text().to_string()),
+            ast::GenericParam::ConstParam(_) | ast::GenericParam::LifetimeParam(_) => None,
+        })
+        .collect()
+}
+
 /// Extract a Rust function signature from inspection metadata.
 fn extract_function_sig(f: Function, db: &RootDatabase, dt: DisplayTarget) -> RustFunctionSig {
     let params = f
@@ -648,6 +661,7 @@ fn extract_function_sig(f: Function, db: &RootDatabase, dt: DisplayTarget) -> Ru
         return_type = source_return_type;
     }
     RustFunctionSig {
+        type_params: source_function_type_params(f, db),
         params,
         return_type,
         is_async: f.is_async(db),
@@ -1228,6 +1242,7 @@ pub fn run_inline<D: FnMut(&mut Data, &OutputCallbackInfo) + Send + 'static>(cal
         let RustItemKind::Function(sig) = metadata.kind else {
             return Err(std::io::Error::other("expected function metadata").into());
         };
+        assert_eq!(sig.type_params, ["D"]);
         assert_eq!(
             sig.params[0].type_display,
             "impl FnMut(&mut demo_callback_probe::Data, &demo_callback_probe::OutputCallbackInfo)"
