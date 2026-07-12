@@ -6773,7 +6773,13 @@ async def main() -> None:
             ],
             "unexpected std.regex output:\n{stdout}"
         );
-        let generated_core = fs::read_to_string("target/incan/std_regex_surface/src/__incan_std/regex/_core.rs")?;
+        let consumer_core = Path::new("target/incan/std_regex_surface/src/__incan_std/regex/_core.rs");
+        assert!(
+            !consumer_core.exists(),
+            "a compiled std.regex module must not be materialized in the consumer: {}",
+            consumer_core.display()
+        );
+        let generated_core = fs::read_to_string("crates/incan_stdlib/stdlib/target/lib/src/regex/_core.rs")?;
         for unexpected in [
             "RegexBuilder::new(&(pattern).to_string())",
             "raw.find(&(text).to_string())",

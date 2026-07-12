@@ -1118,9 +1118,16 @@ fn prepare_library_project(
         .map_err(|error| CliError::failure(error.to_string()))?;
     let rust_extern_contexts = collect_rust_extern_contexts(&modules);
     let dep_modules = &modules[..modules.len() - 1];
+    // Library consumers follow the same compatibility boundary as executable and test-batch consumers: source
+    // modules still provide typechecking metadata, while migrated stdlib modules are linked from the compiled
+    // artifact and must not be generated into a second local `__incan_std` tree.
+    let emitted_dep_modules: Vec<&ParsedModule> = dep_modules
+        .iter()
+        .filter(|module| !stdlib::is_compiled_builtin_stdlib_emission_path(&module.path_segments))
+        .collect();
 
     let mut inline_imports = collect_rust_dependency_uses(lib_module, false);
-    for module in dep_modules {
+    for module in &emitted_dep_modules {
         inline_imports.extend(collect_rust_dependency_uses(module, false));
     }
     let project_name = manifest
@@ -1348,7 +1355,17 @@ fn prepare_library_project(
         project_name.as_str(),
         &selected_exports,
     ));
-    for module in dep_modules {
+    for module in dep_modules
+        .iter()
+        .filter(|module| stdlib::is_compiled_builtin_stdlib_emission_path(&module.path_segments))
+    {
+        codegen.add_dependency_symbol_module_with_path_segments(
+            &module.name,
+            &module.ast,
+            module.path_segments.clone(),
+        );
+    }
+    for module in &emitted_dep_modules {
         codegen.add_module_with_path_segments(&module.name, &module.ast, module.path_segments.clone());
     }
     let mut generator = ProjectGenerator::new(&out_dir, project_name.as_str(), false);
@@ -1403,7 +1420,7 @@ fn prepare_library_project(
     generator.set_dev_dependencies(resolved.dev_dependencies);
 
     let codegen_start = Instant::now();
-    if dep_modules.is_empty() {
+    if emitted_dep_modules.is_empty() {
         let rust_code = codegen
             .try_generate(&lib_module.ast)
             .map_err(|e| CliError::failure(format!("Code generation error: {e}")))?;
@@ -1411,7 +1428,10 @@ fn prepare_library_project(
             .generate(&rust_code)
             .map_err(|e| CliError::failure(format!("Error generating project: {e}")))?;
     } else {
-        let module_paths: Vec<Vec<String>> = dep_modules.iter().map(|module| module.path_segments.clone()).collect();
+        let module_paths: Vec<Vec<String>> = emitted_dep_modules
+            .iter()
+            .map(|module| module.path_segments.clone())
+            .collect();
         let (main_code, rust_modules) = codegen
             .try_generate_multi_file_nested(&lib_module.ast, &module_paths)
             .map_err(|e| CliError::failure(format!("Code generation error: {e}")))?;
