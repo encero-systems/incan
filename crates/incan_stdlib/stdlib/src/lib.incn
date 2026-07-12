@@ -81,7 +81,7 @@ import traits
 import uuid
 import web.app
 import web.macros
-import web
+import web.prelude
 import web.request
 import web.response
 import web.routing

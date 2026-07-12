@@ -1988,8 +1988,10 @@ pub(crate) fn collect_modules_detailed(entry_path: &str) -> Result<Vec<ParsedMod
                 }
                 SourceModuleImportResolution::Local(module_ref) => {
                     let dep_path_str = module_ref.file_path.to_string_lossy().to_string();
+                    let module_segments = canonicalize_source_module_segments(&module_ref.path_segments);
+                    let module_name = module_segments.join("_");
                     if !processed.contains(&dep_path_str) {
-                        to_process.push((dep_path_str.clone(), module_ref.module_name, module_ref.path_segments));
+                        to_process.push((dep_path_str.clone(), module_name, module_segments));
                     }
                     dependency_edges
                         .entry(file_path.clone())

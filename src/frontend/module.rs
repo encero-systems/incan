@@ -240,12 +240,14 @@ fn resolve_first_source_candidate(
 
 /// Canonicalize source-module path segments.
 ///
-/// `mod` and `__init__` are file-layout entrypoints for directory-backed modules, not semantic module names. Normalize
-/// them away so the logical module identity stays consistent anywhere the compiler converts source-backed module paths
-/// into logical module IDs.
+/// `mod`, `__init__`, and directory-local `prelude` files are file-layout entrypoints for directory-backed modules,
+/// not semantic module names. Normalize them away so the logical module identity stays consistent anywhere the
+/// compiler converts source-backed module paths into logical module IDs. A root-level `prelude.incn` remains a
+/// distinct module.
 pub(crate) fn canonicalize_source_module_segments(segments: &[String]) -> Vec<String> {
     match segments.last().map(String::as_str) {
         Some("mod" | "__init__") => segments[..segments.len().saturating_sub(1)].to_vec(),
+        Some("prelude") if segments.len() > 1 => segments[..segments.len().saturating_sub(1)].to_vec(),
         _ => segments.to_vec(),
     }
 }
@@ -257,6 +259,7 @@ pub(crate) fn canonicalize_source_module_segments(segments: &[String]) -> Vec<St
 /// - `src/foo/bar.incn` => `["foo", "bar"]`
 /// - `src/foo/mod.incn` => `["foo"]`
 /// - `src/foo/bar/mod.incn` => `["foo", "bar"]`
+/// - `src/foo/prelude.incn` => `["foo"]`
 pub(crate) fn logical_module_segments_from_file(base: &Path, module_file: &Path) -> Option<Vec<String>> {
     let relative = if let Ok(relative) = module_file.strip_prefix(base) {
         relative.to_path_buf()
@@ -298,7 +301,7 @@ pub(crate) fn logical_module_name_from_source_path(source_path: &str) -> Option<
     }
     let file = segments.pop()?;
     let stem = Path::new(&file).file_stem()?.to_string_lossy().to_string();
-    if stem != "mod" && stem != "__init__" {
+    if stem != "mod" && stem != "__init__" && (stem != "prelude" || segments.is_empty()) {
         segments.push(stem);
     }
     if segments.is_empty() {
@@ -705,6 +708,14 @@ source-root = "library"
         let leaf = logical_module_segments_from_file(&base, &base.join("dataset").join("ops.incn"))
             .ok_or("dataset/ops.incn should resolve logical path")?;
         assert_eq!(leaf, vec!["dataset".to_string(), "ops".to_string()]);
+
+        let prelude = logical_module_segments_from_file(&base, &base.join("dataset").join("prelude.incn"))
+            .ok_or("dataset/prelude.incn should resolve logical path")?;
+        assert_eq!(prelude, vec!["dataset".to_string()]);
+
+        let root_prelude = logical_module_segments_from_file(&base, &base.join("prelude.incn"))
+            .ok_or("root prelude.incn should remain a distinct module")?;
+        assert_eq!(root_prelude, vec!["prelude".to_string()]);
 
         Ok(())
     }
