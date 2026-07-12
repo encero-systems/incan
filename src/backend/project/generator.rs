@@ -384,7 +384,10 @@ impl ProjectGenerator {
         // bridges still use `crate::__incan_std` while they are migrated to canonical artifact paths; re-exporting
         // the artifact's facade keeps those bridges out of a regenerated source stdlib tree.
         let mut full_main = rust_code.to_string();
-        if self.links_compiled_builtin_stdlib_artifact() && !is_builtin_stdlib_artifact_build() {
+        if self.links_compiled_builtin_stdlib_artifact()
+            && !is_builtin_stdlib_artifact_build()
+            && !full_main.contains("mod __incan_std")
+        {
             let facade = "pub use incan_builtin_stdlib::__incan_std;\n";
             if let Some(marker_pos) = full_main.find(MOD_INSERT_MARKER) {
                 let line_end = full_main[marker_pos..]
@@ -687,8 +690,9 @@ impl ProjectGenerator {
 
         let mut sorted_top: Vec<_> = top_level_modules.into_iter().collect();
         sorted_top.sort();
-        let consumer_stdlib_facade =
-            self.links_compiled_builtin_stdlib_artifact() && !is_builtin_stdlib_artifact_build();
+        let consumer_stdlib_facade = self.links_compiled_builtin_stdlib_artifact()
+            && !is_builtin_stdlib_artifact_build()
+            && !sorted_top.iter().any(|module| module == "__incan_std");
         if !sorted_top.is_empty() || consumer_stdlib_facade {
             let visibility = if self.is_binary { "" } else { "pub " };
             let mut mods = sorted_top

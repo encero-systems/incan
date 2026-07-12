@@ -1867,19 +1867,20 @@ fn source_function_metadata(
                         .pat()
                         .map(|pat| pat.syntax().text().to_string().trim().to_string());
                     let raw_ty = ty.syntax().text().to_string();
-                    let type_display = if rust_source_type_param_has_as_fd_bound(function_source.as_str(), raw_ty.as_str()) {
-                        "&impl AsFd".to_string()
-                    } else {
-                        rust_source_borrowed_type_param_bound_display(function_source.as_str(), raw_ty.as_str())
-                            .or_else(|| {
-                                rust_source_callable_bound_for_type_param(
-                                    function_source.as_str(),
-                                    raw_ty.as_str(),
-                                    |inner| Some(ctx.type_display(inner)),
-                                )
-                            })
-                            .unwrap_or_else(|| ctx.type_display(raw_ty.as_str()))
-                    };
+                    let type_display =
+                        if rust_source_type_param_has_as_fd_bound(function_source.as_str(), raw_ty.as_str()) {
+                            "&impl AsFd".to_string()
+                        } else {
+                            rust_source_borrowed_type_param_bound_display(function_source.as_str(), raw_ty.as_str())
+                                .or_else(|| {
+                                    rust_source_callable_bound_for_type_param(
+                                        function_source.as_str(),
+                                        raw_ty.as_str(),
+                                        |inner| Some(ctx.type_display(inner)),
+                                    )
+                                })
+                                .unwrap_or_else(|| ctx.type_display(raw_ty.as_str()))
+                        };
                     Some(RustParam { name, type_display })
                 })
                 .collect::<Vec<_>>()
@@ -1925,19 +1926,20 @@ fn source_function_signature(
                         .pat()
                         .map(|pat| pat.syntax().text().to_string().trim().to_string());
                     let raw_ty = ty.syntax().text().to_string();
-                    let type_display = if rust_source_type_param_has_as_fd_bound(function_source.as_str(), raw_ty.as_str()) {
-                        "&impl AsFd".to_string()
-                    } else {
-                        rust_source_borrowed_type_param_bound_display(function_source.as_str(), raw_ty.as_str())
-                            .or_else(|| {
-                                rust_source_callable_bound_for_type_param(
-                                    function_source.as_str(),
-                                    raw_ty.as_str(),
-                                    |inner| Some(ctx.type_display(inner)),
-                                )
-                            })
-                            .unwrap_or_else(|| ctx.type_display(raw_ty.as_str()))
-                    };
+                    let type_display =
+                        if rust_source_type_param_has_as_fd_bound(function_source.as_str(), raw_ty.as_str()) {
+                            "&impl AsFd".to_string()
+                        } else {
+                            rust_source_borrowed_type_param_bound_display(function_source.as_str(), raw_ty.as_str())
+                                .or_else(|| {
+                                    rust_source_callable_bound_for_type_param(
+                                        function_source.as_str(),
+                                        raw_ty.as_str(),
+                                        |inner| Some(ctx.type_display(inner)),
+                                    )
+                                })
+                                .unwrap_or_else(|| ctx.type_display(raw_ty.as_str()))
+                        };
                     Some(RustParam { name, type_display })
                 }))
                 .collect::<Vec<_>>()

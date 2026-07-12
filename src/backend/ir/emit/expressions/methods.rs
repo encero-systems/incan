@@ -199,12 +199,11 @@ impl<'a> IrEmitter<'a> {
         let call = match method {
             ResultMethodId::Map | ResultMethodId::MapErr | ResultMethodId::AndThen | ResultMethodId::OrElse => {
                 if self.result_value_combinator_can_use_stdlib_helper(callback) {
-                    if let Some(helper_path) = self.result_stdlib_helper_path() {
-                        let callback_tokens = self.emit_expr(callback)?;
-                        return Ok(quote! {
-                            #helper_path::#method_ident(#receiver_tokens, #callback_tokens)
-                        });
-                    }
+                    let callback_tokens = self.emit_expr(callback)?;
+                    let helper_path = Self::result_stdlib_helper_path();
+                    return Ok(quote! {
+                        #helper_path::#method_ident(#receiver_tokens, #callback_tokens)
+                    });
                 }
                 if matches!(callback.kind, IrExprKind::Closure { .. }) {
                     let callback_tokens = self.emit_expr(callback)?;
@@ -224,12 +223,11 @@ impl<'a> IrEmitter<'a> {
                     )));
                 };
                 if self.result_observer_can_use_stdlib_helper(callback) {
-                    if let Some(helper_path) = self.result_stdlib_helper_path() {
-                        let callback_tokens = self.emit_result_observer_stdlib_callback_arg(callback, &observed_ty)?;
-                        return Ok(quote! {
-                            #helper_path::#method_ident(#receiver_tokens, #callback_tokens)
-                        });
-                    }
+                    let callback_tokens = self.emit_result_observer_stdlib_callback_arg(callback, &observed_ty)?;
+                    let helper_path = Self::result_stdlib_helper_path();
+                    return Ok(quote! {
+                        #helper_path::#method_ident(#receiver_tokens, #callback_tokens)
+                    });
                 }
                 let body = self.emit_result_observer_callback_call(callback, &observed_ty)?;
                 quote! {
@@ -247,16 +245,16 @@ impl<'a> IrEmitter<'a> {
         Ok(call)
     }
 
-    /// Return the Result helper module when the current generated crate links it.
+    /// Return the Result helper module for the current generated crate.
     ///
     /// Normal consumers link the compiled stdlib artifact, while the artifact
     /// build itself still uses its crate-local compatibility facade.
-    fn result_stdlib_helper_path(&self) -> Option<TokenStream> {
+    fn result_stdlib_helper_path() -> TokenStream {
         if std::env::var_os("INCAN_INTERNAL_BUILTIN_STDLIB_ARTIFACT_BUILD").is_some() {
-            return Some(quote! { crate::__incan_std::result });
+            quote! { crate::__incan_std::result }
+        } else {
+            quote! { incan_builtin_stdlib::result }
         }
-        self.is_builtin_stdlib_artifact_module_path(&["std".to_string(), "result".to_string()])
-            .then(|| quote! { incan_builtin_stdlib::result })
     }
 
     /// Return whether a value-transforming Result combinator can dogfood the pure Incan std.result helper.

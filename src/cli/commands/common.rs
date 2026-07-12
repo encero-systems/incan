@@ -174,6 +174,7 @@ fn uses_compiled_builtin_stdlib_artifact(modules: &[ParsedModule]) -> bool {
     modules.iter().any(|module| {
         if stdlib::is_compiled_builtin_stdlib_emission_path(&module.path_segments)
             || uses_iterator_adapter_surface(&module.ast)
+            || uses_result_combinator_surface(&module.ast)
         {
             return true;
         }

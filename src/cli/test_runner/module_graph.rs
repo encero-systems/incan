@@ -26,6 +26,11 @@ fn queue_incan_stdlib_source_module(
     processed: &HashSet<PathBuf>,
     to_process: &mut Vec<(PathBuf, String, Vec<String>)>,
 ) -> Result<Option<PathBuf>, String> {
+    // The compiled artifact owns this module's generated Rust implementation. Its checked manifest is loaded by the
+    // test preparation path, so materializing source here would create a second `__incan_std` tree in the harness.
+    if stdlib::is_compiled_builtin_stdlib_module(module_path) {
+        return Ok(None);
+    }
     let stdlib_key = module_path.join(".");
     let source_path = if let Some(cached_path) = incan_source_stdlib_module_paths.get(&stdlib_key) {
         cached_path.clone()
@@ -322,7 +327,8 @@ mod tests {
     }
 
     #[test]
-    fn test_runner_collects_implicit_result_helper_modules() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_runner_uses_compiled_result_helper_without_materializing_source() -> Result<(), Box<dyn std::error::Error>>
+    {
         let tmp = tempfile::tempdir()?;
         let src_dir = tmp.path().join("src");
         std::fs::create_dir_all(&src_dir)?;
@@ -348,12 +354,12 @@ def test_map_err_result_helper_is_packaged() -> None:
         let modules = collect_source_modules_for_test(&ast, &src_dir, None, None, None)?;
 
         assert!(
-            modules.iter().any(|module| module.path_segments
+            !modules.iter().any(|module| module.path_segments
                 == vec![
                     incan_core::lang::stdlib::INCAN_STD_NAMESPACE.to_string(),
                     "result".to_string()
                 ]),
-            "expected std.result helper module to be collected, got {:?}",
+            "compiled std.result helper source must not be collected, got {:?}",
             modules
                 .iter()
                 .map(|module| module.path_segments.clone())
