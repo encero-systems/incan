@@ -519,6 +519,10 @@ body::after {
     line-height: 2.4rem;
   }
 
+  .md-sidebar--primary .md-nav__item > nav.md-nav > .md-nav__title {
+    padding-left: 2.8rem;
+  }
+
   .md-sidebar--primary .md-nav__title .md-logo {
     display: block;
   }
