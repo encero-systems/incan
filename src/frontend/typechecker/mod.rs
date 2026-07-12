@@ -77,6 +77,7 @@ use crate::frontend::module::{ExportedSymbol, canonicalize_source_module_segment
 use crate::frontend::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::frontend::surface_semantics::SurfaceContext;
 use crate::frontend::symbols::*;
+use crate::library_manifest::LibraryManifest;
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect::{Inspector, RustMetadataCache};
 use helpers::{collection_name, collection_type_id, render_resolved_type_as_rust_arg, stringlike_type_id};
@@ -242,6 +243,11 @@ pub struct TypeChecker {
     pub(crate) dependency_trait_rust_derive_paths: HashMap<String, Vec<String>>,
     /// Consumer-side dependency library manifests (`pub::`) keyed by library name.
     pub(crate) library_manifests: Arc<LibraryManifestIndex>,
+    /// Compiler-owned artifact metadata for migrated `std.*` modules.
+    ///
+    /// Unlike [`Self::library_manifests`], this is not a user-declared `pub::` dependency. The compiler supplies it
+    /// when a generated consumer links the local built-in stdlib artifact.
+    pub(crate) builtin_stdlib_manifest: Option<Arc<LibraryManifest>>,
     /// Internal semantic type cache for `pub::` exports referenced transitively by imported signatures.
     ///
     /// These entries are intentionally **not** source-visible names: they exist so values returned from imported
@@ -373,6 +379,7 @@ impl TypeChecker {
             dependency_module_traits: HashMap::new(),
             dependency_trait_rust_derive_paths: HashMap::new(),
             library_manifests: Arc::new(LibraryManifestIndex::default()),
+            builtin_stdlib_manifest: None,
             transitive_pub_types: HashMap::new(),
             transitive_pub_traits: HashMap::new(),
             transitive_stdlib_stub_types: HashMap::new(),
@@ -1477,6 +1484,12 @@ impl TypeChecker {
     /// Set shared dependency library manifests used for `pub::` import resolution.
     pub fn set_library_manifest_index_shared(&mut self, index: Arc<LibraryManifestIndex>) {
         self.library_manifests = index;
+    }
+
+    /// Set the compiled built-in stdlib manifest used to resolve migrated `std.*` public APIs.
+    pub fn set_builtin_stdlib_manifest(&mut self, manifest: Arc<LibraryManifest>) {
+        self.builtin_stdlib_manifest = Some(manifest);
+        self.seed_builtin_stdlib_manifest_symbols();
     }
 
     pub fn set_current_module_path(&mut self, path: Option<Vec<String>>) {
@@ -4391,6 +4404,7 @@ impl TypeChecker {
         self.dependency_derivable_modules.clear();
         self.dependency_module_traits.clear();
         self.dependency_trait_rust_derive_paths.clear();
+        self.seed_builtin_stdlib_manifest_symbols();
         for (name, dep_ast) in dependencies {
             if Self::is_generated_stdlib_dependency_module(name) {
                 continue;
@@ -4430,6 +4444,7 @@ impl TypeChecker {
         self.dependency_derivable_modules.clear();
         self.dependency_module_traits.clear();
         self.dependency_trait_rust_derive_paths.clear();
+        self.seed_builtin_stdlib_manifest_symbols();
         self.predeclare_dependency_interfaces(dependencies, false);
         for (name, dep_ast) in dependencies {
             if Self::is_generated_stdlib_dependency_module(name) {

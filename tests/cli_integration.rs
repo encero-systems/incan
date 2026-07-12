@@ -206,6 +206,9 @@ def main() -> None:
         main_rust.contains("incan_builtin_stdlib::fs::path::Path"),
         "generated consumer must construct types from the compiled artifact:\n{main_rust}"
     );
+
+    let codegraph = run_incan(tmp.path(), &["inspect", "codegraph", &main_arg, "--format", "jsonl"])?;
+    assert_success(&codegraph, "incan inspect codegraph with compiled std.fs metadata");
     Ok(())
 }
 

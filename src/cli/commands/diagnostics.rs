@@ -19,7 +19,9 @@ use crate::manifest::ProjectManifest;
 #[cfg(feature = "rust_inspect")]
 use super::common::CargoPolicy;
 use super::common::{
-    CliDiagnosticFailure, collect_modules_detailed, resolve_project_root, typecheck_modules_with_import_graph_detailed,
+    CliDiagnosticFailure, collect_modules_detailed, collect_project_requirements,
+    compiled_builtin_stdlib_manifest_for_requirements, resolve_project_root,
+    typecheck_modules_with_import_graph_detailed,
 };
 #[cfg(feature = "rust_inspect")]
 use super::lock::{RustInspectTypecheckRequest, prepare_rust_inspect_typecheck_workspace};
@@ -69,6 +71,8 @@ pub fn check_path(path: &Path, format: DiagnosticOutputFormat) -> CliResult<Exit
         .as_ref()
         .map(LibraryManifestIndex::from_project_manifest)
         .unwrap_or_default();
+    let project_requirements = collect_project_requirements(&modules, &library_manifest_index)?;
+    let builtin_stdlib_manifest = compiled_builtin_stdlib_manifest_for_requirements(&project_requirements)?;
     #[cfg(feature = "rust_inspect")]
     let project_name = manifest
         .as_ref()
@@ -102,6 +106,7 @@ pub fn check_path(path: &Path, format: DiagnosticOutputFormat) -> CliResult<Exit
         &modules,
         manifest.as_ref(),
         &library_manifest_index,
+        builtin_stdlib_manifest.as_ref(),
         #[cfg(feature = "rust_inspect")]
         rust_inspect_manifest_dir.as_deref(),
     ) {

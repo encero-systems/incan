@@ -19,12 +19,13 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
-use crate::cli::commands::common::CompilationSession;
+use crate::cli::commands::common::{
+    CompilationSession, collect_project_requirements, compiled_builtin_stdlib_manifest_for_requirements,
+};
 #[cfg(feature = "rust_inspect")]
 use crate::cli::commands::common::{
-    build_source_map, collect_inline_rust_imports, collect_project_requirements, collect_rust_inspect_query_paths,
-    ensure_rust_inspect_workspace, format_dependency_error, merge_project_requirement_dependencies,
-    prewarm_rust_inspect_workspace,
+    build_source_map, collect_inline_rust_imports, collect_rust_inspect_query_paths, ensure_rust_inspect_workspace,
+    format_dependency_error, merge_project_requirement_dependencies, prewarm_rust_inspect_workspace,
 };
 use crate::cli::prelude::ParsedModule;
 #[cfg(feature = "rust_inspect")]
@@ -261,9 +262,33 @@ impl IncanLanguageServer {
         }
 
         // Step 3: Type check (with multi-file import resolution)
+        let mut typecheck_modules = Vec::with_capacity(typecheck_deps.len() + 1);
+        typecheck_modules.push(ParsedModule {
+            name: "lsp_document".to_string(),
+            path_segments: vec!["lsp_document".to_string()],
+            file_path: module_path.clone().unwrap_or_default(),
+            source: source.to_string(),
+            ast: typecheck_ast.clone(),
+        });
+        typecheck_modules.extend(typecheck_deps.iter().cloned());
+        let builtin_stdlib_manifest = match collect_project_requirements(&typecheck_modules, &library_manifest_index)
+            .and_then(|requirements| compiled_builtin_stdlib_manifest_for_requirements(&requirements))
+        {
+            Ok(manifest) => manifest,
+            Err(error) => {
+                diagnostics.push(lsp_root_error_diagnostic(error.message));
+                self.client
+                    .publish_diagnostics(uri.clone(), diagnostics, Some(version))
+                    .await;
+                return;
+            }
+        };
         let mut checker = typechecker::TypeChecker::new();
         checker.set_declared_crate_names(declared_crates);
         checker.set_library_manifest_index(library_manifest_index.clone());
+        if let Some(manifest) = builtin_stdlib_manifest {
+            checker.set_builtin_stdlib_manifest(Arc::new(manifest));
+        }
         #[cfg(feature = "rust_inspect")]
         if let Some((dir, metadata_query_paths)) = rust_inspect_context {
             spawn_rust_inspect_prewarm(dir.clone(), metadata_query_paths);

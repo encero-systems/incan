@@ -33,7 +33,8 @@ use crate::manifest::ProjectManifest;
 use crate::version::INCAN_VERSION;
 
 use super::common::{
-    CliDiagnosticFailure, CompilationSession, collect_modules_detailed, read_source, resolve_project_root,
+    CliDiagnosticFailure, CompilationSession, collect_modules_detailed, collect_project_requirements,
+    compiled_builtin_stdlib_manifest_for_requirements, read_source, resolve_project_root,
     typecheck_modules_with_import_graph_info,
 };
 
@@ -154,10 +155,14 @@ fn directory_modules_diagnostics_and_info(files: &[PathBuf]) -> CliResult<Direct
                         project_root.display()
                     )));
                 };
+                let builtin_stdlib_manifest =
+                    collect_project_requirements(&modules, &context.library_manifest_index)
+                        .and_then(|requirements| compiled_builtin_stdlib_manifest_for_requirements(&requirements))?;
                 match typecheck_modules_with_import_graph_info(
                     &modules,
                     context.manifest.as_ref(),
                     &context.library_manifest_index,
+                    builtin_stdlib_manifest.as_ref(),
                     #[cfg(feature = "rust_inspect")]
                     None,
                 ) {
@@ -212,10 +217,13 @@ fn typecheck_diagnostics_and_info(
     modules: &[ParsedModule],
 ) -> CliResult<(Vec<StableDiagnostic>, BTreeMap<PathBuf, TypeCheckInfo>)> {
     let context = TypecheckContext::discover(path)?;
+    let builtin_stdlib_manifest = collect_project_requirements(modules, &context.library_manifest_index)
+        .and_then(|requirements| compiled_builtin_stdlib_manifest_for_requirements(&requirements))?;
     match typecheck_modules_with_import_graph_info(
         modules,
         context.manifest.as_ref(),
         &context.library_manifest_index,
+        builtin_stdlib_manifest.as_ref(),
         #[cfg(feature = "rust_inspect")]
         None,
     ) {

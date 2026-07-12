@@ -39,9 +39,10 @@ use super::build_report::{
 use super::common::collect_rust_inspect_query_paths;
 use super::common::{
     CargoPolicy, INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, ProjectRequirements, build_source_map, cargo_command_flags,
-    collect_modules, collect_project_requirements, collect_rust_dependency_uses, enforce_project_toolchain_constraint,
-    format_dependency_error, imported_module_deps_for_with_index, merge_project_requirement_dependencies,
-    module_key_index, resolve_project_root, typecheck_modules_with_import_graph, validate_output_dir,
+    collect_modules, collect_project_requirements, collect_rust_dependency_uses,
+    compiled_builtin_stdlib_manifest_for_requirements, enforce_project_toolchain_constraint, format_dependency_error,
+    imported_module_deps_for_with_index, merge_project_requirement_dependencies, module_key_index,
+    resolve_project_root, typecheck_modules_with_import_graph, validate_output_dir,
 };
 use super::lock::{
     GeneratedLibraryDependencyPreheatRequest, LockResolutionRequest, compiled_builtin_stdlib_artifact_lock_payload,
@@ -792,6 +793,7 @@ fn prepare_project_with_options(
         .map(LibraryManifestIndex::from_project_manifest)
         .unwrap_or_default();
     let project_requirements = collect_project_requirements(&modules, &library_manifest_index)?;
+    let builtin_stdlib_manifest = compiled_builtin_stdlib_manifest_for_requirements(&project_requirements)?;
 
     // Derive project name (manifest overrides filename)
     let project_name = options
@@ -824,6 +826,9 @@ fn prepare_project_with_options(
         codegen.set_declared_crate_names(m.declared_rust_crate_names());
     }
     codegen.set_library_manifest_index(library_manifest_index.clone());
+    if let Some(manifest) = builtin_stdlib_manifest.clone() {
+        codegen.set_builtin_stdlib_manifest(manifest);
+    }
     for module in dep_modules
         .iter()
         .filter(|module| stdlib::is_compiled_builtin_stdlib_emission_path(&module.path_segments))
@@ -921,6 +926,7 @@ fn prepare_project_with_options(
         &modules,
         manifest.as_ref(),
         &library_manifest_index,
+        builtin_stdlib_manifest.as_ref(),
         #[cfg(feature = "rust_inspect")]
         rust_inspect_manifest_dir.as_deref(),
     )?;
@@ -1114,6 +1120,7 @@ fn prepare_library_project(
     let declared = manifest.declared_rust_crate_names();
     let library_manifest_index = LibraryManifestIndex::from_project_manifest(&manifest);
     let project_requirements = collect_project_requirements(&modules, &library_manifest_index)?;
+    let builtin_stdlib_manifest = compiled_builtin_stdlib_manifest_for_requirements(&project_requirements)?;
     let contract_model_bundles = read_project_model_bundles(&project_root, &manifest.contract_model_bundle_paths())
         .map_err(|error| CliError::failure(error.to_string()))?;
     let rust_extern_contexts = collect_rust_extern_contexts(&modules);
@@ -1350,6 +1357,9 @@ fn prepare_library_project(
     codegen.set_stdlib_cache(stdlib_cache);
     codegen.set_declared_crate_names(declared);
     codegen.set_library_manifest_index(library_manifest_index.clone());
+    if let Some(manifest) = builtin_stdlib_manifest.clone() {
+        codegen.set_builtin_stdlib_manifest(manifest);
+    }
     codegen.set_public_ordinal_type_identities(public_ordinal_type_identities(
         lib_module,
         project_name.as_str(),

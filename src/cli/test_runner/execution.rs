@@ -3281,13 +3281,26 @@ pub(super) fn run_file_tests_batch(
     let mut codegen = IrCodegen::new();
     codegen.set_preserve_dependency_public_items(false);
     codegen.set_library_manifest_index(prepared.library_manifest_index.clone());
+    if let Some(manifest) =
+        match common::compiled_builtin_stdlib_manifest_for_requirements(&prepared.project_requirements) {
+            Ok(manifest) => manifest,
+            Err(error) => {
+                return tests
+                    .iter()
+                    .map(|test| (test.clone(), TestResult::Failed(start.elapsed(), error.message.clone())))
+                    .collect();
+            }
+        }
+    {
+        codegen.set_builtin_stdlib_manifest(manifest);
+    }
     #[cfg(feature = "rust_inspect")]
     {
         codegen.set_rust_inspect_manifest_dir(prepared.rust_inspect_manifest_dir.clone());
     }
 
-    // The test harness shares the production compiler boundary: typechecking may use source-backed stdlib modules,
-    // but migrated modules must link the compiled artifact instead of being generated under `__incan_std`.
+    // The test harness shares the production compiler boundary: migrated modules use artifact metadata and link the
+    // compiled crate instead of being generated under `__incan_std`.
     let emitted_source_modules = prepared
         .source_modules
         .iter()

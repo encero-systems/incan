@@ -265,6 +265,137 @@ impl TypeChecker {
         }
     }
 
+    /// Seed exact module-member and transitive semantic caches from the compiled built-in stdlib artifact.
+    ///
+    /// The artifact stores checked API metadata with paths relative to its own crate root (`environ`, `serde.json`,
+    /// and so on). Consumers continue to spell those modules as `std.environ` and `std.serde.json`, so this method
+    /// restores the public `std` prefix only in the consumer-side lookup keys. No provider source AST is loaded here.
+    pub(crate) fn seed_builtin_stdlib_manifest_symbols(&mut self) {
+        let Some(api) = self
+            .builtin_stdlib_manifest
+            .as_ref()
+            .and_then(|manifest| manifest.contract_metadata.api.as_ref())
+            .cloned()
+        else {
+            return;
+        };
+
+        let mut seeded_modules = HashSet::new();
+        for module in api.modules {
+            let mut consumer_path = vec![stdlib::STDLIB_ROOT.to_string()];
+            consumer_path.extend(module.module_path.clone());
+            if !stdlib::is_compiled_builtin_stdlib_module(&consumer_path) {
+                continue;
+            }
+
+            let module_key = consumer_path.join(".");
+            if !seeded_modules.insert(module_key.clone()) {
+                // The aggregate builtin artifact can carry the same checked module snapshot through more than one
+                // entrypoint import. It is one public module, not a second set of overloads.
+                continue;
+            }
+            let function_counts = module
+                .declarations
+                .iter()
+                .filter_map(|declaration| match declaration {
+                    ApiDeclaration::Function(function) => Some(function.name.clone()),
+                    _ => None,
+                })
+                .fold(HashMap::<String, usize>::new(), |mut counts, name| {
+                    *counts.entry(name).or_default() += 1;
+                    counts
+                });
+            let mut artifact_members = Vec::new();
+            for declaration in module.declarations {
+                let Some(name) = Self::api_declaration_name(&declaration).map(ToString::to_string) else {
+                    continue;
+                };
+                let Some(mut kind) = self.symbol_kind_from_api_declaration(&declaration) else {
+                    continue;
+                };
+                if function_counts.get(name.as_str()).copied().unwrap_or_default() > 1
+                    && let SymbolKind::Function(info) = &mut kind
+                {
+                    info.emitted_name = Some(overloaded_function_emitted_name(&name, info));
+                }
+                artifact_members.push((name.clone(), kind.clone()));
+                match kind {
+                    SymbolKind::Type(type_info) => {
+                        self.transitive_stdlib_stub_types.entry(name).or_insert(type_info);
+                    }
+                    SymbolKind::Trait(trait_info) => {
+                        self.transitive_stdlib_stub_traits
+                            .entry(name.clone())
+                            .or_insert(trait_info.clone());
+                        self.dependency_module_traits
+                            .insert(format!("{module_key}.{name}"), trait_info);
+                    }
+                    _ => {}
+                }
+            }
+            let members = self.dependency_member_symbols.entry(module_key).or_default();
+            for (name, kind) in artifact_members {
+                Self::insert_artifact_module_symbol(members, name, kind);
+            }
+        }
+    }
+
+    /// Return the public source spelling for one checked API declaration.
+    fn api_declaration_name(declaration: &ApiDeclaration) -> Option<&str> {
+        match declaration {
+            ApiDeclaration::Function(item) => Some(&item.name),
+            ApiDeclaration::Model(item) => Some(&item.name),
+            ApiDeclaration::Class(item) => Some(&item.name),
+            ApiDeclaration::Trait(item) => Some(&item.name),
+            ApiDeclaration::Enum(item) => Some(&item.name),
+            ApiDeclaration::Newtype(item) => Some(&item.name),
+            ApiDeclaration::TypeAlias(item) => Some(&item.name),
+            ApiDeclaration::Const(item) => Some(&item.name),
+            ApiDeclaration::Static(item) => Some(&item.name),
+            ApiDeclaration::Alias(item) => Some(&item.name),
+            ApiDeclaration::Partial(item) => Some(&item.name),
+        }
+    }
+
+    /// Preserve same-name checked overloads while indexing one artifact module.
+    fn insert_artifact_module_symbol(members: &mut HashMap<String, SymbolKind>, name: String, incoming: SymbolKind) {
+        let Some(existing) = members.remove(&name) else {
+            members.insert(name, incoming);
+            return;
+        };
+        let merged = match (existing, incoming) {
+            (SymbolKind::Function(existing), SymbolKind::Function(incoming)) => SymbolKind::FunctionOverloads(vec![
+                FunctionOverloadInfo {
+                    info: existing,
+                    span: Span::default(),
+                },
+                FunctionOverloadInfo {
+                    info: incoming,
+                    span: Span::default(),
+                },
+            ]),
+            (SymbolKind::FunctionOverloads(mut overloads), SymbolKind::Function(incoming)) => {
+                overloads.push(FunctionOverloadInfo {
+                    info: incoming,
+                    span: Span::default(),
+                });
+                SymbolKind::FunctionOverloads(overloads)
+            }
+            (SymbolKind::Function(existing), SymbolKind::FunctionOverloads(mut overloads)) => {
+                overloads.insert(
+                    0,
+                    FunctionOverloadInfo {
+                        info: existing,
+                        span: Span::default(),
+                    },
+                );
+                SymbolKind::FunctionOverloads(overloads)
+            }
+            (_, incoming) => incoming,
+        };
+        members.insert(name, merged);
+    }
+
     /// Define `import pub::library` as a module placeholder after validating the manifest entry.
     fn collect_pub_library_import(&mut self, library: &str, alias: Option<&Ident>, span: Span) {
         let name = alias.cloned().unwrap_or_else(|| library.to_string());
@@ -374,10 +505,51 @@ impl TypeChecker {
         if self.materialize_stdlib_submodule_import(context.module, item, span) {
             return true;
         }
+        if self.materialize_builtin_stdlib_artifact_import(context, item, testing_semantics, span) {
+            return true;
+        }
+        if self.builtin_stdlib_manifest.is_some() && stdlib::is_compiled_builtin_stdlib_module(&context.module.segments)
+        {
+            // A migrated module is owned by the artifact contract. Falling back to its source cache here would hide
+            // an incomplete or stale artifact and give the source tree semantic authority again.
+            return false;
+        }
         if stdlib_context.has_stub {
             return self.materialize_stdlib_stub_import(context, item, testing_semantics, span);
         }
         false
+    }
+
+    /// Materialize one migrated stdlib item from the compiled artifact's checked API metadata.
+    fn materialize_builtin_stdlib_artifact_import(
+        &mut self,
+        context: &FromImportContext<'_>,
+        item: &ImportItem,
+        testing_semantics: Option<&TestingMarkerSemantics>,
+        span: Span,
+    ) -> bool {
+        let Some(kind) = self
+            .dependency_member_symbols
+            .get(&context.module.segments.join("."))
+            .and_then(|members| members.get(&item.name))
+            .cloned()
+        else {
+            return false;
+        };
+
+        let local_name = Self::import_item_local_name(item);
+        self.record_testing_marker_import(context, item, &local_name, testing_semantics);
+        if let SymbolKind::FunctionOverloads(overloads) = &kind {
+            self.record_function_overload_binding(&local_name, overloads, true);
+        }
+        if matches!(kind, SymbolKind::Static(_)) {
+            self.type_info.declarations.static_bindings.insert(
+                local_name.clone(),
+                crate::frontend::typechecker::StaticBindingInfo { is_imported: true },
+            );
+        }
+        self.define_named_import_symbol(local_name, kind, span);
+        true
     }
 
     /// Materialize `from std.namespace import submodule` as a module binding when the submodule is registered.

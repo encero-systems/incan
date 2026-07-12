@@ -38,6 +38,7 @@ use crate::frontend::diagnostics::CompileError;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::canonicalize_source_module_segments;
 use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
+use crate::library_manifest::LibraryManifest;
 use incan_core::lang::stdlib;
 
 use super::emit::CallableNameResolution;
@@ -210,6 +211,8 @@ pub struct IrCodegen<'a> {
     declared_crate_names: Option<HashSet<String>>,
     /// Consumer-side `pub::` dependency metadata used by internal typechecking.
     library_manifest_index: Option<Arc<LibraryManifestIndex>>,
+    /// Compiler-owned `.incnlib` metadata for migrated built-in stdlib modules.
+    builtin_stdlib_manifest: Option<Arc<LibraryManifest>>,
     /// Whether generated Rust should deny warnings so tests can prove normal emission stays warning-clean.
     strict_generated_lints: bool,
     /// Private IR items called by generated code that is appended outside normal IR emission.
@@ -244,6 +247,7 @@ impl<'a> IrCodegen<'a> {
             emit_zen_in_main: false,
             declared_crate_names: None,
             library_manifest_index: None,
+            builtin_stdlib_manifest: None,
             strict_generated_lints: false,
             externally_reachable_items: HashSet::new(),
             externally_reachable_items_by_module: HashMap::new(),
@@ -512,6 +516,11 @@ impl<'a> IrCodegen<'a> {
         self.library_manifest_index = Some(Arc::new(index));
     }
 
+    /// Set the compiled built-in stdlib artifact manifest used by internal typechecking.
+    pub fn set_builtin_stdlib_manifest(&mut self, manifest: LibraryManifest) {
+        self.builtin_stdlib_manifest = Some(Arc::new(manifest));
+    }
+
     /// Set the manifest/workspace root used for rust-inspect-backed typechecking during IR generation.
     #[cfg(feature = "rust_inspect")]
     pub fn set_rust_inspect_manifest_dir(&mut self, dir: PathBuf) {
@@ -542,6 +551,9 @@ impl<'a> IrCodegen<'a> {
         }
         if let Some(index) = self.library_manifest_index.clone() {
             tc.set_library_manifest_index_shared(index);
+        }
+        if let Some(manifest) = self.builtin_stdlib_manifest.clone() {
+            tc.set_builtin_stdlib_manifest(manifest);
         }
         #[cfg(feature = "rust_inspect")]
         if let Some(dir) = self.rust_inspect_manifest_dir.clone() {

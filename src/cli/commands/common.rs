@@ -8,7 +8,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 
 #[cfg(feature = "rust_inspect")]
 use crate::backend::ProjectGenerator;
@@ -399,6 +399,35 @@ fn prepare_builtin_stdlib_artifact() -> CliResult<LibraryArtifactMetadata> {
 /// use this helper rather than relying only on source-import requirement discovery.
 pub(crate) fn compiled_builtin_stdlib_artifact_dependency() -> CliResult<DependencySpec> {
     Ok(prepare_builtin_stdlib_artifact()?.to_dependency_spec())
+}
+
+/// Load the checked API manifest emitted by the prepared built-in stdlib artifact.
+///
+/// This is the compiler-owned semantic boundary for migrated `std.*` modules. Callers use it to typecheck public
+/// imports from artifact metadata while the generated Rust project links the matching artifact crate.
+pub(crate) fn compiled_builtin_stdlib_artifact_manifest() -> CliResult<LibraryManifest> {
+    let artifact = prepare_builtin_stdlib_artifact()?;
+    LibraryManifest::read_from_path(&artifact.manifest_path).map_err(|error| {
+        CliError::failure(format!(
+            "failed to read compiled built-in stdlib manifest {}: {error}",
+            artifact.manifest_path.display()
+        ))
+    })
+}
+
+/// Load compiled built-in stdlib metadata exactly when a compilation will link its generated Rust crate.
+///
+/// Keeping this decision alongside requirement collection prevents command-specific paths from accidentally using
+/// source modules for semantics while another path uses the artifact it emits against.
+pub(crate) fn compiled_builtin_stdlib_manifest_for_requirements(
+    requirements: &ProjectRequirements,
+) -> CliResult<Option<LibraryManifest>> {
+    requirements
+        .dependencies
+        .iter()
+        .any(|dependency| dependency.crate_name == stdlib::BUILTIN_STDLIB_ARTIFACT_CRATE)
+        .then(compiled_builtin_stdlib_artifact_manifest)
+        .transpose()
 }
 
 /// Cargo execution policy resolved from CLI inputs and environment defaults.
@@ -1859,8 +1888,8 @@ pub(crate) fn uses_result_combinator_surface(program: &Program) -> bool {
 /// # Note on Prelude
 ///
 /// The stdlib root prelude (`stdlib/prelude.incn`) exists, but it is not auto-imported into every compilation unit.
-/// Source-backed stdlib trait modules and builtin fallback traits are still discovered explicitly when the parsed AST
-/// needs them.
+/// Unmigrated source-backed stdlib trait modules and builtin fallback traits are still discovered explicitly when the
+/// parsed AST needs them. Migrated modules are resolved through the compiled built-in artifact instead.
 pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
     collect_modules_detailed(entry_path).map_err(|failure| CliError::failure(failure.render_human()))
 }
@@ -1954,36 +1983,43 @@ pub(crate) fn collect_modules_detailed(entry_path: &str) -> Result<Vec<ParsedMod
                 "derives".to_string(),
                 "collection".to_string(),
             ];
-            let source_path = resolve_stdlib_module_source_path(&module_path)?;
-            let module_segments = stdlib_module_segments(&module_path);
-            let module_name = module_segments.join("_");
-            let dep_path_str = source_path.to_string_lossy().to_string();
-            if !processed.contains(&dep_path_str) {
-                to_process.push((dep_path_str.clone(), module_name, module_segments));
+            if compiling_builtin_stdlib_artifact || !stdlib::is_compiled_builtin_stdlib_module(&module_path) {
+                let source_path = resolve_stdlib_module_source_path(&module_path)?;
+                let module_segments = stdlib_module_segments(&module_path);
+                let module_name = module_segments.join("_");
+                let dep_path_str = source_path.to_string_lossy().to_string();
+                if !processed.contains(&dep_path_str) {
+                    to_process.push((dep_path_str.clone(), module_name, module_segments));
+                }
+                dependency_edges
+                    .entry(file_path.clone())
+                    .or_default()
+                    .insert(dep_path_str);
             }
-            dependency_edges
-                .entry(file_path.clone())
-                .or_default()
-                .insert(dep_path_str);
         }
         if uses_result_combinator_surface(&ast) {
             let module_path = vec![stdlib::STDLIB_ROOT.to_string(), "result".to_string()];
-            let source_path = resolve_stdlib_module_source_path(&module_path)?;
-            let module_segments = stdlib_module_segments(&module_path);
-            let module_name = module_segments.join("_");
-            let dep_path_str = source_path.to_string_lossy().to_string();
-            if !processed.contains(&dep_path_str) {
-                to_process.push((dep_path_str.clone(), module_name, module_segments));
+            if compiling_builtin_stdlib_artifact || !stdlib::is_compiled_builtin_stdlib_module(&module_path) {
+                let source_path = resolve_stdlib_module_source_path(&module_path)?;
+                let module_segments = stdlib_module_segments(&module_path);
+                let module_name = module_segments.join("_");
+                let dep_path_str = source_path.to_string_lossy().to_string();
+                if !processed.contains(&dep_path_str) {
+                    to_process.push((dep_path_str.clone(), module_name, module_segments));
+                }
+                dependency_edges
+                    .entry(file_path.clone())
+                    .or_default()
+                    .insert(dep_path_str);
             }
-            dependency_edges
-                .entry(file_path.clone())
-                .or_default()
-                .insert(dep_path_str);
         }
         for resolved in resolve_program_source_imports(&ast, current_base, Some(&session.source_root)) {
             match resolved.resolution {
                 SourceModuleImportResolution::Stdlib { module_path } => {
                     if stdlib::stdlib_stub_path(&module_path).is_none() {
+                        continue;
+                    }
+                    if !compiling_builtin_stdlib_artifact && stdlib::is_compiled_builtin_stdlib_module(&module_path) {
                         continue;
                     }
                     let stdlib_key = module_path.join(".");
@@ -2494,12 +2530,14 @@ pub(crate) fn typecheck_modules_with_import_graph(
     modules: &[ParsedModule],
     manifest: Option<&ProjectManifest>,
     library_manifest_index: &LibraryManifestIndex,
+    builtin_stdlib_manifest: Option<&LibraryManifest>,
     #[cfg(feature = "rust_inspect")] rust_inspect_manifest_dir: Option<&Path>,
 ) -> CliResult<()> {
     typecheck_modules_with_import_graph_detailed(
         modules,
         manifest,
         library_manifest_index,
+        builtin_stdlib_manifest,
         #[cfg(feature = "rust_inspect")]
         rust_inspect_manifest_dir,
     )
@@ -2511,12 +2549,14 @@ pub(crate) fn typecheck_modules_with_import_graph_detailed(
     modules: &[ParsedModule],
     manifest: Option<&ProjectManifest>,
     library_manifest_index: &LibraryManifestIndex,
+    builtin_stdlib_manifest: Option<&LibraryManifest>,
     #[cfg(feature = "rust_inspect")] rust_inspect_manifest_dir: Option<&Path>,
 ) -> Result<(), CliDiagnosticFailure> {
     typecheck_modules_with_import_graph_info(
         modules,
         manifest,
         library_manifest_index,
+        builtin_stdlib_manifest,
         #[cfg(feature = "rust_inspect")]
         rust_inspect_manifest_dir,
     )
@@ -2528,6 +2568,7 @@ pub(crate) fn typecheck_modules_with_import_graph_info(
     modules: &[ParsedModule],
     manifest: Option<&ProjectManifest>,
     library_manifest_index: &LibraryManifestIndex,
+    builtin_stdlib_manifest: Option<&LibraryManifest>,
     #[cfg(feature = "rust_inspect")] rust_inspect_manifest_dir: Option<&Path>,
 ) -> Result<BTreeMap<PathBuf, TypeCheckInfo>, CliDiagnosticFailure> {
     let declared = manifest.map(|m| m.declared_rust_crate_names());
@@ -2544,6 +2585,9 @@ pub(crate) fn typecheck_modules_with_import_graph_info(
         }
         checker.set_current_module_path(Some(module.path_segments.clone()));
         checker.set_library_manifest_index(library_manifest_index.clone());
+        if let Some(builtin_stdlib_manifest) = builtin_stdlib_manifest {
+            checker.set_builtin_stdlib_manifest(Arc::new(builtin_stdlib_manifest.clone()));
+        }
         #[cfg(feature = "rust_inspect")]
         if let Some(rust_inspect_manifest_dir) = rust_inspect_manifest_dir {
             checker.set_rust_inspect_manifest_dir(rust_inspect_manifest_dir.to_path_buf());
@@ -3158,6 +3202,26 @@ model User:
             vec!["dataset".to_string(), "ops".to_string()]
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn collect_modules_keeps_migrated_stdlib_sources_out_of_consumer_graphs() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let tmp = tempfile::tempdir()?;
+        let entry = tmp.path().join("main.incn");
+        std::fs::write(
+            &entry,
+            "from std.environ import get_str\n\ndef main() -> None:\n    get_str(\"HOME\")\n",
+        )?;
+
+        let modules = collect_modules(&entry.to_string_lossy())?;
+        assert_eq!(
+            modules.len(),
+            1,
+            "migrated stdlib imports must be supplied by the artifact, not source modules"
+        );
+        assert_eq!(modules[0].path_segments, ["main"]);
         Ok(())
     }
 
@@ -4040,6 +4104,7 @@ def main() -> None:
             &[module],
             None,
             &LibraryManifestIndex::default(),
+            None,
             #[cfg(feature = "rust_inspect")]
             None,
         )?;
@@ -4060,6 +4125,7 @@ def main() -> None:
             &[module],
             None,
             &LibraryManifestIndex::default(),
+            None,
             #[cfg(feature = "rust_inspect")]
             None,
         );
