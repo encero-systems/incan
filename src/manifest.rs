@@ -1908,8 +1908,7 @@ pretty_assertions = { workspace = true }
 serde = { workspace = true, version = "1" }
 "#;
         let error = ProjectManifest::from_str(content, Path::new("incan.toml"))
-            .err()
-            .expect("workspace identity refinement must fail");
+            .expect_err("workspace identity refinement must fail");
         assert!(error.to_string().contains("may refine only"));
     }
 

@@ -42,7 +42,7 @@ pub mod test_runner;
 use std::env;
 use std::fmt;
 use std::io::{self, IsTerminal};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::{Arc, Mutex};
 
@@ -878,7 +878,7 @@ pub fn run() {
 /// Formatting normally writes source files. A virtual workspace root can imply several members, so that mutation
 /// requires an explicit `--workspace` or `--member` selection; `--check` remains safe to fan out over the inferred
 /// read-only scope.
-fn execute_format(path: &PathBuf, workspace: bool, members: &[String], check: bool, diff: bool) -> CliResult<ExitCode> {
+fn execute_format(path: &Path, workspace: bool, members: &[String], check: bool, diff: bool) -> CliResult<ExitCode> {
     let Some(graph) = WorkspaceGraph::discover(path).map_err(|error| CliError::failure(error.to_string()))? else {
         if workspace || !members.is_empty() {
             return Err(CliError::failure(format!(
@@ -1065,7 +1065,7 @@ fn execute_build(
 
 /// Resolve RFC 077 scope before typechecking and retain one coherent JSON document for a workspace check.
 fn execute_check(
-    path: &PathBuf,
+    path: &Path,
     workspace: bool,
     members: &[String],
     format: DiagnosticOutputFormat,
@@ -1073,9 +1073,9 @@ fn execute_check(
     // A missing file is a valid `incan check` input: the diagnostics pipeline owns its stable tooling error. Discover
     // workspace scope from the containing directory instead of canonicalizing that missing file first.
     let discovery_path = if path.exists() {
-        path.clone()
+        path.to_path_buf()
     } else {
-        path.parent().map(PathBuf::from).unwrap_or_else(|| path.clone())
+        path.parent().map(PathBuf::from).unwrap_or_else(|| path.to_path_buf())
     };
     let Some(graph) =
         WorkspaceGraph::discover(&discovery_path).map_err(|error| CliError::failure(error.to_string()))?
@@ -1097,7 +1097,7 @@ fn execute_check(
         let mut member_reports = Vec::with_capacity(selected.len());
         for member in selected {
             let target = if !workspace && members.is_empty() && selected_members.len() == 1 && path.is_file() {
-                path.clone()
+                path.to_path_buf()
             } else {
                 workspace_member_check_entry(&graph, member)?
             };
@@ -1131,7 +1131,7 @@ fn execute_check(
     for member in selected {
         println!("== workspace {} / member {} ==", graph.root().display(), member.name);
         let target = if !workspace && members.is_empty() && selected_members.len() == 1 && path.is_file() {
-            path.clone()
+            path.to_path_buf()
         } else {
             workspace_member_check_entry(&graph, member)?
         };
