@@ -182,6 +182,12 @@ pub enum Command {
         /// Source file to compile (optional in `--lib` mode)
         #[arg(value_name = "FILE")]
         file: Option<PathBuf>,
+        /// Select every workspace member instead of the implicit current scope.
+        #[arg(long, conflicts_with = "member")]
+        workspace: bool,
+        /// Select one workspace member by name or workspace-relative path. May be repeated.
+        #[arg(long = "member", value_name = "NAME_OR_PATH")]
+        member: Vec<String>,
         /// Enable library mode precondition checks (`src/lib.incn` required)
         #[arg(long = "lib")]
         lib_mode: bool,
@@ -626,6 +632,42 @@ fn workspace_member_check_entry(
     )))
 }
 
+/// Resolve the executable or library source that a selected workspace member owns.
+fn workspace_member_build_entry(
+    workspace: &WorkspaceGraph,
+    member: &crate::workspace::WorkspaceMember,
+    lib_mode: bool,
+) -> CliResult<PathBuf> {
+    if lib_mode {
+        let library = member.path.join("src/lib.incn");
+        if library.is_file() {
+            return Ok(library);
+        }
+        return Err(CliError::failure(format!(
+            "workspace member {} has no src/lib.incn required by --lib",
+            member.name
+        )));
+    }
+    let manifest = workspace
+        .effective_manifest_for(member)
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    if let Some(main) = manifest
+        .project
+        .as_ref()
+        .and_then(|project| project.scripts.get("main"))
+    {
+        return Ok(member.path.join(main));
+    }
+    let conventional_main = member.path.join("src/main.incn");
+    if conventional_main.is_file() {
+        return Ok(conventional_main);
+    }
+    Err(CliError::failure(format!(
+        "workspace member {} has no [project.scripts].main or src/main.incn entrypoint",
+        member.name
+    )))
+}
+
 #[derive(Subcommand, Debug)]
 pub enum InspectCommand {
     /// Generate and inspect current Rust backend output
@@ -838,6 +880,94 @@ fn execute_format(path: &PathBuf, workspace: bool, members: &[String], check: bo
         }
     }
 
+    first_failure.map_or(Ok(ExitCode::SUCCESS), Err)
+}
+
+/// Build one resolved executable or library entrypoint without reinterpreting workspace scope.
+fn execute_single_build(
+    file: Option<PathBuf>,
+    lib_mode: bool,
+    output_dir: Option<&String>,
+    build_options: commands::build::BuildCommandOptions,
+    report_options: BuildReportOptions,
+) -> CliResult<ExitCode> {
+    if lib_mode {
+        let file_arg = file.as_ref().map(|path| path.to_string_lossy().to_string());
+        commands::build_library(file_arg.as_deref(), output_dir, build_options, report_options)
+    } else {
+        let file = resolve_build_entry_file(file)?;
+        commands::build_file(&file.to_string_lossy(), output_dir, build_options, report_options)
+    }
+}
+
+/// Resolve RFC 077 scope before executing build work for each selected member in stable workspace order.
+fn execute_build(
+    file: Option<PathBuf>,
+    workspace: bool,
+    members: &[String],
+    lib_mode: bool,
+    output_dir: Option<String>,
+    build_options: commands::build::BuildCommandOptions,
+    report_options: BuildReportOptions,
+) -> CliResult<ExitCode> {
+    if file.is_some() && (workspace || !members.is_empty()) {
+        return Err(CliError::failure(
+            "a source FILE identifies one build target; omit FILE when selecting workspace members",
+        ));
+    }
+    let scope_start = match file.as_ref() {
+        Some(file) => file.clone(),
+        None => env::current_dir()
+            .map_err(|error| CliError::failure(format!("failed to read current directory: {error}")))?,
+    };
+    let Some(graph) = WorkspaceGraph::discover(&scope_start).map_err(|error| CliError::failure(error.to_string()))?
+    else {
+        if workspace || !members.is_empty() {
+            return Err(CliError::failure(format!(
+                "workspace selection requires a validated workspace containing {}",
+                scope_start.display()
+            )));
+        }
+        return execute_single_build(file, lib_mode, output_dir.as_ref(), build_options, report_options);
+    };
+
+    // An explicit source file remains the single-project command contract unless the caller has selected members.
+    if file.is_some() {
+        return execute_single_build(file, lib_mode, output_dir.as_ref(), build_options, report_options);
+    }
+    let selected = graph
+        .select_members(&scope_start, workspace, members)
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    if selected.len() > 1 && output_dir.is_some() {
+        return Err(CliError::failure(
+            "an explicit OUTPUT_DIR cannot be shared by multiple workspace members; select one member or omit OUTPUT_DIR",
+        ));
+    }
+    if selected.len() > 1 && report_options.enabled() {
+        return Err(CliError::failure(
+            "multi-member build reports are not available yet; select one member or omit --report",
+        ));
+    }
+
+    let mut first_failure = None;
+    for member in selected {
+        println!("== workspace {} / member {} ==", graph.root().display(), member.name);
+        let entry = workspace_member_build_entry(&graph, member, lib_mode)?;
+        if let Err(error) = execute_single_build(
+            Some(entry),
+            lib_mode,
+            output_dir.as_ref(),
+            build_options.clone(),
+            report_options.clone(),
+        ) {
+            if !error.message.is_empty() {
+                eprintln!("{}", error.message);
+            }
+            if first_failure.is_none() {
+                first_failure = Some(CliError::new("", error.exit_code));
+            }
+        }
+    }
     first_failure.map_or(Ok(ExitCode::SUCCESS), Err)
 }
 
@@ -1057,6 +1187,8 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
     match cli.command {
         Some(Command::Build {
             file,
+            workspace,
+            member,
             lib_mode,
             output_dir,
             locked,
@@ -1099,13 +1231,7 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 cargo_all_features,
                 generated_cargo_target_dir,
             };
-            if lib_mode {
-                let file_arg = file.as_ref().map(|p| p.to_string_lossy().to_string());
-                commands::build_library(file_arg.as_deref(), out.as_ref(), build_options, report_options)
-            } else {
-                let file = resolve_build_entry_file(file)?;
-                commands::build_file(&file.to_string_lossy(), out.as_ref(), build_options, report_options)
-            }
+            execute_build(file, workspace, &member, lib_mode, out, build_options, report_options)
         }
         Some(Command::Check {
             path,
@@ -1804,6 +1930,17 @@ mod tests {
         assert!(!workspace);
         assert_eq!(member, vec!["alpha"]);
         assert_eq!(format, DiagnosticOutputFormat::Json);
+        Ok(())
+    }
+
+    #[test]
+    fn test_cli_parse_workspace_build_selection() -> Result<(), clap::Error> {
+        let cli = parse_cli(["incan", "build", "--workspace"])?;
+        let Some(Command::Build { workspace, member, .. }) = cli.command else {
+            return Err(expected_command("build"));
+        };
+        assert!(workspace);
+        assert!(member.is_empty());
         Ok(())
     }
 

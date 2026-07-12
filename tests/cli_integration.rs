@@ -2198,6 +2198,47 @@ fn workspace_check_selection_emits_one_scoped_json_report() -> Result<(), Box<dy
 }
 
 #[test]
+fn workspace_build_selection_fans_out_without_shared_outputs() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    fs::write(
+        tmp.path().join("incan.toml"),
+        "[workspace]\nmembers = [\"packages/*\"]\n",
+    )?;
+    for name in ["alpha", "beta"] {
+        let member = tmp.path().join("packages").join(name);
+        fs::create_dir_all(member.join("src"))?;
+        fs::write(
+            member.join("incan.toml"),
+            format!(
+                "[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"
+            ),
+        )?;
+        fs::write(member.join("src/main.incn"), "def main() -> None:\n    return\n")?;
+    }
+
+    let output = run_incan(tmp.path(), &["build", "--workspace"])?;
+    assert_success(&output, "workspace build fan-out");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("member alpha"), "missing alpha scope:\n{stdout}");
+    assert!(stdout.contains("member beta"), "missing beta scope:\n{stdout}");
+    for name in ["alpha", "beta"] {
+        assert!(
+            tmp.path().join("target/incan").join(name).join("Cargo.toml").is_file(),
+            "workspace build did not generate an isolated project for {name}:\n{stdout}"
+        );
+    }
+
+    let report = run_incan(tmp.path(), &["build", "--workspace", "--report", "json"])?;
+    assert_failure(&report, "multi-member workspace build report");
+    assert!(
+        String::from_utf8_lossy(&report.stderr).contains("multi-member build reports are not available yet"),
+        "report guard should explain the unsupported machine output:\n{}",
+        String::from_utf8_lossy(&report.stderr)
+    );
+    Ok(())
+}
+
+#[test]
 fn lock_preheats_dependency_graph_for_path_dependencies() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let helper_dir = tmp.path().join("preheat_helper");
