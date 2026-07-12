@@ -213,12 +213,13 @@ def main() -> None:
 }
 
 #[test]
-fn compiled_builtin_stdlib_artifact_preserves_web_facade_imports() -> Result<(), Box<dyn std::error::Error>> {
+fn compiled_builtin_stdlib_artifact_preserves_facade_imports() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "compiled_builtin_stdlib_web_facade", "")?;
     fs::write(
         &main_path,
-        r#"from std.web import App, route, Response, Json, GET
+        r#"from std.fs import Path as FsPath
+from std.web import App, route, Response, Json, GET
 
 def main() -> None:
   pass
@@ -229,7 +230,7 @@ def main() -> None:
         tmp.path(),
         &["check", main_path.to_str().ok_or("main path was not valid UTF-8")?],
     )?;
-    assert_success(&output, "incan check with compiled std.web facade metadata");
+    assert_success(&output, "incan check with compiled stdlib facade metadata");
     Ok(())
 }
 
