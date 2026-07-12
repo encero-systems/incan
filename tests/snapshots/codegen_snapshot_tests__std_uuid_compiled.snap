@@ -614,7 +614,7 @@ impl OrdinalKey for UUID {
     }
     fn ordinal_hash(&self) -> i64 {
         let _ = "\n        Hash this key's canonical bytes for `OrdinalMap` lookup.\n\n        Builtin key implementations override this to avoid materializing a fresh byte vector before every lookup.\n        ";
-        return crate::__incan_std::collections::_ordinal_hash(self.ordinal_bytes());
+        return incan_builtin_stdlib::collections::_ordinal_hash(self.ordinal_bytes());
     }
     fn ordinal_bytes_equal(&self, data: Vec<u8>) -> bool {
         let _ = "\n        Return whether `data` is this key's canonical byte representation.\n\n        Builtin key implementations override this to compare borrowed key bytes without allocating query bytes.\n        ";
@@ -876,7 +876,7 @@ impl _UuidBytesWriter {
     ///     `Ok(None)` when the write succeeds.
     pub fn data(&self, value: Vec<u8>) -> Result<(), UuidError> {
         let _ = "\n        Append raw bytes to the UUID buffer.\n\n        Args:\n            value: Bytes to append unchanged.\n\n        Returns:\n            `Ok(None)` when the write succeeds.\n        ";
-        return crate::__incan_std::result::map(
+        return incan_builtin_stdlib::result::map(
                 self.out.write_bytes(value),
                 _discard_written_count,
             )

@@ -705,15 +705,15 @@ def main(result: Result[int, str]) -> Result[int, str]:
 "#;
     let rust_code = generate_rust(source);
     assert!(
-        rust_code.contains("crate::__incan_std::result::map(result, double)"),
+        rust_code.contains("incan_builtin_stdlib::result::map(result, double)"),
         "map with a named function callback should dogfood the std.result helper:\n{rust_code}"
     );
     assert!(
-        rust_code.contains("crate::__incan_std::result::and_then"),
+        rust_code.contains("incan_builtin_stdlib::result::and_then"),
         "and_then with a named function callback should dogfood the std.result helper:\n{rust_code}"
     );
     assert!(
-        rust_code.contains("crate::__incan_std::result::inspect"),
+        rust_code.contains("incan_builtin_stdlib::result::inspect"),
         "inspect with a named function callback should dogfood the std.result helper:\n{rust_code}"
     );
     assert!(
@@ -783,7 +783,7 @@ pub def transform_with_observer(result: Result[Payload, str]) -> Result[Payload,
         "non-Copy named observer callbacks should get a generated borrowed function adapter:\n{rust_code}"
     );
     assert!(
-        rust_code.contains("crate::__incan_std::result::inspect(")
+        rust_code.contains("incan_builtin_stdlib::result::inspect(")
             && rust_code.contains("__incan_borrow_adapter_observe_payload_0"),
         "inspect should pass the borrowed adapter into the Incan-authored std.result helper:\n{rust_code}"
     );

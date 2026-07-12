@@ -282,6 +282,23 @@ fn publish_builtin_stdlib_artifact_resolved_lock(stdlib_root: &Path, artifact_ro
     Ok(())
 }
 
+/// Configure the compiler-owned bootstrap build for the compiled stdlib artifact.
+///
+/// The artifact is the producer of the dependency closure that generated consumers later use offline. A raw Cargo
+/// offline setting inherited from a consumer would prevent that first build from resolving an optional stdlib module
+/// such as `std.regex`. Incan's own explicit offline policy remains inherited by the nested CLI command.
+fn configure_builtin_stdlib_artifact_builder(command: &mut Command, workspace_lock: Option<&Path>) {
+    command
+        .args(["build", "--lib"])
+        .env_remove("CARGO_NET_OFFLINE")
+        .env_remove(INTERNAL_MANIFEST_OVERRIDE_ENV)
+        .env_remove(INTERNAL_PROJECT_ROOT_OVERRIDE_ENV)
+        .env(INTERNAL_BUILTIN_STDLIB_ARTIFACT_BUILD_ENV, "1");
+    if let Some(workspace_lock) = workspace_lock {
+        command.env(INTERNAL_CARGO_LOCK_PAYLOAD_PATH_ENV, workspace_lock);
+    }
+}
+
 /// Build the local built-in stdlib library artifact when a consumer imports a migrated module.
 ///
 /// The artifact project lives beside the `.incn` sources so development and installed SDK layouts use the same
@@ -328,15 +345,8 @@ fn prepare_builtin_stdlib_artifact() -> CliResult<LibraryArtifactMetadata> {
         .map(PathBuf::from);
     let executable = builtin_stdlib_artifact_builder_executable(cargo_test_binary, current_exe);
     let mut command = Command::new(executable);
-    command
-        .args(["build", "--lib"])
-        .current_dir(&stdlib_root)
-        .env_remove(INTERNAL_MANIFEST_OVERRIDE_ENV)
-        .env_remove(INTERNAL_PROJECT_ROOT_OVERRIDE_ENV)
-        .env(INTERNAL_BUILTIN_STDLIB_ARTIFACT_BUILD_ENV, "1");
-    if let Some(workspace_lock) = workspace_lock {
-        command.env(INTERNAL_CARGO_LOCK_PAYLOAD_PATH_ENV, workspace_lock);
-    }
+    command.current_dir(&stdlib_root);
+    configure_builtin_stdlib_artifact_builder(&mut command, workspace_lock.as_deref());
     let status = command.status().map_err(|error| {
         CliError::failure(format!(
             "failed to run `incan build --lib` for built-in stdlib artifact at {}: {error}",
@@ -2591,6 +2601,25 @@ mod tests {
         assert_eq!(
             builtin_stdlib_artifact_builder_executable(None, PathBuf::from("/tmp/target/debug/deps/incan-abc123"),),
             PathBuf::from("/tmp/target/debug/incan")
+        );
+    }
+
+    #[test]
+    fn builtin_stdlib_artifact_builder_resolves_its_initial_closure_without_raw_cargo_offline() {
+        let mut command = Command::new("incan");
+        configure_builtin_stdlib_artifact_builder(&mut command, None);
+
+        assert!(
+            command
+                .get_envs()
+                .any(|(key, value)| key == "CARGO_NET_OFFLINE" && value.is_none()),
+            "the artifact bootstrap must clear an inherited raw Cargo offline setting"
+        );
+        assert!(
+            command.get_envs().any(|(key, value)| {
+                key == INTERNAL_BUILTIN_STDLIB_ARTIFACT_BUILD_ENV && value.is_some_and(|value| value == "1")
+            }),
+            "the artifact bootstrap must retain its internal build marker"
         );
     }
 
