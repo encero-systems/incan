@@ -468,6 +468,9 @@ pub struct FieldExport {
     pub ty: TypeRef,
     /// Whether the field has a declared default value.
     pub has_default: bool,
+    /// Materializable source default used when a consumer constructs this type through the artifact boundary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<ParamDefaultExport>,
     /// Optional field alias published by the library surface.
     pub alias: Option<String>,
     /// Optional human-readable field description.
@@ -1209,7 +1212,7 @@ fn preset_value_from_checked(value: &CheckedPresetValue) -> PresetValueExport {
 
 /// Convert checked parameter defaults into the manifest default-expression vocabulary when consumers can materialize
 /// them.
-fn param_default_from_checked(value: &CheckedParamDefault) -> Option<ParamDefaultExport> {
+pub(crate) fn param_default_from_checked(value: &CheckedParamDefault) -> Option<ParamDefaultExport> {
     match value {
         CheckedParamDefault::Int(value) => Some(ParamDefaultExport::Int(*value)),
         CheckedParamDefault::Float(value) => Some(ParamDefaultExport::Float(value.to_string())),
@@ -1338,11 +1341,13 @@ fn method_from_checked(method: &crate::frontend::library_exports::CheckedMethod)
     }
 }
 
+/// Convert checked field metadata into artifact metadata, including a materializable default when available.
 fn field_from_checked(field: &crate::frontend::library_exports::CheckedField) -> FieldExport {
     FieldExport {
         name: field.name.clone(),
         ty: type_ref_from_resolved(&field.ty),
         has_default: field.has_default,
+        default: field.default.as_ref().and_then(param_default_from_checked),
         alias: field.alias.clone(),
         description: field.description.clone(),
     }

@@ -28,7 +28,7 @@ use crate::library_manifest::{
     FieldExport, FieldRequirementExport, FunctionExport, MethodExport, ModelExport, NewtypeConstraintExport,
     NewtypeExport, ParamExport, PartialExport, PartialPresetExport, PartialTargetKindExport, PresetDictEntryExport,
     PresetModelFieldExport, PresetValueExport, ReceiverExport, TraitExport, TypeAliasExport, TypeBoundExport,
-    TypeParamExport, TypeRef, params_from_checked, type_ref_from_resolved,
+    TypeParamExport, TypeRef, param_default_from_checked, params_from_checked, type_ref_from_resolved,
 };
 
 pub const CHECKED_API_METADATA_SCHEMA_VERSION: u32 = 1;
@@ -1043,6 +1043,7 @@ fn api_trait(
                 name: name.clone(),
                 ty: type_ref_from_resolved(ty),
                 has_default: false,
+                default: None,
                 alias: None,
                 description: None,
             })
@@ -1410,6 +1411,7 @@ fn field(field: &crate::frontend::library_exports::CheckedField) -> FieldExport 
         name: field.name.clone(),
         ty: type_ref_from_resolved(&field.ty),
         has_default: field.has_default,
+        default: field.default.as_ref().and_then(param_default_from_checked),
         alias: field.alias.clone(),
         description: field.description.clone(),
     }

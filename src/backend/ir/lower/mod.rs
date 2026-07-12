@@ -48,6 +48,7 @@ use crate::frontend::symbols::ResolvedType;
 use crate::frontend::symbols::{CallableParam, NewtypePrimitiveConstraint};
 use crate::frontend::typechecker::TypeCheckInfo;
 use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
+use crate::library_manifest::LibraryManifest;
 use decl::callable_docstring;
 use incan_core::lang::conventions;
 use incan_core::lang::decorators::{self, DecoratorId};
@@ -124,6 +125,8 @@ pub struct AstLowering {
     pub(super) type_info: Option<TypeCheckInfo>,
     /// Public dependency manifests used to rehydrate callable defaults across `pub::` boundaries.
     pub(super) library_manifest_index: Option<Arc<LibraryManifestIndex>>,
+    /// Checked compiled built-in stdlib metadata used to rehydrate consumer call defaults without provider source.
+    pub(super) builtin_stdlib_manifest: Option<Arc<LibraryManifest>>,
     /// Newtype construction plans used by calls and generated bridges.
     ///
     /// Production lowering consumes typechecker-approved plans. Direct AST-lowering tests may use the conservative
@@ -267,6 +270,7 @@ impl AstLowering {
             iterator_adopter_names: HashSet::new(),
             type_info: None,
             library_manifest_index: None,
+            builtin_stdlib_manifest: None,
             newtype_construction: HashMap::new(),
             current_impl_type: None,
             current_classmethod_constructor: None,
@@ -302,6 +306,11 @@ impl AstLowering {
     /// Provide public dependency manifests for lowering metadata-backed call signatures.
     pub fn set_library_manifest_index(&mut self, index: Option<Arc<LibraryManifestIndex>>) {
         self.library_manifest_index = index;
+    }
+
+    /// Provide the checked compiled built-in stdlib manifest for artifact-backed consumer lowering.
+    pub fn set_builtin_stdlib_manifest(&mut self, manifest: Option<Arc<LibraryManifest>>) {
+        self.builtin_stdlib_manifest = manifest;
     }
 
     /// Lower one typechecker-resolved callable surface into IR parameters, attaching an already-planned default

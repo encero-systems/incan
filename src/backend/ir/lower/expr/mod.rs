@@ -1112,6 +1112,8 @@ impl AstLowering {
                     let imported_pub_method_signature = public_receiver_library.as_deref().and_then(|library| {
                         self.callable_signature_for_imported_pub_type_method(library, &receiver.ty, m)
                     });
+                    let builtin_stdlib_method_signature =
+                        self.callable_signature_for_builtin_stdlib_type_method(&receiver.ty, m);
                     let call_site_signature = self.callable_signature_for_call_span(expr_span);
                     let std_logging_signature = if matches!(
                         &receiver.ty,
@@ -1123,7 +1125,9 @@ impl AstLowering {
                     };
                     let callable_signature = match (
                         std_logging_signature.or(call_site_signature),
-                        imported_type_method_signature.or(imported_pub_method_signature),
+                        imported_type_method_signature
+                            .or(imported_pub_method_signature)
+                            .or(builtin_stdlib_method_signature),
                     ) {
                         (Some(mut call_site), Some(imported)) => {
                             for (param, imported_param) in call_site.params.iter_mut().zip(imported.params.iter()) {

@@ -34,7 +34,7 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
 use super::decl::{FunctionParam, IrDeclKind, IrEnumValue, IrEnumValueType, IrStruct, VariantFields, Visibility};
-use super::expr::TypedExpr;
+use super::expr::{IrDictEntry, IrExprKind, IrListEntry, Literal as IrLiteral, TypedExpr};
 use super::types::{IR_UNION_TYPE_NAME, IrType, Mutability};
 use super::{FunctionRegistry, FunctionSignature, IrProgram};
 use crate::frontend::api_metadata::{
@@ -44,7 +44,7 @@ use crate::frontend::api_metadata::{
 use crate::frontend::library_manifest_index::{LibraryManifestIndex, LibraryManifestIndexEntry};
 use crate::frontend::symbols::ResolvedType;
 use crate::library_manifest::{
-    FieldExport, LibraryManifest, MethodExport, NewtypeExport, ParamKindExport, TypeRef,
+    FieldExport, LibraryManifest, MethodExport, NewtypeExport, ParamDefaultExport, ParamKindExport, TypeRef,
     resolved_type_from_manifest_type_ref,
 };
 use incan_core::lang::types::collections::{self, CollectionTypeId};
@@ -1594,7 +1594,16 @@ impl<'a> IrEmitter<'a> {
                 .iter()
                 .map(|field| (field.name.clone(), Self::manifest_type_ref_to_ir_type(&field.ty)))
                 .collect(),
-            field_defaults: HashMap::new(),
+            field_defaults: fields
+                .iter()
+                .filter_map(|field| {
+                    field
+                        .default
+                        .as_ref()
+                        .and_then(Self::manifest_default_to_ir_expr)
+                        .map(|default| (field.name.clone(), default))
+                })
+                .collect(),
             field_aliases: fields
                 .iter()
                 .filter_map(|field| {
@@ -1623,6 +1632,48 @@ impl<'a> IrEmitter<'a> {
                 .insert((name.to_string(), field.name.clone()), field.alias.clone());
             self.struct_field_descriptions
                 .insert((name.to_string(), field.name.clone()), field.description.clone());
+        }
+    }
+
+    /// Convert manifest-safe field defaults into the IR required by artifact-backed constructors.
+    fn manifest_default_to_ir_expr(default: &ParamDefaultExport) -> Option<TypedExpr> {
+        match default {
+            ParamDefaultExport::Int(value) => Some(TypedExpr::new(IrExprKind::Int(*value), IrType::Int)),
+            ParamDefaultExport::Float(value) => value
+                .parse::<f64>()
+                .ok()
+                .map(|value| TypedExpr::new(IrExprKind::Float(value), IrType::Float)),
+            ParamDefaultExport::Bool(value) => Some(TypedExpr::new(IrExprKind::Bool(*value), IrType::Bool)),
+            ParamDefaultExport::String(value) => Some(TypedExpr::new(
+                IrExprKind::Literal(IrLiteral::StaticStr(value.clone())),
+                IrType::StaticStr,
+            )),
+            ParamDefaultExport::Bytes(value) => Some(TypedExpr::new(IrExprKind::Bytes(value.clone()), IrType::Bytes)),
+            ParamDefaultExport::None => Some(TypedExpr::new(IrExprKind::None, IrType::Unit)),
+            ParamDefaultExport::List(values) => Some(TypedExpr::new(
+                IrExprKind::List(
+                    values
+                        .iter()
+                        .map(|value| Self::manifest_default_to_ir_expr(value).map(IrListEntry::Element))
+                        .collect::<Option<Vec<_>>>()?,
+                ),
+                IrType::List(Box::new(IrType::Unknown)),
+            )),
+            ParamDefaultExport::Dict(entries) => Some(TypedExpr::new(
+                IrExprKind::Dict(
+                    entries
+                        .iter()
+                        .map(|entry| {
+                            Some(IrDictEntry::Pair(
+                                Self::manifest_default_to_ir_expr(&entry.key)?,
+                                Box::new(Self::manifest_default_to_ir_expr(&entry.value)?),
+                            ))
+                        })
+                        .collect::<Option<Vec<_>>>()?,
+                ),
+                IrType::Dict(Box::new(IrType::Unknown), Box::new(IrType::Unknown)),
+            )),
+            ParamDefaultExport::ConstRef(_) | ParamDefaultExport::Call { .. } | ParamDefaultExport::Unsupported => None,
         }
     }
 

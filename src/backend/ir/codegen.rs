@@ -598,6 +598,7 @@ impl<'a> IrCodegen<'a> {
     fn configure_lowering(&self, lowering: &mut AstLowering) {
         lowering.set_stdlib_cache(self.stdlib_cache.clone());
         lowering.set_library_manifest_index(self.library_manifest_index.clone());
+        lowering.set_builtin_stdlib_manifest(self.builtin_stdlib_manifest.clone());
     }
 
     /// Add a dependency module (for multi-file compilation)

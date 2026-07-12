@@ -516,11 +516,35 @@ impl AstLowering {
             return Ok(None);
         };
         let module_path = &path[..path.len() - 1];
+        if let Some(manifest) = self.builtin_stdlib_manifest.clone()
+            && let Some(method) = Self::api_method_export_for_pub_type(&manifest, type_name, method_name)
+        {
+            return Ok(Some(self.callable_signature_from_builtin_stdlib_method_export(&method)));
+        }
         let mut cache = crate::frontend::typechecker::stdlib_loader::StdlibAstCache::new();
-        let Some(method) = cache.lookup_type_method_decl(module_path, type_name, method_name) else {
-            return Ok(None);
-        };
-        self.callable_signature_from_stdlib_method_decl(&method).map(Some)
+        if let Some(method) = cache.lookup_type_method_decl(module_path, type_name, method_name) {
+            return self.callable_signature_from_stdlib_method_decl(&method).map(Some);
+        }
+        Ok(None)
+    }
+
+    /// Resolve a compiled-stdlib method signature from a typed receiver, including artifact-owned defaults.
+    ///
+    /// Calls on local values such as `path.open("rb")` no longer retain the import expression that introduced
+    /// `Path`, so import-path-only lookup cannot recover its omitted arguments. The checked artifact metadata is the
+    /// canonical source for these consumer calls.
+    pub(in crate::backend::ir::lower) fn callable_signature_for_builtin_stdlib_type_method(
+        &mut self,
+        receiver_ty: &IrType,
+        method_name: &str,
+    ) -> Option<FunctionSignature> {
+        let type_name = Self::nominal_receiver_type_name(receiver_ty)?;
+        if self.struct_names.contains_key(type_name) || self.enum_names.contains_key(type_name) {
+            return None;
+        }
+        let manifest = self.builtin_stdlib_manifest.clone()?;
+        let method = Self::api_method_export_for_pub_type(&manifest, type_name, method_name)?;
+        Some(self.callable_signature_from_builtin_stdlib_method_export(&method))
     }
 
     /// Resolve an imported public dependency model/class method signature from the provider manifest.
@@ -668,6 +692,86 @@ impl AstLowering {
                 })
                 .collect(),
             return_type: self.lower_pub_manifest_type_ref(library, &method.return_type),
+        }
+    }
+
+    /// Rebuild an artifact-backed stdlib method signature without reopening provider source modules.
+    fn callable_signature_from_builtin_stdlib_method_export(&mut self, method: &MethodExport) -> FunctionSignature {
+        FunctionSignature {
+            params: method
+                .params
+                .iter()
+                .map(|param| {
+                    let kind = param_kind_from_manifest(param.kind);
+                    FunctionParam {
+                        name: param.name.clone(),
+                        ty: Self::lower_param_container_type(
+                            kind,
+                            self.lower_resolved_type(&crate::library_manifest::resolved_type_from_manifest_type_ref(
+                                &param.ty,
+                            )),
+                        ),
+                        mutability: Mutability::Immutable,
+                        is_self: false,
+                        kind,
+                        default: self.lower_builtin_stdlib_param_default(param),
+                    }
+                })
+                .collect(),
+            return_type: self.lower_resolved_type(&crate::library_manifest::resolved_type_from_manifest_type_ref(
+                &method.return_type,
+            )),
+        }
+    }
+
+    /// Lower manifest-safe literal defaults for a compiled stdlib method call.
+    fn lower_builtin_stdlib_param_default(&mut self, param: &ParamExport) -> Option<TypedExpr> {
+        match param.default.as_ref() {
+            Some(ParamDefaultExport::Unsupported) | None => None,
+            Some(default) if default.is_materializable() => self.lower_builtin_stdlib_default_expr(default),
+            Some(_) => None,
+        }
+    }
+
+    /// Keep artifact-owned literal defaults in consumer IR without loading the stdlib source AST.
+    fn lower_builtin_stdlib_default_expr(&mut self, default: &ParamDefaultExport) -> Option<TypedExpr> {
+        match default {
+            ParamDefaultExport::Int(value) => Some(TypedExpr::new(IrExprKind::Int(*value), IrType::Int)),
+            ParamDefaultExport::Float(value) => value
+                .parse::<f64>()
+                .ok()
+                .map(|value| TypedExpr::new(IrExprKind::Float(value), IrType::Float)),
+            ParamDefaultExport::Bool(value) => Some(TypedExpr::new(IrExprKind::Bool(*value), IrType::Bool)),
+            ParamDefaultExport::String(value) => Some(TypedExpr::new(
+                IrExprKind::Literal(IrLiteral::StaticStr(value.clone())),
+                IrType::StaticStr,
+            )),
+            ParamDefaultExport::Bytes(value) => Some(TypedExpr::new(IrExprKind::Bytes(value.clone()), IrType::Bytes)),
+            ParamDefaultExport::None => Some(TypedExpr::new(IrExprKind::None, IrType::Unit)),
+            ParamDefaultExport::List(values) => Some(TypedExpr::new(
+                IrExprKind::List(
+                    values
+                        .iter()
+                        .map(|value| self.lower_builtin_stdlib_default_expr(value).map(IrListEntry::Element))
+                        .collect::<Option<Vec<_>>>()?,
+                ),
+                IrType::List(Box::new(IrType::Unknown)),
+            )),
+            ParamDefaultExport::Dict(entries) => Some(TypedExpr::new(
+                IrExprKind::Dict(
+                    entries
+                        .iter()
+                        .map(|entry| {
+                            Some(IrDictEntry::Pair(
+                                self.lower_builtin_stdlib_default_expr(&entry.key)?,
+                                Box::new(self.lower_builtin_stdlib_default_expr(&entry.value)?),
+                            ))
+                        })
+                        .collect::<Option<Vec<_>>>()?,
+                ),
+                IrType::Dict(Box::new(IrType::Unknown), Box::new(IrType::Unknown)),
+            )),
+            ParamDefaultExport::ConstRef(_) | ParamDefaultExport::Call { .. } | ParamDefaultExport::Unsupported => None,
         }
     }
 
