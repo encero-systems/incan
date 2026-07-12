@@ -39,6 +39,7 @@ use crate::manifest::{
 use crate::project_lifecycle::toolchain::ToolchainConstraintSet;
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect::{Inspector, InspectorConfig};
+use crate::workspace::WorkspaceGraph;
 use incan_core::lang::{
     stdlib::{self, StdlibExtraCrateDep, StdlibExtraCrateSource},
     surface::result_methods,
@@ -269,6 +270,46 @@ fn split_env_cargo_args(value: Option<&str>) -> Vec<String> {
         .collect()
 }
 
+/// Discover a project manifest and materialize explicit RFC 077 inheritance before compiler stages consume it.
+///
+/// This is the single-project compatibility boundary: projects outside a workspace retain their parsed manifest, while
+/// a member receives the graph-owned effective manifest. A dangling `{ workspace = true }` request is always an error
+/// instead of being silently treated as an absent local dependency.
+pub(crate) fn discover_effective_project_manifest(start_dir: &Path) -> CliResult<Option<ProjectManifest>> {
+    let Some(manifest) = ProjectManifest::discover(start_dir).map_err(|error| CliError::failure(error.to_string()))?
+    else {
+        return Ok(None);
+    };
+    let workspace =
+        WorkspaceGraph::discover(manifest.project_root()).map_err(|error| CliError::failure(error.to_string()))?;
+    let Some(workspace) = workspace else {
+        if manifest.has_workspace_inherited_dependencies() {
+            return Err(CliError::failure(format!(
+                "{} declares {{ workspace = true }} dependencies but is not a member of an active workspace",
+                manifest.path().display()
+            )));
+        }
+        return Ok(Some(manifest));
+    };
+    let canonical_root = std::fs::canonicalize(manifest.project_root()).map_err(|error| {
+        CliError::failure(format!(
+            "failed to canonicalize project root {}: {error}",
+            manifest.project_root().display()
+        ))
+    })?;
+    let member = workspace.member_for_root(&canonical_root).ok_or_else(|| {
+        CliError::failure(format!(
+            "project {} is not a member of the active workspace at {}",
+            manifest.path().display(),
+            workspace.root().display()
+        ))
+    })?;
+    workspace
+        .effective_member_manifest(member)
+        .map(Some)
+        .map_err(|error| CliError::failure(error.to_string()))
+}
+
 /// Shared source-analysis context for CLI commands and the LSP.
 ///
 /// This owns the project-level inputs that affect context-sensitive parsing and typechecking so entrypoints do not
@@ -298,8 +339,7 @@ impl CompilationSession {
     /// Discover project context with either full dependency artifacts or parser-only dependency metadata.
     fn discover_with_dependency_mode(entry_path: &Path, dependency_mode: DependencyManifestMode) -> CliResult<Self> {
         let inferred_project_root = resolve_project_root(entry_path);
-        let manifest =
-            ProjectManifest::discover(&inferred_project_root).map_err(|error| CliError::failure(error.to_string()))?;
+        let manifest = discover_effective_project_manifest(&inferred_project_root)?;
         let project_root = manifest
             .as_ref()
             .map(|manifest| manifest.project_root().to_path_buf())

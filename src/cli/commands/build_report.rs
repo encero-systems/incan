@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use clap::ValueEnum;
 use serde::Serialize;
+use serde_json::Value;
 
 use crate::cli::{CliError, CliResult};
 use crate::dependency_resolver::InlineRustImport;
@@ -163,6 +164,26 @@ pub struct BuildReport {
     pub interop: BuildInteropReport,
     pub timings_ms: BTreeMap<String, u64>,
     pub notes: Vec<String>,
+    /// Compiler-owned workspace identity when this build was selected as part of an RFC 077 member scope.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<BuildWorkspaceContext>,
+}
+
+/// Workspace identity attached to an individual member's build report.
+#[derive(Debug, Clone, Serialize)]
+pub struct BuildWorkspaceContext {
+    pub root: String,
+    pub scope_origin: String,
+    pub member_name: String,
+    pub member_root: String,
+}
+
+impl BuildReport {
+    /// Attach the scope selected by the workspace orchestrator without changing build preparation ownership.
+    pub(crate) fn with_workspace_context(mut self, workspace: BuildWorkspaceContext) -> Self {
+        self.workspace = Some(workspace);
+        self
+    }
 }
 
 /// Build report data collected before the actual Cargo build finishes.
@@ -202,6 +223,7 @@ impl BuildReportDraft {
             interop: self.interop,
             timings_ms,
             notes: self.notes,
+            workspace: None,
         }
     }
 }
@@ -235,6 +257,26 @@ pub(crate) fn emit_build_report(report: &BuildReport, options: &BuildReportOptio
         BuildReportFormat::Json => {
             let json = serde_json::to_string_pretty(report)
                 .map_err(|error| CliError::failure(format!("failed to serialize build report JSON: {error}")))?;
+            if let Some(path) = &options.output_path {
+                write_json_file(path, &json)?;
+            } else {
+                println!("{json}");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Write or print one aggregate RFC 077 workspace build report using the same user-facing `--report` contract.
+pub(crate) fn emit_workspace_build_report(report: &Value, options: &BuildReportOptions) -> CliResult<()> {
+    let Some(format) = options.format else {
+        return Ok(());
+    };
+    match format {
+        BuildReportFormat::Json => {
+            let json = serde_json::to_string_pretty(report).map_err(|error| {
+                CliError::failure(format!("failed to serialize workspace build report JSON: {error}"))
+            })?;
             if let Some(path) = &options.output_path {
                 write_json_file(path, &json)?;
             } else {

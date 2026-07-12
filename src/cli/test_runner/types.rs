@@ -169,4 +169,18 @@ pub struct TestRunConfig<'a> {
     pub cargo_features: Vec<String>,
     pub cargo_no_default_features: bool,
     pub cargo_all_features: bool,
+    /// Compiler-owned workspace identity attached to every observable test result for a fan-out invocation.
+    pub workspace_context: Option<WorkspaceTestContext>,
+}
+
+/// Member identity supplied by RFC 077 orchestration to a single test-batch run.
+///
+/// The runner does not discover workspaces itself: it only projects this context into JSON Lines test records and
+/// summaries after the CLI has validated scope selection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceTestContext {
+    pub workspace_root: PathBuf,
+    pub scope_origin: String,
+    pub member_name: String,
+    pub member_root: PathBuf,
 }

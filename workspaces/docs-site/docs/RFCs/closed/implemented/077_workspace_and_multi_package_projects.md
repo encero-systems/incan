@@ -1,6 +1,6 @@
 # RFC 077: workspace and multi-package projects
 
-- **Status:** Planned
+- **Status:** Implemented
 - **Created:** 2026-04-26
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -15,7 +15,7 @@
 - **Issue:** [#405](https://github.com/encero-systems/incan/issues/405)
 - **RFC PR:** [#830](https://github.com/encero-systems/incan/pull/830)
 - **Written against:** v0.3
-- **Shipped in:** —
+- **Shipped in:** v0.5
 
 ## Summary
 
@@ -405,6 +405,71 @@ The implementation should build one validated workspace graph before command pla
 - **LSP / IDE tooling:** editor tooling should surface workspace members, default members, selected command scope, and member-specific diagnostics.
 - **Agentic tooling:** agents may use workspace topology to select relevant project skills, but must respect member scope and policy.
 - **Documentation:** docs must explain the difference between envs, members, workspace roots, and project packages.
+
+## Implementation Plan
+
+### Phase 1: Validated workspace topology
+
+- Parse workspace declarations alongside existing project manifests without changing single-project behavior.
+- Construct a deterministic workspace graph with implicit rooted membership, virtual-root support, explicit non-root paths and globs, exclusions, default members, and precise validation diagnostics.
+- Make project discovery recognize only an ancestor workspace that actually contains the current project.
+
+### Phase 2: Scope, inspection, and command routing
+
+- Resolve current-directory, default-member, `--member`, and `--workspace` selection before commands read or mutate member state.
+- Add human-readable and JSON `incan workspace inspect` output with graph identity, selected scope, inherited configuration provenance, lock state, and warnings.
+- Route single-project and multi-member commands through one scope-aware orchestration boundary, rejecting multi-member use where a command intrinsically requires one project.
+
+### Phase 3: Shared dependency, environment, and lock contracts
+
+- Validate explicit workspace dependency inheritance, including permitted Rust feature and optional refinements, and report effective provenance.
+- Resolve explicit workspace environment extensions and reject cross-root/member cycles.
+- Publish and consume one root lock that represents the complete workspace graph regardless of the selected member set, using the durable publication and locking contract.
+
+### Phase 4: Lifecycle, tooling, and documentation
+
+- Fan out supported build, check, test, and format commands in deterministic member order with member-scoped diagnostics and machine-readable results.
+- Keep capabilities member-local until the graph, selection, inspection, scoped mutation planning, and policy-evaluation prerequisites are all available.
+- Make the workspace graph available to project-aware editor and tooling entrypoints without independently rediscovering topology.
+- Document rooted and virtual workspace behavior, selection, inheritance, locks, and migration from member-local locks.
+
+## Implementation log
+
+### Spec / design
+
+- [x] Settle rooted versus virtual workspace identity, explicit non-root membership, deterministic selection, whole-workspace locking, and additive Rust dependency refinements.
+- [x] Record the constrained v0.5 boundary: no registry, task scheduler, atomic workspace publish, or implicit capability fan-out.
+
+### Manifest and topology
+
+- [x] Parse and validate `[workspace]` declarations without changing manifests that omit the table.
+- [x] Build a deterministic graph for rooted and virtual workspaces, explicit paths, globs, exclusions, defaults, duplicate names, and invalid containment.
+- [x] Resolve a workspace only when it contains the discovered project, preserving nearest-project behavior outside a workspace.
+
+### Scope and CLI
+
+- [x] Resolve unqualified current-directory/default-member scope and explicit `--member`/`--workspace` scope before member work begins.
+- [x] Add `incan workspace inspect` in human and JSON forms with selected scope, provenance, warnings, and lock state.
+- [x] Reject invalid, ambiguous, empty, or intrinsically multi-project command scopes with actionable diagnostics.
+
+### Shared configuration and locks
+
+- [x] Validate explicit shared Incan, Rust, and Rust dev dependency inheritance and effective Rust feature provenance.
+- [x] Resolve explicit workspace environment inheritance and reject cross-layer cycles.
+- [x] Read and publish only the canonical root lock for a workspace; retain member-local locks as visible, non-authoritative migration warnings.
+- [x] Cover crash-safe root lock publication and concurrent lock access through the established durability primitives.
+
+### Command and tooling integration
+
+- [x] Fan out supported check, build, test, and format commands in deterministic member order while retaining unchanged single-project behavior.
+- [x] Carry workspace/member identity into diagnostics, reports, test-batch results, LSP project context, and codegraph project discovery where observable.
+- [x] Keep workspace capability operations rejected or member-local until RFC 075/RFC 076 prerequisites are implemented rather than approximating cross-member mutation.
+
+### Tests and documentation
+
+- [x] Add rooted and virtual fixture coverage for topology, selection, manifests, locks, inheritance, command fan-out, generated Rust, and JSON inspection.
+- [x] Add Linux and macOS integration coverage for concurrent root-lock access and crash-safe publication.
+- [x] Update reference documentation, generated references, feature metadata, release notes, and migration guidance.
 
 ## Design Decisions
 

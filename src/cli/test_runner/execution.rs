@@ -2884,20 +2884,21 @@ pub(super) fn run_file_tests_batch(
     }
     let source = source_parts.join("\n");
 
-    let manifest = match ProjectManifest::discover(first.file_path.parent().unwrap_or_else(|| Path::new("."))) {
-        Ok(manifest) => manifest,
-        Err(err) => {
-            return tests
-                .iter()
-                .map(|t| {
-                    (
-                        t.clone(),
-                        TestResult::Failed(start.elapsed(), format!("Manifest error: {}", err)),
-                    )
-                })
-                .collect();
-        }
-    };
+    let manifest =
+        match common::discover_effective_project_manifest(first.file_path.parent().unwrap_or_else(|| Path::new("."))) {
+            Ok(manifest) => manifest,
+            Err(err) => {
+                return tests
+                    .iter()
+                    .map(|t| {
+                        (
+                            t.clone(),
+                            TestResult::Failed(start.elapsed(), format!("Manifest error: {}", err)),
+                        )
+                    })
+                    .collect();
+            }
+        };
     let library_manifest_index = manifest
         .as_ref()
         .map(LibraryManifestIndex::from_project_manifest)

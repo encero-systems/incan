@@ -4,7 +4,7 @@
 //! Used by both `incan lock` and the build pipeline.
 
 use std::collections::BTreeSet;
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -21,7 +21,8 @@ use crate::dependency_resolver::{InlineRustImport, ResolvedDependencies, resolve
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::{diagnostics, lexer, parser};
 use crate::lockfile::{CargoFeatureSelection, IncanLock, compute_deps_fingerprint};
-use crate::manifest::ProjectManifest;
+use crate::manifest::{DependencySpec, ProjectManifest};
+use crate::workspace::WorkspaceGraph;
 
 use super::common::{
     CargoPolicy, ProjectRequirements, build_source_map, cargo_command_flags, cargo_lockfile_flags, collect_modules,
@@ -83,6 +84,11 @@ pub fn lock_project(
         cargo_all_features,
     }
     .normalized();
+    if let Some(workspace) =
+        WorkspaceGraph::discover(manifest.project_root()).map_err(|error| CliError::failure(error.to_string()))?
+    {
+        return lock_workspace(&workspace, entry_file.map(PathBuf::as_path), &cargo_features);
+    }
     let context = collect_project_lock_context(&manifest, entry_file.map(PathBuf::as_path), &cargo_features)?
         .ok_or_else(|| {
             CliError::failure("incan lock requires a FILE argument or at least one [project.scripts] entry")
@@ -111,10 +117,44 @@ pub fn lock_project(
         &context.project_requirements,
         &cargo_features,
         &cargo_policy,
+        None,
         #[cfg(feature = "rust_inspect")]
         &context.rust_inspect_query_paths,
     )?;
 
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Generate the one canonical RFC 077 lockfile for every effective workspace member.
+fn lock_workspace(
+    workspace: &WorkspaceGraph,
+    entry_file: Option<&Path>,
+    cargo_features: &CargoFeatureSelection,
+) -> CliResult<ExitCode> {
+    let lock_path = workspace.root().join("incan.lock");
+    let publication_lock = crate::lockfile::acquire_publication_lock(&lock_path)
+        .map_err(|error| CliError::failure(format!("failed to acquire workspace lock publication guard: {error}")))?;
+    let context = collect_workspace_lock_context(workspace, entry_file, cargo_features)?;
+    let root_manifest = workspace
+        .workspace_manifest()
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    let rust_edition = root_manifest
+        .build
+        .as_ref()
+        .and_then(|build| build.rust_edition.clone());
+    let cargo_policy = CargoPolicy::explicit(false, false, false, Vec::new());
+    generate_lockfile(
+        workspace.root(),
+        "incan_workspace",
+        rust_edition,
+        &context.resolved,
+        &context.project_requirements,
+        cargo_features,
+        &cargo_policy,
+        Some(&publication_lock),
+        #[cfg(feature = "rust_inspect")]
+        &context.rust_inspect_query_paths,
+    )?;
     Ok(ExitCode::SUCCESS)
 }
 
@@ -270,6 +310,21 @@ pub(crate) fn resolve_lock_payload(request: LockResolutionRequest<'_>) -> CliRes
         return Ok(None);
     }
 
+    if let Some(manifest) = manifest
+        && let Some(workspace) =
+            WorkspaceGraph::discover(manifest.project_root()).map_err(|error| CliError::failure(error.to_string()))?
+    {
+        return resolve_workspace_lock_payload(
+            &workspace,
+            resolved,
+            project_requirements,
+            cargo_features,
+            cargo_policy,
+            #[cfg(feature = "rust_inspect")]
+            rust_inspect_query_paths,
+        );
+    }
+
     let project_context = if let Some(manifest) = manifest {
         collect_project_lock_context(manifest, None, cargo_features)?
     } else {
@@ -349,8 +404,94 @@ pub(crate) fn resolve_lock_payload(request: LockResolutionRequest<'_>) -> CliRes
         project_requirements,
         cargo_features,
         cargo_policy,
+        None,
         #[cfg(feature = "rust_inspect")]
         rust_inspect_query_paths,
+    )?;
+    Ok(Some(lock.cargo_lock_payload))
+}
+
+/// Resolve or generate the canonical root lock for a workspace-aware compiler invocation.
+///
+/// The member that triggered this call is deliberately absent from the path calculation: a workspace lock is built
+/// from every member context and lives only at the workspace root.
+fn resolve_workspace_lock_payload(
+    workspace: &WorkspaceGraph,
+    caller_resolved: &ResolvedDependencies,
+    caller_requirements: &ProjectRequirements,
+    cargo_features: &CargoFeatureSelection,
+    cargo_policy: &CargoPolicy,
+    #[cfg(feature = "rust_inspect")] caller_rust_inspect_query_paths: &[String],
+) -> CliResult<Option<String>> {
+    let context = collect_workspace_lock_context(workspace, None, cargo_features)?;
+    let mut resolved = merge_workspace_resolved_dependencies(&context.resolved, caller_resolved)?;
+    let requirements = merge_workspace_project_requirements(&context.project_requirements, caller_requirements)?;
+    merge_project_requirement_dependencies(&mut resolved, &requirements)?;
+    let fingerprint = compute_deps_fingerprint(
+        &resolved.dependencies,
+        &resolved.dev_dependencies,
+        cargo_features,
+        Some(workspace.root()),
+    );
+    let strict = cargo_policy.locked || cargo_policy.frozen;
+    if strict && let Some(message) = strict_git_source_error(&resolved) {
+        return Err(CliError::failure(message));
+    }
+
+    let lock_path = workspace.root().join("incan.lock");
+    if lock_path.exists() {
+        let lock = IncanLock::load(&lock_path).map_err(|error| CliError::failure(error.to_string()))?;
+        if lock.deps_fingerprint != fingerprint {
+            if strict {
+                return Err(CliError::failure(format!(
+                    "workspace incan.lock is out of date\n\n\
+                     \x20 expected deps-fingerprint: {fingerprint}\n\
+                     \x20   actual deps-fingerprint: {}\n\n\
+                     Run `incan lock` from any workspace member or the workspace root to refresh the canonical lock.",
+                    lock.deps_fingerprint
+                )));
+            }
+            eprintln!(
+                "warning: workspace incan.lock is out of date; using the existing root lock payload without rewriting it. Run `incan lock` to refresh it."
+            );
+            return Ok(Some(lock.cargo_lock_payload));
+        }
+        return Ok(Some(lock.cargo_lock_payload));
+    }
+
+    if strict {
+        return Err(CliError::failure(
+            "workspace incan.lock is missing; run `incan lock` from any workspace member or the workspace root",
+        ));
+    }
+
+    #[cfg(feature = "rust_inspect")]
+    let mut rust_inspect_query_paths = context.rust_inspect_query_paths;
+    #[cfg(feature = "rust_inspect")]
+    {
+        rust_inspect_query_paths.extend(caller_rust_inspect_query_paths.iter().cloned());
+        rust_inspect_query_paths.sort();
+        rust_inspect_query_paths.dedup();
+    }
+    let rust_edition = workspace
+        .workspace_manifest()
+        .map_err(|error| CliError::failure(error.to_string()))?
+        .build
+        .as_ref()
+        .and_then(|build| build.rust_edition.clone());
+    let publication_lock = crate::lockfile::acquire_publication_lock(&workspace.root().join("incan.lock"))
+        .map_err(|error| CliError::failure(format!("failed to acquire workspace lock publication guard: {error}")))?;
+    let lock = generate_lockfile(
+        workspace.root(),
+        "incan_workspace",
+        rust_edition,
+        &resolved,
+        &requirements,
+        cargo_features,
+        cargo_policy,
+        Some(&publication_lock),
+        #[cfg(feature = "rust_inspect")]
+        &rust_inspect_query_paths,
     )?;
     Ok(Some(lock.cargo_lock_payload))
 }
@@ -362,6 +503,198 @@ struct ProjectLockContext {
     project_requirements: ProjectRequirements,
     #[cfg(feature = "rust_inspect")]
     rust_inspect_query_paths: Vec<String>,
+}
+
+/// The complete dependency inputs for a canonical workspace-root lockfile.
+struct WorkspaceLockContext {
+    resolved: ResolvedDependencies,
+    project_requirements: ProjectRequirements,
+    #[cfg(feature = "rust_inspect")]
+    rust_inspect_query_paths: Vec<String>,
+}
+
+/// Collect every member's effective dependency inputs before lock generation.
+///
+/// Crucially, this does not accept command scope: RFC 077 makes the root lock a property of the whole graph, so a
+/// command started in one member cannot narrow the fingerprint or omit another member's feature activation.
+fn collect_workspace_lock_context(
+    workspace: &WorkspaceGraph,
+    entry_file: Option<&Path>,
+    cargo_features: &CargoFeatureSelection,
+) -> CliResult<WorkspaceLockContext> {
+    let explicit_entry = entry_file.map(resolve_explicit_lock_entry).transpose()?;
+    let mut explicit_entry_was_selected = explicit_entry.is_none();
+    let mut resolved = ResolvedDependencies {
+        dependencies: Vec::new(),
+        dev_dependencies: Vec::new(),
+    };
+    let mut project_requirements = ProjectRequirements::default();
+    #[cfg(feature = "rust_inspect")]
+    let mut rust_inspect_query_paths = Vec::new();
+    let mut has_context = false;
+
+    for member in workspace.members() {
+        let manifest = workspace
+            .effective_member_manifest(member)
+            .map_err(|error| CliError::failure(error.to_string()))?;
+        enforce_project_toolchain_constraint(&manifest)?;
+        let member_entry = explicit_entry.as_deref().filter(|path| path.starts_with(member.root()));
+        if member_entry.is_some() {
+            explicit_entry_was_selected = true;
+        }
+        let Some(member_context) = collect_project_lock_context(&manifest, member_entry, cargo_features)? else {
+            continue;
+        };
+        has_context = true;
+        resolved = merge_workspace_resolved_dependencies(&resolved, &member_context.resolved)?;
+        project_requirements =
+            merge_workspace_project_requirements(&project_requirements, &member_context.project_requirements)?;
+        #[cfg(feature = "rust_inspect")]
+        rust_inspect_query_paths.extend(member_context.rust_inspect_query_paths);
+    }
+
+    if !explicit_entry_was_selected {
+        let entry = explicit_entry.ok_or_else(|| {
+            CliError::failure("workspace lock selection lost the explicit entry path during resolution")
+        })?;
+        return Err(CliError::failure(format!(
+            "lock entry {} is not contained by any selected workspace member",
+            entry.display()
+        )));
+    }
+    if !has_context {
+        return Err(CliError::failure(
+            "incan lock requires a FILE argument or at least one [project.scripts] entry across the workspace",
+        ));
+    }
+    #[cfg(feature = "rust_inspect")]
+    {
+        rust_inspect_query_paths.sort();
+        rust_inspect_query_paths.dedup();
+    }
+    Ok(WorkspaceLockContext {
+        resolved,
+        project_requirements,
+        #[cfg(feature = "rust_inspect")]
+        rust_inspect_query_paths,
+    })
+}
+
+/// Canonicalize one optional command-line entry before assigning it to a member.
+fn resolve_explicit_lock_entry(entry_file: &Path) -> CliResult<PathBuf> {
+    let candidate = if entry_file.is_absolute() {
+        entry_file.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|error| CliError::failure(format!("failed to determine current directory: {error}")))?
+            .join(entry_file)
+    };
+    fs::canonicalize(&candidate)
+        .map_err(|error| CliError::failure(format!("failed to resolve lock entry {}: {error}", candidate.display())))
+}
+
+/// Merge member dependency sets into Cargo's workspace-wide feature union without allowing identity drift.
+fn merge_workspace_resolved_dependencies(
+    current: &ResolvedDependencies,
+    extra: &ResolvedDependencies,
+) -> CliResult<ResolvedDependencies> {
+    let mut merged = current.clone();
+    for candidate in &extra.dependencies {
+        merge_workspace_dependency(&mut merged.dependencies, &mut merged.dev_dependencies, candidate, false)?;
+    }
+    for candidate in &extra.dev_dependencies {
+        merge_workspace_dependency(&mut merged.dependencies, &mut merged.dev_dependencies, candidate, true)?;
+    }
+    merged
+        .dependencies
+        .sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
+    merged
+        .dev_dependencies
+        .sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
+    Ok(merged)
+}
+
+/// Merge one member request; normal dependency use wins over dev-only use while features/defaults become a union.
+fn merge_workspace_dependency(
+    dependencies: &mut Vec<DependencySpec>,
+    dev_dependencies: &mut Vec<DependencySpec>,
+    candidate: &DependencySpec,
+    dev_only: bool,
+) -> CliResult<()> {
+    if let Some(existing) = dependencies
+        .iter_mut()
+        .find(|spec| spec.crate_name == candidate.crate_name)
+    {
+        merge_workspace_dependency_spec(existing, candidate)?;
+        return Ok(());
+    }
+
+    if let Some(index) = dev_dependencies
+        .iter()
+        .position(|spec| spec.crate_name == candidate.crate_name)
+    {
+        let mut existing = dev_dependencies.remove(index);
+        merge_workspace_dependency_spec(&mut existing, candidate)?;
+        if dev_only {
+            dev_dependencies.push(existing);
+        } else {
+            dependencies.push(existing);
+        }
+        return Ok(());
+    }
+
+    if dev_only {
+        dev_dependencies.push(candidate.clone());
+    } else {
+        dependencies.push(candidate.clone());
+    }
+    Ok(())
+}
+
+/// Merge only Cargo-unifiable member refinements; source, version, rename, and identity remain exact.
+fn merge_workspace_dependency_spec(existing: &mut DependencySpec, candidate: &DependencySpec) -> CliResult<()> {
+    if existing.version != candidate.version
+        || existing.source != candidate.source
+        || existing.package != candidate.package
+    {
+        return Err(CliError::failure(format!(
+            "dependency `{}` has incompatible workspace member identities; align version, source, and package at the workspace root",
+            candidate.crate_name
+        )));
+    }
+    existing.features.extend(candidate.features.iter().cloned());
+    existing.features.sort();
+    existing.features.dedup();
+    existing.default_features |= candidate.default_features;
+    existing.optional &= candidate.optional;
+    Ok(())
+}
+
+/// Merge stdlib/provider requirements with the same feature-union rules used for member Rust dependencies.
+fn merge_workspace_project_requirements(
+    current: &ProjectRequirements,
+    extra: &ProjectRequirements,
+) -> CliResult<ProjectRequirements> {
+    let mut stdlib_features = current.stdlib_features.clone();
+    stdlib_features.extend(extra.stdlib_features.iter().cloned());
+    stdlib_features.sort();
+    stdlib_features.dedup();
+    let mut dependencies = current.dependencies.clone();
+    for candidate in &extra.dependencies {
+        if let Some(existing) = dependencies
+            .iter_mut()
+            .find(|spec| spec.crate_name == candidate.crate_name)
+        {
+            merge_workspace_dependency_spec(existing, candidate)?;
+        } else {
+            dependencies.push(candidate.clone());
+        }
+    }
+    dependencies.sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
+    Ok(ProjectRequirements {
+        stdlib_features,
+        dependencies,
+    })
 }
 
 /// Test-file dependency inputs that must participate in the same project lock fingerprint as normal scripts.
@@ -934,8 +1267,19 @@ pub(crate) fn generate_lockfile(
     project_requirements: &ProjectRequirements,
     cargo_features: &CargoFeatureSelection,
     cargo_policy: &CargoPolicy,
+    publication_lock: Option<&File>,
     #[cfg(feature = "rust_inspect")] rust_inspect_query_paths: &[String],
 ) -> CliResult<IncanLock> {
+    let lock_path = project_root.join("incan.lock");
+    let owned_publication_lock = if publication_lock.is_none() {
+        Some(
+            crate::lockfile::acquire_publication_lock(&lock_path)
+                .map_err(|error| CliError::failure(format!("failed to acquire lock publication guard: {error}")))?,
+        )
+    } else {
+        None
+    };
+    let publication_lock = publication_lock.or(owned_publication_lock.as_ref());
     let lock_dir = project_root.join("target").join("incan_lock");
     let mut generator = ProjectGenerator::new(&lock_dir, project_name, true);
     #[cfg(feature = "rust_inspect")]
@@ -993,8 +1337,9 @@ pub(crate) fn generate_lockfile(
         rust_inspect_query_paths,
     )?;
 
-    let lock_path = project_root.join("incan.lock");
-    lock.write(&lock_path)
+    let publication_lock = publication_lock
+        .ok_or_else(|| CliError::failure("internal error: lock generation lost its publication guard"))?;
+    lock.write_while_locked(&lock_path, publication_lock)
         .map_err(|e| CliError::failure(format!("Failed to write incan.lock: {}", e)))?;
 
     Ok(lock)
@@ -1116,6 +1461,46 @@ mod tests {
             optional: false,
             package: None,
         }
+    }
+
+    #[test]
+    fn workspace_lock_merge_unifies_cargo_features_without_permitting_identity_drift()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut first = registry_dependency("serde");
+        first.features = vec!["alloc".to_string()];
+        first.default_features = false;
+        first.optional = true;
+        let mut second = registry_dependency("serde");
+        second.features = vec!["derive".to_string()];
+
+        let merged = merge_workspace_resolved_dependencies(
+            &ResolvedDependencies {
+                dependencies: vec![first],
+                dev_dependencies: Vec::new(),
+            },
+            &ResolvedDependencies {
+                dependencies: vec![second],
+                dev_dependencies: Vec::new(),
+            },
+        )?;
+        let serde = merged.dependencies.first().ok_or("merged serde dependency missing")?;
+        assert_eq!(serde.features, vec!["alloc", "derive"]);
+        assert!(serde.default_features);
+        assert!(!serde.optional);
+
+        let mut incompatible = registry_dependency("serde");
+        incompatible.version = Some("2".to_string());
+        let error = merge_workspace_resolved_dependencies(
+            &merged,
+            &ResolvedDependencies {
+                dependencies: vec![incompatible],
+                dev_dependencies: Vec::new(),
+            },
+        )
+        .err()
+        .ok_or("incompatible workspace dependency should fail")?;
+        assert!(error.message.contains("incompatible workspace member identities"));
+        Ok(())
     }
 
     #[test]

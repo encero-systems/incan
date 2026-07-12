@@ -29,12 +29,11 @@ use crate::frontend::diagnostics::{self, StableDiagnostic};
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::canonicalize_source_module_segments;
 use crate::frontend::typechecker::{SourceTargetInfo, TypeCheckInfo};
-use crate::manifest::ProjectManifest;
 use crate::version::INCAN_VERSION;
 
 use super::common::{
-    CliDiagnosticFailure, CompilationSession, collect_modules_detailed, read_source, resolve_project_root,
-    typecheck_modules_with_import_graph_info,
+    CliDiagnosticFailure, CompilationSession, collect_modules_detailed, discover_effective_project_manifest,
+    read_source, resolve_project_root, typecheck_modules_with_import_graph_info,
 };
 
 /// Output format for `incan inspect codegraph`.
@@ -185,7 +184,7 @@ fn directory_modules_diagnostics_and_info(files: &[PathBuf]) -> CliResult<Direct
 }
 
 struct TypecheckContext {
-    manifest: Option<ProjectManifest>,
+    manifest: Option<crate::manifest::ProjectManifest>,
     library_manifest_index: LibraryManifestIndex,
 }
 
@@ -193,7 +192,7 @@ impl TypecheckContext {
     /// Discover manifest and library metadata needed to typecheck codegraph entrypoint collections.
     fn discover(path: &Path) -> CliResult<Self> {
         let project_root = resolve_project_root(path);
-        let manifest = ProjectManifest::discover(&project_root)
+        let manifest = discover_effective_project_manifest(&project_root)
             .map_err(|error| CliError::failure(format!("failed to load project manifest: {error}")))?;
         let library_manifest_index = manifest
             .as_ref()
@@ -312,7 +311,7 @@ fn should_skip_directory(path: &Path) -> bool {
 /// metadata exports.
 fn package_identity(path: &Path) -> CliResult<Option<CodegraphPackage>> {
     let project_root = resolve_project_root(path);
-    let manifest = ProjectManifest::discover(&project_root)
+    let manifest = discover_effective_project_manifest(&project_root)
         .map_err(|error| CliError::failure(format!("failed to load project manifest: {error}")))?;
     Ok(manifest.map(|manifest| CodegraphPackage {
         name: manifest.project.as_ref().and_then(|project| project.name.clone()),

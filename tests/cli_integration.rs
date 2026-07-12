@@ -169,6 +169,433 @@ fn parse_jsonl_stdout(output: &Output) -> Result<Vec<serde_json::Value>, Box<dyn
 }
 
 #[test]
+fn workspace_inspect_reports_deterministic_scope_and_stale_member_locks() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::write(
+        root.path().join("incan.toml"),
+        r#"
+[project]
+name = "root"
+
+[workspace]
+members = ["packages/*"]
+default-members = ["zebra", "alpha"]
+"#,
+    )?;
+    for name in ["alpha", "zebra"] {
+        let member_root = root.path().join("packages").join(name);
+        fs::create_dir_all(member_root.join("src"))?;
+        fs::write(
+            member_root.join("incan.toml"),
+            format!("[project]\nname = \"{name}\"\n"),
+        )?;
+    }
+    fs::write(root.path().join("packages/zebra/incan.lock"), "obsolete member lock")?;
+
+    let default_output = run_incan(root.path(), &["workspace", "inspect", "--format", "json"])?;
+    assert_success(&default_output, "workspace inspect from root");
+    let default_report = parse_json_stdout(&default_output)?;
+    assert_eq!(default_report["schema_version"], 1);
+    assert_eq!(default_report["selected_scope"]["origin"], "default_members");
+    assert_eq!(default_report["selected_scope"]["members"][0]["name"], "alpha");
+    assert_eq!(default_report["selected_scope"]["members"][1]["name"], "zebra");
+    assert_eq!(
+        default_report["lock"]["stale_member_local_locks"]
+            .as_array()
+            .map(Vec::len),
+        Some(1)
+    );
+
+    let current_member_output = run_incan(
+        &root.path().join("packages/zebra/src"),
+        &["workspace", "inspect", "--format", "json"],
+    )?;
+    assert_success(&current_member_output, "workspace inspect from member");
+    let current_member_report = parse_json_stdout(&current_member_output)?;
+    assert_eq!(current_member_report["selected_scope"]["origin"], "current_member");
+    assert_eq!(current_member_report["selected_scope"]["members"][0]["name"], "zebra");
+
+    let all_output = run_incan(
+        root.path(),
+        &["workspace", "inspect", "--format", "json", "--workspace"],
+    )?;
+    assert_success(&all_output, "workspace inspect --workspace");
+    let all_report = parse_json_stdout(&all_output)?;
+    assert_eq!(all_report["selected_scope"]["origin"], "workspace");
+    assert_eq!(
+        all_report["selected_scope"]["members"].as_array().map(Vec::len),
+        Some(3)
+    );
+    Ok(())
+}
+
+#[test]
+fn workspace_lock_is_published_once_at_the_root_from_any_member() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::write(
+        root.path().join("incan.toml"),
+        r#"
+[workspace]
+members = ["packages/*"]
+
+[workspace.rust-dependencies]
+itoa = "1"
+"#,
+    )?;
+    for name in ["alpha", "zebra"] {
+        let member_root = root.path().join("packages").join(name);
+        fs::create_dir_all(member_root.join("src"))?;
+        fs::write(
+            member_root.join("incan.toml"),
+            format!(
+                "[project]\nname = \"{name}\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n{}",
+                if name == "alpha" {
+                    "\n[rust-dependencies]\nitoa = { workspace = true }\n"
+                } else {
+                    ""
+                },
+            ),
+        )?;
+        fs::write(
+            member_root.join("src/main.incn"),
+            if name == "alpha" {
+                "from rust::itoa import Buffer\n\ndef main() -> None:\n  println(\"workspace lock\")\n"
+            } else {
+                "def main() -> None:\n  println(\"workspace lock\")\n"
+            },
+        )?;
+    }
+
+    let output = run_incan(&root.path().join("packages/alpha"), &["lock"])?;
+    assert_success(&output, "incan lock from workspace member");
+    let root_lock = root.path().join("incan.lock");
+    assert!(root_lock.is_file(), "workspace root lock was not written");
+    assert!(
+        fs::read_to_string(&root_lock)?.contains("itoa"),
+        "inherited member dependency was omitted from root lock"
+    );
+    assert!(
+        !root.path().join("packages/alpha/incan.lock").exists()
+            && !root.path().join("packages/zebra/incan.lock").exists(),
+        "workspace members must not receive authoritative lockfiles"
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn workspace_lock_concurrent_publishers_leave_one_parseable_root_lock() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::write(
+        root.path().join("incan.toml"),
+        "[workspace]\nmembers = [\"packages/*\"]\n",
+    )?;
+    for name in ["alpha", "zebra"] {
+        let member_root = root.path().join("packages").join(name);
+        fs::create_dir_all(member_root.join("src"))?;
+        fs::write(
+            member_root.join("incan.toml"),
+            format!(
+                "[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"
+            ),
+        )?;
+        fs::write(member_root.join("src/main.incn"), "def main() -> None:\n  pass\n")?;
+    }
+
+    let stdlib = Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib/stdlib");
+    let generated_target = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/incan_generated_shared_target");
+    let spawn_lock = |member: &str| -> Result<std::process::Child, Box<dyn std::error::Error>> {
+        Ok(Command::new(incan_binary())
+            .arg("lock")
+            .current_dir(root.path().join("packages").join(member))
+            .env("CARGO_NET_OFFLINE", "true")
+            .env("INCAN_NO_BANNER", "1")
+            .env("INCAN_STDLIB", &stdlib)
+            .env("INCAN_STDLIB_DIR", &stdlib)
+            .env("INCAN_GENERATED_CARGO_TARGET_DIR", &generated_target)
+            .spawn()?)
+    };
+    let left = spawn_lock("alpha")?;
+    let right = spawn_lock("zebra")?;
+    let left_output = left.wait_with_output()?;
+    let right_output = right.wait_with_output()?;
+    assert_success(&left_output, "first concurrent workspace lock publisher");
+    assert_success(&right_output, "second concurrent workspace lock publisher");
+
+    let lock_path = root.path().join("incan.lock");
+    let lock = incan::lockfile::IncanLock::load(&lock_path)?;
+    assert!(!lock.deps_fingerprint.is_empty());
+    assert!(
+        fs::read_dir(root.path())?
+            .filter_map(Result::ok)
+            .all(|entry| !entry.file_name().to_string_lossy().contains(".incan-stage-")),
+        "failed workspace lock publication left a private staging file behind"
+    );
+    Ok(())
+}
+
+#[test]
+fn workspace_fmt_fans_out_in_member_order_without_changing_single_project_semantics()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::write(
+        root.path().join("incan.toml"),
+        "[workspace]\nmembers = [\"packages/*\"]\n",
+    )?;
+    for name in ["zebra", "alpha"] {
+        let member_root = root.path().join("packages").join(name);
+        fs::create_dir_all(member_root.join("src"))?;
+        fs::write(
+            member_root.join("incan.toml"),
+            format!("[project]\nname = \"{name}\"\n"),
+        )?;
+        fs::write(
+            member_root.join("src/main.incn"),
+            "def main() -> None:\n  println(\"formatted\")\n",
+        )?;
+    }
+
+    let output = run_incan(root.path(), &["fmt", "--workspace"])?;
+    assert_success(&output, "workspace fmt --workspace");
+    let stdout = String::from_utf8(output.stdout)?;
+    let alpha = stdout
+        .find("workspace member alpha")
+        .ok_or("alpha formatting output missing")?;
+    let zebra = stdout
+        .find("workspace member zebra")
+        .ok_or("zebra formatting output missing")?;
+    assert!(
+        alpha < zebra,
+        "workspace formatter did not use deterministic member order:\n{stdout}"
+    );
+    Ok(())
+}
+
+#[test]
+fn workspace_check_fans_out_with_one_member_scoped_json_report() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::write(
+        root.path().join("incan.toml"),
+        "[workspace]\nmembers = [\"packages/*\"]\n",
+    )?;
+    for (name, source) in [
+        ("zebra", "def main() -> None:\n  println(\"zebra\")\n"),
+        ("alpha", "def main() -> None:\n  println(\"alpha\")\n"),
+    ] {
+        let member_root = root.path().join("packages").join(name);
+        fs::create_dir_all(member_root.join("src"))?;
+        fs::write(
+            member_root.join("incan.toml"),
+            format!("[project]\nname = \"{name}\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"),
+        )?;
+        fs::write(member_root.join("src/main.incn"), source)?;
+    }
+
+    let output = run_incan(root.path(), &["check", "--workspace", "--format", "json"])?;
+    assert_success(&output, "workspace check --workspace");
+    let report = parse_json_stdout(&output)?;
+    assert_eq!(report["schema_version"], "incan.workspace.check.v1");
+    assert_eq!(report["ok"], true);
+    assert_eq!(report["workspace"]["selected_scope"]["origin"], "workspace");
+    assert_eq!(report["results"][0]["member"]["name"], "alpha");
+    assert_eq!(report["results"][1]["member"]["name"], "zebra");
+    assert_eq!(report["results"][0]["report"]["ok"], true);
+    assert_eq!(report["results"][1]["report"]["ok"], true);
+
+    let member_output = run_incan(root.path(), &["check", "--member", "zebra", "--format", "json"])?;
+    assert_success(&member_output, "workspace check --member");
+    let member_report = parse_json_stdout(&member_output)?;
+    assert_eq!(
+        member_report["workspace"]["selected_scope"]["origin"],
+        "explicit_members"
+    );
+    assert_eq!(member_report["results"].as_array().map(Vec::len), Some(1));
+    assert_eq!(member_report["results"][0]["member"]["name"], "zebra");
+    Ok(())
+}
+
+#[test]
+fn workspace_test_fans_out_with_member_identity_in_jsonl() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::write(
+        root.path().join("incan.toml"),
+        "[workspace]\nmembers = [\"packages/*\"]\n",
+    )?;
+    for name in ["zebra", "alpha"] {
+        let member_root = root.path().join("packages").join(name);
+        fs::create_dir_all(member_root.join("tests"))?;
+        fs::create_dir_all(member_root.join("src"))?;
+        fs::write(
+            member_root.join("incan.toml"),
+            format!("[project]\nname = \"{name}\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"),
+        )?;
+        fs::write(member_root.join("src/main.incn"), "def main() -> None:\n  pass\n")?;
+        fs::write(
+            member_root.join("tests/test_member.incn"),
+            format!("from std.testing import test\n\n@test\ndef test_{name}() -> None:\n  assert True\n"),
+        )?;
+    }
+
+    let output = run_incan(root.path(), &["test", "--workspace", "--format", "json"])?;
+    assert_success(&output, "workspace test --workspace --format json");
+    let records = parse_jsonl_stdout(&output)?;
+    assert_eq!(records[0]["event"], "workspace_scope");
+    assert_eq!(records[0]["workspace"]["selected_scope"]["origin"], "workspace");
+    let member_names = records
+        .iter()
+        .filter(|record| record.get("test_id").is_some())
+        .map(|record| record["workspace"]["member"]["name"].as_str().unwrap_or_default())
+        .collect::<Vec<_>>();
+    assert_eq!(member_names, vec!["alpha", "zebra"]);
+    assert!(
+        records
+            .iter()
+            .filter(|record| record.get("summary").is_some())
+            .all(|record| record["workspace"]["root"].is_string())
+    );
+    Ok(())
+}
+
+#[test]
+fn workspace_build_fans_out_with_one_aggregate_json_report() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::write(
+        root.path().join("incan.toml"),
+        "[workspace]\nmembers = [\"packages/*\"]\n\n[workspace.rust-dependencies]\nitoa = \"1\"\n",
+    )?;
+    for name in ["zebra", "alpha"] {
+        let member_root = root.path().join("packages").join(name);
+        fs::create_dir_all(member_root.join("src"))?;
+        fs::write(
+            member_root.join("incan.toml"),
+            format!(
+                "[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n{}",
+                if name == "alpha" {
+                    "\n[rust-dependencies]\nitoa = { workspace = true }\n"
+                } else {
+                    ""
+                }
+            ),
+        )?;
+        fs::write(
+            member_root.join("src/main.incn"),
+            if name == "alpha" {
+                "from rust::itoa import Buffer\n\ndef main() -> None:\n  println(\"alpha\")\n".to_string()
+            } else {
+                format!("def main() -> None:\n  println(\"{name}\")\n")
+            },
+        )?;
+    }
+
+    let output = run_incan(root.path(), &["build", "--workspace", "--report", "json"])?;
+    assert_success(&output, "workspace build --workspace --report json");
+    let report = parse_json_stdout(&output)?;
+    assert_eq!(report["schema_version"], "incan.workspace.build.v1");
+    assert_eq!(report["ok"], true);
+    assert_eq!(report["workspace"]["selected_scope"]["origin"], "workspace");
+    assert_eq!(report["results"][0]["member"]["name"], "alpha");
+    assert_eq!(report["results"][1]["member"]["name"], "zebra");
+    assert_eq!(report["results"][0]["report"]["workspace"]["member_name"], "alpha");
+    assert_eq!(report["results"][1]["report"]["workspace"]["member_name"], "zebra");
+    assert!(
+        report["results"][0]["report"]["dependencies"]["rust"]
+            .as_array()
+            .is_some_and(|dependencies| dependencies.iter().any(|dependency| dependency["crate_name"] == "itoa"))
+    );
+    Ok(())
+}
+
+#[test]
+fn workspace_run_and_version_require_one_explicit_member() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::write(
+        root.path().join("incan.toml"),
+        "[workspace]\nmembers = [\"packages/*\"]\n",
+    )?;
+    for name in ["zebra", "alpha"] {
+        let member_root = root.path().join("packages").join(name);
+        fs::create_dir_all(member_root.join("src"))?;
+        fs::write(
+            member_root.join("incan.toml"),
+            format!(
+                "[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"
+            ),
+        )?;
+        fs::write(
+            member_root.join("src/main.incn"),
+            format!("def main() -> None:\n  println(\"{name}\")\n"),
+        )?;
+    }
+
+    let run_output = run_incan(root.path(), &["run", "--member", "alpha"])?;
+    assert_success(&run_output, "workspace run --member alpha");
+    assert_eq!(String::from_utf8(run_output.stdout)?, "alpha\n");
+
+    let multi_run = run_incan(root.path(), &["run", "--workspace"])?;
+    assert!(
+        !multi_run.status.success(),
+        "workspace run unexpectedly accepted multiple members"
+    );
+    assert!(
+        String::from_utf8(multi_run.stderr)?.contains("incan run requires exactly one workspace member"),
+        "workspace run did not explain the one-member requirement"
+    );
+
+    let version_output = run_incan(root.path(), &["version", "patch", "--member", "alpha"])?;
+    assert_success(&version_output, "workspace version --member alpha");
+    let alpha_manifest = fs::read_to_string(root.path().join("packages/alpha/incan.toml"))?;
+    let zebra_manifest = fs::read_to_string(root.path().join("packages/zebra/incan.toml"))?;
+    assert!(alpha_manifest.contains("version = \"0.1.1\""));
+    assert!(zebra_manifest.contains("version = \"0.1.0\""));
+    Ok(())
+}
+
+#[test]
+fn workspace_env_fragments_are_inherited_only_through_explicit_member_extends() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = tempfile::tempdir()?;
+    fs::write(
+        root.path().join("incan.toml"),
+        r#"
+[workspace]
+members = ["packages/member"]
+
+[workspace.envs.ci]
+env-vars = { ROOT = "1", SHARED = "workspace" }
+
+[workspace.envs.ci.scripts]
+test = ["incan", "test"]
+"#,
+    )?;
+    let member_root = root.path().join("packages/member");
+    fs::create_dir_all(member_root.join("src"))?;
+    fs::write(
+        member_root.join("incan.toml"),
+        r#"
+[project]
+name = "member"
+
+[tool.incan.envs.ci]
+extends = ["workspace:ci"]
+env-vars = { SHARED = "member", MEMBER = "1" }
+"#,
+    )?;
+
+    let output = run_incan(&member_root, &["env", "show", "ci", "--format", "json"])?;
+    assert_success(&output, "workspace env inheritance");
+    let report = parse_json_stdout(&output)?;
+    assert_eq!(
+        report["overlay_chain"],
+        serde_json::json!(["project", "default", "workspace:ci", "ci"])
+    );
+    assert_eq!(report["env_vars"]["ROOT"], "1");
+    assert_eq!(report["env_vars"]["SHARED"], "member");
+    assert_eq!(report["env_vars"]["MEMBER"], "1");
+    assert_eq!(report["scripts"]["test"], serde_json::json!(["incan", "test"]));
+    Ok(())
+}
+
+#[test]
 fn run_std_environ_string_accessors_issue557() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "std_environ_string_accessors", "")?;

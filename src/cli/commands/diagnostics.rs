@@ -14,12 +14,12 @@ use crate::frontend::diagnostics::{self, DIAGNOSTIC_SCHEMA_VERSION, StableDiagno
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 #[cfg(feature = "rust_inspect")]
 use crate::lockfile::CargoFeatureSelection;
-use crate::manifest::ProjectManifest;
 
 #[cfg(feature = "rust_inspect")]
 use super::common::CargoPolicy;
 use super::common::{
-    CliDiagnosticFailure, collect_modules_detailed, resolve_project_root, typecheck_modules_with_import_graph_detailed,
+    CliDiagnosticFailure, collect_modules_detailed, discover_effective_project_manifest, resolve_project_root,
+    typecheck_modules_with_import_graph_detailed,
 };
 #[cfg(feature = "rust_inspect")]
 use super::lock::{RustInspectTypecheckRequest, prepare_rust_inspect_typecheck_workspace};
@@ -31,11 +31,27 @@ pub enum DiagnosticOutputFormat {
     Json,
 }
 
-#[derive(Debug, Serialize)]
-struct DiagnosticReport {
+/// One complete typecheck result, retained independently from CLI rendering so workspace orchestration can emit one
+/// coherent machine-readable report for several members.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct DiagnosticReport {
     schema_version: u32,
     ok: bool,
     diagnostics: Vec<StableDiagnostic>,
+    #[serde(skip_serializing)]
+    human_message: Option<String>,
+}
+
+impl DiagnosticReport {
+    /// Whether collection and typechecking succeeded without diagnostics.
+    pub(crate) fn ok(&self) -> bool {
+        self.ok
+    }
+
+    /// Human-readable diagnostics retained from the compiler pipeline when the report is unsuccessful.
+    pub(crate) fn human_message(&self) -> Option<&str> {
+        self.human_message.as_deref()
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -47,13 +63,22 @@ struct ExplainReport {
 
 /// Run the canonical check pipeline for a file or project entrypoint.
 pub fn check_path(path: &Path, format: DiagnosticOutputFormat) -> CliResult<ExitCode> {
+    let report = check_path_report(path)?;
+    render_check_report(&report, format)
+}
+
+/// Run the canonical check pipeline without deciding how its result is rendered.
+///
+/// This is the single-project compiler boundary used by both `incan check` and the RFC 077 workspace command fan-out.
+/// It deliberately retains stable diagnostics rather than printing them as soon as a member fails.
+pub(crate) fn check_path_report(path: &Path) -> CliResult<DiagnosticReport> {
     let modules = match collect_modules_detailed(&path.to_string_lossy()) {
         Ok(modules) => modules,
-        Err(failure) => return render_check_failure(failure, format),
+        Err(failure) => return Ok(diagnostic_report_from_failure(failure)),
     };
     let normalized_path = normalize_input_path(path)?;
     let project_root = resolve_project_root(&normalized_path);
-    let manifest = match ProjectManifest::discover(&project_root) {
+    let manifest = match discover_effective_project_manifest(&project_root) {
         Ok(manifest) => manifest,
         Err(error) => {
             let failure = CliDiagnosticFailure::single(
@@ -62,7 +87,7 @@ pub fn check_path(path: &Path, format: DiagnosticOutputFormat) -> CliResult<Exit
                 diagnostics::CompileError::new(error.to_string(), crate::frontend::ast::Span::default()),
                 diagnostics::DiagnosticPhase::Tooling,
             );
-            return render_check_failure(failure, format);
+            return Ok(diagnostic_report_from_failure(failure));
         }
     };
     let library_manifest_index = manifest
@@ -105,8 +130,13 @@ pub fn check_path(path: &Path, format: DiagnosticOutputFormat) -> CliResult<Exit
         #[cfg(feature = "rust_inspect")]
         rust_inspect_manifest_dir.as_deref(),
     ) {
-        Ok(()) => render_check_success(format),
-        Err(failure) => render_check_failure(failure, format),
+        Ok(()) => Ok(DiagnosticReport {
+            schema_version: DIAGNOSTIC_SCHEMA_VERSION,
+            ok: true,
+            diagnostics: Vec::new(),
+            human_message: None,
+        }),
+        Err(failure) => Ok(diagnostic_report_from_failure(failure)),
     }
 }
 
@@ -149,51 +179,57 @@ pub fn explain_diagnostic(code: &str, format: DiagnosticOutputFormat) -> CliResu
     }
 }
 
-/// Render a successful check result in either human text or the stable JSON report shape.
-fn render_check_success(format: DiagnosticOutputFormat) -> CliResult<ExitCode> {
+/// Render one already-evaluated check result in either human text or the stable JSON report shape.
+fn render_check_report(report: &DiagnosticReport, format: DiagnosticOutputFormat) -> CliResult<ExitCode> {
     match format {
         DiagnosticOutputFormat::Text => {
-            println!("✓ Type check passed!");
-            Ok(ExitCode::SUCCESS)
+            if report.ok {
+                println!("✓ Type check passed!");
+                Ok(ExitCode::SUCCESS)
+            } else {
+                Err(CliError::failure(render_check_report_human(report)))
+            }
         }
         DiagnosticOutputFormat::Json => {
-            let report = DiagnosticReport {
-                schema_version: DIAGNOSTIC_SCHEMA_VERSION,
-                ok: true,
-                diagnostics: Vec::new(),
-            };
-            print_json(&report)?;
-            Ok(ExitCode::SUCCESS)
+            print_json(report)?;
+            if report.ok {
+                Ok(ExitCode::SUCCESS)
+            } else {
+                Err(CliError::new("", ExitCode::FAILURE))
+            }
         }
     }
 }
 
-/// Render failed collection or typechecking diagnostics without losing structured JSON context.
-fn render_check_failure(failure: CliDiagnosticFailure, format: DiagnosticOutputFormat) -> CliResult<ExitCode> {
-    match format {
-        DiagnosticOutputFormat::Text => Err(CliError::failure(failure.render_human())),
-        DiagnosticOutputFormat::Json => {
-            let diagnostics = failure
-                .diagnostics
-                .iter()
-                .map(|diagnostic| {
-                    diagnostics::stable_diagnostic(
-                        &diagnostic.file_path,
-                        &diagnostic.source,
-                        &diagnostic.error,
-                        diagnostic.phase,
-                    )
-                })
-                .collect();
-            let report = DiagnosticReport {
-                schema_version: DIAGNOSTIC_SCHEMA_VERSION,
-                ok: false,
-                diagnostics,
-            };
-            print_json(&report)?;
-            Err(CliError::new("", ExitCode::FAILURE))
-        }
+/// Convert source-aware compiler failures into the stable report consumed by both single-project and workspace paths.
+fn diagnostic_report_from_failure(failure: CliDiagnosticFailure) -> DiagnosticReport {
+    let human_message = failure.render_human();
+    let diagnostics = failure
+        .diagnostics
+        .iter()
+        .map(|diagnostic| {
+            diagnostics::stable_diagnostic(
+                &diagnostic.file_path,
+                &diagnostic.source,
+                &diagnostic.error,
+                diagnostic.phase,
+            )
+        })
+        .collect();
+    DiagnosticReport {
+        schema_version: DIAGNOSTIC_SCHEMA_VERSION,
+        ok: false,
+        diagnostics,
+        human_message: Some(human_message),
     }
+}
+
+/// Render diagnostics for the human CLI without rebuilding source context in the workspace orchestration layer.
+fn render_check_report_human(report: &DiagnosticReport) -> String {
+    report
+        .human_message
+        .clone()
+        .unwrap_or_else(|| "type check failed without diagnostics".to_string())
 }
 
 /// Pretty-print a serializable diagnostics payload to stdout.
