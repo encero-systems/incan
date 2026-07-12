@@ -1,0 +1,11 @@
+"""Reusable pricing primitives."""
+
+
+pub model LineItem:
+    name: str
+    quantity: int
+    unit_price: float
+
+
+pub def subtotal(item: LineItem) -> float:
+    return float(item.quantity) * item.unit_price

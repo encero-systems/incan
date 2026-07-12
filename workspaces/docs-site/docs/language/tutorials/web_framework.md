@@ -1,6 +1,8 @@
-# Web Framework
+# Web framework guide
 
-Incan includes a web framework that currently lowers to [Axum](https://docs.rs/axum/latest/axum/), giving you Flask/FastAPI-like syntax with a native async server backend.
+This page is the task-oriented guide to Incan's hosted web framework. For a linear first experience, start with [Build your first API](build_your_first_api.md).
+
+Incan's web framework currently lowers to [Axum](https://docs.rs/axum/latest/axum/), giving you Flask/FastAPI-like syntax with a native async server backend.
 
 ## Quick Start
 

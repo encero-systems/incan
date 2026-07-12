@@ -1,6 +1,11 @@
-from rust::regex @ "1" import Regex
+from rust::regex import Regex
 
 
 def contains_number(input: str) -> bool:
     pattern = Regex.new("\\d+").unwrap()
     return pattern.is_match(input)
+
+
+def main() -> None:
+    for sample in ["invoice-42", "invoice-pending"]:
+        println(f"{sample}: {contains_number(sample)}")

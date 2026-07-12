@@ -245,6 +245,9 @@ async def cooperative_loop() -> None:
 
 Channels enable safe message passing between concurrent tasks. They're the primary way to communicate between async tasks without shared mutable state.
 
+!!! warning "Current compiler limitation"
+    The channel declarations exist in `std.async.channel`, but the current compiler rejects the documented typed constructor and imported `Sender`/`Receiver` methods. Treat the channel material below as the intended library contract, not as a currently runnable authoring path. Task spawning, joining, and timeouts remain available; see [Build an asynchronous worker pipeline](../tutorials/async_worker_pipeline.md) for an end-to-end checked tutorial.
+
 ### MPSC Channel (Multi-Producer, Single-Consumer)
 
 **MPSC** stands for **M**ulti-**P**roducer, **S**ingle-**C**onsumer:
@@ -753,5 +756,5 @@ This pattern is important for reliability. If a channel closes unexpectedly, you
 - [Error handling recipes](../how-to/error_handling_recipes.md) - Patterns and best practices
 - [Error trait](../reference/stdlib_traits/error.md) - Stdlib trait reference
 - [Examples: Async Tasks](https://github.com/encero-systems/incan/blob/main/examples/advanced/async_tasks.incn)
-- [Examples: Channels](https://github.com/encero-systems/incan/blob/main/examples/advanced/async_channels.incn)
+- [Examples: Async concurrency](https://github.com/encero-systems/incan/blob/main/examples/advanced/async_channels.incn)
 - [Examples: Synchronization](https://github.com/encero-systems/incan/blob/main/examples/advanced/async_sync.incn)

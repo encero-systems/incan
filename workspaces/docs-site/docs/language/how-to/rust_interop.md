@@ -602,6 +602,6 @@ If the scrutinee is typed as a bare imported Rust path (not a `rusttype` alias),
 - [File I/O](file_io.md) - Reading, writing, and path handling
 - [Async Programming](async_programming.md) - Async/await with Tokio
 - [Imports & Modules](imports_and_modules.md) - Module system, imports, and built-in functions
-- [Web Framework](../tutorials/web_framework.md) - Building web apps with Axum
+- [Web framework guide](../tutorials/web_framework.md) - Building web apps with Axum
 
 --8<-- "_snippets/rfcs_refs.md"

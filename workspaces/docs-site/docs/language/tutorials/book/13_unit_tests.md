@@ -137,9 +137,11 @@ Async fixtures still use `@fixture`; there is no async-only decorator. The runne
 
 That's the end of the Incan Book (Basics)! You now know the core language. Here are some directions to explore next:
 
-- [Your first project](../../../tooling/tutorials/your_first_project.md) — Set up a real project with `incan init`, Rust crate dependencies, and reproducible builds
-- [Rust interop](../../how-to/rust_interop.md) — Use Rust crates from Incan code
-- [Async programming](../../how-to/async_programming.md) — Write concurrent programs
+- [Your first project](../../../tooling/tutorials/your_first_project.md) — Scaffold a project with `incan new`, split it into modules, and add tests
+- [Build a typed data processor](../typed_data_processor.md) — Combine models, JSON, files, modules, and tests
+- [Build and consume an Incan library](../../../tooling/tutorials/build_and_consume_library.md) — Export a public API and import it through `pub::`
+- [Build an asynchronous worker pipeline](../async_worker_pipeline.md) — Spawn tasks, preserve join failures, and apply a deadline
+- [Add a Rust crate](../add_a_rust_crate.md) — Put a versioned Rust dependency behind an Incan helper
 - [Standard library reference: `std.testing`](../../reference/stdlib/testing.md) — Full testing API: fixtures, parametrize, skip, xfail
 
 <section class="inc-learning-panel inc-learning-panel--complete inc-incus-slot" data-label="Complete" data-incus-category="success" markdown="1">
