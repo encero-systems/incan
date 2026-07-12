@@ -359,6 +359,17 @@ impl ProjectGenerator {
         facade
     }
 
+    /// Return whether this generated project links the compiled built-in stdlib artifact.
+    ///
+    /// The artifact preserves a narrow `__incan_std` facade for compiler-generated compatibility paths. Consumers
+    /// re-export that facade instead of regenerating any stdlib source; the bridge can be removed once every emitted
+    /// compiler path is artifact-qualified.
+    fn links_compiled_builtin_stdlib_artifact(&self) -> bool {
+        self.dependencies
+            .iter()
+            .any(|dependency| dependency.crate_name == stdlib::BUILTIN_STDLIB_ARTIFACT_CRATE)
+    }
+
     /// Generate the project structure (single-file mode).
     pub fn generate(&self, rust_code: &str) -> io::Result<bool> {
         let src_dir = self.ensure_generated_src_dir()?;
@@ -653,9 +664,11 @@ impl ProjectGenerator {
 
         let mut sorted_top: Vec<_> = top_level_modules.into_iter().collect();
         sorted_top.sort();
-        if !sorted_top.is_empty() {
+        let consumer_stdlib_facade =
+            self.links_compiled_builtin_stdlib_artifact() && !is_builtin_stdlib_artifact_build();
+        if !sorted_top.is_empty() || consumer_stdlib_facade {
             let visibility = if self.is_binary { "" } else { "pub " };
-            let mut mods: String = sorted_top
+            let mut mods = sorted_top
                 .iter()
                 .map(|m| {
                     let top_level_path = vec![(*m).clone()];
@@ -667,12 +680,16 @@ impl ProjectGenerator {
                     Self::render_module_decl(m, &relative_path, visibility)
                 })
                 .collect::<Vec<_>>()
-                .join("\n")
-                + "\n";
+                .join("\n");
+            if !mods.is_empty() {
+                mods.push('\n');
+            }
 
             if !self.is_binary && is_builtin_stdlib_artifact_build() {
                 mods.push('\n');
                 mods.push_str(&Self::builtin_stdlib_artifact_facade(&sorted_top));
+            } else if consumer_stdlib_facade {
+                mods.push_str("pub use incan_builtin_stdlib::__incan_std;\n");
             }
 
             if let Some(marker_pos) = full_main.find(MOD_INSERT_MARKER) {
@@ -717,6 +734,7 @@ impl ProjectGenerator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::manifest::DependencySource;
     use std::collections::HashMap;
 
     #[test]
@@ -763,6 +781,32 @@ mod tests {
             facade,
             "pub mod __incan_std {\n    pub use crate::r#async;\n    pub use crate::fs;\n    pub use crate::traits;\n}\n"
         );
+    }
+
+    #[test]
+    fn test_generate_nested_consumer_reexports_compiled_stdlib_compatibility_facade()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let mut generator = ProjectGenerator::new(temp.path(), "consumer", true);
+        generator.set_dependencies(vec![DependencySpec {
+            crate_name: stdlib::BUILTIN_STDLIB_ARTIFACT_CRATE.to_string(),
+            version: None,
+            features: Vec::new(),
+            default_features: true,
+            source: DependencySource::Path {
+                path: temp.path().join("artifact"),
+            },
+            optional: false,
+            package: None,
+        }]);
+
+        generator.generate_nested("fn main() {}\n", &HashMap::new())?;
+        let generated = fs::read_to_string(temp.path().join("src/main.rs"))?;
+        assert!(
+            generated.contains("pub use incan_builtin_stdlib::__incan_std;"),
+            "compiled-stdlib consumers must retain the narrow compatibility facade:\n{generated}"
+        );
+        Ok(())
     }
 
     #[test]

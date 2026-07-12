@@ -21,6 +21,7 @@ import compression.deflate
 import compression.gzip
 import compression.lzma
 import compression
+import compression.prelude
 import compression.snappy
 import compression.snappy.raw
 import compression.zlib
@@ -44,6 +45,7 @@ import encoding.base85
 import encoding.bech32
 import encoding.hex
 import encoding
+import encoding.prelude
 import environ
 import fs.file
 import fs.glob
@@ -64,6 +66,7 @@ import regex._core
 import regex._replacement
 import regex
 import regex.types
+import regex.prelude
 import result
 import serde.json
 import serde
