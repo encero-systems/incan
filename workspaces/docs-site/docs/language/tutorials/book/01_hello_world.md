@@ -2,6 +2,11 @@
 
 Prerequisite: follow [Install, build, and run](../../../tooling/how-to/install_and_run.md).
 
+<div class="inc-book-progress" aria-label="Chapter 1 of 13">
+  <div class="inc-book-progress__meta"><strong>Chapter 1 of 13</strong><span>Hello world</span></div>
+  <div class="inc-book-progress__bar" aria-hidden="true"><span style="--inc-progress: 7.7%"></span></div>
+</div>
+
 ## Create a file
 
 Create `hello.incn`:
@@ -57,9 +62,13 @@ For the full lifecycle workflow, see [Project lifecycle](../../how-to/project_li
 
 ## Try it
 
+<section class="inc-learning-panel inc-learning-panel--exercise" data-label="Exercise" markdown="1">
+
 1. Change the message you print.
 2. Print two lines (two calls to `println`).
 3. Use `print("...")` once to see the “no newline” behavior.
+
+</section>
 
 ??? example "One possible solution"
 
@@ -70,6 +79,13 @@ For the full lifecycle workflow, see [Project lifecycle](../../how-to/project_li
         println("Second line")
     ```
 
-## Next
+<section class="inc-learning-panel inc-learning-panel--complete inc-incus-slot" data-label="Complete" data-incus-category="success" markdown="1">
 
-Next chapter: [2. Values, variables, and types](02_values_variables_and_types.md).
+If your output contains two lines and one call used `print`, the first chapter is complete. You have edited and run an Incan program.
+
+</section>
+
+<nav class="inc-prev-next" aria-label="Book chapter navigation">
+  <a href="../"><small>Book overview</small><strong>All 13 chapters</strong></a>
+  <a href="../02_values_variables_and_types/"><small>Next chapter</small><strong>2. Values, variables, and types →</strong></a>
+</nav>

@@ -1,5 +1,7 @@
 # 5. Modules and imports
 
+<div class="inc-book-progress" aria-label="Chapter 5 of 13"><div class="inc-book-progress__meta"><strong>Chapter 5 of 13</strong><span>Modules and imports</span></div><div class="inc-book-progress__bar" aria-hidden="true"><span style="--inc-progress: 38.5%"></span></div></div>
+
 Once your program is more than one file, you’ll split it into modules and import what you need.
 
 ## A tiny multi-file project
@@ -135,8 +137,4 @@ Use `const` for baked compile-time data (constants).
 - Reference: [Imports and modules (reference)](../../reference/imports_and_modules.md)
 - Reference: [Static storage](../../reference/static_storage.md)
 
-## Next
-
-Back: [4. Control flow](04_control_flow.md)
-
-Next chapter: [6. Errors (Result/Option and `?`)](06_errors.md)
+<nav class="inc-prev-next" aria-label="Book chapter navigation"><a href="../04_control_flow/"><small>Previous chapter</small><strong>← 4. Control flow</strong></a><a href="../06_errors/"><small>Next chapter</small><strong>6. Errors →</strong></a></nav>

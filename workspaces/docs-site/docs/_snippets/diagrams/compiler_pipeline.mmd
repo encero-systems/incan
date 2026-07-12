@@ -1,6 +1,7 @@
-flowchart TD
-    incanSource[Incan_source_.incn] --> parser[Parse_and_validate]
-    parser --> typecheck[Typecheck_and_resolve]
-    typecheck --> lower[Lower_to_Rust]
-    lower --> cargo[Cargo_build]
-    cargo --> binary[Executable]
+flowchart LR
+    source[Incan source] --> frontend[Parser and type checker]
+    frontend --> facts[Checked program facts]
+    facts --> backend[Rust backend]
+    backend --> workspace[Generated Rust workspace]
+    workspace --> artifact[Native artifact]
+    facts --> evidence[Diagnostics, reports, and codegraph]

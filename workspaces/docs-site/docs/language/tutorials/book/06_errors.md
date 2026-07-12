@@ -1,5 +1,7 @@
 # 6. Errors (Result/Option and `?`)
 
+<div class="inc-book-progress" aria-label="Chapter 6 of 13"><div class="inc-book-progress__meta"><strong>Chapter 6 of 13</strong><span>Result, Option, and ?</span></div><div class="inc-book-progress__bar" aria-hidden="true"><span style="--inc-progress: 46.2%"></span></div></div>
+
 Incan uses explicit error values (`Result` and `Option`) instead of Python-style exceptions.
 
 ## `Result[T, E]`
@@ -126,8 +128,4 @@ def normalize(name: str) -> Result[str, NameError]:
 - Results, Options, and the `?` operator (deep dive): [Error Handling](../../explanation/error_handling.md)
 - Common error message patterns: [Error Messages](../../how-to/error_messages.md)
 
-## Next
-
-Back: [5. Modules and imports](05_modules_and_imports.md)
-
-Next chapter: [7. Strings and formatting](07_strings_and_formatting.md)
+<nav class="inc-prev-next" aria-label="Book chapter navigation"><a href="../05_modules_and_imports/"><small>Previous chapter</small><strong>← 5. Modules and imports</strong></a><a href="../07_strings_and_formatting/"><small>Next chapter</small><strong>7. Strings and formatting →</strong></a></nav>

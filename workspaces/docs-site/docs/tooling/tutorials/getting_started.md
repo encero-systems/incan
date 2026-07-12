@@ -2,6 +2,14 @@
 
 This tutorial is the shortest public path from an installed toolchain to running, testing, and release-building a project. It does not require cloning the compiler repository.
 
+<ol class="inc-step-rail" style="--inc-step-count: 5" aria-label="Getting started steps">
+  <li><strong>Install</strong>Verify the toolchain</li>
+  <li><strong>Create</strong>Scaffold a project</li>
+  <li><strong>Run</strong>Execute the entry point</li>
+  <li><strong>Test</strong>Check behavior</li>
+  <li><strong>Build</strong>Produce a release binary</li>
+</ol>
+
 ## Install and verify
 
 Install the toolchain, then make sure the command is on `PATH`. The direct installer provisions stable Rust through `rustup` when needed and installs the `wasm32-wasip1` target used by package vocab companions:
@@ -49,6 +57,12 @@ Run it:
 incan run
 ```
 
+<section class="inc-learning-panel inc-learning-panel--result" data-label="Result" markdown="1">
+
+The starter prints its greeting from `src/main.incn`. At this point the manifest, source root, entry point, and Rust-backed build path are all connected.
+
+</section>
+
 Test it:
 
 ```bash
@@ -62,6 +76,12 @@ incan build --release
 ```
 
 `incan build` already uses the release Cargo profile; `--release` is accepted so the first-contact command spells out the intent.
+
+<section class="inc-learning-panel inc-learning-panel--complete inc-incus-slot" data-label="Complete" data-incus-category="success" markdown="1">
+
+You now have a runnable project, a passing starter test, and a native release build. Continue with [Your first project](your_first_project.md) to split the starter into modules and add meaningful tests.
+
+</section>
 
 ## What 0.4 is good for
 

@@ -20,9 +20,9 @@ theme:
   pygments_style: default
   pygments_style_dark: native
   palette:
-    - scheme: slate
-      primary: black
-      accent: amber
+    scheme: slate
+    primary: black
+    accent: amber
   features:
     - navigation.instant
     - navigation.tabs
@@ -67,7 +67,8 @@ markdown_extensions:
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid
-          class: mermaid
+          class: inc-diagram
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.tabbed:
       alternate_style: true
   - toc:
@@ -83,6 +84,10 @@ extra_css:
 
 extra_javascript:
   - _snippets/javascripts/mathjax.js
+  - _snippets/javascripts/incan_home_motion.js
+  - shared/incapunk/incus-library/manifest.js
+  - _snippets/javascripts/incan_docs_components.js
+  - _snippets/javascripts/incan_mermaid.js
   - https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js
   - _snippets/javascripts/tablesort.js
   - _snippets/javascripts/rfc_table_filter.js
@@ -314,3 +319,4 @@ nav:
       - Roadmap: roadmap.md
       # XXX: Temporary page while in beta
       - Stability policy: stability.md
+      - Meet Incus: project/incus.md

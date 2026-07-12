@@ -1,5 +1,7 @@
 # 8. Collections and iteration
 
+<div class="inc-book-progress" aria-label="Chapter 8 of 13"><div class="inc-book-progress__meta"><strong>Chapter 8 of 13</strong><span>Collections and iteration</span></div><div class="inc-book-progress__bar" aria-hidden="true"><span style="--inc-progress: 61.5%"></span></div></div>
+
 Incan has Python-like collections and a familiar `for` loop.
 
 !!! tip "Coming from Rust?"
@@ -204,8 +206,4 @@ def numbers() -> Generator[int]:
 - Generators: [Use generators for lazy pipelines](../../how-to/generators.md)
 - Control flow overview: [Control flow](../../explanation/control_flow.md)
 
-## Next
-
-Back: [7. Strings and formatting](07_strings_and_formatting.md)
-
-Next chapter: [9. Enums and better `match`](09_enums.md)
+<nav class="inc-prev-next" aria-label="Book chapter navigation"><a href="../07_strings_and_formatting/"><small>Previous chapter</small><strong>← 7. Strings and formatting</strong></a><a href="../09_enums/"><small>Next chapter</small><strong>9. Enums and match →</strong></a></nav>

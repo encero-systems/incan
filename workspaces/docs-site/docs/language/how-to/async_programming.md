@@ -10,6 +10,20 @@ Incan supports async/await through the current Tokio-backed runtime path. This g
 
     The key difference is under the hood: the current beta builds through Rust and uses Tokio, giving you familiar Python-shaped syntax with a native async runtime.
 
+```mermaid
+sequenceDiagram
+  participant Caller
+  participant Future
+  participant Runtime as Tokio-backed runtime
+  Caller->>Future: call async function
+  Caller->>Runtime: await or spawn
+  Runtime->>Future: poll until ready
+  Future-->>Runtime: value or join error
+  Runtime-->>Caller: resume with typed result
+```
+
+<p class="inc-diagram-caption">Calling creates async work; <code>await</code> or task APIs let the runtime drive it to a typed result.</p>
+
 ## Quick Start
 
 ```incan
