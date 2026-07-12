@@ -190,21 +190,94 @@ impl AstLowering {
     pub(in crate::backend::ir::lower) fn trait_impl_targets_for_adopted_trait_bound(
         &self,
         bound: &ast::TraitBound,
+        owner_type_name: &str,
         type_params: &[ast::TypeParam],
     ) -> Vec<(String, Vec<IrType>)> {
         if bound.type_args.is_empty() {
             return self.trait_impl_targets_for_adopted_trait(&bound.name, type_params);
         }
         let type_param_names: std::collections::HashSet<&str> = type_params.iter().map(|tp| tp.name.as_str()).collect();
+        let owner_type = Self::trait_impl_owner_type(owner_type_name, type_params);
         let direct_args = bound
             .type_args
             .iter()
-            .map(|arg| self.lower_type_with_type_params(&arg.node, Some(&type_param_names)))
+            .map(|arg| {
+                let lowered = self.lower_type_with_type_params(&arg.node, Some(&type_param_names));
+                Self::substitute_trait_impl_self_type(lowered, &owner_type)
+            })
             .collect::<Vec<_>>();
         let mut seen = HashSet::new();
         let mut out = Vec::new();
         self.collect_trait_impl_targets_recursive(&bound.name, &direct_args, &mut seen, &mut out);
         out
+    }
+
+    /// Build the fully-instantiated owner type used when an adopted trait bound names `Self`.
+    ///
+    /// Trait implementation headers are outside a Rust method or trait body, so a bare `Self` is not valid there.
+    /// The IR must instead carry the adopter's nominal type, including its declared generic parameters.
+    fn trait_impl_owner_type(type_name: &str, type_params: &[ast::TypeParam]) -> IrType {
+        if type_params.is_empty() {
+            IrType::Struct(type_name.to_string())
+        } else {
+            IrType::NamedGeneric(
+                type_name.to_string(),
+                type_params
+                    .iter()
+                    .map(|param| IrType::Generic(param.name.clone()))
+                    .collect(),
+            )
+        }
+    }
+
+    /// Replace `Self` in an adopted trait target with its concrete implementation owner.
+    ///
+    /// This substitution is intentionally performed at the trait-target boundary rather than by emission: `Self`
+    /// still has its ordinary meaning in trait method bodies, while an impl header requires a concrete type.
+    fn substitute_trait_impl_self_type(ty: IrType, owner_type: &IrType) -> IrType {
+        match ty {
+            IrType::SelfType => owner_type.clone(),
+            IrType::List(inner) => IrType::List(Box::new(Self::substitute_trait_impl_self_type(*inner, owner_type))),
+            IrType::Dict(key, value) => IrType::Dict(
+                Box::new(Self::substitute_trait_impl_self_type(*key, owner_type)),
+                Box::new(Self::substitute_trait_impl_self_type(*value, owner_type)),
+            ),
+            IrType::Set(inner) => IrType::Set(Box::new(Self::substitute_trait_impl_self_type(*inner, owner_type))),
+            IrType::Tuple(items) => IrType::Tuple(
+                items
+                    .into_iter()
+                    .map(|item| Self::substitute_trait_impl_self_type(item, owner_type))
+                    .collect(),
+            ),
+            IrType::Option(inner) => {
+                IrType::Option(Box::new(Self::substitute_trait_impl_self_type(*inner, owner_type)))
+            }
+            IrType::Result(ok, err) => IrType::Result(
+                Box::new(Self::substitute_trait_impl_self_type(*ok, owner_type)),
+                Box::new(Self::substitute_trait_impl_self_type(*err, owner_type)),
+            ),
+            IrType::NamedGeneric(name, args) => IrType::NamedGeneric(
+                name,
+                args.into_iter()
+                    .map(|arg| Self::substitute_trait_impl_self_type(arg, owner_type))
+                    .collect(),
+            ),
+            IrType::TypeToken(inner) => {
+                IrType::TypeToken(Box::new(Self::substitute_trait_impl_self_type(*inner, owner_type)))
+            }
+            IrType::Function { params, ret } => IrType::Function {
+                params: params
+                    .into_iter()
+                    .map(|param| Self::substitute_trait_impl_self_type(param, owner_type))
+                    .collect(),
+                ret: Box::new(Self::substitute_trait_impl_self_type(*ret, owner_type)),
+            },
+            IrType::Ref(inner) => IrType::Ref(Box::new(Self::substitute_trait_impl_self_type(*inner, owner_type))),
+            IrType::RefMut(inner) => {
+                IrType::RefMut(Box::new(Self::substitute_trait_impl_self_type(*inner, owner_type)))
+            }
+            other => other,
+        }
     }
 
     /// Return whether the typechecker proved a body-less rusttype Rust-trait adoption is satisfied by the backing type.
@@ -661,7 +734,57 @@ impl AstLowering {
         let trait_sig = self.lowered_method_signature_for_match(trait_method, &trait_param_names, &subst);
         let empty_subst = std::collections::HashMap::new();
         let candidate_sig = self.lowered_method_signature_for_match(candidate, owner_type_param_names, &empty_subst);
-        trait_sig == candidate_sig
+        trait_sig.0 == candidate_sig.0
+            && trait_sig.1 == candidate_sig.1
+            && Self::trait_impl_type_matches(&trait_sig.2, &candidate_sig.2)
+    }
+
+    /// Compare trait-implementation types after the trait target has replaced its `Self` argument with the adopter
+    /// type.
+    ///
+    /// Concrete implementation methods retain `Self` in their source signature because it remains valid inside the
+    /// generated impl body. At this matching boundary it denotes the same owner as the concrete trait target.
+    fn trait_impl_type_matches(expected: &IrType, actual: &IrType) -> bool {
+        match (expected, actual) {
+            (_, IrType::SelfType) => true,
+            (IrType::List(expected), IrType::List(actual))
+            | (IrType::Set(expected), IrType::Set(actual))
+            | (IrType::Option(expected), IrType::Option(actual))
+            | (IrType::TypeToken(expected), IrType::TypeToken(actual))
+            | (IrType::Ref(expected), IrType::Ref(actual))
+            | (IrType::RefMut(expected), IrType::RefMut(actual)) => Self::trait_impl_type_matches(expected, actual),
+            (IrType::Dict(expected_key, expected_value), IrType::Dict(actual_key, actual_value))
+            | (IrType::Result(expected_key, expected_value), IrType::Result(actual_key, actual_value)) => {
+                Self::trait_impl_type_matches(expected_key, actual_key)
+                    && Self::trait_impl_type_matches(expected_value, actual_value)
+            }
+            (IrType::Tuple(expected), IrType::Tuple(actual))
+            | (IrType::NamedGeneric(_, expected), IrType::NamedGeneric(_, actual)) => {
+                expected.len() == actual.len()
+                    && expected
+                        .iter()
+                        .zip(actual)
+                        .all(|(expected, actual)| Self::trait_impl_type_matches(expected, actual))
+            }
+            (
+                IrType::Function {
+                    params: expected_params,
+                    ret: expected_ret,
+                },
+                IrType::Function {
+                    params: actual_params,
+                    ret: actual_ret,
+                },
+            ) => {
+                expected_params.len() == actual_params.len()
+                    && expected_params
+                        .iter()
+                        .zip(actual_params)
+                        .all(|(expected, actual)| Self::trait_impl_type_matches(expected, actual))
+                    && Self::trait_impl_type_matches(expected_ret, actual_ret)
+            }
+            _ => expected == actual,
+        }
     }
 
     /// Return whether a source-level trait target names the current Rust impl target.
@@ -680,7 +803,11 @@ impl AstLowering {
             .iter()
             .map(|arg| self.lower_type_with_type_params(&arg.node, Some(owner_type_param_names)))
             .collect::<Vec<_>>();
-        lowered_args == trait_type_args
+        lowered_args.len() == trait_type_args.len()
+            && trait_type_args
+                .iter()
+                .zip(&lowered_args)
+                .all(|(expected, actual)| Self::trait_impl_type_matches(expected, actual))
     }
 
     /// Return source-level method names for compiler-known imported traits whose declaration may be unavailable in
@@ -758,9 +885,10 @@ impl AstLowering {
         owner_type_param_names: &std::collections::HashSet<&str>,
         adopted_traits: &[Spanned<ast::TraitBound>],
     ) -> bool {
+        let owner_type_name = self.current_impl_type.clone().unwrap_or_default();
         for trait_ref in adopted_traits {
             for (trait_name, trait_type_args) in
-                self.trait_impl_targets_for_adopted_trait_bound(&trait_ref.node, type_params)
+                self.trait_impl_targets_for_adopted_trait_bound(&trait_ref.node, &owner_type_name, type_params)
             {
                 let Some(trait_decl) = self.trait_decls.get(&trait_name).cloned() else {
                     continue;

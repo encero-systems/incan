@@ -7678,6 +7678,58 @@ mod test_runner_e2e {
 
     // ---- Passing test ----
 
+    /// Issue #815: generic and `Self`-returning Index adoptions must compile in the generated test package.
+    #[test]
+    fn e2e_issue815_generic_index_trait_adoptions_compile() {
+        let dir = write_test_project(
+            "test_issue815_generic_index.incn",
+            r#"
+from std.testing import assert_eq
+from std.traits.indexing import Index
+
+class GenericBox[T with Clone] with Index[str, str]:
+    pub label: str
+    pub witness: list[T]
+
+    def __getitem__(self, key: str) for Index[str, str] -> str:
+        return key
+
+class PlainBox with Index[list[str], Self]:
+    pub label: str
+
+    def __getitem__(self, key: list[str]) for Index[list[str], Self] -> Self:
+        return self
+
+class GenericSelfBox[T with Clone] with Index[list[str], Self]:
+    pub label: str
+    pub witness: list[T]
+
+    def __getitem__(self, key: list[str]) for Index[list[str], Self] -> Self:
+        return self
+
+def test_generic_index() -> None:
+    box = GenericBox[int](label="orders", witness=[1])
+    assert_eq(box["amount"], "amount")
+
+def test_self_returning_index() -> None:
+    box = PlainBox(label="nested")
+    assert_eq(box[["name"]].label, "nested")
+
+def test_generic_self_returning_index() -> None:
+    box = GenericSelfBox[int](label="nested-generic", witness=[1])
+    assert_eq(box[["name"]].label, "nested-generic")
+"#,
+        );
+
+        let output = run_incan_test(&dir);
+        assert!(
+            output.status.success(),
+            "expected issue #815 test package to compile and pass.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
+
     #[test]
     fn e2e_basic_reporting_decorator_filter_and_capture_share_one_project() {
         let dir = write_test_project(
