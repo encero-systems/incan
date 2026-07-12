@@ -237,6 +237,7 @@ fn builtin_stdlib_artifact_workspace_lock(stdlib_root: &Path) -> Option<PathBuf>
         .skip(1)
         .map(|parent| parent.join("Cargo.lock"))
         .find(|path| path.is_file())
+        .map(|path| fs::canonicalize(&path).unwrap_or(path))
 }
 
 /// Seed a development built-in stdlib artifact from the verified enclosing workspace lockfile.
