@@ -16,8 +16,8 @@ use std::time::Instant;
 use incan_core::interop::{
     RustFieldInfo, RustFunctionSig, RustItemKind, RustItemMetadata, RustMethodSig, RustParam, RustTraitAssoc,
     RustTraitInfo, RustTypeInfo, RustTypeMetadataCompleteness, RustTypeShape, RustTypeShapePathFallback,
-    RustVariantInfo, RustVisibility, parse_rust_type_shape_text, rust_source_callable_bound_for_type_param,
-    rust_source_type_param_has_as_fd_bound, split_top_level_rust_args,
+    RustVariantInfo, RustVisibility, parse_rust_type_shape_text, rust_source_borrowed_type_param_bound_display,
+    rust_source_callable_bound_for_type_param, rust_source_type_param_has_as_fd_bound, split_top_level_rust_args,
 };
 use incan_core::lang::types::collections::{self, CollectionTypeId};
 use ra_ap_syntax::{
@@ -1867,17 +1867,19 @@ fn source_function_metadata(
                         .pat()
                         .map(|pat| pat.syntax().text().to_string().trim().to_string());
                     let raw_ty = ty.syntax().text().to_string();
-                    let type_display =
-                        if rust_source_type_param_has_as_fd_bound(function_source.as_str(), raw_ty.as_str()) {
-                            "&impl AsFd".to_string()
-                        } else {
-                            rust_source_callable_bound_for_type_param(
-                                function_source.as_str(),
-                                raw_ty.as_str(),
-                                |inner| Some(ctx.type_display(inner)),
-                            )
+                    let type_display = if rust_source_type_param_has_as_fd_bound(function_source.as_str(), raw_ty.as_str()) {
+                        "&impl AsFd".to_string()
+                    } else {
+                        rust_source_borrowed_type_param_bound_display(function_source.as_str(), raw_ty.as_str())
+                            .or_else(|| {
+                                rust_source_callable_bound_for_type_param(
+                                    function_source.as_str(),
+                                    raw_ty.as_str(),
+                                    |inner| Some(ctx.type_display(inner)),
+                                )
+                            })
                             .unwrap_or_else(|| ctx.type_display(raw_ty.as_str()))
-                        };
+                    };
                     Some(RustParam { name, type_display })
                 })
                 .collect::<Vec<_>>()
@@ -1923,17 +1925,19 @@ fn source_function_signature(
                         .pat()
                         .map(|pat| pat.syntax().text().to_string().trim().to_string());
                     let raw_ty = ty.syntax().text().to_string();
-                    let type_display =
-                        if rust_source_type_param_has_as_fd_bound(function_source.as_str(), raw_ty.as_str()) {
-                            "&impl AsFd".to_string()
-                        } else {
-                            rust_source_callable_bound_for_type_param(
-                                function_source.as_str(),
-                                raw_ty.as_str(),
-                                |inner| Some(ctx.type_display(inner)),
-                            )
+                    let type_display = if rust_source_type_param_has_as_fd_bound(function_source.as_str(), raw_ty.as_str()) {
+                        "&impl AsFd".to_string()
+                    } else {
+                        rust_source_borrowed_type_param_bound_display(function_source.as_str(), raw_ty.as_str())
+                            .or_else(|| {
+                                rust_source_callable_bound_for_type_param(
+                                    function_source.as_str(),
+                                    raw_ty.as_str(),
+                                    |inner| Some(ctx.type_display(inner)),
+                                )
+                            })
                             .unwrap_or_else(|| ctx.type_display(raw_ty.as_str()))
-                        };
+                    };
                     Some(RustParam { name, type_display })
                 }))
                 .collect::<Vec<_>>()

@@ -45,6 +45,36 @@ fn check_str(source: &str) -> Result<(), Vec<CompileError>> {
     check(&ast)
 }
 
+#[test]
+fn metadata_free_path_new_records_a_borrowed_argument_boundary() -> Result<(), String> {
+    let source = r#"
+from rust::std::path import Path
+
+def main() -> None:
+  path = "example.txt"
+  _ = Path.new(path)
+"#;
+    let ast = parse_program(source, "metadata-free Path.new borrow boundary");
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errors| format!("Path.new should typecheck: {errors:?}"))?;
+
+    let params = checker
+        .type_info()
+        .calls
+        .call_site_callable_params
+        .values()
+        .find(|params| params.len() == 1)
+        .ok_or("Path.new call should record one callable parameter")?;
+    assert!(
+        matches!(params[0].ty, ResolvedType::Ref(_)),
+        "Path.new should retain a borrowed Rust parameter, got {:?}",
+        params[0].ty
+    );
+    Ok(())
+}
+
 fn parse_program(source: &str, context: &str) -> crate::frontend::ast::Program {
     let tokens = lexer::lex(source).unwrap_or_else(|errs| panic!("{context} lex failed: {errs:?}"));
     parser::parse(&tokens).unwrap_or_else(|errs| panic!("{context} parse failed: {errs:?}"))

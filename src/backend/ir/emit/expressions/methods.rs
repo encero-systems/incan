@@ -290,20 +290,28 @@ impl<'a> IrEmitter<'a> {
             ) || is_string_buffer_type(&arg.ty))
     }
 
-    /// Return whether `std::path::Path.new` should preserve its `&str` argument shape.
+    /// Return whether `std::path::Path.new` should preserve a literal/static string argument shape.
     ///
     /// Rust's `Path::new` takes a generic `S: AsRef<OsStr>`. A direct literal
     /// or static string provides the necessary inference shape; adding `.into()`
     /// introduces an unconstrained intermediate target once consumer dependencies
-    /// provide additional `AsRef<OsStr>` implementations.
-    fn std_path_new_preserves_string_argument_shape(receiver: &TypedExpr, method: &str, arg: &TypedExpr) -> bool {
+    /// provide additional `AsRef<OsStr>` implementations. Owned runtime strings must instead follow the ordinary
+    /// external borrow boundary and emit `&value` for Path's `&S` parameter.
+    fn std_path_new_preserves_static_string_argument_shape(
+        receiver: &TypedExpr,
+        method: &str,
+        arg: &TypedExpr,
+    ) -> bool {
         method == "new"
             && matches!(
                 &receiver.ty,
                 IrType::Struct(path) | IrType::RustDisplay(path)
                     if matches!(path.as_str(), "std::path::Path" | "Path")
             )
-            && matches!(arg.ty, IrType::String | IrType::StaticStr | IrType::StrRef)
+            && matches!(
+                arg.kind,
+                IrExprKind::String(_) | IrExprKind::Literal(super::super::super::expr::Literal::StaticStr(_))
+            )
     }
 
     /// Emit method-call arguments with Rust-boundary borrowing and union wrapping applied from callable metadata.
@@ -405,7 +413,7 @@ impl<'a> IrEmitter<'a> {
                     context.base_use_site,
                     ValueUseSite::ExternalCallArg { .. } | ValueUseSite::MethodArg
                 );
-                let arg_use_site = if Self::std_path_new_preserves_string_argument_shape(receiver, method, arg) {
+                let arg_use_site = if Self::std_path_new_preserves_static_string_argument_shape(receiver, method, arg) {
                     ValueUseSite::MethodArg
                 } else {
                     match (context.base_use_site, param) {

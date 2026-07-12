@@ -7587,6 +7587,25 @@ def main() -> None:
             String::from_utf8_lossy(&output.stderr)
         );
     }
+
+    #[test]
+    fn test_rust_path_new_borrows_owned_string_argument() {
+        let output = run_incan_source(
+            r#"
+from rust::std::path import Path as RustPath
+
+def main() -> None:
+    path = "example.txt"
+    println(RustPath.new(path).exists())
+"#,
+        );
+
+        assert!(
+            output.status.success(),
+            "Path.new should borrow an owned Incan string at the Rust boundary. stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }
 
 /// End-to-end integration tests for `incan test`.
