@@ -747,9 +747,12 @@ impl TypeChecker {
         iterator_methods::from_str(method).is_some_and(iterator_methods::is_terminal)
     }
 
-    /// Validate `.sum()` item types against the backend-supported summable item surface.
+    /// Validate `.sum()` item types against the source-owned `Sum[T]` capability surface.
     fn iterator_sum_output_type(&mut self, elem: &ResolvedType, span: Span) -> ResolvedType {
-        if self.iterator_sum_underlying_type(elem).is_some() {
+        if self
+            .temporary_trait_capability_supports_type(incan_core::lang::trait_capabilities::iterator_sum(), elem)
+            .is_some_and(|supported| supported)
+        {
             return elem.clone();
         }
         self.errors.push(CompileError::type_error(
@@ -760,33 +763,6 @@ impl TypeChecker {
             span,
         ));
         ResolvedType::Unknown
-    }
-
-    /// Return the primitive summation carrier for an iterator item type.
-    ///
-    /// Primitive numeric types carry themselves. Newtypes recursively carry their underlying summable type, which lets
-    /// `.sum()` accept transparent domain wrappers while still rejecting non-summable shapes.
-    fn iterator_sum_underlying_type(&self, elem: &ResolvedType) -> Option<ResolvedType> {
-        match elem {
-            ResolvedType::Int | ResolvedType::Float | ResolvedType::Unknown => Some(elem.clone()),
-            ResolvedType::Named(name) => self.newtype_sum_underlying_type(name, &[]),
-            ResolvedType::Generic(name, args) => self.newtype_sum_underlying_type(name, args),
-            _ => None,
-        }
-    }
-
-    /// Resolve the summation carrier for a newtype, applying generic type arguments before checking the underlying.
-    fn newtype_sum_underlying_type(&self, name: &str, args: &[ResolvedType]) -> Option<ResolvedType> {
-        let Some(TypeInfo::Newtype(newtype)) = self.lookup_type_info(name) else {
-            return None;
-        };
-        let underlying = if args.is_empty() {
-            newtype.underlying.clone()
-        } else {
-            let subst = type_param_subst_map(&newtype.type_params, args);
-            substitute_resolved_type(&newtype.underlying, &subst)
-        };
-        self.iterator_sum_underlying_type(&underlying)
     }
 
     /// Track the narrow same-binding case after a terminal iterator method consumes a direct local binding.

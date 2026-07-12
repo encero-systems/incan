@@ -53,45 +53,20 @@ impl PositiveInt {
 }
 fn sum_money(items: Vec<Money>) -> Money {
     return {
-        let mut __incan_iter = crate::__incan_std::derives::collection::ListIterator {
+        let mut __incan_iterator_sum = crate::__incan_std::derives::collection::ListIterator {
             items: (items),
             index: 0i64,
         };
-        let mut __incan_sum: i64 = 0i64;
-        loop {
-            match crate::__incan_std::derives::collection::Iterator::__next__(
-                &mut __incan_iter,
-            ) {
-                Some(__incan_item) => __incan_sum += __incan_item.0,
-                None => break Money(__incan_sum),
-            }
-        }
+        crate::__incan_std::derives::collection::Iterator::sum(&mut __incan_iterator_sum)
     };
 }
 fn sum_positive(items: Vec<PositiveInt>) -> PositiveInt {
     return {
-        let mut __incan_iter = crate::__incan_std::derives::collection::ListIterator {
+        let mut __incan_iterator_sum = crate::__incan_std::derives::collection::ListIterator {
             items: (items),
             index: 0i64,
         };
-        let mut __incan_sum: i64 = 0i64;
-        loop {
-            match crate::__incan_std::derives::collection::Iterator::__next__(
-                &mut __incan_iter,
-            ) {
-                Some(__incan_item) => __incan_sum += __incan_item.0,
-                None => {
-                    break match PositiveInt::from_underlying(__incan_sum) {
-                        Ok(__incan_newtype_value) => __incan_newtype_value,
-                        Err(_) => {
-                            panic!(
-                                "validated newtype construction failed: PositiveInt::from_underlying"
-                            )
-                        }
-                    };
-                }
-            }
-        }
+        crate::__incan_std::derives::collection::Iterator::sum(&mut __incan_iterator_sum)
     };
 }
 fn main() {
@@ -193,19 +168,11 @@ fn main() {
         }
     };
     let total = {
-        let mut __incan_iter = crate::__incan_std::derives::collection::ListIterator {
+        let mut __incan_iterator_sum = crate::__incan_std::derives::collection::ListIterator {
             items: (xs),
             index: 0i64,
         };
-        let mut __incan_sum: i64 = 0i64;
-        loop {
-            match crate::__incan_std::derives::collection::Iterator::__next__(
-                &mut __incan_iter,
-            ) {
-                Some(__incan_item) => __incan_sum += __incan_item,
-                None => break __incan_sum,
-            }
-        }
+        crate::__incan_std::derives::collection::Iterator::sum(&mut __incan_iterator_sum)
     };
     let total_money = sum_money(moneys);
     let total_positive = sum_positive(positives);
@@ -216,4 +183,43 @@ fn main() {
     let _ = println!("{}", total);
     let _ = println!("{}", total_money.0);
     let _ = println!("{}", total_positive.0);
+}
+impl crate::__incan_std::derives::collection::Sum<Money> for Money {
+    fn sum<I: crate::__incan_std::derives::collection::Iterator<Money>>(
+        mut items: I,
+    ) -> Self {
+        let mut total: i64 = 0i64;
+        loop {
+            match <I as crate::__incan_std::derives::collection::Iterator<
+                Money,
+            >>::__next__(&mut items) {
+                Some(item) => total += item.0,
+                None => break Money(total),
+            }
+        }
+    }
+}
+impl crate::__incan_std::derives::collection::Sum<PositiveInt> for PositiveInt {
+    fn sum<I: crate::__incan_std::derives::collection::Iterator<PositiveInt>>(
+        mut items: I,
+    ) -> Self {
+        let mut total: i64 = 0i64;
+        loop {
+            match <I as crate::__incan_std::derives::collection::Iterator<
+                PositiveInt,
+            >>::__next__(&mut items) {
+                Some(item) => total += item.0,
+                None => {
+                    break match PositiveInt::from_underlying(total) {
+                        Ok(value) => value,
+                        Err(_) => {
+                            panic!(
+                                "validated newtype construction failed: PositiveInt::from_underlying"
+                            )
+                        }
+                    };
+                }
+            }
+        }
+    }
 }
