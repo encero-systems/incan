@@ -2052,6 +2052,70 @@ fn build_from_workspace_member_uses_inherited_rust_dependency() -> Result<(), Bo
 }
 
 #[test]
+fn workspace_test_selection_fans_out_with_member_scoped_json() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    fs::write(
+        tmp.path().join("incan.toml"),
+        "[workspace]\nmembers = [\"packages/*\"]\n",
+    )?;
+    for name in ["alpha", "beta"] {
+        let member = tmp.path().join("packages").join(name);
+        fs::create_dir_all(member.join("src"))?;
+        fs::create_dir_all(member.join("tests"))?;
+        fs::write(
+            member.join("incan.toml"),
+            format!(
+                "[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"
+            ),
+        )?;
+        fs::write(member.join("src/main.incn"), "def main() -> None:\n    return\n")?;
+        fs::write(
+            member.join("tests/test_member.incn"),
+            "from std.testing import assert_eq\n\ndef test_member() -> None:\n    assert_eq(1, 1)\n",
+        )?;
+    }
+
+    let output = run_incan(tmp.path(), &["test", "--workspace", "--format", "json"])?;
+    assert_success(&output, "workspace test fan-out");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout
+            .lines()
+            .all(|line| line.trim().is_empty() || line.trim_start().starts_with('{')),
+        "workspace JSON output contained a non-JSON line:\n{stdout}"
+    );
+    let records = parse_jsonl_stdout(&output)?;
+    let summaries = records
+        .iter()
+        .filter(|record| record.get("summary").is_some())
+        .collect::<Vec<_>>();
+    assert_eq!(summaries.len(), 2);
+    let root = fs::canonicalize(tmp.path())?.to_string_lossy().into_owned();
+    for (summary, member) in summaries.into_iter().zip(["alpha", "beta"]) {
+        assert_eq!(summary["workspace"]["root"], serde_json::json!(root));
+        assert_eq!(
+            summary["workspace"]["selected_members"],
+            serde_json::json!(["alpha", "beta"])
+        );
+        assert_eq!(summary["workspace"]["member"], serde_json::json!(member));
+    }
+
+    let selected = run_incan(tmp.path(), &["test", "--member", "beta", "--format", "json"])?;
+    assert_success(&selected, "selected workspace member test");
+    let selected_records = parse_jsonl_stdout(&selected)?;
+    let selected_summary = selected_records
+        .iter()
+        .find(|record| record.get("summary").is_some())
+        .ok_or("selected member test listing did not emit a summary")?;
+    assert_eq!(
+        selected_summary["workspace"]["selected_members"],
+        serde_json::json!(["beta"])
+    );
+    assert_eq!(selected_summary["workspace"]["member"], serde_json::json!("beta"));
+    Ok(())
+}
+
+#[test]
 fn lock_preheats_dependency_graph_for_path_dependencies() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let helper_dir = tmp.path().join("preheat_helper");

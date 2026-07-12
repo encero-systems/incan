@@ -46,6 +46,7 @@ use std::path::PathBuf;
 use std::process;
 
 use crate::manifest::ProjectManifest;
+use crate::workspace::WorkspaceGraph;
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use commands::build_report::{BuildReportFormat, BuildReportOptions, RustInspectionFormat};
 use commands::codegraph::CodegraphInspectionFormat;
@@ -361,6 +362,12 @@ pub enum Command {
         /// Path to test file or directory
         #[arg(value_name = "PATH", default_value = ".")]
         path: PathBuf,
+        /// Select every workspace member instead of the implicit current scope.
+        #[arg(long, conflicts_with = "member")]
+        workspace: bool,
+        /// Select one workspace member by name or workspace-relative path. May be repeated.
+        #[arg(long = "member", value_name = "NAME_OR_PATH")]
+        member: Vec<String>,
         /// Verbose output
         #[arg(short, long)]
         verbose: bool,
@@ -521,6 +528,38 @@ pub enum Command {
         #[arg(long = "cargo-all-features")]
         cargo_all_features: bool,
     },
+}
+
+/// Owned CLI inputs for the test command before RFC 077 scope resolution.
+///
+/// `TestRunConfig` intentionally borrows a single path and filter while it executes one member. This wrapper keeps
+/// the parsed CLI inputs intact while a workspace command expands to a deterministic sequence of member runs.
+struct TestCommandOptions {
+    path: PathBuf,
+    workspace: bool,
+    members: Vec<String>,
+    verbose: bool,
+    stop_on_fail: bool,
+    include_slow: bool,
+    filter: Option<String>,
+    marker_expr: Option<String>,
+    strict_markers: bool,
+    jobs: usize,
+    test_features: Vec<String>,
+    timeout: Option<String>,
+    no_capture: bool,
+    fail_on_empty: bool,
+    list_only: bool,
+    report_format: test_runner::TestOutputFormat,
+    junit_path: Option<PathBuf>,
+    durations: Option<usize>,
+    shuffle: bool,
+    seed: Option<u64>,
+    run_xfail: bool,
+    cargo_policy: CargoPolicy,
+    cargo_features: Vec<String>,
+    cargo_no_default_features: bool,
+    cargo_all_features: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -697,6 +736,117 @@ pub fn run() {
     }
 }
 
+/// Resolve RFC 077 scope before test discovery or execution, then run each selected member in workspace order.
+///
+/// The runner deliberately remains member-oriented: it already owns test discovery, generated batch compilation,
+/// and JSONL emission. This command layer supplies the validated workspace context so each emitted result is
+/// attributable without inventing a second test-result protocol.
+fn execute_tests(options: TestCommandOptions, use_color: bool) -> CliResult<ExitCode> {
+    let Some(workspace) =
+        WorkspaceGraph::discover(&options.path).map_err(|error| CliError::failure(error.to_string()))?
+    else {
+        if options.workspace || !options.members.is_empty() {
+            return Err(CliError::failure(format!(
+                "workspace selection requires a validated workspace containing {}",
+                options.path.display()
+            )));
+        }
+        return test_runner::run_tests(test_runner::TestRunConfig {
+            path: &options.path.to_string_lossy(),
+            verbose: options.verbose,
+            stop_on_fail: options.stop_on_fail,
+            include_slow: options.include_slow,
+            filter: options.filter.as_deref(),
+            marker_expr: options.marker_expr.as_deref(),
+            strict_markers: options.strict_markers,
+            jobs: options.jobs,
+            test_features: options.test_features,
+            timeout: options.timeout.as_deref(),
+            no_capture: options.no_capture,
+            use_color,
+            fail_on_empty: options.fail_on_empty,
+            list_only: options.list_only,
+            report_format: options.report_format,
+            junit_path: options.junit_path,
+            durations: options.durations,
+            shuffle: options.shuffle,
+            seed: options.seed,
+            run_xfail: options.run_xfail,
+            cargo_policy: options.cargo_policy,
+            cargo_features: options.cargo_features,
+            cargo_no_default_features: options.cargo_no_default_features,
+            cargo_all_features: options.cargo_all_features,
+            workspace_context: None,
+        });
+    };
+
+    let selected = workspace
+        .select_members(&options.path, options.workspace, &options.members)
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    if selected.len() > 1 && options.junit_path.is_some() {
+        return Err(CliError::failure(
+            "--junit accepts one member at a time; select one workspace member to avoid overwriting its report",
+        ));
+    }
+
+    let selected_members = selected.iter().map(|member| member.name.clone()).collect::<Vec<_>>();
+    let mut first_failure = None;
+    for member in selected {
+        if options.report_format == test_runner::TestOutputFormat::Console {
+            println!(
+                "== workspace {} / member {} ==",
+                workspace.root().display(),
+                member.name
+            );
+        }
+        let member_path = member.path.to_string_lossy().into_owned();
+        let result = test_runner::run_tests(test_runner::TestRunConfig {
+            path: &member_path,
+            verbose: options.verbose,
+            stop_on_fail: options.stop_on_fail,
+            include_slow: options.include_slow,
+            filter: options.filter.as_deref(),
+            marker_expr: options.marker_expr.as_deref(),
+            strict_markers: options.strict_markers,
+            jobs: options.jobs,
+            test_features: options.test_features.clone(),
+            timeout: options.timeout.as_deref(),
+            no_capture: options.no_capture,
+            use_color,
+            fail_on_empty: options.fail_on_empty,
+            list_only: options.list_only,
+            report_format: options.report_format,
+            junit_path: options.junit_path.clone(),
+            durations: options.durations,
+            shuffle: options.shuffle,
+            seed: options.seed,
+            run_xfail: options.run_xfail,
+            cargo_policy: options.cargo_policy.clone(),
+            cargo_features: options.cargo_features.clone(),
+            cargo_no_default_features: options.cargo_no_default_features,
+            cargo_all_features: options.cargo_all_features,
+            workspace_context: Some(test_runner::TestWorkspaceContext {
+                root: workspace.root().to_path_buf(),
+                selected_members: selected_members.clone(),
+                member: member.name.clone(),
+            }),
+        });
+        if let Err(error) = result {
+            if !error.message.is_empty() {
+                eprintln!("{}", error.message);
+            }
+            if first_failure.is_none() {
+                first_failure = Some(CliError::new("", error.exit_code));
+            }
+            if options.stop_on_fail {
+                break;
+            }
+        }
+    }
+
+    first_failure.map_or(Ok(ExitCode::SUCCESS), Err)
+}
+
 /// Execute the CLI command and return result.
 /// Execute one already-parsed CLI request without terminating the process.
 fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
@@ -825,6 +975,8 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
         Some(Command::Fmt { path, check, diff }) => commands::format_files(&path.to_string_lossy(), check, diff),
         Some(Command::Test {
             path,
+            workspace,
+            member,
             verbose,
             stop_on_fail,
             slow,
@@ -854,44 +1006,47 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             cargo_no_default_features,
             cargo_all_features,
             cargo_passthrough,
-        }) => test_runner::run_tests(test_runner::TestRunConfig {
-            path: &path.to_string_lossy(),
-            verbose,
-            stop_on_fail,
-            include_slow: slow,
-            filter: filter.as_deref(),
-            marker_expr: marker_expr.as_deref(),
-            strict_markers,
-            jobs,
-            test_features,
-            timeout: timeout.as_deref(),
-            no_capture,
+        }) => execute_tests(
+            TestCommandOptions {
+                path,
+                workspace,
+                members: member,
+                verbose,
+                stop_on_fail,
+                include_slow: slow,
+                filter,
+                marker_expr,
+                strict_markers,
+                jobs,
+                test_features,
+                timeout,
+                no_capture,
+                fail_on_empty,
+                list_only,
+                report_format,
+                junit_path,
+                durations,
+                shuffle,
+                seed,
+                run_xfail,
+                cargo_policy: CargoPolicy::from_cli_and_env(
+                    CargoPolicyCliFlags {
+                        offline,
+                        no_offline,
+                        locked,
+                        no_locked,
+                        frozen,
+                        no_frozen,
+                    },
+                    cargo_args,
+                    cargo_passthrough,
+                ),
+                cargo_features,
+                cargo_no_default_features,
+                cargo_all_features,
+            },
             use_color,
-            fail_on_empty,
-            list_only,
-            report_format,
-            junit_path,
-            durations,
-            shuffle,
-            seed,
-            run_xfail,
-            cargo_policy: CargoPolicy::from_cli_and_env(
-                CargoPolicyCliFlags {
-                    offline,
-                    no_offline,
-                    locked,
-                    no_locked,
-                    frozen,
-                    no_frozen,
-                },
-                cargo_args,
-                cargo_passthrough,
-            ),
-            cargo_features,
-            cargo_no_default_features,
-            cargo_all_features,
-            workspace_context: None,
-        }),
+        ),
         Some(Command::Version {
             bump,
             set,
@@ -1438,6 +1593,17 @@ mod tests {
         assert!(verbose);
         assert!(stop_on_fail);
         assert_eq!(filter.as_deref(), Some("unit"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_cli_parse_workspace_test_selection() -> Result<(), clap::Error> {
+        let cli = parse_cli(["incan", "test", "--member", "alpha", "--member", "packages/beta"])?;
+        let Some(Command::Test { workspace, member, .. }) = cli.command else {
+            return Err(expected_command("test"));
+        };
+        assert!(!workspace);
+        assert_eq!(member, vec!["alpha", "packages/beta"]);
         Ok(())
     }
 
