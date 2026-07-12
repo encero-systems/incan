@@ -61,6 +61,7 @@ def main() -> None:
     def first(items: list[str]) -> Optional[str]:
         return items[0] if items else None
     ```
+
     In Python, `Optional[T]` is mostly a type-hinting/tooling concept. In Incan, `Option[T]` is an explicit enum that the compiler can reason about and enforce.
 
 ## Propagating errors with `?`

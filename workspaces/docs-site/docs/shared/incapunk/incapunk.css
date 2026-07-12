@@ -1751,27 +1751,24 @@ body::after {
 .inc-release-summary p { margin: 0.35rem 0 0; color: var(--inc-muted); font-size: 0.65rem; line-height: 1.42; }
 
 .inc-incus-slot { position: relative; overflow: visible; }
-.inc-incus-slot--active {
+.md-typeset .admonition.inc-incus-slot--active,
+.md-typeset details.inc-incus-slot--active {
   --incus-slot-width: clamp(6.8rem, 14vw, 8.8rem);
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--incus-slot-width);
-  column-gap: 0.5rem;
+  --incus-slot-gap: 0.5rem;
+  padding-right: calc(var(--incus-slot-width) + var(--incus-slot-gap));
   min-height: 8rem;
 }
 
-/* Material gives admonitions a more specific display declaration. Preserve
- * the reserved Incus column without escalating to an override or !important. */
-.md-typeset .admonition.inc-incus-slot--active,
-.md-typeset details.inc-incus-slot--active {
-  display: grid;
+.md-typeset details.inc-incus-slot--active:not([open]) {
+  min-height: 0;
+  padding-right: 0;
 }
 
-.inc-incus-slot--active > :not(.inc-incus-slot__image) {
-  grid-column: 1;
-  min-width: 0;
+.md-typeset details.inc-incus-slot--active:not([open]) > .inc-incus-slot__image {
+  display: none;
 }
 
-.inc-incus-slot__image {
+.md-typeset .inc-incus-slot__image {
   position: absolute;
   z-index: 2;
   right: -0.4rem;
@@ -1921,12 +1918,13 @@ body::after {
     border-bottom: 1px solid rgba(255, 193, 90, 0.12);
   }
 
-  .inc-incus-slot--active {
+  .md-typeset .admonition.inc-incus-slot--active,
+  .md-typeset details.inc-incus-slot--active {
     --incus-slot-width: 5.7rem;
-    column-gap: 0.25rem;
+    --incus-slot-gap: 0.25rem;
   }
 
-  .inc-incus-slot__image { right: -0.45rem; width: 5.5rem; height: 7.5rem; }
+  .md-typeset .inc-incus-slot__image { right: -0.45rem; width: 5.5rem; height: 7.5rem; }
 
   .rfc-index-filter label { display: grid; gap: 0.35rem; }
   .rfc-index-filter input { width: 100%; margin-left: 0; }

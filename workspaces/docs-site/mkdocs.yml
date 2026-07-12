@@ -80,7 +80,7 @@ extra:
 
 extra_css:
   - stylesheets/pygments.css
-  - /shared/incapunk/incapunk.css
+  - /shared/incapunk/incapunk.css?v=20260712-incus-flow-3
 
 extra_javascript:
   - _snippets/javascripts/mathjax.js
