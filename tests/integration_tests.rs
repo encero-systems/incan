@@ -7519,6 +7519,13 @@ class PlainBox with Index[list[str], Self]:
     def __getitem__(self, key: list[str]) for Index[list[str], Self] -> Self:
         return self
 
+class GenericSelfBox[T with Clone] with Index[list[str], Self]:
+    pub label: str
+    pub witness: list[T]
+
+    def __getitem__(self, key: list[str]) for Index[list[str], Self] -> Self:
+        return self
+
 def test_generic_index() -> None:
     box = GenericBox[int](label="orders", witness=[1])
     assert_eq(box["amount"], "amount")
@@ -7526,6 +7533,10 @@ def test_generic_index() -> None:
 def test_self_returning_index() -> None:
     box = PlainBox(label="nested")
     assert_eq(box[["name"]].label, "nested")
+
+def test_generic_self_returning_index() -> None:
+    box = GenericSelfBox[int](label="nested-generic", witness=[1])
+    assert_eq(box[["name"]].label, "nested-generic")
 "#,
         );
 
