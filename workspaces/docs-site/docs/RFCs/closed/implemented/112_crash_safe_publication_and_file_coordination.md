@@ -1,15 +1,15 @@
 # RFC 112: Crash-safe local publication and file coordination
 
-- **Status:** In Progress
+- **Status:** Implemented
 - **Created:** 2026-07-11
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
     - RFC 055 (`std.fs` path-centric filesystem APIs with chunked file I/O)
     - RFC 077 (workspace and multi-package projects)
 - **Issue:** #829
-- **RFC PR:** —
+- **RFC PR:** [#833](https://github.com/encero-systems/incan/pull/833)
 - **Written against:** v0.4
-- **Shipped in:** —
+- **Shipped in:** v0.5
 
 ## Summary
 
@@ -194,7 +194,7 @@ Implementations should map the public contract to the host's native replace, syn
 - Add replacement visibility, failure-preservation, directory-synchronization, and multi-process contention tests for Linux and macOS.
 - Publish the crash-safe recipe and migration guidance in the filesystem reference and release notes.
 
-## Progress Checklist
+## Implementation log
 
 ### Spec / design
 
