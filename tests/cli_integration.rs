@@ -3378,6 +3378,85 @@ impl Expr {
 }
 
 #[test]
+fn rust_method_into_bound_keeps_string_argument_inferable_issue804() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(
+        tmp.path(),
+        "cli_rust_method_into_bound",
+        r#"
+
+[rust-dependencies.into_method_helper]
+path = "rust/into_method_helper"
+"#,
+    )?;
+    fs::write(
+        &main_path,
+        r#"from rust::into_method_helper import Tokenizer
+
+def main() -> None:
+  tokenizer = Tokenizer.new()
+  println(tokenizer.encode("hello world", false))
+"#,
+    )?;
+
+    let helper_src = tmp.path().join("rust").join("into_method_helper").join("src");
+    fs::create_dir_all(&helper_src)?;
+    fs::write(
+        helper_src
+            .parent()
+            .ok_or("into_method_helper src has no parent")?
+            .join("Cargo.toml"),
+        r#"[package]
+name = "into_method_helper"
+version = "0.1.0"
+edition = "2021"
+"#,
+    )?;
+    fs::write(
+        helper_src.join("lib.rs"),
+        r#"pub struct Tokenizer;
+
+impl Tokenizer {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn encode<E: Into<String>>(&self, input: E, uppercase: bool) -> String {
+        let text = input.into();
+        if uppercase {
+            text.to_uppercase()
+        } else {
+            text
+        }
+    }
+}
+"#,
+    )?;
+
+    let output = run_incan(
+        tmp.path(),
+        &["run", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(&output, "incan run with a Rust Into-bound method argument");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "hello world",
+        "Rust Into-bound method should receive the original string type"
+    );
+
+    let generated = fs::read_to_string(tmp.path().join("target/incan/cli_rust_method_into_bound/src/main.rs"))?;
+    assert!(
+        generated.contains("tokenizer.encode(\"hello world\", false)"),
+        "unresolved Rust method generic should preserve the string literal shape, got:\n{generated}"
+    );
+    assert!(
+        !generated.contains("tokenizer.encode(\"hello world\".into(), false)"),
+        "unresolved Rust method generic must not emit an ambiguous `.into()`, got:\n{generated}"
+    );
+    Ok(())
+}
+
+#[test]
 fn run_types_rust_callback_closures_in_every_match_arm_issue733() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(
