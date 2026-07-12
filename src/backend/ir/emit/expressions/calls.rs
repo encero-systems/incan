@@ -42,8 +42,36 @@ impl<'a> IrEmitter<'a> {
         else {
             return None;
         };
-        if !matches!(arg.ty, IrType::Function { .. }) || !self.needs_borrowed_function_adapter(name, &borrowed_indices)
-        {
+        let IrType::Function {
+            params: source_params, ..
+        } = &arg.ty
+        else {
+            return None;
+        };
+        // A source callback that already spells the required borrow must be passed directly. The adapter is only for
+        // changing an owned source parameter into an immutable borrow; creating one for an existing borrow would
+        // either be redundant or leave a helper that cannot be emitted.
+        let function_param_is_borrowed = |ty: &IrType| {
+            matches!(ty, IrType::Ref(_) | IrType::RefMut(_))
+                || matches!(ty, IrType::RustDisplay(display) if display.trim_start().starts_with('&'))
+        };
+        let source_already_borrows = self
+            .function_registry
+            .get(name)
+            .map(|signature| {
+                borrowed_indices.iter().all(|index| {
+                    signature
+                        .params
+                        .get(*index)
+                        .is_some_and(|param| function_param_is_borrowed(&param.ty))
+                })
+            })
+            .unwrap_or_else(|| {
+                borrowed_indices
+                    .iter()
+                    .all(|index| source_params.get(*index).is_some_and(function_param_is_borrowed))
+            });
+        if source_already_borrows || !self.needs_borrowed_function_adapter(name, &borrowed_indices) {
             return None;
         }
         let helper_name = Self::borrowed_function_adapter_name(name, &borrowed_indices);
