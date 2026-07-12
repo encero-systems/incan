@@ -318,10 +318,10 @@ pub fn stable_diagnostic(
         primary_span: diagnostic_span(file_name, source, error.span),
         notes: error.notes.clone(),
         hints: error.hints.clone(),
-        expected: error.expected.clone(),
-        actual: error.actual.clone(),
+        expected: error.expected().map(str::to_owned),
+        actual: error.actual().map(str::to_owned),
         related_spans: error
-            .related_spans
+            .related_spans()
             .iter()
             .map(|related| DiagnosticRelatedSpan {
                 span: diagnostic_span(file_name, source, related.span),

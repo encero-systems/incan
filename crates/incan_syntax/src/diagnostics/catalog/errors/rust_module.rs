@@ -4,7 +4,7 @@
 //! sanitization and crate resolution.
 
 use crate::ast::Span;
-use crate::diagnostics::{CompileError, ErrorKind};
+use crate::diagnostics::CompileError;
 
 // -- rust.module() directive --------------------------------------------------
 
@@ -50,18 +50,11 @@ pub fn unresolved_rust_module_crate(crate_name: &str, path: &str, span: Span) ->
 
 /// `rust.module()` directive with no `@rust.extern` items in the module (warning).
 pub fn unused_rust_module(span: Span) -> CompileError {
-    CompileError {
-        message: "`rust.module()` directive has no effect — no `@rust.extern` items found".to_string(),
+    CompileError::warning(
+        "`rust.module()` directive has no effect — no `@rust.extern` items found".to_string(),
         span,
-        kind: ErrorKind::Warning,
-        notes: Vec::new(),
-        hints: vec![
-            "Remove it if this module is pure Incan, or add `@rust.extern` to Rust-backed functions".to_string(),
-        ],
-        related_spans: Vec::new(),
-        expected: None,
-        actual: None,
-    }
+    )
+    .with_hint("Remove it if this module is pure Incan, or add `@rust.extern` to Rust-backed functions")
 }
 
 // -- @rust.extern decorator ---------------------------------------------------
