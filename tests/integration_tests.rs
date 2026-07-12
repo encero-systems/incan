@@ -624,7 +624,10 @@ def main() -> None:
 /// the current build, including when `CARGO_TARGET_DIR` is not the default `target/`.
 fn incan_debug_binary() -> std::path::PathBuf {
     if let Ok(path) = std::env::var("CARGO_BIN_EXE_incan") {
-        return path.into();
+        let path = std::path::PathBuf::from(path);
+        if path.exists() {
+            return path;
+        }
     }
     if let Ok(target_dir) = std::env::var("CARGO_TARGET_DIR") {
         let p = std::path::PathBuf::from(&target_dir).join("debug/incan");
@@ -632,7 +635,7 @@ fn incan_debug_binary() -> std::path::PathBuf {
             return p;
         }
     }
-    std::path::PathBuf::from("target/debug/incan")
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/debug/incan")
 }
 
 fn shared_generated_cargo_target_dir() -> std::path::PathBuf {
@@ -645,6 +648,24 @@ fn incan_command() -> Command {
     let mut command = Command::new(incan_debug_binary());
     command.env("INCAN_GENERATED_CARGO_TARGET_DIR", shared_generated_cargo_target_dir());
     command
+}
+
+/// Resolve the exact immutable compiled stdlib artifact selected for one generated consumer.
+fn compiled_builtin_stdlib_artifact_root(generated_project: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let cargo_toml = fs::read_to_string(generated_project.join("Cargo.toml"))?;
+    let manifest: toml::Value = toml::from_str(&cargo_toml)?;
+    let path = manifest
+        .get("dependencies")
+        .and_then(|dependencies| dependencies.get("incan_builtin_stdlib"))
+        .and_then(|dependency| dependency.get("path"))
+        .and_then(toml::Value::as_str)
+        .ok_or("generated consumer did not select a compiled built-in stdlib artifact path")?;
+    let path = PathBuf::from(path);
+    Ok(if path.is_absolute() {
+        path
+    } else {
+        generated_project.join(path)
+    })
 }
 
 fn run_incan_command_with_timeout(
@@ -2676,7 +2697,7 @@ def main() -> None:
 
 /// End-to-end codegen tests
 mod codegen_tests {
-    use super::{incan_command, strip_ansi_escapes};
+    use super::{compiled_builtin_stdlib_artifact_root, incan_command, strip_ansi_escapes};
     use incan::backend::IrCodegen;
     use incan::frontend::{lexer, parser, typechecker};
     use std::fs;
@@ -6699,7 +6720,8 @@ async def main() -> None:
         let output = incan_command()
             .args(["run", "tests/fixtures/valid/std_ordinal_map_surface.incn"])
             .env("CARGO_NET_OFFLINE", "true")
-            .output()?;
+            .output()
+            .map_err(|error| format!("failed to run std.ordinal_map fixture: {error}"))?;
 
         assert!(
             output.status.success(),
@@ -6710,7 +6732,8 @@ async def main() -> None:
         );
         assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "std.ordinal_map ok");
 
-        let generated_main = fs::read_to_string("target/incan/std_ordinal_map_surface/src/main.rs")?;
+        let generated_main = fs::read_to_string("target/incan/std_ordinal_map_surface/src/main.rs")
+            .map_err(|error| format!("failed to read generated std.ordinal_map consumer: {error}"))?;
         assert!(
             generated_main.contains("__incan_ordinal_require_str("),
             "OrdinalMap[str] literal lookup should lower through the borrowed string fast path:\n{generated_main}"
@@ -6723,7 +6746,9 @@ async def main() -> None:
             !std::path::Path::new("target/incan/std_ordinal_map_surface/src/__incan_std/collections.rs").exists(),
             "a compiled std.collections module must not be materialized in the consumer"
         );
-        let generated_collections = fs::read_to_string("crates/incan_stdlib/stdlib/target/lib/src/collections.rs")?;
+        let artifact_root = compiled_builtin_stdlib_artifact_root(Path::new("target/incan/std_ordinal_map_surface"))?;
+        let generated_collections = fs::read_to_string(artifact_root.join("src/collections.rs"))
+            .map_err(|error| format!("failed to read compiled std.collections artifact: {error}"))?;
         assert!(
             generated_collections.contains("incan_stdlib::__incan_ordinal_map_string_fast_impls!();"),
             "the compiled std.collections artifact should splice in the stdlib-owned OrdinalMap string support:\n{generated_collections}"
@@ -6779,7 +6804,8 @@ async def main() -> None:
             "a compiled std.regex module must not be materialized in the consumer: {}",
             consumer_core.display()
         );
-        let generated_core = fs::read_to_string("crates/incan_stdlib/stdlib/target/lib/src/regex/_core.rs")?;
+        let artifact_root = compiled_builtin_stdlib_artifact_root(Path::new("target/incan/std_regex_surface"))?;
+        let generated_core = fs::read_to_string(artifact_root.join("src/regex/_core.rs"))?;
         for unexpected in [
             "RegexBuilder::new(&(pattern).to_string())",
             "raw.find(&(text).to_string())",

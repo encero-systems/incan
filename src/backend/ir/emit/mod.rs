@@ -316,6 +316,13 @@ pub struct IrEmitter<'a> {
     const_string_literals: std::collections::HashMap<String, String>,
     /// Map of type name -> module path segments for dependency modules.
     type_module_paths: HashMap<String, Vec<String>>,
+    /// Provider module paths owned by the linked compiled built-in stdlib artifact.
+    ///
+    /// These paths do not use the consumer-only `__incan_std` namespace, so generated support fast paths need an
+    /// explicit ownership marker rather than inferring ownership from a short module name such as `collections`.
+    builtin_stdlib_artifact_module_paths: HashSet<Vec<String>>,
+    /// Nominal type names published by each provider module in the linked compiled built-in stdlib artifact.
+    builtin_stdlib_artifact_type_module_paths: HashMap<String, HashSet<Vec<String>>>,
     /// Type names that are declared in multiple modules (ambiguous).
     ambiguous_type_names: HashSet<String>,
     /// Map of value name -> module path segments for dependency modules.
@@ -436,6 +443,8 @@ impl<'a> IrEmitter<'a> {
             in_return_context: RefCell::new(false),
             const_string_literals: std::collections::HashMap::new(),
             type_module_paths: HashMap::new(),
+            builtin_stdlib_artifact_module_paths: HashSet::new(),
+            builtin_stdlib_artifact_type_module_paths: HashMap::new(),
             ambiguous_type_names: HashSet::new(),
             value_module_paths: HashMap::new(),
             ambiguous_value_names: HashSet::new(),
@@ -1218,6 +1227,9 @@ impl<'a> IrEmitter<'a> {
         let Some(api) = manifest.contract_metadata.api.as_ref() else {
             return;
         };
+        self.builtin_stdlib_artifact_module_paths =
+            api.modules.iter().map(|module| module.module_path.clone()).collect();
+        self.builtin_stdlib_artifact_type_module_paths.clear();
         let mut models = Vec::new();
         let mut classes = Vec::new();
         let mut enums = Vec::new();
@@ -1225,6 +1237,19 @@ impl<'a> IrEmitter<'a> {
         let mut functions = Vec::new();
         for module in &api.modules {
             for declaration in &module.declarations {
+                let nominal_name = match declaration {
+                    ApiDeclaration::Model(model) => Some(model.name.as_str()),
+                    ApiDeclaration::Class(class) => Some(class.name.as_str()),
+                    ApiDeclaration::Enum(enum_) => Some(enum_.name.as_str()),
+                    ApiDeclaration::Newtype(newtype) => Some(newtype.name.as_str()),
+                    _ => None,
+                };
+                if let Some(name) = nominal_name {
+                    self.builtin_stdlib_artifact_type_module_paths
+                        .entry(name.to_string())
+                        .or_default()
+                        .insert(module.module_path.clone());
+                }
                 match declaration {
                     ApiDeclaration::Model(model) => models.push(model_export_from_api(model)),
                     ApiDeclaration::Class(class) => classes.push(class_export_from_api(class)),
@@ -1237,6 +1262,30 @@ impl<'a> IrEmitter<'a> {
         }
         self.seed_builtin_stdlib_export_metadata(&models, &classes, &enums, &newtypes);
         self.seed_builtin_stdlib_factory_metadata(&functions, &models, &classes);
+    }
+
+    /// Return whether a dependency module is supplied by the linked compiled built-in stdlib artifact.
+    pub(in crate::backend::ir::emit) fn is_builtin_stdlib_artifact_module_path(&self, module: &[String]) -> bool {
+        self.builtin_stdlib_artifact_module_paths.contains(module)
+    }
+
+    /// Return whether a named type is owned by the direct crate-root projection of a compiled stdlib provider module.
+    pub(in crate::backend::ir::emit) fn is_builtin_stdlib_artifact_type_in_module(
+        &self,
+        type_name: &str,
+        source_module: &str,
+    ) -> bool {
+        let Some(artifact_module) = source_module.strip_prefix("std.") else {
+            return false;
+        };
+        let expected = artifact_module.split('.');
+        self.builtin_stdlib_artifact_type_module_paths
+            .get(type_name)
+            .is_some_and(|modules| {
+                modules
+                    .iter()
+                    .any(|module| module.iter().map(String::as_str).eq(expected.clone()))
+            })
     }
 
     /// Return anonymous union wrappers that are owned by a compiled stdlib artifact.

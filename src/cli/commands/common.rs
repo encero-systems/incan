@@ -53,8 +53,6 @@ use super::vocab_extraction::collect_library_vocab_metadata_for_parser;
 /// Files larger than this are rejected to prevent out-of-memory conditions during compilation.
 const MAX_SOURCE_SIZE: u64 = 100 * 1024 * 1024;
 static PREPARED_LIBRARY_DEPENDENCIES: LazyLock<Mutex<HashSet<PathBuf>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
-static PREPARED_BUILTIN_STDLIB_ARTIFACTS: LazyLock<Mutex<HashSet<PathBuf>>> =
-    LazyLock::new(|| Mutex::new(HashSet::new()));
 pub(crate) const INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV: &str = "INCAN_INTERNAL_LIBRARY_ARTIFACT_ONLY";
 /// Internal marker selecting canonical local module paths while compiling the built-in stdlib artifact itself.
 pub(crate) const INTERNAL_BUILTIN_STDLIB_ARTIFACT_BUILD_ENV: &str = "INCAN_INTERNAL_BUILTIN_STDLIB_ARTIFACT_BUILD";
@@ -213,7 +211,7 @@ fn builtin_stdlib_artifact_builder_executable(
     cargo_test_binary: Option<PathBuf>,
     current_executable: PathBuf,
 ) -> PathBuf {
-    cargo_test_binary.unwrap_or_else(|| {
+    cargo_test_binary.filter(|path| path.is_file()).unwrap_or_else(|| {
         let cargo_test_binary = current_executable
             .parent()
             .filter(|parent| parent.file_name().is_some_and(|name| name == "deps"))
@@ -284,14 +282,257 @@ fn publish_builtin_stdlib_artifact_resolved_lock(stdlib_root: &Path, artifact_ro
     Ok(())
 }
 
+const BUILTIN_STDLIB_ARTIFACT_STORE: &str = "incan_builtin_stdlib";
+const BUILTIN_STDLIB_ARTIFACT_IDENTITY_FILE: &str = ".incan-artifact-identity";
+
+/// Keep the bootstrap artifact lock alive for the whole preparation/publish transaction.
+///
+/// The compiler cannot call its own Incan `std.fs` artifact before that artifact exists. This is therefore a
+/// deliberately narrow native bootstrap boundary, mirroring RFC 112's advisory-lock contract while the compiler
+/// produces the first Incan-owned stdlib artifact.
+struct BuiltinStdlibArtifactLock {
+    _file: fs::File,
+}
+
+/// Acquire the artifact-store lock that serializes all bootstrap builds and publications.
+fn acquire_builtin_stdlib_artifact_lock(store_root: &Path) -> CliResult<BuiltinStdlibArtifactLock> {
+    fs::create_dir_all(store_root).map_err(|error| {
+        CliError::failure(format!(
+            "failed to create compiled built-in stdlib artifact store {}: {error}",
+            store_root.display()
+        ))
+    })?;
+    let lock_path = store_root.join(".incan.lock");
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(&lock_path)
+        .map_err(|error| CliError::failure(format!("failed to open artifact lock {}: {error}", lock_path.display())))?;
+    file.lock().map_err(|error| {
+        CliError::failure(format!(
+            "failed to acquire artifact lock {}: {error}",
+            lock_path.display()
+        ))
+    })?;
+    Ok(BuiltinStdlibArtifactLock { _file: file })
+}
+
+/// Construct the fixed crate metadata expected at one immutable artifact root.
+fn builtin_stdlib_artifact_metadata(artifact_root: PathBuf) -> LibraryArtifactMetadata {
+    LibraryArtifactMetadata::from_crate_root(
+        stdlib::BUILTIN_STDLIB_ARTIFACT_CRATE,
+        stdlib::BUILTIN_STDLIB_ARTIFACT_CRATE,
+        artifact_root,
+    )
+}
+
+/// Hash one sorted stdlib source subtree while excluding generated build output.
+fn hash_builtin_stdlib_artifact_source_tree(root: &Path, current: &Path, hasher: &mut Sha256) -> CliResult<()> {
+    let mut entries = fs::read_dir(current)
+        .map_err(|error| {
+            CliError::failure(format!(
+                "failed to read stdlib source directory {}: {error}",
+                current.display()
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| {
+            CliError::failure(format!(
+                "failed to enumerate stdlib source directory {}: {error}",
+                current.display()
+            ))
+        })?;
+    entries.sort_by_key(|entry| entry.file_name());
+
+    for entry in entries {
+        let path = entry.path();
+        let relative = path.strip_prefix(root).map_err(|error| {
+            CliError::failure(format!(
+                "failed to make stdlib source path {} relative: {error}",
+                path.display()
+            ))
+        })?;
+        if relative
+            .components()
+            .next()
+            .is_some_and(|component| component.as_os_str() == "target")
+        {
+            continue;
+        }
+        let file_type = entry.file_type().map_err(|error| {
+            CliError::failure(format!(
+                "failed to inspect stdlib source path {}: {error}",
+                path.display()
+            ))
+        })?;
+        hasher.update(relative.to_string_lossy().as_bytes());
+        hasher.update([0]);
+        if file_type.is_dir() {
+            hasher.update(b"directory\0");
+            hash_builtin_stdlib_artifact_source_tree(root, &path, hasher)?;
+        } else if file_type.is_file() {
+            hasher.update(b"file\0");
+            let bytes = fs::read(&path).map_err(|error| {
+                CliError::failure(format!("failed to read stdlib source file {}: {error}", path.display()))
+            })?;
+            hasher.update(bytes);
+        } else if file_type.is_symlink() {
+            hasher.update(b"symlink\0");
+            let target = fs::read_link(&path).map_err(|error| {
+                CliError::failure(format!(
+                    "failed to read stdlib source symlink {}: {error}",
+                    path.display()
+                ))
+            })?;
+            hasher.update(target.to_string_lossy().as_bytes());
+        }
+        hasher.update([0xff]);
+    }
+    Ok(())
+}
+
+/// Derive the immutable artifact identity from every compiler input that can change its generated Rust or dependency
+/// closure. The identity is intentionally content based for stdlib sources, so an old partial or stale artifact is
+/// never accepted merely because its conventional directory happens to exist.
+fn builtin_stdlib_artifact_identity(
+    stdlib_root: &Path,
+    executable: &Path,
+    workspace_lock: Option<&Path>,
+) -> CliResult<String> {
+    let mut hasher = Sha256::new();
+    hasher.update(b"incan-builtin-stdlib-artifact-v2\0");
+    hash_builtin_stdlib_artifact_source_tree(stdlib_root, stdlib_root, &mut hasher)?;
+
+    hasher.update(b"compiler-executable\0");
+    let executable = fs::canonicalize(executable).unwrap_or_else(|_| executable.to_path_buf());
+    hasher.update(executable.to_string_lossy().as_bytes());
+    let executable_metadata = fs::metadata(&executable).map_err(|error| {
+        CliError::failure(format!(
+            "failed to inspect compiler executable {}: {error}",
+            executable.display()
+        ))
+    })?;
+    hasher.update(executable_metadata.len().to_le_bytes());
+    let modified = executable_metadata
+        .modified()
+        .map_err(|error| {
+            CliError::failure(format!(
+                "failed to inspect compiler executable timestamp {}: {error}",
+                executable.display()
+            ))
+        })?
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| CliError::failure(format!("compiler executable timestamp predates Unix epoch: {error}")))?;
+    hasher.update(modified.as_secs().to_le_bytes());
+    hasher.update(modified.subsec_nanos().to_le_bytes());
+
+    hasher.update(b"workspace-lock\0");
+    if let Some(workspace_lock) = workspace_lock {
+        hasher.update(fs::read(workspace_lock).map_err(|error| {
+            CliError::failure(format!(
+                "failed to read workspace lock {}: {error}",
+                workspace_lock.display()
+            ))
+        })?);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+/// Return whether an artifact has every published file and the exact requested identity marker.
+fn builtin_stdlib_artifact_is_complete(metadata: &LibraryArtifactMetadata, identity: &str) -> bool {
+    metadata.manifest_path.is_file()
+        && metadata.cargo_toml_path.is_file()
+        && metadata.crate_lib_path.is_file()
+        && metadata.crate_root.join("Cargo.lock").is_file()
+        && fs::read_to_string(metadata.crate_root.join(BUILTIN_STDLIB_ARTIFACT_IDENTITY_FILE))
+            .is_ok_and(|actual| actual.trim() == identity)
+}
+
+/// Flush every staged artifact file and directory before atomic publication.
+fn sync_builtin_stdlib_artifact_tree(path: &Path) -> CliResult<()> {
+    let mut entries = fs::read_dir(path)
+        .map_err(|error| {
+            CliError::failure(format!(
+                "failed to read staged artifact directory {}: {error}",
+                path.display()
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| {
+            CliError::failure(format!(
+                "failed to enumerate staged artifact directory {}: {error}",
+                path.display()
+            ))
+        })?;
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        let entry_path = entry.path();
+        let file_type = entry.file_type().map_err(|error| {
+            CliError::failure(format!(
+                "failed to inspect staged artifact path {}: {error}",
+                entry_path.display()
+            ))
+        })?;
+        if file_type.is_dir() {
+            sync_builtin_stdlib_artifact_tree(&entry_path)?;
+        } else if file_type.is_file() {
+            fs::File::open(&entry_path)
+                .and_then(|file| file.sync_all())
+                .map_err(|error| {
+                    CliError::failure(format!(
+                        "failed to synchronize staged artifact file {}: {error}",
+                        entry_path.display()
+                    ))
+                })?;
+        }
+    }
+    fs::File::open(path)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|error| {
+            CliError::failure(format!(
+                "failed to synchronize staged artifact directory {}: {error}",
+                path.display()
+            ))
+        })
+}
+
+/// Flush the artifact store after publishing a new immutable artifact directory.
+fn sync_builtin_stdlib_artifact_store(store_root: &Path) -> CliResult<()> {
+    fs::File::open(store_root)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|error| {
+            CliError::failure(format!(
+                "failed to synchronize artifact store {}: {error}",
+                store_root.display()
+            ))
+        })
+}
+
+/// Allocate a unique private staging directory for one artifact identity.
+fn staged_builtin_stdlib_artifact_root(store_root: &Path, identity: &str) -> CliResult<PathBuf> {
+    let elapsed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| CliError::failure(format!("system clock predates Unix epoch: {error}")))?;
+    Ok(store_root.join(format!(
+        ".staging-{identity}-{}-{}",
+        std::process::id(),
+        elapsed.as_nanos()
+    )))
+}
+
 /// Configure the compiler-owned bootstrap build for the compiled stdlib artifact.
 ///
 /// The artifact is the producer of the dependency closure that generated consumers later use offline. A raw Cargo
 /// offline setting inherited from a consumer would prevent that first build from resolving an optional stdlib module
 /// such as `std.regex`. Incan's own explicit offline policy remains inherited by the nested CLI command.
-fn configure_builtin_stdlib_artifact_builder(command: &mut Command, workspace_lock: Option<&Path>) {
+fn configure_builtin_stdlib_artifact_builder(command: &mut Command, workspace_lock: Option<&Path>, output_dir: &Path) {
     command
-        .args(["build", "--lib"])
+        // `build --lib` accepts an optional project/file positional before its positional output directory. Keep the
+        // explicit `.` project root so the staging directory is unambiguously parsed as output rather than as a file.
+        .args(["build", "--lib", "."])
+        .arg(output_dir)
         .env_remove("CARGO_NET_OFFLINE")
         .env_remove(INTERNAL_MANIFEST_OVERRIDE_ENV)
         .env_remove(INTERNAL_PROJECT_ROOT_OVERRIDE_ENV)
@@ -310,88 +551,118 @@ fn prepare_builtin_stdlib_artifact() -> CliResult<LibraryArtifactMetadata> {
     let stdlib_root = crate::cli::prelude::find_stdlib_dir().ok_or_else(|| {
         CliError::failure("cannot locate built-in stdlib sources needed to prepare the compiled stdlib artifact")
     })?;
-    let canonical_root = fs::canonicalize(&stdlib_root).unwrap_or_else(|_| stdlib_root.clone());
-    let artifact_root = stdlib_root.join("target").join("lib");
-    let metadata = LibraryArtifactMetadata::from_crate_root(
-        stdlib::BUILTIN_STDLIB_ARTIFACT_CRATE,
-        stdlib::BUILTIN_STDLIB_ARTIFACT_CRATE,
-        artifact_root,
-    );
-    if metadata.manifest_path.is_file() && metadata.cargo_toml_path.is_file() && metadata.crate_lib_path.is_file() {
-        return Ok(metadata);
-    }
-
-    {
-        let prepared = PREPARED_BUILTIN_STDLIB_ARTIFACTS
-            .lock()
-            .map_err(|_| CliError::failure("failed to lock prepared built-in stdlib artifact set"))?;
-        if prepared.contains(&canonical_root) {
-            return Err(CliError::failure(format!(
-                "compiled built-in stdlib artifact is missing after preparation at {}",
-                metadata.crate_root.display()
-            )));
-        }
-    }
-
-    let workspace_lock = builtin_stdlib_artifact_workspace_lock(&stdlib_root);
-    seed_builtin_stdlib_artifact_workspace_lock(workspace_lock.as_deref(), &metadata.crate_root)?;
-
-    eprintln!(
-        "Preparing compiled built-in stdlib artifact with `incan build --lib` in {}",
-        stdlib_root.display()
-    );
+    let stdlib_root = fs::canonicalize(&stdlib_root).map_err(|error| {
+        CliError::failure(format!(
+            "failed to canonicalize built-in stdlib source directory {}: {error}",
+            stdlib_root.display()
+        ))
+    })?;
     let current_exe = env::current_exe()
         .map_err(|error| CliError::failure(format!("failed to resolve current incan executable: {error}")))?;
     let cargo_test_binary = env::var_os("CARGO_BIN_EXE_incan")
         .filter(|path| !path.is_empty())
         .map(PathBuf::from);
     let executable = builtin_stdlib_artifact_builder_executable(cargo_test_binary, current_exe);
-    let mut command = Command::new(executable);
-    command.current_dir(&stdlib_root);
-    configure_builtin_stdlib_artifact_builder(&mut command, workspace_lock.as_deref());
-    // This is an implementation detail of the consumer compile. Never inherit its successful stdout into the
-    // program being run: `incan run` must reserve stdout for the user's program, and JSON/reporting callers need
-    // the same boundary. Preserve both streams when the nested artifact build actually fails.
-    let output = command.output().map_err(|error| {
-        CliError::failure(format!(
-            "failed to run `incan build --lib` for built-in stdlib artifact at {}: {error}",
-            stdlib_root.display()
-        ))
-    })?;
-    if !output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let mut diagnostics = String::new();
-        if !stderr.trim().is_empty() {
-            diagnostics.push_str(stderr.trim_end());
-        }
-        if !stdout.trim().is_empty() {
-            if !diagnostics.is_empty() {
-                diagnostics.push('\n');
-            }
-            diagnostics.push_str(stdout.trim_end());
-        }
+    let workspace_lock = builtin_stdlib_artifact_workspace_lock(&stdlib_root);
+    let identity = builtin_stdlib_artifact_identity(&stdlib_root, &executable, workspace_lock.as_deref())?;
+    let store_root = stdlib_root.join("target").join(BUILTIN_STDLIB_ARTIFACT_STORE);
+    let _lock = acquire_builtin_stdlib_artifact_lock(&store_root)?;
+    let artifact_root = store_root.join(&identity);
+    let metadata = builtin_stdlib_artifact_metadata(artifact_root.clone());
+    if builtin_stdlib_artifact_is_complete(&metadata, &identity) {
+        return Ok(metadata);
+    }
+    if artifact_root.exists() {
         return Err(CliError::failure(format!(
-            "failed to prepare compiled built-in stdlib artifact at {}{}",
-            stdlib_root.display(),
-            if diagnostics.is_empty() {
-                String::new()
-            } else {
-                format!("\n{diagnostics}")
-            }
+            "compiled built-in stdlib artifact at {} is incomplete; refusing to overwrite an already published identity",
+            artifact_root.display()
         )));
     }
-    publish_builtin_stdlib_artifact_resolved_lock(&stdlib_root, &metadata.crate_root)?;
-    if !metadata.manifest_path.is_file() || !metadata.cargo_toml_path.is_file() || !metadata.crate_lib_path.is_file() {
+
+    let staging_root = staged_builtin_stdlib_artifact_root(&store_root, &identity)?;
+    let build_result = (|| -> CliResult<()> {
+        seed_builtin_stdlib_artifact_workspace_lock(workspace_lock.as_deref(), &staging_root)?;
+        eprintln!(
+            "Preparing compiled built-in stdlib artifact with `incan build --lib` in {}",
+            stdlib_root.display()
+        );
+        let mut command = Command::new(&executable);
+        command.current_dir(&stdlib_root);
+        configure_builtin_stdlib_artifact_builder(&mut command, workspace_lock.as_deref(), &staging_root);
+        // This is an implementation detail of the consumer compile. Never inherit its successful stdout into the
+        // program being run: `incan run` must reserve stdout for the user's program, and JSON/reporting callers need
+        // the same boundary. Preserve both streams when the nested artifact build actually fails.
+        let output = command.output().map_err(|error| {
+            CliError::failure(format!(
+                "failed to run `incan build --lib` for built-in stdlib artifact at {}: {error}",
+                stdlib_root.display()
+            ))
+        })?;
+        if !output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let mut diagnostics = String::new();
+            if !stderr.trim().is_empty() {
+                diagnostics.push_str(stderr.trim_end());
+            }
+            if !stdout.trim().is_empty() {
+                if !diagnostics.is_empty() {
+                    diagnostics.push('\n');
+                }
+                diagnostics.push_str(stdout.trim_end());
+            }
+            return Err(CliError::failure(format!(
+                "failed to prepare compiled built-in stdlib artifact at {}{}",
+                stdlib_root.display(),
+                if diagnostics.is_empty() {
+                    String::new()
+                } else {
+                    format!("\n{diagnostics}")
+                }
+            )));
+        }
+        publish_builtin_stdlib_artifact_resolved_lock(&stdlib_root, &staging_root)?;
+        let staged_metadata = builtin_stdlib_artifact_metadata(staging_root.clone());
+        if !staged_metadata.manifest_path.is_file()
+            || !staged_metadata.cargo_toml_path.is_file()
+            || !staged_metadata.crate_lib_path.is_file()
+            || !staged_metadata.crate_root.join("Cargo.lock").is_file()
+        {
+            return Err(CliError::failure(format!(
+                "compiled built-in stdlib staging artifact is incomplete at {}",
+                staging_root.display()
+            )));
+        }
+        fs::write(
+            staging_root.join(BUILTIN_STDLIB_ARTIFACT_IDENTITY_FILE),
+            format!("{identity}\n"),
+        )
+        .map_err(|error| {
+            CliError::failure(format!(
+                "failed to write compiled stdlib artifact identity at {}: {error}",
+                staging_root.display()
+            ))
+        })?;
+        sync_builtin_stdlib_artifact_tree(&staging_root)?;
+        fs::rename(&staging_root, &artifact_root).map_err(|error| {
+            CliError::failure(format!(
+                "failed to publish compiled built-in stdlib artifact from {} to {}: {error}",
+                staging_root.display(),
+                artifact_root.display()
+            ))
+        })?;
+        sync_builtin_stdlib_artifact_store(&store_root)
+    })();
+    if let Err(error) = build_result {
+        let _ = fs::remove_dir_all(&staging_root);
+        return Err(error);
+    }
+    if !builtin_stdlib_artifact_is_complete(&metadata, &identity) {
         return Err(CliError::failure(format!(
-            "compiled built-in stdlib artifact is incomplete at {}",
+            "compiled built-in stdlib artifact is incomplete after publication at {}",
             metadata.crate_root.display()
         )));
     }
-    let mut prepared = PREPARED_BUILTIN_STDLIB_ARTIFACTS
-        .lock()
-        .map_err(|_| CliError::failure("failed to lock prepared built-in stdlib artifact set"))?;
-    prepared.insert(canonical_root);
     Ok(metadata)
 }
 
@@ -2654,13 +2925,21 @@ mod tests {
     }
 
     #[test]
-    fn builtin_stdlib_artifact_builder_uses_cargo_cli_binary_in_integration_tests() {
+    fn builtin_stdlib_artifact_builder_uses_current_cargo_cli_binary_in_integration_tests()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = tempfile::tempdir()?;
+        let cargo_cli = temp_dir.path().join("incan-cli");
+        fs::write(&cargo_cli, "test binary")?;
+        assert_eq!(
+            builtin_stdlib_artifact_builder_executable(Some(cargo_cli.clone()), PathBuf::from("/tmp/integration-test"),),
+            cargo_cli
+        );
         assert_eq!(
             builtin_stdlib_artifact_builder_executable(
-                Some(PathBuf::from("/tmp/incan-cli")),
+                Some(PathBuf::from("/tmp/stale-incan-cli")),
                 PathBuf::from("/tmp/integration-test"),
             ),
-            PathBuf::from("/tmp/incan-cli")
+            PathBuf::from("/tmp/integration-test")
         );
         assert_eq!(
             builtin_stdlib_artifact_builder_executable(None, PathBuf::from("/usr/local/bin/incan")),
@@ -2670,12 +2949,13 @@ mod tests {
             builtin_stdlib_artifact_builder_executable(None, PathBuf::from("/tmp/target/debug/deps/incan-abc123"),),
             PathBuf::from("/tmp/target/debug/incan")
         );
+        Ok(())
     }
 
     #[test]
     fn builtin_stdlib_artifact_builder_resolves_its_initial_closure_without_raw_cargo_offline() {
         let mut command = Command::new("incan");
-        configure_builtin_stdlib_artifact_builder(&mut command, None);
+        configure_builtin_stdlib_artifact_builder(&mut command, None, Path::new("/tmp/staged-stdlib-artifact"));
 
         assert!(
             command
@@ -2688,6 +2968,12 @@ mod tests {
                 key == INTERNAL_BUILTIN_STDLIB_ARTIFACT_BUILD_ENV && value.is_some_and(|value| value == "1")
             }),
             "the artifact bootstrap must retain its internal build marker"
+        );
+        assert!(
+            command
+                .get_args()
+                .any(|argument| argument == std::ffi::OsStr::new("/tmp/staged-stdlib-artifact")),
+            "the artifact bootstrap must build into its private staging directory"
         );
     }
 
@@ -2726,6 +3012,70 @@ mod tests {
         assert_eq!(
             fs::read_to_string(artifact_root.join("Cargo.lock"))?,
             "resolved closure"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn builtin_stdlib_artifact_identity_tracks_source_and_lock_inputs() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = tempfile::tempdir()?;
+        let stdlib_root = temp_dir.path().join("stdlib");
+        fs::create_dir_all(stdlib_root.join("nested"))?;
+        fs::write(stdlib_root.join("incan.toml"), "[project]\nname = \"stdlib\"\n")?;
+        fs::write(
+            stdlib_root.join("nested").join("module.incn"),
+            "pub def value() -> int:\n  return 1\n",
+        )?;
+        let workspace_lock = temp_dir.path().join("Cargo.lock");
+        fs::write(&workspace_lock, "first lock closure")?;
+        let executable = std::env::current_exe()?;
+
+        let initial = builtin_stdlib_artifact_identity(&stdlib_root, &executable, Some(&workspace_lock))?;
+        fs::write(
+            stdlib_root.join("nested").join("module.incn"),
+            "pub def value() -> int:\n  return 2\n",
+        )?;
+        let source_changed = builtin_stdlib_artifact_identity(&stdlib_root, &executable, Some(&workspace_lock))?;
+        assert_ne!(
+            initial, source_changed,
+            "changing a stdlib source must invalidate its artifact identity"
+        );
+
+        fs::write(&workspace_lock, "second lock closure")?;
+        let lock_changed = builtin_stdlib_artifact_identity(&stdlib_root, &executable, Some(&workspace_lock))?;
+        assert_ne!(
+            source_changed, lock_changed,
+            "changing the resolved Cargo closure must invalidate its artifact identity"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn builtin_stdlib_artifact_completion_requires_identity_marker() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = tempfile::tempdir()?;
+        let artifact_root = temp_dir.path().join("artifact");
+        let metadata = builtin_stdlib_artifact_metadata(artifact_root.clone());
+        fs::create_dir_all(artifact_root.join("src"))?;
+        fs::write(
+            artifact_root.join("Cargo.toml"),
+            "[package]\nname = \"incan_builtin_stdlib\"\n",
+        )?;
+        fs::write(artifact_root.join("Cargo.lock"), "version = 4\n")?;
+        fs::write(artifact_root.join("src").join("lib.rs"), "")?;
+        fs::write(artifact_root.join("incan_builtin_stdlib.incnlib"), "{}")?;
+
+        assert!(
+            !builtin_stdlib_artifact_is_complete(&metadata, "identity-a"),
+            "ordinary generated files alone must not make a potentially partial artifact consumable"
+        );
+        fs::write(
+            artifact_root.join(BUILTIN_STDLIB_ARTIFACT_IDENTITY_FILE),
+            "identity-a\n",
+        )?;
+        assert!(builtin_stdlib_artifact_is_complete(&metadata, "identity-a"));
+        assert!(
+            !builtin_stdlib_artifact_is_complete(&metadata, "identity-b"),
+            "an artifact from a different compiler/source identity must be rebuilt"
         );
         Ok(())
     }

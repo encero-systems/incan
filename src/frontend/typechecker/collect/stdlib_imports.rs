@@ -1972,7 +1972,7 @@ impl TypeChecker {
             properties: std::collections::HashMap::new(),
             method_overloads,
             methods,
-            method_aliases: std::collections::HashMap::new(),
+            method_aliases: Self::method_aliases_from_manifest(&export.methods),
         }
     }
 
@@ -1991,7 +1991,7 @@ impl TypeChecker {
             properties: std::collections::HashMap::new(),
             method_overloads,
             methods,
-            method_aliases: std::collections::HashMap::new(),
+            method_aliases: Self::method_aliases_from_manifest(&export.methods),
         }
     }
 
@@ -2014,7 +2014,7 @@ impl TypeChecker {
                 })
                 .collect(),
             methods: self.methods_from_manifest(&export.methods),
-            method_aliases: std::collections::HashMap::new(),
+            method_aliases: Self::method_aliases_from_manifest(&export.methods),
             properties: std::collections::HashMap::new(),
             requires: export
                 .requires
@@ -2128,7 +2128,7 @@ impl TypeChecker {
             method_rebindings: std::collections::HashMap::new(),
             traits: export.traits.clone(),
             trait_adoptions: Self::trait_adoptions_from_manifest(&export.traits, &export.trait_adoptions),
-            method_aliases: std::collections::HashMap::new(),
+            method_aliases: Self::method_aliases_from_manifest(&export.methods),
             methods: self.methods_from_manifest(&export.methods),
             method_overloads: self.method_overloads_from_manifest(&export.methods),
         }
@@ -2203,6 +2203,19 @@ impl TypeChecker {
         methods
             .iter()
             .map(|method| (method.name.clone(), self.method_info_from_manifest(method)))
+            .collect()
+    }
+
+    /// Preserve same-type aliases so lowering can emit the canonical Rust method from a compiled dependency.
+    fn method_aliases_from_manifest(methods: &[MethodExport]) -> HashMap<String, String> {
+        methods
+            .iter()
+            .filter_map(|method| {
+                method
+                    .alias_of
+                    .as_ref()
+                    .map(|target| (method.name.clone(), target.clone()))
+            })
             .collect()
     }
 

@@ -77,7 +77,15 @@ fn peel_refs(ty: &IrType) -> &IrType {
 
 /// Return whether a type name matches an expected Rust path.
 fn type_name_matches(actual: &str, expected: &str) -> bool {
-    actual == expected || actual.rsplit("::").next() == Some(expected)
+    actual == expected || terminal_type_name(actual) == expected
+}
+
+/// Return the final nominal segment from either source-qualified (`std.collections.Type`) or Rust-qualified paths.
+fn terminal_type_name(type_name: &str) -> &str {
+    type_name
+        .rsplit([':', '.'])
+        .find(|segment| !segment.is_empty())
+        .unwrap_or(type_name)
 }
 
 /// Return whether a concrete type argument matches an expected Rust path.
@@ -97,20 +105,31 @@ fn concrete_type_arg_matches(actual: &IrType, expected: &str) -> bool {
 
 /// Return whether a type module path matches an expected Rust module.
 fn type_module_matches(emitter: &IrEmitter, type_name: &str, fast_path: &MethodFastPath) -> bool {
-    let short_name = type_name.rsplit("::").next().unwrap_or(type_name);
+    let short_name = terminal_type_name(type_name);
     type_path_matches(type_name, fast_path.source_module, fast_path.receiver_type)
         || type_path_matches(type_name, fast_path.generated_module, fast_path.receiver_type)
+        || emitter.is_builtin_stdlib_artifact_type_in_module(short_name, fast_path.source_module)
         || [type_name, short_name].iter().any(|name| {
             emitter.type_module_paths.get(*name).is_some_and(|module| {
-                module_matches(module, fast_path.source_module) || module_matches(module, fast_path.generated_module)
+                module_matches(module, fast_path.source_module)
+                    || module_matches(module, fast_path.generated_module)
+                    || compiled_artifact_module_matches(emitter, module, fast_path.source_module)
             })
         })
+}
+
+/// Return whether an artifact-owned provider module is the direct crate-root projection of a stdlib source module.
+fn compiled_artifact_module_matches(emitter: &IrEmitter, module: &[String], source_module: &str) -> bool {
+    let Some(artifact_module) = source_module.strip_prefix("std.") else {
+        return false;
+    };
+    emitter.is_builtin_stdlib_artifact_module_path(module) && module_matches(module, artifact_module)
 }
 
 /// Return whether a type path matches an expected Rust path.
 fn type_path_matches(type_name: &str, module: &str, receiver_type: &str) -> bool {
     let module_path = module.replace('.', "::");
-    type_name == format!("{module_path}::{receiver_type}")
+    type_name == format!("{module_path}::{receiver_type}") || type_name == format!("{module}.{receiver_type}")
 }
 
 /// Return whether a module path matches an expected Rust module.

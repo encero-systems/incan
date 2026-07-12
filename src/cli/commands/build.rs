@@ -1080,6 +1080,7 @@ pub fn build_file(
 /// Validate a library project and generate its Rust project without running Cargo.
 fn prepare_library_project(
     file_path: Option<&str>,
+    output_dir: Option<&str>,
     cargo_policy: CargoPolicy,
     cargo_features: Vec<String>,
     cargo_no_default_features: bool,
@@ -1342,7 +1343,18 @@ fn prepare_library_project(
     }
     record_timing(&mut timings_ms, "library_collect_vocab_metadata", vocab_start);
 
-    let out_dir = project_root.join("target").join("lib");
+    let out_dir = match output_dir {
+        Some(output_dir) => {
+            validate_output_dir(output_dir)?;
+            let output_dir = PathBuf::from(output_dir);
+            if output_dir.is_absolute() {
+                output_dir
+            } else {
+                project_root.join(output_dir)
+            }
+        }
+        None => project_root.join("target").join("lib"),
+    };
     std::fs::create_dir_all(&out_dir)
         .map_err(|e| CliError::failure(format!("failed to create {}: {e}", out_dir.display())))?;
     package_desugarer_artifact(&out_dir, pending_desugarer_artifact.as_ref())?;
@@ -1489,7 +1501,7 @@ fn write_library_manifest_artifacts(prepared: &mut PreparedLibraryProject) -> Cl
 /// Validate RFC 031 library-mode preconditions.
 pub fn build_library(
     file_path: Option<&str>,
-    _output_dir: Option<&String>,
+    output_dir: Option<&String>,
     options: BuildCommandOptions,
     report_options: BuildReportOptions,
 ) -> CliResult<ExitCode> {
@@ -1497,6 +1509,7 @@ pub fn build_library(
     let generated_cargo_target_dir = options.effective_generated_cargo_target_dir();
     let mut prepared = prepare_library_project(
         file_path,
+        output_dir.map(String::as_str),
         options.cargo_policy,
         options.cargo_features,
         options.cargo_no_default_features,
@@ -1589,6 +1602,7 @@ pub fn inspect_rust(path: &Path, lib_mode: bool, format: RustInspectionFormat) -
     let report = if lib_mode {
         let prepared = prepare_library_project(
             Some(path_arg.as_ref()),
+            None,
             CargoPolicy::default(),
             Vec::new(),
             false,
