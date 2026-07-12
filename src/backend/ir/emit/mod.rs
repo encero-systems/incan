@@ -33,13 +33,19 @@ use std::collections::{HashMap, HashSet};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
-use super::decl::{IrDeclKind, IrEnumValue, IrEnumValueType, IrStruct, VariantFields, Visibility};
+use super::decl::{FunctionParam, IrDeclKind, IrEnumValue, IrEnumValueType, IrStruct, VariantFields, Visibility};
 use super::expr::TypedExpr;
-use super::types::{IR_UNION_TYPE_NAME, IrType};
+use super::types::{IR_UNION_TYPE_NAME, IrType, Mutability};
 use super::{FunctionRegistry, FunctionSignature, IrProgram};
+use crate::frontend::api_metadata::{
+    ApiDeclaration, class_export_from_api, enum_export_from_api, function_export_from_api, model_export_from_api,
+    newtype_export_from_api, trait_export_from_api,
+};
 use crate::frontend::library_manifest_index::{LibraryManifestIndex, LibraryManifestIndexEntry};
 use crate::frontend::symbols::ResolvedType;
-use crate::library_manifest::{FieldExport, TypeRef, resolved_type_from_manifest_type_ref};
+use crate::library_manifest::{
+    FieldExport, LibraryManifest, MethodExport, ParamKindExport, TypeRef, resolved_type_from_manifest_type_ref,
+};
 use incan_core::lang::types::collections::{self, CollectionTypeId};
 use incan_core::lang::{rust_keywords, stdlib};
 
@@ -1192,6 +1198,249 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Seed nominal method and enum metadata from the compiled built-in stdlib artifact manifest.
+    ///
+    /// Built-in stdlib consumers intentionally do not materialize provider source modules. The artifact manifest is
+    /// therefore the sole metadata source for whether a receiver uses Incan call semantics and whether a member is an
+    /// enum variant rather than a Rust field access.
+    pub(crate) fn seed_builtin_stdlib_manifest_metadata(&mut self, manifest: &LibraryManifest) {
+        self.seed_builtin_stdlib_export_metadata(
+            &manifest.exports.models,
+            &manifest.exports.classes,
+            &manifest.exports.enums,
+        );
+
+        // The aggregate artifact's top-level export list describes its crate facade, while its checked API records
+        // the public declarations of every `std.*` provider module. Consumers must use that artifact-owned API
+        // instead of reopening the provider source modules.
+        let Some(api) = manifest.contract_metadata.api.as_ref() else {
+            return;
+        };
+        let mut models = Vec::new();
+        let mut classes = Vec::new();
+        let mut enums = Vec::new();
+        let mut functions = Vec::new();
+        for module in &api.modules {
+            for declaration in &module.declarations {
+                match declaration {
+                    ApiDeclaration::Model(model) => models.push(model_export_from_api(model)),
+                    ApiDeclaration::Class(class) => classes.push(class_export_from_api(class)),
+                    ApiDeclaration::Enum(enum_) => enums.push(enum_export_from_api(enum_)),
+                    ApiDeclaration::Function(function) => functions.push(function_export_from_api(function)),
+                    _ => {}
+                }
+            }
+        }
+        self.seed_builtin_stdlib_export_metadata(&models, &classes, &enums);
+        self.seed_builtin_stdlib_factory_metadata(&functions, &models, &classes);
+    }
+
+    /// Return anonymous union wrappers that are owned by a compiled stdlib artifact.
+    ///
+    /// The checked API is the artifact's structural type contract. Deriving these names from it preserves the
+    /// provider's Rust nominal identity without reopening any provider source module in a consumer compilation.
+    pub(crate) fn builtin_stdlib_artifact_union_type_libraries(manifest: &LibraryManifest) -> HashMap<String, String> {
+        let mut union_shapes = HashMap::new();
+        let Some(api) = manifest.contract_metadata.api.as_ref() else {
+            return HashMap::new();
+        };
+        for module in &api.modules {
+            for declaration in &module.declarations {
+                Self::collect_api_declaration_union_types(declaration, &mut union_shapes);
+            }
+        }
+        union_shapes
+            .into_keys()
+            .map(|name| (name, stdlib::BUILTIN_STDLIB_ARTIFACT_CRATE.to_string()))
+            .collect()
+    }
+
+    /// Collect anonymous union shapes reachable from one checked API declaration.
+    fn collect_api_declaration_union_types(declaration: &ApiDeclaration, unions: &mut HashMap<String, IrType>) {
+        match declaration {
+            ApiDeclaration::Function(function) => {
+                Self::collect_manifest_param_union_types(&function.params, unions);
+                Self::collect_manifest_type_ref_union_types(&function.return_type, unions);
+            }
+            ApiDeclaration::Model(model) => {
+                let model = model_export_from_api(model);
+                Self::collect_manifest_nominal_union_types(&model.fields, &model.methods, unions);
+            }
+            ApiDeclaration::Class(class) => {
+                let class = class_export_from_api(class);
+                Self::collect_manifest_nominal_union_types(&class.fields, &class.methods, unions);
+            }
+            ApiDeclaration::Trait(trait_decl) => {
+                let trait_decl = trait_export_from_api(trait_decl);
+                Self::collect_manifest_method_union_types(&trait_decl.methods, unions);
+            }
+            ApiDeclaration::Enum(enum_) => {
+                let enum_ = enum_export_from_api(enum_);
+                for variant in &enum_.variants {
+                    for field in &variant.fields {
+                        Self::collect_manifest_type_ref_union_types(field, unions);
+                    }
+                }
+                Self::collect_manifest_method_union_types(&enum_.methods, unions);
+            }
+            ApiDeclaration::Newtype(newtype) => {
+                let newtype = newtype_export_from_api(newtype);
+                Self::collect_manifest_type_ref_union_types(&newtype.underlying, unions);
+                Self::collect_manifest_method_union_types(&newtype.methods, unions);
+            }
+            ApiDeclaration::TypeAlias(alias) => {
+                Self::collect_manifest_type_ref_union_types(&alias.type_alias.target, unions);
+            }
+            ApiDeclaration::Const(konst) => Self::collect_manifest_type_ref_union_types(&konst.ty, unions),
+            ApiDeclaration::Static(static_) => Self::collect_manifest_type_ref_union_types(&static_.ty, unions),
+            ApiDeclaration::Alias(alias) => {
+                if let Some(function) = &alias.projected_function {
+                    Self::collect_manifest_param_union_types(&function.callable.params, unions);
+                    Self::collect_manifest_type_ref_union_types(&function.callable.return_type, unions);
+                }
+            }
+            ApiDeclaration::Partial(partial) => {
+                Self::collect_manifest_param_union_types(&partial.params, unions);
+                Self::collect_manifest_type_ref_union_types(&partial.return_type, unions);
+            }
+        }
+    }
+
+    /// Collect anonymous union shapes exposed by one nominal declaration.
+    fn collect_manifest_nominal_union_types(
+        fields: &[FieldExport],
+        methods: &[MethodExport],
+        unions: &mut HashMap<String, IrType>,
+    ) {
+        for field in fields {
+            Self::collect_manifest_type_ref_union_types(&field.ty, unions);
+        }
+        Self::collect_manifest_method_union_types(methods, unions);
+    }
+
+    /// Collect anonymous union shapes exposed by a method set.
+    fn collect_manifest_method_union_types(methods: &[MethodExport], unions: &mut HashMap<String, IrType>) {
+        for method in methods {
+            Self::collect_manifest_param_union_types(&method.params, unions);
+            Self::collect_manifest_type_ref_union_types(&method.return_type, unions);
+        }
+    }
+
+    /// Collect anonymous union shapes used by callable parameters.
+    fn collect_manifest_param_union_types(
+        params: &[crate::library_manifest::ParamExport],
+        unions: &mut HashMap<String, IrType>,
+    ) {
+        for param in params {
+            Self::collect_manifest_type_ref_union_types(&param.ty, unions);
+        }
+    }
+
+    /// Decode one manifest type reference and register every anonymous union it contains.
+    fn collect_manifest_type_ref_union_types(ty: &TypeRef, unions: &mut HashMap<String, IrType>) {
+        Self::collect_union_types_from_type(&Self::manifest_type_ref_to_ir_type(ty), unions);
+    }
+
+    /// Seed nominal metadata represented by one artifact export surface.
+    fn seed_builtin_stdlib_export_metadata(
+        &mut self,
+        models: &[crate::library_manifest::ModelExport],
+        classes: &[crate::library_manifest::ClassExport],
+        enums: &[crate::library_manifest::EnumExport],
+    ) {
+        for model in models {
+            self.register_manifest_constructor_metadata(&model.name, &model.fields);
+            self.register_manifest_method_metadata(&model.name, &model.methods, &model.type_params);
+        }
+        for class in classes {
+            self.register_manifest_constructor_metadata(&class.name, &class.fields);
+            self.register_manifest_method_metadata(&class.name, &class.methods, &class.type_params);
+        }
+        for enum_ in enums {
+            for variant in &enum_.variants {
+                let fields = variant
+                    .fields
+                    .iter()
+                    .map(Self::manifest_type_ref_to_ir_type)
+                    .collect::<Vec<_>>();
+                self.enum_variant_fields.insert(
+                    (enum_.name.clone(), variant.name.clone()),
+                    if fields.is_empty() {
+                        VariantFields::Unit
+                    } else {
+                        VariantFields::Tuple(fields)
+                    },
+                );
+            }
+            for alias in &enum_.variant_aliases {
+                self.enum_variant_aliases
+                    .insert((enum_.name.clone(), alias.name.clone()), alias.target.clone());
+            }
+            self.register_manifest_method_metadata(&enum_.name, &enum_.methods, &enum_.type_params);
+        }
+    }
+
+    /// Project factory method metadata onto its public constructor identity.
+    fn seed_builtin_stdlib_factory_metadata(
+        &mut self,
+        functions: &[crate::library_manifest::FunctionExport],
+        models: &[crate::library_manifest::ModelExport],
+        classes: &[crate::library_manifest::ClassExport],
+    ) {
+        // Public factories such as `BytesIO()` can expose an otherwise-internal nominal return type. Call lowering
+        // preserves the public factory identity at some consumer boundaries, so project the returned type's method
+        // metadata onto that identity as well. This is manifest data, not a source-module fallback.
+        for function in functions {
+            let IrType::Struct(returned_name) = Self::manifest_type_ref_to_ir_type(&function.return_type) else {
+                continue;
+            };
+            if let Some(model) = models.iter().find(|model| model.name == returned_name) {
+                self.register_manifest_method_metadata(&function.name, &model.methods, &model.type_params);
+            }
+            if let Some(class) = classes.iter().find(|class| class.name == returned_name) {
+                self.register_manifest_method_metadata(&function.name, &class.methods, &class.type_params);
+            }
+        }
+    }
+
+    /// Register method-call metadata reconstructed from one `.incnlib` nominal export.
+    fn register_manifest_method_metadata(
+        &mut self,
+        owner: &str,
+        methods: &[MethodExport],
+        type_params: &[crate::library_manifest::TypeParamExport],
+    ) {
+        for method in methods {
+            let key = (owner.to_string(), method.name.clone());
+            self.method_signatures.insert(
+                key.clone(),
+                FunctionSignature {
+                    params: method
+                        .params
+                        .iter()
+                        .map(|param| FunctionParam {
+                            name: param.name.clone(),
+                            ty: Self::manifest_type_ref_to_ir_type(&param.ty),
+                            mutability: Mutability::Immutable,
+                            is_self: false,
+                            kind: match param.kind {
+                                ParamKindExport::Normal => crate::frontend::ast::ParamKind::Normal,
+                                ParamKindExport::RestPositional => crate::frontend::ast::ParamKind::RestPositional,
+                                ParamKindExport::RestKeyword => crate::frontend::ast::ParamKind::RestKeyword,
+                            },
+                            // Call-site defaults are already lowered from the manifest when the call is resolved.
+                            // This cache is for Rust ownership and variant emission only.
+                            default: None,
+                        })
+                        .collect(),
+                    return_type: Self::manifest_type_ref_to_ir_type(&method.return_type),
+                },
+            );
+            self.method_signature_type_params
+                .insert(key, type_params.iter().map(|param| param.name.clone()).collect());
+        }
+    }
+
     /// Seed nominal metadata, optionally skipping ambiguous dependency names.
     fn seed_nominal_metadata_from_program_inner(&mut self, program: &IrProgram, skip_ambiguous: bool) {
         for decl in &program.declarations {
@@ -1373,7 +1622,7 @@ impl<'a> IrEmitter<'a> {
                     ),
                     Some(CollectionTypeId::Tuple) => IrType::Tuple(args),
                     Some(id) => IrType::NamedGeneric(collections::as_str(id).to_string(), args),
-                    None if name == IR_UNION_TYPE_NAME => IrType::NamedGeneric(name.clone(), args),
+                    None if name == IR_UNION_TYPE_NAME => Self::canonical_manifest_union_type(args),
                     None if args.is_empty() => IrType::Struct(name.clone()),
                     None => IrType::NamedGeneric(name.clone(), args),
                 }
@@ -1393,6 +1642,39 @@ impl<'a> IrEmitter<'a> {
             ResolvedType::RefMut(inner) => IrType::RefMut(Box::new(Self::resolved_type_to_ir_type(inner))),
             ResolvedType::RustPath(path) => IrType::Struct(path.clone()),
             ResolvedType::CallSiteInfer | ResolvedType::Unknown => IrType::Unknown,
+        }
+    }
+
+    /// Reconstruct the canonical anonymous-union shape used by AST lowering.
+    ///
+    /// Artifact metadata stores the source `Union[...]` spelling. Its generated Rust wrapper name is stable only
+    /// after flattening, ordering, and optional-`None` normalization match the lowering path exactly.
+    fn canonical_manifest_union_type(members: Vec<IrType>) -> IrType {
+        let mut has_none = false;
+        let mut flattened = Vec::new();
+        for member in members {
+            match member {
+                IrType::Unit => has_none = true,
+                IrType::NamedGeneric(name, nested) if name == IR_UNION_TYPE_NAME => flattened.extend(nested),
+                member => flattened.push(member),
+            }
+        }
+        flattened.sort_by_key(IrType::rust_name);
+        flattened.dedup();
+        if has_none {
+            return match flattened.as_slice() {
+                [] => IrType::Unit,
+                [only] => IrType::Option(Box::new(only.clone())),
+                _ => IrType::Option(Box::new(IrType::NamedGeneric(
+                    IR_UNION_TYPE_NAME.to_string(),
+                    flattened,
+                ))),
+            };
+        }
+        match flattened.as_slice() {
+            [] => IrType::Unknown,
+            [only] => only.clone(),
+            _ => IrType::NamedGeneric(IR_UNION_TYPE_NAME.to_string(), flattened),
         }
     }
 

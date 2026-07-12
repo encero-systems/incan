@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use crate::frontend::ast::{
     AliasDecl, ClassDecl, Declaration, DictEntry, EnumDecl, Expr, FunctionDecl, ImportDecl, ImportItem, ImportKind,
     ListEntry, Literal, ModelDecl, NewtypeDecl, PartialDecl, Program, Span, Spanned, TraitBound, TraitDecl,
-    TypeAliasDecl, TypeParam, Visibility,
+    TypeAliasDecl, TypeParam, UnaryOp, Visibility,
 };
 use crate::frontend::decorator_resolution;
 use crate::frontend::module::canonicalize_source_module_segments;
@@ -840,6 +840,15 @@ fn checked_preset_value(expr: &Expr, context: DefaultPathContext<'_>) -> Checked
 fn checked_param_default(expr: &Spanned<Expr>, context: DefaultPathContext<'_>) -> CheckedParamDefault {
     match &expr.node {
         Expr::Literal(literal) => checked_param_default_literal(literal),
+        Expr::Unary(UnaryOp::Neg, value) => match &value.node {
+            Expr::Literal(Literal::Int(value)) => value
+                .value
+                .checked_neg()
+                .map(CheckedParamDefault::Int)
+                .unwrap_or(CheckedParamDefault::Unsupported),
+            Expr::Literal(Literal::Float(value)) => CheckedParamDefault::Float(-value.value),
+            _ => CheckedParamDefault::Unsupported,
+        },
         Expr::Ident(name) => CheckedParamDefault::ConstRef(context.canonical_value_path(vec![name.clone()])),
         Expr::Field(base, field) => {
             let mut path = checked_preset_path(&base.node);

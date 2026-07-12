@@ -416,15 +416,35 @@ impl<'a> IrCodegen<'a> {
         emitter: &mut IrEmitter<'_>,
         metadata: &DependencySymbolMetadata,
         library_manifest_index: Option<&Arc<LibraryManifestIndex>>,
+        builtin_stdlib_manifest: Option<&LibraryManifest>,
     ) {
         emitter.set_type_module_paths(metadata.module_paths.clone(), metadata.ambiguous_type_names.clone());
         emitter.set_value_module_paths(
             metadata.value_module_paths.clone(),
             metadata.ambiguous_value_names.clone(),
         );
-        emitter.set_dependency_enum_types(metadata.enum_type_names.clone());
+        let mut enum_type_names = metadata.enum_type_names.clone();
+        if let Some(manifest) = builtin_stdlib_manifest {
+            enum_type_names.extend(manifest.exports.enums.iter().map(|enum_| enum_.name.clone()));
+            enum_type_names.extend(
+                manifest
+                    .contract_metadata
+                    .api
+                    .iter()
+                    .flat_map(|api| api.modules.iter())
+                    .flat_map(|module| module.declarations.iter())
+                    .filter_map(|declaration| match declaration {
+                        crate::frontend::api_metadata::ApiDeclaration::Enum(enum_) => Some(enum_.name.clone()),
+                        _ => None,
+                    }),
+            );
+        }
+        emitter.set_dependency_enum_types(enum_type_names);
         if let Some(index) = library_manifest_index {
             emitter.seed_public_dependency_nominal_metadata(index);
+        }
+        if let Some(manifest) = builtin_stdlib_manifest {
+            emitter.seed_builtin_stdlib_manifest_metadata(manifest);
         }
     }
 
@@ -639,6 +659,12 @@ impl<'a> IrCodegen<'a> {
     fn compiled_builtin_stdlib_metadata_programs(
         &mut self,
     ) -> Result<(HashMap<String, String>, CompiledStdlibMetadataPrograms), GenerationError> {
+        if let Some(manifest) = self.builtin_stdlib_manifest.as_deref() {
+            return Ok((
+                IrEmitter::builtin_stdlib_artifact_union_type_libraries(manifest),
+                Vec::new(),
+            ));
+        }
         if self.dependency_symbol_modules.is_empty() {
             return Ok((HashMap::new(), Vec::new()));
         }
@@ -990,6 +1016,7 @@ impl<'a> IrCodegen<'a> {
                 inner,
                 &dependency_symbol_metadata,
                 self.library_manifest_index.as_ref(),
+                self.builtin_stdlib_manifest.as_deref(),
             );
             inner.set_external_union_type_libraries(external_union_type_libraries.clone());
             inner.set_needs_serde(self.needs_serde);
@@ -1021,6 +1048,7 @@ impl<'a> IrCodegen<'a> {
                 &mut emitter,
                 &dependency_symbol_metadata,
                 self.library_manifest_index.as_ref(),
+                self.builtin_stdlib_manifest.as_deref(),
             );
             emitter.set_external_union_type_libraries(external_union_type_libraries.clone());
             emitter.set_needs_serde(self.needs_serde);
@@ -1371,6 +1399,7 @@ impl<'a> IrCodegen<'a> {
                     inner,
                     &dependency_symbol_metadata,
                     self.library_manifest_index.as_ref(),
+                    self.builtin_stdlib_manifest.as_deref(),
                 );
                 inner.set_external_union_type_libraries(external_union_type_libraries.clone());
                 inner.set_external_rust_functions(self.external_rust_functions.clone());
@@ -1397,6 +1426,7 @@ impl<'a> IrCodegen<'a> {
                     &mut emitter,
                     &dependency_symbol_metadata,
                     self.library_manifest_index.as_ref(),
+                    self.builtin_stdlib_manifest.as_deref(),
                 );
                 emitter.set_external_union_type_libraries(external_union_type_libraries.clone());
                 emitter.set_external_rust_functions(self.external_rust_functions.clone());
@@ -1630,6 +1660,7 @@ impl<'a> IrCodegen<'a> {
                     inner,
                     &dependency_symbol_metadata,
                     self.library_manifest_index.as_ref(),
+                    self.builtin_stdlib_manifest.as_deref(),
                 );
                 inner.set_external_union_type_libraries(external_union_type_libraries.clone());
                 inner.set_external_rust_functions(self.external_rust_functions.clone());
@@ -1656,6 +1687,7 @@ impl<'a> IrCodegen<'a> {
                     &mut emitter,
                     &dependency_symbol_metadata,
                     self.library_manifest_index.as_ref(),
+                    self.builtin_stdlib_manifest.as_deref(),
                 );
                 emitter.set_external_union_type_libraries(external_union_type_libraries.clone());
                 emitter.set_external_rust_functions(self.external_rust_functions.clone());

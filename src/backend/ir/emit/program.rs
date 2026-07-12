@@ -2055,7 +2055,7 @@ impl<'a> IrEmitter<'a> {
     }
 
     /// Collect anonymous union shapes that appear inside a type.
-    fn collect_union_types_from_type(ty: &IrType, out: &mut HashMap<String, IrType>) {
+    pub(crate) fn collect_union_types_from_type(ty: &IrType, out: &mut HashMap<String, IrType>) {
         if !matches!(ty, IrType::ExternalUnion { .. })
             && let Some(name) = ty.union_type_name()
         {

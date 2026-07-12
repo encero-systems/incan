@@ -615,7 +615,7 @@ impl<'a> IrEmitter<'a> {
 
     /// Return whether a metadata-free receiver is eligible for std::io-style compatibility borrowing.
     fn receiver_allows_io_method_fallback(receiver: &TypedExpr) -> bool {
-        !Self::expr_is_type_like(receiver)
+        !Self::expr_is_type_like(receiver) && !Self::receiver_type_matches_any(receiver, &["BytesIO", "_BytesIO"])
     }
 
     /// Return whether an external Rust trait-style associated call needs `&mut` for its first argument.

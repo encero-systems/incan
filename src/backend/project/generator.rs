@@ -380,13 +380,36 @@ impl ProjectGenerator {
         changed |= Self::write_file_if_changed(&self.output_dir.join("Cargo.toml"), &cargo_toml)?;
         changed |= self.write_cargo_lock_if_needed()?;
 
+        // Single-file consumers need the same artifact-backed compatibility namespace as nested projects. Compiler
+        // bridges still use `crate::__incan_std` while they are migrated to canonical artifact paths; re-exporting
+        // the artifact's facade keeps those bridges out of a regenerated source stdlib tree.
+        let mut full_main = rust_code.to_string();
+        if self.links_compiled_builtin_stdlib_artifact() && !is_builtin_stdlib_artifact_build() {
+            let facade = "pub use incan_builtin_stdlib::__incan_std;\n";
+            if let Some(marker_pos) = full_main.find(MOD_INSERT_MARKER) {
+                let line_end = full_main[marker_pos..]
+                    .find('\n')
+                    .map(|offset| marker_pos + offset + 1)
+                    .unwrap_or(full_main.len());
+                full_main.replace_range(marker_pos..line_end, facade);
+            } else if let Some(attr_pos) = full_main.find("#![") {
+                let line_end = full_main[attr_pos..]
+                    .find('\n')
+                    .map(|offset| attr_pos + offset + 1)
+                    .unwrap_or(full_main.len());
+                full_main.insert_str(line_end, facade);
+            } else {
+                full_main = format!("{facade}\n{full_main}");
+            }
+        }
+
         // Write main source file
         let main_file = if self.is_binary {
             src_dir.join("main.rs")
         } else {
             src_dir.join("lib.rs")
         };
-        changed |= Self::write_file_if_changed(&main_file, rust_code)?;
+        changed |= Self::write_file_if_changed(&main_file, &full_main)?;
 
         Ok(changed)
     }
@@ -806,6 +829,33 @@ mod tests {
             generated.contains("pub use incan_builtin_stdlib::__incan_std;"),
             "compiled-stdlib consumers must retain the narrow compatibility facade:\n{generated}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn test_generate_consumer_reexports_compiled_stdlib_compatibility_facade() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let temp = tempfile::tempdir()?;
+        let mut generator = ProjectGenerator::new(temp.path(), "consumer", true);
+        generator.set_dependencies(vec![DependencySpec {
+            crate_name: stdlib::BUILTIN_STDLIB_ARTIFACT_CRATE.to_string(),
+            version: None,
+            features: Vec::new(),
+            default_features: true,
+            source: DependencySource::Path {
+                path: temp.path().join("artifact"),
+            },
+            optional: false,
+            package: None,
+        }]);
+
+        generator.generate("// __INCAN_INSERT_MODS__\nfn main() {}\n")?;
+        let generated = fs::read_to_string(temp.path().join("src/main.rs"))?;
+        assert!(
+            generated.contains("pub use incan_builtin_stdlib::__incan_std;"),
+            "single-file compiled-stdlib consumers must retain the narrow compatibility facade:\n{generated}"
+        );
+        assert!(!generated.contains("__INCAN_INSERT_MODS__"));
         Ok(())
     }
 
