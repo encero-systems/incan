@@ -9,7 +9,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::cli::commands::common::CargoPolicy;
 use crate::cli::{CliError, CliResult, ExitCode};
-use crate::manifest::ProjectManifest;
+use crate::workspace::WorkspaceGraph;
 
 mod discovery;
 mod execution;
@@ -203,7 +203,9 @@ fn enforce_test_path_toolchain_constraint(path: &Path) -> CliResult<()> {
     } else {
         path
     };
-    if let Some(manifest) = ProjectManifest::discover(start).map_err(|error| CliError::failure(error.to_string()))? {
+    if let Some(manifest) = WorkspaceGraph::discover_effective_project_manifest(start)
+        .map_err(|error| CliError::failure(error.to_string()))?
+    {
         crate::cli::commands::common::enforce_project_toolchain_constraint(&manifest)?;
     }
     Ok(())

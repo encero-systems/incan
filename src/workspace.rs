@@ -390,6 +390,22 @@ impl WorkspaceGraph {
         ))
     }
 
+    /// Discover the manifest that compilation should consume for one path.
+    ///
+    /// A selected workspace member receives its explicit shared-dependency opt-ins before callers construct library
+    /// indexes, resolve Rust crates, or generate a lock payload. A workspace root that selects multiple members does
+    /// not silently choose one: command fan-out owns that later RFC 077 decision, so this method falls back to the
+    /// ordinary manifest discovery contract there.
+    pub fn discover_effective_project_manifest(start: &Path) -> Result<Option<ProjectManifest>, WorkspaceError> {
+        if let Some(workspace) = Self::discover(start)? {
+            let selected = workspace.selected_members_for(start)?;
+            if let [member] = selected.as_slice() {
+                return workspace.effective_manifest_for(member).map(Some);
+            }
+        }
+        Ok(ProjectManifest::discover(start)?)
+    }
+
     /// Resolve the member scope implied by `start` before any command execution.
     pub fn selected_members_for(&self, start: &Path) -> Result<Vec<&WorkspaceMember>, WorkspaceError> {
         let start = canonical_start_path(start)?;
@@ -844,6 +860,8 @@ fn resolve_effective_rust_dev_dependencies(
 mod tests {
     use std::fs;
 
+    use crate::manifest::DependencySource;
+
     use super::*;
 
     fn write_manifest(root: &Path, relative: &str, content: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -949,6 +967,34 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["first", "second"]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn effective_manifest_discovery_applies_member_workspace_rust_dependencies()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        write_manifest(
+            temp.path(),
+            "incan.toml",
+            "[workspace]\nmembers = ['members/*']\n[workspace.rust-dependencies]\ntiny_workspace = { path = 'shared/tiny_workspace' }\n",
+        )?;
+        write_manifest(
+            temp.path(),
+            "members/app/incan.toml",
+            "[project]\nname = 'app'\n[rust-dependencies]\ntiny_workspace = { workspace = true }\n",
+        )?;
+
+        let manifest = WorkspaceGraph::discover_effective_project_manifest(&temp.path().join("members/app"))?
+            .ok_or("member manifest should be discovered")?;
+        let dependency = manifest
+            .rust_dependencies()
+            .get("tiny_workspace")
+            .ok_or("effective shared dependency should be available to compilation")?;
+        let DependencySource::Path { path } = &dependency.source else {
+            return Err("effective shared dependency should retain its path source".into());
+        };
+        assert_eq!(path, &temp.path().canonicalize()?.join("shared/tiny_workspace"));
         Ok(())
     }
 

@@ -29,6 +29,7 @@ use crate::library_manifest::LibraryManifest;
 use crate::library_manifest::LibraryRustAbi;
 use crate::lockfile::CargoFeatureSelection;
 use crate::manifest::ProjectManifest;
+use crate::workspace::WorkspaceGraph;
 
 use super::build_report::{
     BuildReportDraft, BuildReportMode, BuildReportOptions, BuildReportProject, RustInspectionFormat, SourceFileReport,
@@ -759,7 +760,8 @@ fn prepare_project_with_options(
     };
     let path = normalized_file_path.as_path();
     let inferred_project_root = resolve_project_root(path);
-    let manifest = ProjectManifest::discover(&inferred_project_root).map_err(|e| CliError::failure(e.to_string()))?;
+    let manifest = WorkspaceGraph::discover_effective_project_manifest(&inferred_project_root)
+        .map_err(|e| CliError::failure(e.to_string()))?;
     if let Some(manifest) = manifest.as_ref() {
         enforce_project_toolchain_constraint(manifest)?;
     }
@@ -1063,7 +1065,9 @@ fn prepare_library_project(
     let mut timings_ms = BTreeMap::new();
     let source_load_start = Instant::now();
     let project_root = resolve_library_project_root(file_path)?;
-    let Some(manifest) = ProjectManifest::discover(&project_root).map_err(|e| CliError::failure(e.to_string()))? else {
+    let Some(manifest) = WorkspaceGraph::discover_effective_project_manifest(&project_root)
+        .map_err(|e| CliError::failure(e.to_string()))?
+    else {
         return Err(CliError::failure(
             "No incan.toml found for `incan build --lib` (run `incan init` first)",
         ));

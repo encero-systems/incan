@@ -1994,6 +1994,64 @@ fn build_from_workspace_member_uses_the_root_lockfile() -> Result<(), Box<dyn st
 }
 
 #[test]
+fn build_from_workspace_member_uses_inherited_rust_dependency() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    fs::write(
+        tmp.path().join("incan.toml"),
+        "[workspace]\nmembers = [\"packages/*\"]\n\n[workspace.rust-dependencies]\ntiny_workspace = { path = \"shared/tiny_workspace\" }\n",
+    )?;
+    let helper_src = tmp.path().join("shared/tiny_workspace/src");
+    fs::create_dir_all(&helper_src)?;
+    fs::write(
+        helper_src
+            .parent()
+            .ok_or("helper source has no parent")?
+            .join("Cargo.toml"),
+        "[package]\nname = \"tiny_workspace\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    fs::write(
+        helper_src.join("lib.rs"),
+        "pub fn plus_one(value: i64) -> i64 { value + 1 }\n",
+    )?;
+
+    for name in ["alpha", "beta"] {
+        let member = tmp.path().join("packages").join(name);
+        fs::create_dir_all(member.join("src"))?;
+        let inherited_dependency = if name == "alpha" {
+            "\n[rust-dependencies]\ntiny_workspace = { workspace = true }\n"
+        } else {
+            ""
+        };
+        fs::write(
+            member.join("incan.toml"),
+            format!(
+                "[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"{inherited_dependency}"
+            ),
+        )?;
+        let source = if name == "alpha" {
+            "from rust::tiny_workspace import plus_one\n\npub def value() -> int:\n    return plus_one(41)\n\ndef main() -> None:\n    println(value())\n"
+        } else {
+            "def main() -> None:\n    return\n"
+        };
+        fs::write(member.join("src/main.incn"), source)?;
+    }
+    let tests = tmp.path().join("packages/alpha/tests");
+    fs::create_dir_all(&tests)?;
+    fs::write(
+        tests.join("test_main.incn"),
+        "from std.testing import assert_eq\nfrom crate.main import value\n\ndef test_inherited_rust_dependency() -> None:\n    assert_eq(value(), 42)\n",
+    )?;
+
+    let output = run_incan(&tmp.path().join("packages/alpha"), &["build"])?;
+    assert_success(&output, "workspace member build with inherited Rust dependency");
+    let test_output = run_incan(&tmp.path().join("packages/alpha"), &["test"])?;
+    assert_success(&test_output, "workspace member test with inherited Rust dependency");
+    assert!(tmp.path().join("incan.lock").is_file());
+    assert!(!tmp.path().join("packages/alpha/incan.lock").exists());
+    Ok(())
+}
+
+#[test]
 fn lock_preheats_dependency_graph_for_path_dependencies() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let helper_dir = tmp.path().join("preheat_helper");
