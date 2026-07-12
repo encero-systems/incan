@@ -333,8 +333,7 @@ fn prepare_builtin_stdlib_artifact() -> CliResult<LibraryArtifactMetadata> {
         .current_dir(&stdlib_root)
         .env_remove(INTERNAL_MANIFEST_OVERRIDE_ENV)
         .env_remove(INTERNAL_PROJECT_ROOT_OVERRIDE_ENV)
-        .env(INTERNAL_BUILTIN_STDLIB_ARTIFACT_BUILD_ENV, "1")
-        .env(INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, "1");
+        .env(INTERNAL_BUILTIN_STDLIB_ARTIFACT_BUILD_ENV, "1");
     if let Some(workspace_lock) = workspace_lock {
         command.env(INTERNAL_CARGO_LOCK_PAYLOAD_PATH_ENV, workspace_lock);
     }
