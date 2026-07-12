@@ -561,8 +561,15 @@ fn collect_trait_bound_signature_references(bound: &ast::TraitBound, names: &mut
     }
 }
 
-/// Collect same-module declarations referenced by one trait's public signature.
-fn trait_signature_references(trait_decl: &ast::TraitDecl) -> HashSet<String> {
+/// Collect same-module declarations required to emit one trait's public surface.
+///
+/// Most dependencies come directly from source signatures. `Iterator.sum()` is
+/// the one temporary exception: its source body is ordinary Incan, but the
+/// backend currently supplies its per-method `T: Sum[T]` Rust bound because
+/// Incan has no syntax for a bound on an existing trait type parameter. Keep
+/// `Sum` alongside the retained `Iterator` declaration until that source-level
+/// bound can be represented and lowered without this bridge.
+fn trait_emission_references(trait_decl: &ast::TraitDecl) -> HashSet<String> {
     let mut names = HashSet::new();
     for type_param in &trait_decl.type_params {
         for bound in &type_param.bounds {
@@ -589,10 +596,18 @@ fn trait_signature_references(trait_decl: &ast::TraitDecl) -> HashSet<String> {
         }
         collect_type_signature_references(&method.node.return_type.node, &mut names);
     }
+    if trait_decl.name == "Iterator"
+        && trait_decl
+            .methods
+            .iter()
+            .any(|method| method.node.name == "sum" && method.node.body.is_some())
+    {
+        names.insert("Sum".to_string());
+    }
     names
 }
 
-/// Extend selected trait declarations with the local trait declarations named in their signatures.
+/// Extend selected trait declarations with the local trait declarations needed to emit their public surface.
 ///
 /// This fixed-point closure is needed because an initial import can retain `Sum[T]` while its `sum` method refers to
 /// `Iterator[T]`. Both source declarations must be emitted together, regardless of whether the importing program
@@ -623,7 +638,7 @@ fn retain_same_module_trait_signature_dependencies(
                 let Some(trait_decl) = declared_traits.get(selected_name.as_str()) else {
                     continue;
                 };
-                for reference in trait_signature_references(trait_decl) {
+                for reference in trait_emission_references(trait_decl) {
                     if declared_traits.contains_key(reference.as_str()) && !selected.contains(&reference) {
                         additions.push((module_path.clone(), reference));
                     }
@@ -801,6 +816,42 @@ pub trait Sum[T]:
         };
         assert!(selected.contains("Sum"));
         assert!(selected.contains("Iterator"));
+    }
+
+    #[test]
+    fn selected_iterator_keeps_sum_used_by_source_owned_default() {
+        let main = parse("from std.derives.collection import Iterator\n");
+        let collection = parse(
+            r#"
+pub trait Iterator[T]:
+    def __next__(mut self) -> Option[T]: ...
+
+    def sum(mut self) -> T:
+        return T.sum(self)
+
+pub trait Sum[T]:
+    @classmethod
+    def sum(cls, items: Iterator[T]) -> Self: ...
+"#,
+        );
+        let reachable = collect_externally_reachable_items_by_module(
+            &main,
+            &[(
+                "collection",
+                &collection,
+                Some(vec!["std".to_string(), "derives".to_string(), "collection".to_string()]),
+            )],
+        );
+        let collection_path = vec![
+            "__incan_std".to_string(),
+            "derives".to_string(),
+            "collection".to_string(),
+        ];
+        let Some(selected) = reachable.get(&collection_path) else {
+            panic!("collection should be reachable");
+        };
+        assert!(selected.contains("Iterator"));
+        assert!(selected.contains("Sum"));
     }
 }
 
