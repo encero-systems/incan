@@ -451,7 +451,7 @@ impl<'a> IrCodegen<'a> {
 
     /// Collect `TryFrom[str]` bridge facts needed at the generated crate root.
     fn string_try_from_bridge_config(&self, uses_contract: bool) -> StringTryFromBridgeConfig {
-        StringTryFromBridgeConfig::for_crate_root(uses_contract, self.library_manifest_index.as_ref())
+        StringTryFromBridgeConfig::for_crate_root(uses_contract)
     }
 
     /// Apply collected OrdinalKey bridge metadata to a freshly created emitter.
@@ -465,7 +465,6 @@ impl<'a> IrCodegen<'a> {
     /// Apply compiler-provided `TryFrom[str]` bridge metadata to a freshly created emitter.
     fn apply_string_try_from_bridge_config(&self, emitter: &mut IrEmitter, config: &StringTryFromBridgeConfig) {
         emitter.set_emit_std_string_try_from_newtype_impls(config.emit_local_newtype_impls);
-        emitter.set_external_string_try_from_types(config.external_types.clone());
     }
 
     /// Apply every temporary source-owned capability bridge to a freshly created emitter.

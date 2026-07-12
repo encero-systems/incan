@@ -39,7 +39,7 @@ use super::types::{IR_UNION_TYPE_NAME, IrType};
 use super::{FunctionRegistry, FunctionSignature, IrProgram};
 use crate::frontend::library_manifest_index::{LibraryManifestIndex, LibraryManifestIndexEntry};
 use crate::frontend::symbols::ResolvedType;
-use crate::library_manifest::{FieldExport, TypeParamExport, TypeRef, resolved_type_from_manifest_type_ref};
+use crate::library_manifest::{FieldExport, TypeRef, resolved_type_from_manifest_type_ref};
 use incan_core::lang::types::collections::{self, CollectionTypeId};
 use incan_core::lang::{rust_keywords, stdlib};
 
@@ -69,35 +69,6 @@ pub(crate) struct ExternalOrdinalCustomKey {
     pub has_ordinal_hash: bool,
     /// Whether the producer exported an explicit `ordinal_bytes_equal` method.
     pub has_ordinal_bytes_equal: bool,
-}
-
-/// Public dependency type that needs the consumer crate's source-owned `TryFrom[str]` identity.
-#[derive(Debug, Clone)]
-pub(crate) struct ExternalStringTryFromType {
-    /// Dependency key used as the generated Rust crate alias.
-    pub dependency_key: String,
-    /// Exported public type name.
-    pub name: String,
-    /// Checked generic parameters and declaration bounds in source order.
-    pub type_params: Vec<TypeParamExport>,
-    /// Conversion path proven by checked library metadata.
-    pub kind: ExternalStringTryFromKind,
-}
-
-/// Consumer-side conversion path for one external type.
-#[derive(Debug, Clone)]
-pub(crate) enum ExternalStringTryFromKind {
-    /// Forward through the producer crate's canonical source-owned trait identity.
-    Explicit,
-    /// Parse an underlying value and construct the producer's newtype.
-    Newtype {
-        /// Wrapped type parsed before constructing the outer newtype.
-        underlying: TypeRef,
-        /// Checked producer validation hook, which takes precedence over serialized predicates.
-        checked_constructor: Option<String>,
-        /// Checked producer predicates used only when no validation hook exists.
-        constraints: Vec<crate::frontend::symbols::NewtypePrimitiveConstraint>,
-    },
 }
 
 /// Cross-module callable-name resolver metadata keyed by a concrete function-pointer signature.
@@ -276,8 +247,6 @@ pub struct IrEmitter<'a> {
     emit_std_ordinal_value_enum_impls: bool,
     /// Whether local newtypes should receive compiler-provided `TryFrom[str]` impls.
     emit_std_string_try_from_newtype_impls: bool,
-    /// Public dependency types that need this crate's local `TryFrom[str]` trait identity.
-    external_string_try_from_types: Vec<ExternalStringTryFromType>,
     /// Public value enums imported from `.incnlib` dependencies that need this crate's local `OrdinalKey`.
     external_ordinal_value_enums: Vec<ExternalOrdinalValueEnum>,
     /// Public user-authored key types imported from `.incnlib` dependencies that need this crate's local `OrdinalKey`.
@@ -431,7 +400,6 @@ impl<'a> IrEmitter<'a> {
             preserve_public_items: true,
             emit_std_ordinal_value_enum_impls: false,
             emit_std_string_try_from_newtype_impls: false,
-            external_string_try_from_types: Vec::new(),
             external_ordinal_value_enums: Vec::new(),
             external_ordinal_custom_keys: Vec::new(),
             public_ordinal_type_identities: HashMap::new(),
@@ -1010,11 +978,6 @@ impl<'a> IrEmitter<'a> {
     /// Set whether local newtypes should receive compiler-provided `TryFrom[str]` implementations.
     pub fn set_emit_std_string_try_from_newtype_impls(&mut self, enabled: bool) {
         self.emit_std_string_try_from_newtype_impls = enabled;
-    }
-
-    /// Set checked dependency metadata for consumer-side `TryFrom[str]` adapters.
-    pub(crate) fn set_external_string_try_from_types(&mut self, types: Vec<ExternalStringTryFromType>) {
-        self.external_string_try_from_types = types;
     }
 
     /// Set value-enum metadata loaded from `.incnlib` dependencies for consumer-side `OrdinalKey` impls.
