@@ -1474,9 +1474,9 @@ pub fn run_inline<D: FnMut(&mut Data, &OutputCallbackInfo)>(callback: D) {
     }
 
     #[test]
-    fn metadata_free_method_signature_preserves_path_new_borrow_shape() {
+    fn metadata_free_method_signature_preserves_path_new_borrow_shape() -> Result<(), String> {
         let signature = metadata_free_method_signature("std::path::Path", "new")
-            .expect("std::path::Path::new should have a metadata-free signature");
+            .ok_or_else(|| "std::path::Path::new should have a metadata-free signature".to_string())?;
 
         assert_eq!(signature.return_type, "&std::path::Path");
         assert_eq!(signature.params.len(), 1);
@@ -1484,5 +1484,6 @@ pub fn run_inline<D: FnMut(&mut Data, &OutputCallbackInfo)>(callback: D) {
         assert_eq!(signature.params[0].type_display, "&impl AsRef<std::ffi::OsStr>");
         assert!(!signature.is_async);
         assert!(!signature.is_unsafe);
+        Ok(())
     }
 }
