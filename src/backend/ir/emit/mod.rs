@@ -44,7 +44,8 @@ use crate::frontend::api_metadata::{
 use crate::frontend::library_manifest_index::{LibraryManifestIndex, LibraryManifestIndexEntry};
 use crate::frontend::symbols::ResolvedType;
 use crate::library_manifest::{
-    FieldExport, LibraryManifest, MethodExport, ParamKindExport, TypeRef, resolved_type_from_manifest_type_ref,
+    FieldExport, LibraryManifest, MethodExport, NewtypeExport, ParamKindExport, TypeRef,
+    resolved_type_from_manifest_type_ref,
 };
 use incan_core::lang::types::collections::{self, CollectionTypeId};
 use incan_core::lang::{rust_keywords, stdlib};
@@ -1208,6 +1209,7 @@ impl<'a> IrEmitter<'a> {
             &manifest.exports.models,
             &manifest.exports.classes,
             &manifest.exports.enums,
+            &manifest.exports.newtypes,
         );
 
         // The aggregate artifact's top-level export list describes its crate facade, while its checked API records
@@ -1219,6 +1221,7 @@ impl<'a> IrEmitter<'a> {
         let mut models = Vec::new();
         let mut classes = Vec::new();
         let mut enums = Vec::new();
+        let mut newtypes = Vec::new();
         let mut functions = Vec::new();
         for module in &api.modules {
             for declaration in &module.declarations {
@@ -1226,12 +1229,13 @@ impl<'a> IrEmitter<'a> {
                     ApiDeclaration::Model(model) => models.push(model_export_from_api(model)),
                     ApiDeclaration::Class(class) => classes.push(class_export_from_api(class)),
                     ApiDeclaration::Enum(enum_) => enums.push(enum_export_from_api(enum_)),
+                    ApiDeclaration::Newtype(newtype) => newtypes.push(newtype_export_from_api(newtype)),
                     ApiDeclaration::Function(function) => functions.push(function_export_from_api(function)),
                     _ => {}
                 }
             }
         }
-        self.seed_builtin_stdlib_export_metadata(&models, &classes, &enums);
+        self.seed_builtin_stdlib_export_metadata(&models, &classes, &enums, &newtypes);
         self.seed_builtin_stdlib_factory_metadata(&functions, &models, &classes);
     }
 
@@ -1347,6 +1351,7 @@ impl<'a> IrEmitter<'a> {
         models: &[crate::library_manifest::ModelExport],
         classes: &[crate::library_manifest::ClassExport],
         enums: &[crate::library_manifest::EnumExport],
+        newtypes: &[NewtypeExport],
     ) {
         for model in models {
             self.register_manifest_constructor_metadata(&model.name, &model.fields);
@@ -1377,6 +1382,11 @@ impl<'a> IrEmitter<'a> {
                     .insert((enum_.name.clone(), alias.name.clone()), alias.target.clone());
             }
             self.register_manifest_method_metadata(&enum_.name, &enum_.methods, &enum_.type_params);
+        }
+        // Newtypes carry method bodies just like models and classes. Consumers do not lower the provider source, so
+        // their artifact metadata must participate in the same Incan ownership planning as every other nominal type.
+        for newtype in newtypes {
+            self.register_manifest_method_metadata(&newtype.name, &newtype.methods, &newtype.type_params);
         }
     }
 

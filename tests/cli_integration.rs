@@ -178,6 +178,14 @@ fn compiled_builtin_stdlib_artifact_replaces_consumer_fs_source_closure() -> Res
 from std.fs.path import Path
 
 def main() -> None:
+  payload = b"artifact"
+  target = Path("target/compiled-stdlib-artifact.bin")
+  match target.write_bytes(payload):
+    Ok(_) => pass
+    Err(_) => pass
+  match target.read_bytes():
+    Ok(data) => assert data == payload
+    Err(_) => pass
   println(matches("routes/users.incn", "routes/*.incn"))
   println(Path("routes/users.incn").name())
 "#,
@@ -205,6 +213,10 @@ def main() -> None:
     assert!(
         main_rust.contains("incan_builtin_stdlib::fs::path::Path"),
         "generated consumer must construct types from the compiled artifact:\n{main_rust}"
+    );
+    assert!(
+        main_rust.contains("target.write_bytes(payload.clone())"),
+        "compiled newtype method metadata must preserve Incan ownership semantics:\n{main_rust}"
     );
 
     let codegraph = run_incan(tmp.path(), &["inspect", "codegraph", &main_arg, "--format", "jsonl"])?;
