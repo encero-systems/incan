@@ -3402,7 +3402,10 @@ from rust::std::time import Duration
 def hold() -> Result[None, IoError]:
     guard = Path("{target}").lock_shared()?
     Path("{ready}").write_text("ready", "utf-8", "strict", None)?
-    sleep(Duration.from_secs(30))
+    # Keep the proven holder alive while a fresh child compiler process builds the probe. The Rust
+    # harness terminates this process immediately after the probe, so this is a liveness ceiling,
+    # not test latency.
+    sleep(Duration.from_secs(300))
     return Ok(None)
 
 def main() -> None:
