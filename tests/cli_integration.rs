@@ -155,6 +155,108 @@ def main() -> Result[None, str]:
     Ok(())
 }
 
+#[test]
+fn rust_trait_object_method_arguments_borrow_by_metadata_issue832() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(
+        tmp.path(),
+        "rust_trait_object_borrow_arguments",
+        r#"
+
+[rust-dependencies]
+duck_adapter = { path = "rust/duck_adapter" }
+"#,
+    )?;
+    fs::write(
+        &main_path,
+        r#"from rust::duck_adapter import InterleavedOwned, Processor
+
+def main() -> None:
+  mut processor = Processor.new()
+  input_frames: usize = 3
+  empty_frames: usize = 0
+  input = InterleavedOwned.new(input_frames)
+  mut output = InterleavedOwned.new(empty_frames)
+  println(processor.process_into_buffer(input, output))
+"#,
+    )?;
+
+    let helper_src = tmp.path().join("rust").join("duck_adapter").join("src");
+    fs::create_dir_all(&helper_src)?;
+    fs::write(
+        helper_src
+            .parent()
+            .ok_or("duck adapter source directory had no parent")?
+            .join("Cargo.toml"),
+        r#"[package]
+name = "duck_adapter"
+version = "0.1.0"
+edition = "2021"
+"#,
+    )?;
+    fs::write(
+        helper_src.join("lib.rs"),
+        r#"pub trait Adapter {
+    fn frames(&self) -> usize;
+}
+
+pub trait AdapterMut: Adapter {
+    fn set_frames(&mut self, frames: usize);
+}
+
+pub struct InterleavedOwned {
+    frames: usize,
+}
+
+impl InterleavedOwned {
+    pub fn new(frames: usize) -> Self {
+        Self { frames }
+    }
+}
+
+impl Adapter for InterleavedOwned {
+    fn frames(&self) -> usize {
+        self.frames
+    }
+}
+
+impl AdapterMut for InterleavedOwned {
+    fn set_frames(&mut self, frames: usize) {
+        self.frames = frames;
+    }
+}
+
+pub struct Processor;
+
+impl Processor {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn process_into_buffer(&mut self, input: &dyn Adapter, output: &mut dyn AdapterMut) -> usize {
+        output.set_frames(input.frames());
+        output.frames()
+    }
+}
+"#,
+    )?;
+
+    let output = run_incan(tmp.path(), &["run"])?;
+    assert_success(&output, "Rust trait-object method argument borrowing");
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "3");
+
+    let generated = fs::read_to_string(
+        tmp.path()
+            .join("target/incan/rust_trait_object_borrow_arguments/src/main.rs"),
+    )?;
+    let compact_generated: String = generated.chars().filter(|ch| !ch.is_whitespace()).collect();
+    assert!(
+        compact_generated.contains("process_into_buffer(&input,&mutoutput)"),
+        "trait-object argument borrows must survive generated Rust:\n{generated}"
+    );
+    Ok(())
+}
+
 fn parse_json_stdout(output: &Output) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     Ok(serde_json::from_slice(&output.stdout)?)
 }

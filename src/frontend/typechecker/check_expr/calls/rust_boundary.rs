@@ -310,6 +310,14 @@ impl TypeChecker {
         )
     }
 
+    /// Return whether a borrowed Rust parameter is a dynamically-dispatched trait object.
+    ///
+    /// Trait-object compatibility is established from rust-inspect metadata, but Rust still requires the reference
+    /// syntax at the call site. Recording it here keeps typechecking and generated-Rust ownership in agreement.
+    fn rust_display_is_trait_object(rust_ty: &str) -> bool {
+        rust_ty.trim_start().starts_with("dyn ")
+    }
+
     /// Render an Incan type into the canonical boundary vocabulary used by interop coercion policy lookup.
     ///
     /// Returns `None` for shapes not covered by the builtin boundary coercion matrix.
@@ -434,6 +442,16 @@ impl TypeChecker {
     fn rust_arg_boundary_match(&self, arg_ty: &ResolvedType, rust_param_ty: &str) -> RustArgBoundaryMatch {
         let display = Self::rust_display_without_lifetimes(rust_param_ty);
         let normalized = display.replace(' ', "");
+        if let Some((is_mut, inner)) = Self::rust_display_borrow_kind(display.as_str())
+            && Self::rust_display_is_trait_object(inner)
+        {
+            let target_inner_ty = self.resolved_type_from_rust_display(inner);
+            return if self.types_compatible(arg_ty, &target_inner_ty) {
+                RustArgBoundaryMatch::Coercion(RustArgCoercionKind::TraitObjectBorrow { mutable: is_mut })
+            } else {
+                RustArgBoundaryMatch::NoMatch
+            };
+        }
         if let Some(target_ty) = self.resolved_function_type_from_rust_callable_bound_display(display.as_str()) {
             return if self.types_compatible(arg_ty, &target_ty) {
                 RustArgBoundaryMatch::Exact
@@ -537,6 +555,14 @@ impl TypeChecker {
                 }
             }
             RustArgBoundaryMatch::Coercion(kind) => {
+                if matches!(kind, RustArgCoercionKind::TraitObjectBorrow { mutable: true })
+                    && let Expr::Ident(name) = &arg_expr.node
+                    && !self.mutable_bindings.contains(name)
+                {
+                    self.errors
+                        .push(errors::mutable_rust_borrow_requires_mut(name, arg_expr.span));
+                    return;
+                }
                 self.type_info.rust.arg_coercions.insert(
                     (arg_expr.span.start, arg_expr.span.end),
                     RustArgCoercionInfo {
@@ -882,11 +908,12 @@ impl TypeChecker {
 
 #[cfg(test)]
 mod validate_rust_function_call_tests {
-    use super::TypeChecker;
+    use super::{RustArgBoundaryMatch, TypeChecker};
     use crate::frontend::ast::{CallArg, Expr, IntLiteral, Literal, Span, Spanned};
     use crate::frontend::symbols::{
         CallableParam, NewtypeInfo, ResolvedType, ScopeKind, Symbol, SymbolKind, TypeInfo, VariableInfo,
     };
+    use crate::frontend::typechecker::RustArgCoercionKind;
     use incan_core::interop::{RustFunctionSig, RustParam};
     use incan_core::lang::types::numerics::NumericTypeId;
     use std::collections::HashMap;
@@ -927,6 +954,46 @@ mod validate_rust_function_call_tests {
         assert!(
             TypeChecker::rust_identity_metadata_base_should_probe("datafusion_expr::expr::WindowFunction"),
             "nominal dependency item displays should still reuse cache-only identity metadata"
+        );
+    }
+
+    #[test]
+    fn rust_trait_object_parameters_record_the_required_borrow_shape() {
+        let checker = TypeChecker::new();
+        let adapter = checker.resolved_type_from_rust_display("dyn demo::Adapter");
+        let adapter_mut = checker.resolved_type_from_rust_display("dyn demo::AdapterMut");
+
+        assert_eq!(
+            checker.rust_arg_boundary_match(&adapter, "&dyn demo::Adapter"),
+            RustArgBoundaryMatch::Coercion(RustArgCoercionKind::TraitObjectBorrow { mutable: false })
+        );
+        assert_eq!(
+            checker.rust_arg_boundary_match(&adapter_mut, "&mut dyn demo::AdapterMut"),
+            RustArgBoundaryMatch::Coercion(RustArgCoercionKind::TraitObjectBorrow { mutable: true })
+        );
+    }
+
+    #[test]
+    fn mutable_rust_trait_object_borrow_rejects_immutable_binding() {
+        let mut checker = TypeChecker::new();
+        let span = Span::new(10, 16);
+        let arg = Spanned::new(Expr::Ident("output".to_string()), span);
+        let adapter_mut = checker.resolved_type_from_rust_display("dyn demo::AdapterMut");
+
+        checker.validate_rust_boundary_value(
+            "demo::Processor",
+            "&mut dyn demo::AdapterMut",
+            &arg,
+            &adapter_mut,
+            false,
+        );
+
+        assert!(
+            checker.errors.iter().any(|error| error
+                .message
+                .contains("Rust parameter requires a mutable borrow of 'output'")),
+            "expected a mutable trait-object borrow diagnostic, got {:?}",
+            checker.errors
         );
     }
 
