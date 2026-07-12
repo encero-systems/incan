@@ -281,6 +281,7 @@ impl TypeChecker {
         };
 
         let mut seeded_modules = HashSet::new();
+        let mut aliases = Vec::new();
         for module in api.modules {
             let mut consumer_path = vec![stdlib::STDLIB_ROOT.to_string()];
             consumer_path.extend(module.module_path.clone());
@@ -307,6 +308,10 @@ impl TypeChecker {
                 });
             let mut artifact_members = Vec::new();
             for declaration in module.declarations {
+                if let ApiDeclaration::Alias(alias) = &declaration {
+                    aliases.push((module_key.clone(), alias.name.clone(), alias.target_path.clone()));
+                    continue;
+                }
                 let Some(name) = Self::api_declaration_name(&declaration).map(ToString::to_string) else {
                     continue;
                 };
@@ -338,6 +343,65 @@ impl TypeChecker {
                 Self::insert_artifact_module_symbol(members, name, kind);
             }
         }
+
+        // Facade modules are represented by checked aliases in the artifact. Resolve them only against the artifact
+        // maps we just seeded; consumers never need the source prelude to reconstruct a public `std.*` surface.
+        let mut unresolved = aliases;
+        while !unresolved.is_empty() {
+            let mut progressed = false;
+            unresolved.retain(|(module_key, name, target_path)| {
+                let Some((target_module, target_name)) = Self::builtin_stdlib_alias_target(target_path) else {
+                    return false;
+                };
+                let Some(kind) = self
+                    .dependency_member_symbols
+                    .get(&target_module)
+                    .and_then(|members| members.get(&target_name))
+                    .cloned()
+                else {
+                    return true;
+                };
+
+                match &kind {
+                    SymbolKind::Type(type_info) => {
+                        self.transitive_stdlib_stub_types
+                            .entry(name.clone())
+                            .or_insert_with(|| type_info.clone());
+                    }
+                    SymbolKind::Trait(trait_info) => {
+                        self.transitive_stdlib_stub_traits
+                            .entry(name.clone())
+                            .or_insert_with(|| trait_info.clone());
+                        self.dependency_module_traits
+                            .insert(format!("{module_key}.{name}"), trait_info.clone());
+                    }
+                    _ => {}
+                }
+                let members = self.dependency_member_symbols.entry(module_key.clone()).or_default();
+                Self::insert_artifact_module_symbol(members, name.clone(), kind);
+                progressed = true;
+                false
+            });
+            if !progressed {
+                break;
+            }
+        }
+    }
+
+    /// Return an artifact module/member target for one checked built-in stdlib facade alias.
+    fn builtin_stdlib_alias_target(target_path: &[String]) -> Option<(String, String)> {
+        if target_path.first().map(String::as_str) != Some(stdlib::STDLIB_ROOT) {
+            return None;
+        }
+        let source_path = &target_path[1..];
+        let (name, module_path) = source_path.split_last()?;
+        Some((
+            std::iter::once(stdlib::STDLIB_ROOT)
+                .chain(module_path.iter().map(String::as_str))
+                .collect::<Vec<_>>()
+                .join("."),
+            name.clone(),
+        ))
     }
 
     /// Return the public source spelling for one checked API declaration.

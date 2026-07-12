@@ -601,9 +601,8 @@ impl<'a> IrCodegen<'a> {
 
     /// Add dependency source metadata without scheduling that module for local Rust emission.
     ///
-    /// This is the compiled-stdlib boundary: imports continue to derive their
-    /// type and value ownership from source, while generated Rust resolves
-    /// those symbols through the linked artifact crate.
+    /// This remains available for non-emitted source dependencies. Migrated built-in stdlib imports instead derive
+    /// their semantics from the compiled artifact manifest and resolve Rust symbols through the linked artifact crate.
     pub fn add_dependency_symbol_module_with_path_segments(
         &mut self,
         module_name: &'a str,

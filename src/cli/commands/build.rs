@@ -775,11 +775,8 @@ fn prepare_project_with_options(
     };
 
     let dep_modules = &modules[..modules.len() - 1];
-    // Typechecking still consumes the source-backed stdlib module graph during the compatibility transition, but
-    // migrated modules are supplied by the compiled built-in artifact at Rust emission time. Keeping this split here
-    // prevents generated consumers from silently materializing a second `__incan_std` implementation. Remove this
-    // bridge once the incnlib manifest carries the module-qualified type, trait, decorator, and default-argument
-    // metadata needed by the frontend's stdlib import resolver.
+    // Migrated stdlib modules resolve from the compiled artifact's checked metadata and are supplied by its linked
+    // Rust crate. Keep them out of local emission so consumers cannot materialize a second `__incan_std` tree.
     let emitted_dep_modules: Vec<&ParsedModule> = dep_modules
         .iter()
         .filter(|module| !stdlib::is_compiled_builtin_stdlib_emission_path(&module.path_segments))
@@ -1125,9 +1122,8 @@ fn prepare_library_project(
         .map_err(|error| CliError::failure(error.to_string()))?;
     let rust_extern_contexts = collect_rust_extern_contexts(&modules);
     let dep_modules = &modules[..modules.len() - 1];
-    // Library consumers follow the same compatibility boundary as executable and test-batch consumers: source
-    // modules still provide typechecking metadata, while migrated stdlib modules are linked from the compiled
-    // artifact and must not be generated into a second local `__incan_std` tree.
+    // Library consumers use the same artifact metadata and linked Rust crate as executable and test-batch consumers;
+    // migrated modules must not be generated into a second local `__incan_std` tree.
     let emitted_dep_modules: Vec<&ParsedModule> = dep_modules
         .iter()
         .filter(|module| !stdlib::is_compiled_builtin_stdlib_emission_path(&module.path_segments))

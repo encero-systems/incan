@@ -678,7 +678,12 @@ pub fn collect_checked_api_metadata(
                     declarations.push(ApiDeclaration::Partial(api_partial(export, decl.span, &module_path)));
                 }
             }
-            Declaration::Import(import) if public(import.visibility) => {
+            // Module-level `from ... import ...` bindings are part of a module's public surface, including facade
+            // modules such as `std.web` whose `prelude.incn` consists entirely of re-exports. Rust imports remain an
+            // implementation detail unless explicitly declared `pub`.
+            Declaration::Import(import)
+                if matches!(import.kind, ImportKind::From { .. }) || public(import.visibility) =>
+            {
                 declarations.extend(
                     api_aliases(import, decl.span, &module_path)
                         .into_iter()
