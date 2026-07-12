@@ -469,9 +469,14 @@ fn parse_reference(value: &str) -> Result<FeatureReference, &'static str> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        process,
+        sync::atomic::{AtomicU64, Ordering},
+    };
 
-    use super::{FeatureMetadataError, parse_feature_blocks};
+    use super::{FeatureMetadataError, load_feature_inventory, parse_feature_blocks};
 
     const VALID_BLOCK: &str = r#"
 # incan-feature: begin
@@ -489,6 +494,54 @@ mod tests {
 # reference = "std.example | stdlib/example.md"
 # incan-feature: end
 "#;
+
+    static NEXT_TEST_ROOT: AtomicU64 = AtomicU64::new(0);
+
+    struct TestRoot {
+        path: PathBuf,
+    }
+
+    impl TestRoot {
+        fn new() -> std::io::Result<Self> {
+            let sequence = NEXT_TEST_ROOT.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!("incan-feature-metadata-{}-{sequence}", process::id()));
+            fs::create_dir_all(&path)?;
+            Ok(Self { path })
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TestRoot {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    fn source_block(id: &str, name: &str) -> String {
+        VALID_BLOCK
+            .replace("# ", "// ")
+            .replace("std.example", id)
+            .lines()
+            .map(|line| {
+                if line.starts_with("// name = ") {
+                    format!("// name = \"{name}\"")
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn write_source_block(root: &Path, relative_path: &str, id: &str, name: &str) -> std::io::Result<()> {
+        let path = root.join(relative_path);
+        let parent = path.parent().expect("source path should have a parent");
+        fs::create_dir_all(parent)?;
+        fs::write(path, source_block(id, name))
+    }
 
     /// Source-local metadata accepts a complete block and preserves repeated fields.
     #[test]
@@ -534,6 +587,69 @@ mod tests {
             Err(error) => error,
         };
         assert!(error.to_string().contains("\"name\" must appear exactly once"));
+    }
+
+    /// Duplicate ids in distinct source owners fail rather than depending on discovery order.
+    #[test]
+    fn rejects_duplicate_feature_ids_across_source_files() -> Result<(), Box<dyn std::error::Error>> {
+        let root = TestRoot::new()?;
+        write_source_block(root.path(), "src/first.rs", "std.duplicate", "First source capability")?;
+        write_source_block(
+            root.path(),
+            "src/second.rs",
+            "std.duplicate",
+            "Second source capability",
+        )?;
+
+        let error = load_feature_inventory(root.path()).expect_err("duplicate source ids should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("duplicate feature metadata id \"std.duplicate\"")
+        );
+        assert!(error.to_string().contains("First source capability"));
+        assert!(error.to_string().contains("Second source capability"));
+        Ok(())
+    }
+
+    /// Duplicate names in distinct source owners fail even when their stable ids differ.
+    #[test]
+    fn rejects_duplicate_feature_names_across_source_files() -> Result<(), Box<dyn std::error::Error>> {
+        let root = TestRoot::new()?;
+        write_source_block(root.path(), "src/first.rs", "std.first", "Shared source capability")?;
+        write_source_block(root.path(), "src/second.rs", "std.second", "Shared source capability")?;
+
+        let error = load_feature_inventory(root.path()).expect_err("duplicate source names should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("duplicate feature metadata name \"Shared source capability\"")
+        );
+        assert!(error.to_string().contains("std.first"));
+        assert!(error.to_string().contains("std.second"));
+        Ok(())
+    }
+
+    /// The source-local inventory cannot shadow a legacy bridge entry while migration remains incomplete.
+    #[test]
+    fn rejects_source_feature_name_that_collides_with_legacy_bridge() -> Result<(), Box<dyn std::error::Error>> {
+        let root = TestRoot::new()?;
+        write_source_block(
+            root.path(),
+            "src/shadow.rs",
+            "std.shadow",
+            "Namespaced stdlib imports and decorators",
+        )?;
+
+        let error = load_feature_inventory(root.path()).expect_err("legacy bridge name collision should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("duplicate feature metadata name \"Namespaced stdlib imports and decorators\"")
+        );
+        assert!(error.to_string().contains("NamespacedStdlib"));
+        assert!(error.to_string().contains("std.shadow"));
+        Ok(())
     }
 
     /// References require an explicit label/path separator so generated links cannot be ambiguous.
