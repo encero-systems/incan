@@ -486,11 +486,13 @@ impl WorkspaceGraph {
             .collect())
     }
 
+    /// Return whether a canonical start path is the workspace root or lies within a declared member.
     fn contains_path(&self, path: &Path) -> bool {
         path == self.root || self.members.iter().any(|member| path.starts_with(&member.path))
     }
 }
 
+/// Canonicalize a workspace-discovery start path, treating an empty relative parent as the current directory.
 fn canonical_start_path(path: &Path) -> Result<PathBuf, WorkspaceError> {
     // `Path::parent()` is an empty path for a bare relative filename. Test and compiler callers use that parent as
     // their discovery start, where it means the current directory rather than a path that should be handed to the
@@ -503,6 +505,7 @@ fn canonical_start_path(path: &Path) -> Result<PathBuf, WorkspaceError> {
     canonical_path(path)
 }
 
+/// Canonicalize a filesystem path while retaining its path context in workspace diagnostics.
 fn canonical_path(path: &Path) -> Result<PathBuf, WorkspaceError> {
     fs::canonicalize(path).map_err(|source| WorkspaceError::Io {
         path: path.to_path_buf(),
@@ -510,6 +513,7 @@ fn canonical_path(path: &Path) -> Result<PathBuf, WorkspaceError> {
     })
 }
 
+/// Load and validate one manifest used to construct a workspace graph.
 fn read_manifest(path: &Path) -> Result<ProjectManifest, WorkspaceError> {
     let content = fs::read_to_string(path).map_err(|source| WorkspaceError::Io {
         path: path.to_path_buf(),
@@ -518,6 +522,7 @@ fn read_manifest(path: &Path) -> Result<ProjectManifest, WorkspaceError> {
     ProjectManifest::from_str(&content, path).map_err(Into::into)
 }
 
+/// Inspect the canonical root lock and report any non-authoritative member-local locks without mutating them.
 fn inspect_root_lock(root: &Path, members: &[WorkspaceMember]) -> WorkspaceLockState {
     let path = root.join("incan.lock");
     let stale_member_lockfiles = members
@@ -559,6 +564,7 @@ fn inspect_root_lock(root: &Path, members: &[WorkspaceMember]) -> WorkspaceLockS
     }
 }
 
+/// Validate and normalize the project name required for a workspace member.
 fn required_project_name(name: Option<&str>, manifest: &Path) -> Result<String, WorkspaceError> {
     let Some(name) = name.map(str::trim).filter(|name| !name.is_empty()) else {
         return Err(invalid(
@@ -569,6 +575,7 @@ fn required_project_name(name: Option<&str>, manifest: &Path) -> Result<String, 
     Ok(name.to_string())
 }
 
+/// Construct a workspace-validation error attributed to its owning manifest.
 fn invalid(manifest: &Path, message: impl Into<String>) -> WorkspaceError {
     WorkspaceError::Invalid {
         manifest: manifest.to_path_buf(),
@@ -576,6 +583,7 @@ fn invalid(manifest: &Path, message: impl Into<String>) -> WorkspaceError {
     }
 }
 
+/// Expand member or exclusion patterns into canonical workspace-relative directories in deterministic order.
 fn expand_patterns(
     root: &Path,
     patterns: &[String],
@@ -646,6 +654,7 @@ fn expand_patterns(
     Ok(expanded.into_iter().collect())
 }
 
+/// Return whether a member or exclusion pattern denotes the workspace root itself.
 fn pattern_is_root(pattern: &str) -> Result<bool, WorkspaceError> {
     if contains_glob(pattern) {
         return Glob::new(pattern)
@@ -660,12 +669,14 @@ fn pattern_is_root(pattern: &str) -> Result<bool, WorkspaceError> {
         .all(|component| matches!(component, std::path::Component::CurDir)))
 }
 
+/// Detect glob metacharacters accepted by the workspace member-pattern grammar.
 fn contains_glob(pattern: &str) -> bool {
     pattern
         .bytes()
         .any(|byte| matches!(byte, b'*' | b'?' | b'[' | b'{' | b'!'))
 }
 
+/// Recursively enumerate canonical directories beneath a workspace root for deterministic glob expansion.
 fn discover_directories(root: &Path) -> Result<Vec<PathBuf>, WorkspaceError> {
     let mut directories = vec![root.to_path_buf()];
     let mut index = 0;
@@ -699,6 +710,7 @@ fn discover_directories(root: &Path) -> Result<Vec<PathBuf>, WorkspaceError> {
     Ok(directories)
 }
 
+/// Reject a workspace graph whose declared members do not have unique project names.
 fn validate_unique_member_names(members: &[WorkspaceMember], manifest: &Path) -> Result<(), WorkspaceError> {
     let mut paths_by_name = BTreeMap::new();
     for member in members {
@@ -717,6 +729,7 @@ fn validate_unique_member_names(members: &[WorkspaceMember], manifest: &Path) ->
     Ok(())
 }
 
+/// Resolve configured default member selectors to unique member names in declaration order.
 fn resolve_default_members(
     members: &[WorkspaceMember],
     root: &Path,
@@ -823,6 +836,7 @@ fn resolve_effective_rust_dependencies(
     Ok(effective_by_member)
 }
 
+/// Build effective Rust dev dependencies for every member from explicit workspace opt-ins and local refinements.
 fn resolve_effective_rust_dev_dependencies(
     members: &[WorkspaceMember],
     manifests: &BTreeMap<PathBuf, ProjectManifest>,

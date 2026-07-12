@@ -627,6 +627,7 @@ pub fn parse_workspace_rust_dev_dependency_declarations(
     parse_workspace_rust_dependency_table(&workspace.rust_dev_dependencies, "rust-dev-dependencies", manifest_path)
 }
 
+/// Parse one workspace Rust dependency table and reject member-style inheritance or workspace-level optionality.
 fn parse_workspace_rust_dependency_table(
     entries: &HashMap<String, toml::Value>,
     section: &str,

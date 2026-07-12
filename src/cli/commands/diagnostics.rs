@@ -68,6 +68,7 @@ pub fn check_path_report(path: &Path) -> CliResult<DiagnosticReport> {
     Ok(check_path_outcome(path)?.report)
 }
 
+/// Run collection, project resolution, and typechecking while retaining either a stable report or its source failure.
 fn check_path_outcome(path: &Path) -> CliResult<CheckOutcome> {
     let modules = match collect_modules_detailed(&path.to_string_lossy()) {
         Ok(modules) => modules,
@@ -201,6 +202,7 @@ fn render_check_failure(failure: CliDiagnosticFailure, format: DiagnosticOutputF
     }
 }
 
+/// Construct the canonical empty diagnostic report for a successful check.
 fn successful_check_report() -> DiagnosticReport {
     DiagnosticReport {
         schema_version: DIAGNOSTIC_SCHEMA_VERSION,
@@ -209,6 +211,7 @@ fn successful_check_report() -> DiagnosticReport {
     }
 }
 
+/// Convert a compiler or tooling failure into the shared structured check outcome.
 fn failed_check_outcome(failure: CliDiagnosticFailure) -> CheckOutcome {
     let diagnostics = failure
         .diagnostics
