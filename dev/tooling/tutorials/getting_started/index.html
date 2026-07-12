@@ -64,8 +64,6 @@
   
     
     
-      
-    
     
     
     
@@ -125,19 +123,7 @@
     </div>
     
       
-        <form class="md-header__option" data-md-component="palette">
-  
     
-    
-    
-    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="amber"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
-    
-  
-</form>
-      
-    
-    
-      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
     
     
     
@@ -6083,6 +6069,8 @@
       
         
       
+        
+      
     
     
       
@@ -6248,6 +6236,27 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../project/incus/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Meet Incus
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -6346,6 +6355,14 @@
 
 <h1 id="getting-started-with-incan">Getting started with Incan<a class="headerlink" href="#getting-started-with-incan" title="Permanent link">&para;</a></h1>
 <p>This tutorial is the shortest public path from an installed toolchain to running, testing, and release-building a project. It does not require cloning the compiler repository.</p>
+<ol class="inc-step-rail" style="--inc-step-count: 5" aria-label="Getting started steps">
+  <li><strong>Install</strong>Verify the toolchain</li>
+  <li><strong>Create</strong>Scaffold a project</li>
+  <li><strong>Run</strong>Execute the entry point</li>
+  <li><strong>Test</strong>Check behavior</li>
+  <li><strong>Build</strong>Produce a release binary</li>
+</ol>
+
 <h2 id="install-and-verify">Install and verify<a class="headerlink" href="#install-and-verify" title="Permanent link">&para;</a></h2>
 <p>Install the toolchain, then make sure the command is on <code>PATH</code>. The direct installer provisions stable Rust through <code>rustup</code> when needed and installs the <code>wasm32-wasip1</code> target used by package vocab companions:</p>
 <div class="language-bash highlight"><pre><span></span><code>curl<span class="w"> </span>-fsSL<span class="w"> </span>https://github.com/encero-systems/incan/releases/latest/download/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>bash
@@ -6376,6 +6393,9 @@ brew<span class="w"> </span>install<span class="w"> </span>incan
 <p>Run it:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>run
 </code></pre></div>
+<section class="inc-learning-panel inc-learning-panel--result" data-label="Result">
+<p>The starter prints its greeting from <code>src/main.incn</code>. At this point the manifest, source root, entry point, and Rust-backed build path are all connected.</p>
+</section>
 <p>Test it:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span><span class="nb">test</span>
 </code></pre></div>
@@ -6383,6 +6403,9 @@ brew<span class="w"> </span>install<span class="w"> </span>incan
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>build<span class="w"> </span>--release
 </code></pre></div>
 <p><code>incan build</code> already uses the release Cargo profile; <code>--release</code> is accepted so the first-contact command spells out the intent.</p>
+<section class="inc-learning-panel inc-learning-panel--complete inc-incus-slot" data-incus-category="success" data-label="Complete">
+<p>You now have a runnable project, a passing starter test, and a native release build. Continue with <a href="../your_first_project/">Your first project</a> to split the starter into modules and add meaningful tests.</p>
+</section>
 <h2 id="what-04-is-good-for">What 0.4 is good for<a class="headerlink" href="#what-04-is-good-for" title="Permanent link">&para;</a></h2>
 <p>0.4 is intended for trying Incan as an installed toolchain, creating small projects, running tests, checking diagnostics, inspecting generated artifacts, and evaluating how Incan fits into Rust-backed application tooling.</p>
 <h2 id="what-04-is-not-yet-good-for">What 0.4 is not yet good for<a class="headerlink" href="#what-04-is-not-yet-good-for" title="Permanent link">&para;</a></h2>
@@ -6449,6 +6472,14 @@ brew<span class="w"> </span>install<span class="w"> </span>incan
       <script src="../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
         <script src="../../../_snippets/javascripts/mathjax.js"></script>
+      
+        <script src="../../../_snippets/javascripts/incan_home_motion.js"></script>
+      
+        <script src="../../../shared/incapunk/incus-library/manifest.js"></script>
+      
+        <script src="../../../_snippets/javascripts/incan_docs_components.js"></script>
+      
+        <script src="../../../_snippets/javascripts/incan_mermaid.js"></script>
       
         <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
       

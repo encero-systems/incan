@@ -64,8 +64,6 @@
   
     
     
-      
-    
     
     
     
@@ -125,19 +123,7 @@
     </div>
     
       
-        <form class="md-header__option" data-md-component="palette">
-  
     
-    
-    
-    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="amber"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
-    
-  
-</form>
-      
-    
-    
-      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
     
     
     
@@ -6063,6 +6049,8 @@
       
         
       
+        
+      
     
     
       
@@ -6228,6 +6216,27 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../project/incus/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Meet Incus
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -6342,7 +6351,6 @@
 <li><strong>Compiler foundation</strong>: The 0.5 backend-foundation lane now has a behavior inventory, generated-Rust deprecation policy, stable semantic identity scaffolding, typed compiler facts, initial HIR structures, and a Hees.ai dependency inventory so backend migration work has a shared review surface (#646, #647, #648, #649, #650, #651).</li>
 <li><strong>Stdlib</strong>: <code>std.checksum</code> adds CRC32 value, digest-byte, and incremental helpers for compatibility and accidental-corruption checks, separate from <code>std.hash</code> security and hashing contracts (#709).</li>
 <li><strong>Stdlib</strong>: <code>std.environ</code> adds redacted, read-only Unicode environment access through required, optional, and defaulted string reads, plus typed reads for primitives, explicit <code>TryFrom[str]</code> adopters, and validated newtypes (RFC 089, #557).</li>
-<li><strong>Stdlib</strong>: <code>std.fs</code> adds same-filesystem atomic publication, explicit directory synchronization, and OS-backed shared/exclusive advisory locks for crash-safe local state (RFC 112, #829).</li>
 </ul>
 <h2 id="tooling">Tooling<a class="headerlink" href="#tooling" title="Permanent link">&para;</a></h2>
 <ul>
@@ -6411,6 +6419,14 @@
       <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
         <script src="../../_snippets/javascripts/mathjax.js"></script>
+      
+        <script src="../../_snippets/javascripts/incan_home_motion.js"></script>
+      
+        <script src="../../shared/incapunk/incus-library/manifest.js"></script>
+      
+        <script src="../../_snippets/javascripts/incan_docs_components.js"></script>
+      
+        <script src="../../_snippets/javascripts/incan_mermaid.js"></script>
       
         <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
       

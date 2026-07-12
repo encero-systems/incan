@@ -64,8 +64,6 @@
   
     
     
-      
-    
     
     
     
@@ -125,19 +123,7 @@
     </div>
     
       
-        <form class="md-header__option" data-md-component="palette">
-  
     
-    
-    
-    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="amber"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
-    
-  
-</form>
-      
-    
-    
-      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
     
     
     
@@ -6275,6 +6261,8 @@
       
         
       
+        
+      
     
     
       
@@ -6431,6 +6419,27 @@
   
   <span class="md-ellipsis">
     Stability policy
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../project/incus/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Meet Incus
   </span>
   
 
@@ -7064,7 +7073,7 @@ Runtime<span class="w"> </span>crates<span class="w"> </span><span class="o">(</
 </table>
 <h2 id="surface-semantics-engine">Surface Semantics Engine<a class="headerlink" href="#surface-semantics-engine" title="Permanent link">&para;</a></h2>
 <p>Surface syntax features (soft keywords, decorator semantics) are fully driven by a <strong>semantics registry</strong>. Every compiler stage — parser, typechecker, lowering, and scanning — consults the registry instead of hardcoding keyword identities. The design separates <em>feature knowledge</em> (which keyword does what) from <em>execution knowledge</em> (how the compiler performs each action):</p>
-<pre class="mermaid"><code>flowchart LR
+<pre class="inc-diagram"><code>flowchart LR
     imports --&gt; SC[SurfaceContext]
     SC --&gt; REG[semantics registry]
 
@@ -7443,6 +7452,14 @@ ast::Type          ──►  IrType               ──►  (syn Type)
       <script src="../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
         <script src="../../../_snippets/javascripts/mathjax.js"></script>
+      
+        <script src="../../../_snippets/javascripts/incan_home_motion.js"></script>
+      
+        <script src="../../../shared/incapunk/incus-library/manifest.js"></script>
+      
+        <script src="../../../_snippets/javascripts/incan_docs_components.js"></script>
+      
+        <script src="../../../_snippets/javascripts/incan_mermaid.js"></script>
       
         <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
       

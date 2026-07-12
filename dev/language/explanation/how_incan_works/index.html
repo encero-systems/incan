@@ -64,8 +64,6 @@
   
     
     
-      
-    
     
     
     
@@ -125,19 +123,7 @@
     </div>
     
       
-        <form class="md-header__option" data-md-component="palette">
-  
     
-    
-    
-    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="amber"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
-    
-  
-</form>
-      
-    
-    
-      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
     
     
     
@@ -6074,6 +6060,8 @@
       
         
       
+        
+      
     
     
       
@@ -6239,6 +6227,27 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../project/incus/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Meet Incus
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -6331,13 +6340,16 @@
 <h2 id="the-short-version">The short version<a class="headerlink" href="#the-short-version" title="Permanent link">&para;</a></h2>
 <p>In the current beta, Incan checks <code>.incn</code> source code, lowers it through the Rust backend, and builds an executable. Generated Rust is inspectable backend output today, but the longer-lived public contract is the checked source, diagnostics, build reports, semantic facts, package metadata, and native artifacts.</p>
 <h2 id="pipeline-conceptual">Pipeline (conceptual)<a class="headerlink" href="#pipeline-conceptual" title="Permanent link">&para;</a></h2>
-<pre class="mermaid"><code>flowchart TD
-    incanSource[Incan_source_.incn] --&gt; parser[Parse_and_validate]
-    parser --&gt; typecheck[Typecheck_and_resolve]
-    typecheck --&gt; lower[Lower_to_Rust]
-    lower --&gt; cargo[Cargo_build]
-    cargo --&gt; binary[Executable]
+<pre class="inc-diagram"><code>flowchart LR
+    source[Incan source] --&gt; frontend[Parser and type checker]
+    frontend --&gt; facts[Checked program facts]
+    facts --&gt; backend[Rust backend]
+    backend --&gt; workspace[Generated Rust workspace]
+    workspace --&gt; artifact[Native artifact]
+    facts --&gt; evidence[Diagnostics, reports, and codegraph]
 </code></pre>
+<p class="inc-diagram-caption">The checked Incan program owns the public meaning. Generated Rust is inspectable backend output, while diagnostics and reports expose stable tooling facts.</p>
+
 <h2 id="what-this-means-in-practice">What this means in practice<a class="headerlink" href="#what-this-means-in-practice" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Incan programs are compiled (not interpreted).</li>
@@ -6404,6 +6416,14 @@
       <script src="../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
         <script src="../../../_snippets/javascripts/mathjax.js"></script>
+      
+        <script src="../../../_snippets/javascripts/incan_home_motion.js"></script>
+      
+        <script src="../../../shared/incapunk/incus-library/manifest.js"></script>
+      
+        <script src="../../../_snippets/javascripts/incan_docs_components.js"></script>
+      
+        <script src="../../../_snippets/javascripts/incan_mermaid.js"></script>
       
         <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
       

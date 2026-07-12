@@ -64,8 +64,6 @@
   
     
     
-      
-    
     
     
     
@@ -125,19 +123,7 @@
     </div>
     
       
-        <form class="md-header__option" data-md-component="palette">
-  
     
-    
-    
-    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="amber"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
-    
-  
-</form>
-      
-    
-    
-      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
     
     
     
@@ -6458,6 +6444,8 @@
       
         
       
+        
+      
     
     
       
@@ -6614,6 +6602,27 @@
   
   <span class="md-ellipsis">
     Stability policy
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../project/incus/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Meet Incus
   </span>
   
 
@@ -7105,6 +7114,17 @@
 <p>Incan keeps the familiar <code>async def</code> and <code>await</code> authoring shape, but it is not an <code>asyncio</code> compatibility layer. Task spawning, timeouts, cancellation, and runtime behavior follow Incan's <code>std.async</code> contracts and the current Tokio-backed runtime path.</p>
 <p>The key difference is under the hood: the current beta builds through Rust and uses Tokio, giving you familiar Python-shaped syntax with a native async runtime.</p>
 </div>
+<pre class="inc-diagram"><code>sequenceDiagram
+  participant Caller
+  participant Future
+  participant Runtime as Tokio-backed runtime
+  Caller-&gt;&gt;Future: call async function
+  Caller-&gt;&gt;Runtime: await or spawn
+  Runtime-&gt;&gt;Future: poll until ready
+  Future--&gt;&gt;Runtime: value or join error
+  Runtime--&gt;&gt;Caller: resume with typed result</code></pre>
+<p class="inc-diagram-caption">Calling creates async work; <code>await</code> or task APIs let the runtime drive it to a typed result.</p>
+
 <h2 id="quick-start">Quick Start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h2>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.time</span><span class="w"> </span><span class="kn">import</span> <span class="n">sleep</span>
 
@@ -7835,6 +7855,14 @@
       <script src="../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
         <script src="../../../_snippets/javascripts/mathjax.js"></script>
+      
+        <script src="../../../_snippets/javascripts/incan_home_motion.js"></script>
+      
+        <script src="../../../shared/incapunk/incus-library/manifest.js"></script>
+      
+        <script src="../../../_snippets/javascripts/incan_docs_components.js"></script>
+      
+        <script src="../../../_snippets/javascripts/incan_mermaid.js"></script>
       
         <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
       

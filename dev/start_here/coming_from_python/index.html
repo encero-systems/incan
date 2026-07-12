@@ -64,8 +64,6 @@
   
     
     
-      
-    
     
     
     
@@ -125,19 +123,7 @@
     </div>
     
       
-        <form class="md-header__option" data-md-component="palette">
-  
     
-    
-    
-    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="amber"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
-    
-  
-</form>
-      
-    
-    
-      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
     
     
     
@@ -6072,6 +6058,8 @@
       
         
       
+        
+      
     
     
       
@@ -6237,6 +6225,27 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../project/incus/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Meet Incus
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -6326,6 +6335,11 @@
 
 <h1 id="coming-from-python-apps">Coming from Python (apps)<a class="headerlink" href="#coming-from-python-apps" title="Permanent link">&para;</a></h1>
 <p>This page routes Python developers who are evaluating Incan for application code, services, typed domain packages, and deployment-oriented tooling.</p>
+<aside class="inc-bridge-note inc-incus-slot" data-incus-category="python" aria-label="Python to Incan mental model">
+  <span class="inc-eyebrow">Python → Incan</span>
+  <strong>Keep the readable application-code shape. Move more failure, type, and deployment facts into contracts the compiler can check.</strong>
+</aside>
+
 <h2 id="install-first">Install first<a class="headerlink" href="#install-first" title="Permanent link">&para;</a></h2>
 <p>If you use Python tooling day to day, <code>pipx</code> is the cleanest package-manager entrypoint because it keeps the command package isolated from project environments while still installing the verified Incan toolchain archive. The installer also provisions the Rust backend when needed, so a fresh machine can move straight from install to <code>incan run</code>:</p>
 <div class="language-bash highlight"><pre><span></span><code>pipx<span class="w"> </span>install<span class="w"> </span>incan
@@ -6345,20 +6359,14 @@ incan<span class="w"> </span><span class="nb">test</span>
 incan<span class="w"> </span>build<span class="w"> </span>--release
 </code></pre></div>
 <h2 id="what-you-should-do-next">What you should do next<a class="headerlink" href="#what-you-should-do-next" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Install the toolchain and create a starter project: <a href="../../tooling/tutorials/getting_started/">Getting Started</a></li>
-<li>If anything fails: <a href="../../tooling/how-to/troubleshooting/">Troubleshooting</a></li>
-<li>Learn the basics: <a href="../../language/tutorials/book/">The Incan Book (Basics)</a></li>
-<li>Build your first API: <a href="../../language/tutorials/build_your_first_api/">Build your first API</a></li>
-<li>Multi-file apps: <a href="../../language/how-to/imports_and_modules/">Imports and modules (how-to)</a></li>
-<li>Write tests: <a href="../../language/how-to/testing_stdlib/">Testing in Incan</a></li>
-<li>Set up your workflow:<ul>
-<li><a href="../../tooling/how-to/formatting/">Formatting</a></li>
-<li><a href="../../tooling/how-to/testing/">Testing CLI</a></li>
-<li><a href="../../tooling/how-to/editor_setup/">Editor setup</a> (LSP, syntax highlighting)</li>
-</ul>
-</li>
-</ul>
+<div class="inc-route-grid">
+  <a class="inc-route-card" href="../../tooling/tutorials/getting_started/"><span class="inc-eyebrow">Start</span><strong>Install and run</strong><span>Create a starter project and complete the normal run, test, and release-build loop.</span></a>
+  <a class="inc-route-card" href="../../language/tutorials/book/"><span class="inc-eyebrow">Learn</span><strong>Read the basics</strong><span>Work through the language in short, sequential chapters with runnable exercises.</span></a>
+  <a class="inc-route-card" href="../../language/tutorials/build_your_first_api/"><span class="inc-eyebrow">Build</span><strong>Create an API</strong><span>Run the built-in web framework and serve typed JSON endpoints.</span></a>
+  <a class="inc-route-card" href="../../language/how-to/imports_and_modules/"><span class="inc-eyebrow">Scale out</span><strong>Use modules</strong><span>Move from a single file to multi-file applications and module-owned state.</span></a>
+</div>
+
+<p>Then add <a href="../../language/how-to/testing_stdlib/">tests</a>, <a href="../../tooling/how-to/formatting/">formatting</a>, the <a href="../../tooling/how-to/testing/">testing CLI</a>, and <a href="../../tooling/how-to/editor_setup/">editor support</a>. If anything fails, use <a href="../../tooling/how-to/troubleshooting/">Troubleshooting</a>.</p>
 <h2 id="explanation">Explanation<a class="headerlink" href="#explanation" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../../language/explanation/why_incan/">Why Incan?</a></li>
@@ -6425,6 +6433,14 @@ incan<span class="w"> </span>build<span class="w"> </span>--release
       <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
         <script src="../../_snippets/javascripts/mathjax.js"></script>
+      
+        <script src="../../_snippets/javascripts/incan_home_motion.js"></script>
+      
+        <script src="../../shared/incapunk/incus-library/manifest.js"></script>
+      
+        <script src="../../_snippets/javascripts/incan_docs_components.js"></script>
+      
+        <script src="../../_snippets/javascripts/incan_mermaid.js"></script>
       
         <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
       
