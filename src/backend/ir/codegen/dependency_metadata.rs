@@ -765,8 +765,9 @@ mod tests {
     use super::*;
 
     fn parse(source: &str) -> Program {
-        let tokens = crate::frontend::lexer::lex(source).expect("fixture should lex");
-        crate::frontend::parser::parse(&tokens).expect("fixture should parse")
+        let tokens =
+            crate::frontend::lexer::lex(source).unwrap_or_else(|errors| panic!("fixture should lex: {errors:?}"));
+        crate::frontend::parser::parse(&tokens).unwrap_or_else(|errors| panic!("fixture should parse: {errors:?}"))
     }
 
     #[test]
@@ -795,7 +796,9 @@ pub trait Sum[T]:
             "derives".to_string(),
             "collection".to_string(),
         ];
-        let selected = reachable.get(&collection_path).expect("collection should be reachable");
+        let Some(selected) = reachable.get(&collection_path) else {
+            panic!("collection should be reachable");
+        };
         assert!(selected.contains("Sum"));
         assert!(selected.contains("Iterator"));
     }

@@ -81,8 +81,8 @@
     {
       "path": "src/backend/ir/emit/decls/functions.rs",
       "category": "callable and Rust macro emission compatibility",
-      "expected_count": 2,
-      "expected_fingerprint": "0x99dc282326807784"
+      "expected_count": 4,
+      "expected_fingerprint": "0x77f3c730b657f4c8"
     },
     {
       "path": "src/backend/ir/emit/decls/impls.rs",
@@ -123,8 +123,8 @@
     {
       "path": "src/backend/ir/emit/expressions/methods.rs",
       "category": "quarantined metadata-free method compatibility",
-      "expected_count": 6,
-      "expected_fingerprint": "0x8e7a10a90b5bbd3f"
+      "expected_count": 9,
+      "expected_fingerprint": "0xa79a69b55f1cffdf"
     },
     {
       "path": "src/backend/ir/emit/expressions/methods/fast_paths.rs",
@@ -189,8 +189,8 @@
     {
       "path": "src/backend/ir/lower/decl/traits.rs",
       "category": "iterator trait method lowering compatibility",
-      "expected_count": 1,
-      "expected_fingerprint": "0x38db8c81d2ab19aa"
+      "expected_count": 2,
+      "expected_fingerprint": "0x5aba6acff170507f"
     },
     {
       "path": "src/backend/ir/lower/expr/calls.rs",
