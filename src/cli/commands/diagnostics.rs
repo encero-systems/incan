@@ -31,11 +31,17 @@ pub enum DiagnosticOutputFormat {
     Json,
 }
 
-#[derive(Debug, Serialize)]
-struct DiagnosticReport {
-    schema_version: u32,
-    ok: bool,
-    diagnostics: Vec<StableDiagnostic>,
+#[derive(Debug, Clone, Serialize)]
+pub struct DiagnosticReport {
+    pub schema_version: u32,
+    pub ok: bool,
+    pub diagnostics: Vec<StableDiagnostic>,
+}
+
+/// One completed check, retaining the human diagnostic source needed by the text renderer.
+struct CheckOutcome {
+    report: DiagnosticReport,
+    failure: Option<CliDiagnosticFailure>,
 }
 
 #[derive(Debug, Serialize)]
@@ -47,9 +53,25 @@ struct ExplainReport {
 
 /// Run the canonical check pipeline for a file or project entrypoint.
 pub fn check_path(path: &Path, format: DiagnosticOutputFormat) -> CliResult<ExitCode> {
+    let outcome = check_path_outcome(path)?;
+    match outcome.failure {
+        Some(failure) => render_check_failure(failure, format),
+        None => render_check_success(format),
+    }
+}
+
+/// Check a path and retain the stable report for a workspace-level machine-readable envelope.
+///
+/// This deliberately performs the same compiler pipeline as [`check_path`]. The plain command owns text rendering,
+/// while the workspace command can aggregate these completed reports without rerunning or parsing CLI output.
+pub fn check_path_report(path: &Path) -> CliResult<DiagnosticReport> {
+    Ok(check_path_outcome(path)?.report)
+}
+
+fn check_path_outcome(path: &Path) -> CliResult<CheckOutcome> {
     let modules = match collect_modules_detailed(&path.to_string_lossy()) {
         Ok(modules) => modules,
-        Err(failure) => return render_check_failure(failure, format),
+        Err(failure) => return Ok(failed_check_outcome(failure)),
     };
     let normalized_path = normalize_input_path(path)?;
     let project_root = resolve_project_root(&normalized_path);
@@ -62,7 +84,7 @@ pub fn check_path(path: &Path, format: DiagnosticOutputFormat) -> CliResult<Exit
                 diagnostics::CompileError::new(error.to_string(), crate::frontend::ast::Span::default()),
                 diagnostics::DiagnosticPhase::Tooling,
             );
-            return render_check_failure(failure, format);
+            return Ok(failed_check_outcome(failure));
         }
     };
     let library_manifest_index = manifest
@@ -105,8 +127,11 @@ pub fn check_path(path: &Path, format: DiagnosticOutputFormat) -> CliResult<Exit
         #[cfg(feature = "rust_inspect")]
         rust_inspect_manifest_dir.as_deref(),
     ) {
-        Ok(()) => render_check_success(format),
-        Err(failure) => render_check_failure(failure, format),
+        Ok(()) => Ok(CheckOutcome {
+            report: successful_check_report(),
+            failure: None,
+        }),
+        Err(failure) => Ok(failed_check_outcome(failure)),
     }
 }
 
@@ -157,11 +182,7 @@ fn render_check_success(format: DiagnosticOutputFormat) -> CliResult<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         DiagnosticOutputFormat::Json => {
-            let report = DiagnosticReport {
-                schema_version: DIAGNOSTIC_SCHEMA_VERSION,
-                ok: true,
-                diagnostics: Vec::new(),
-            };
+            let report = successful_check_report();
             print_json(&report)?;
             Ok(ExitCode::SUCCESS)
         }
@@ -173,26 +194,41 @@ fn render_check_failure(failure: CliDiagnosticFailure, format: DiagnosticOutputF
     match format {
         DiagnosticOutputFormat::Text => Err(CliError::failure(failure.render_human())),
         DiagnosticOutputFormat::Json => {
-            let diagnostics = failure
-                .diagnostics
-                .iter()
-                .map(|diagnostic| {
-                    diagnostics::stable_diagnostic(
-                        &diagnostic.file_path,
-                        &diagnostic.source,
-                        &diagnostic.error,
-                        diagnostic.phase,
-                    )
-                })
-                .collect();
-            let report = DiagnosticReport {
-                schema_version: DIAGNOSTIC_SCHEMA_VERSION,
-                ok: false,
-                diagnostics,
-            };
+            let report = failed_check_outcome(failure).report;
             print_json(&report)?;
             Err(CliError::new("", ExitCode::FAILURE))
         }
+    }
+}
+
+fn successful_check_report() -> DiagnosticReport {
+    DiagnosticReport {
+        schema_version: DIAGNOSTIC_SCHEMA_VERSION,
+        ok: true,
+        diagnostics: Vec::new(),
+    }
+}
+
+fn failed_check_outcome(failure: CliDiagnosticFailure) -> CheckOutcome {
+    let diagnostics = failure
+        .diagnostics
+        .iter()
+        .map(|diagnostic| {
+            diagnostics::stable_diagnostic(
+                &diagnostic.file_path,
+                &diagnostic.source,
+                &diagnostic.error,
+                diagnostic.phase,
+            )
+        })
+        .collect();
+    CheckOutcome {
+        report: DiagnosticReport {
+            schema_version: DIAGNOSTIC_SCHEMA_VERSION,
+            ok: false,
+            diagnostics,
+        },
+        failure: Some(failure),
     }
 }
 

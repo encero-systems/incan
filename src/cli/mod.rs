@@ -54,6 +54,7 @@ use commands::common::{CargoPolicy, CargoPolicyCliFlags};
 use commands::diagnostics::DiagnosticOutputFormat;
 use commands::lifecycle::{EnvOutputFormat, VersionBumpArg};
 use commands::tools::{ToolsDoctorFormat, ToolsMetadataFormat, ToolsModelMetadataFormat};
+use serde::Serialize;
 
 // ============================================================================
 // CLI Error handling
@@ -240,6 +241,12 @@ pub enum Command {
         /// File or project entrypoint to check
         #[arg(value_name = "PATH")]
         path: PathBuf,
+        /// Select every workspace member instead of the implicit current scope.
+        #[arg(long, conflicts_with = "member")]
+        workspace: bool,
+        /// Select one workspace member by name or workspace-relative path. May be repeated.
+        #[arg(long = "member", value_name = "NAME_OR_PATH")]
+        member: Vec<String>,
         /// Output format
         #[arg(long = "format", value_enum, default_value = "text")]
         format: DiagnosticOutputFormat,
@@ -568,6 +575,57 @@ struct TestCommandOptions {
     cargo_all_features: bool,
 }
 
+#[derive(Serialize)]
+struct WorkspaceCheckReport {
+    schema_version: u32,
+    ok: bool,
+    workspace: WorkspaceCheckScope,
+    members: Vec<WorkspaceMemberCheckReport>,
+}
+
+#[derive(Serialize)]
+struct WorkspaceCheckScope {
+    root: PathBuf,
+    selected_members: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct WorkspaceMemberCheckReport {
+    member: String,
+    report: commands::diagnostics::DiagnosticReport,
+}
+
+/// Resolve the source entrypoint used by a workspace-level check for one member.
+///
+/// The single-project `check` command deliberately accepts a file. Workspace selection names projects instead, so
+/// it first honors the member's declared main script and then uses the conventional source entrypoints for libraries
+/// and small projects that have not declared a script yet.
+fn workspace_member_check_entry(
+    workspace: &WorkspaceGraph,
+    member: &crate::workspace::WorkspaceMember,
+) -> CliResult<PathBuf> {
+    let manifest = workspace
+        .effective_manifest_for(member)
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    if let Some(main) = manifest
+        .project
+        .as_ref()
+        .and_then(|project| project.scripts.get("main"))
+    {
+        return Ok(member.path.join(main));
+    }
+    for candidate in ["src/main.incn", "src/lib.incn"] {
+        let path = member.path.join(candidate);
+        if path.is_file() {
+            return Ok(path);
+        }
+    }
+    Err(CliError::failure(format!(
+        "workspace member {} has no [project.scripts].main, src/main.incn, or src/lib.incn entrypoint",
+        member.name
+    )))
+}
+
 #[derive(Subcommand, Debug)]
 pub enum InspectCommand {
     /// Generate and inspect current Rust backend output
@@ -783,6 +841,90 @@ fn execute_format(path: &PathBuf, workspace: bool, members: &[String], check: bo
     first_failure.map_or(Ok(ExitCode::SUCCESS), Err)
 }
 
+/// Resolve RFC 077 scope before typechecking and retain one coherent JSON document for a workspace check.
+fn execute_check(
+    path: &PathBuf,
+    workspace: bool,
+    members: &[String],
+    format: DiagnosticOutputFormat,
+) -> CliResult<ExitCode> {
+    // A missing file is a valid `incan check` input: the diagnostics pipeline owns its stable tooling error. Discover
+    // workspace scope from the containing directory instead of canonicalizing that missing file first.
+    let discovery_path = if path.exists() {
+        path.clone()
+    } else {
+        path.parent().map(PathBuf::from).unwrap_or_else(|| path.clone())
+    };
+    let Some(graph) =
+        WorkspaceGraph::discover(&discovery_path).map_err(|error| CliError::failure(error.to_string()))?
+    else {
+        if workspace || !members.is_empty() {
+            return Err(CliError::failure(format!(
+                "workspace selection requires a validated workspace containing {}",
+                path.display()
+            )));
+        }
+        return commands::check_path(path, format);
+    };
+    let selected = graph
+        .select_members(&discovery_path, workspace, members)
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    let selected_members = selected.iter().map(|member| member.name.clone()).collect::<Vec<_>>();
+
+    if format == DiagnosticOutputFormat::Json {
+        let mut member_reports = Vec::with_capacity(selected.len());
+        for member in selected {
+            let target = if !workspace && members.is_empty() && selected_members.len() == 1 && path.is_file() {
+                path.clone()
+            } else {
+                workspace_member_check_entry(&graph, member)?
+            };
+            let report = commands::diagnostics::check_path_report(&target)?;
+            member_reports.push(WorkspaceMemberCheckReport {
+                member: member.name.clone(),
+                report,
+            });
+        }
+        let ok = member_reports.iter().all(|member| member.report.ok);
+        let report = WorkspaceCheckReport {
+            schema_version: crate::frontend::diagnostics::DIAGNOSTIC_SCHEMA_VERSION,
+            ok,
+            workspace: WorkspaceCheckScope {
+                root: graph.root().to_path_buf(),
+                selected_members,
+            },
+            members: member_reports,
+        };
+        let json = serde_json::to_string_pretty(&report)
+            .map_err(|error| CliError::failure(format!("failed to serialize workspace check report: {error}")))?;
+        println!("{json}");
+        return if ok {
+            Ok(ExitCode::SUCCESS)
+        } else {
+            Err(CliError::new("", ExitCode::FAILURE))
+        };
+    }
+
+    let mut first_failure = None;
+    for member in selected {
+        println!("== workspace {} / member {} ==", graph.root().display(), member.name);
+        let target = if !workspace && members.is_empty() && selected_members.len() == 1 && path.is_file() {
+            path.clone()
+        } else {
+            workspace_member_check_entry(&graph, member)?
+        };
+        if let Err(error) = commands::check_path(&target, format) {
+            if !error.message.is_empty() {
+                eprintln!("{}", error.message);
+            }
+            if first_failure.is_none() {
+                first_failure = Some(CliError::new("", error.exit_code));
+            }
+        }
+    }
+    first_failure.map_or(Ok(ExitCode::SUCCESS), Err)
+}
+
 /// Resolve RFC 077 scope before test discovery or execution, then run each selected member in workspace order.
 ///
 /// The runner deliberately remains member-oriented: it already owns test discovery, generated batch compilation,
@@ -965,7 +1107,12 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 commands::build_file(&file.to_string_lossy(), out.as_ref(), build_options, report_options)
             }
         }
-        Some(Command::Check { path, format }) => commands::check_path(&path, format),
+        Some(Command::Check {
+            path,
+            workspace,
+            member,
+            format,
+        }) => execute_check(&path, workspace, &member, format),
         Some(Command::Explain { code, format }) => commands::explain_diagnostic(&code, format),
         Some(Command::Inspect { command }) => match command {
             InspectCommand::Rust { path, lib_mode, format } => commands::inspect_rust(&path, lib_mode, format),
@@ -1639,6 +1786,24 @@ mod tests {
         };
         assert!(workspace);
         assert!(member.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn test_cli_parse_workspace_check_selection() -> Result<(), clap::Error> {
+        let cli = parse_cli(["incan", "check", ".", "--member", "alpha", "--format", "json"])?;
+        let Some(Command::Check {
+            workspace,
+            member,
+            format,
+            ..
+        }) = cli.command
+        else {
+            return Err(expected_command("check"));
+        };
+        assert!(!workspace);
+        assert_eq!(member, vec!["alpha"]);
+        assert_eq!(format, DiagnosticOutputFormat::Json);
         Ok(())
     }
 

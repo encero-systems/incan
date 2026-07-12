@@ -2151,6 +2151,53 @@ fn workspace_format_selection_requires_explicit_cross_member_mutation() -> Resul
 }
 
 #[test]
+fn workspace_check_selection_emits_one_scoped_json_report() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    fs::write(
+        tmp.path().join("incan.toml"),
+        "[workspace]\nmembers = [\"packages/*\"]\n",
+    )?;
+    for (name, source) in [
+        ("alpha", "def main() -> None:\n    return\n"),
+        ("beta", "def main() -> None:\n    missing()\n"),
+    ] {
+        let member = tmp.path().join("packages").join(name);
+        fs::create_dir_all(member.join("src"))?;
+        fs::write(
+            member.join("incan.toml"),
+            format!(
+                "[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"
+            ),
+        )?;
+        fs::write(member.join("src/main.incn"), source)?;
+    }
+
+    let output = run_incan(tmp.path(), &["check", ".", "--workspace", "--format", "json"])?;
+    assert_failure(&output, "workspace check with an invalid member");
+    let report = parse_json_stdout(&output)?;
+    assert_eq!(report["schema_version"], serde_json::json!(1));
+    assert_eq!(report["ok"], serde_json::json!(false));
+    assert_eq!(
+        report["workspace"]["selected_members"],
+        serde_json::json!(["alpha", "beta"])
+    );
+    assert_eq!(report["members"].as_array().map(Vec::len), Some(2));
+    assert_eq!(report["members"][0]["member"], serde_json::json!("alpha"));
+    assert_eq!(
+        report["members"][0]["report"]["ok"],
+        serde_json::json!(true),
+        "valid workspace member should pass:\n{report}"
+    );
+    assert_eq!(report["members"][1]["member"], serde_json::json!("beta"));
+    assert_eq!(report["members"][1]["report"]["ok"], serde_json::json!(false));
+    assert_eq!(
+        report["members"][1]["report"]["diagnostics"][0]["code"],
+        serde_json::json!("INCAN-T0001")
+    );
+    Ok(())
+}
+
+#[test]
 fn lock_preheats_dependency_graph_for_path_dependencies() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let helper_dir = tmp.path().join("preheat_helper");
