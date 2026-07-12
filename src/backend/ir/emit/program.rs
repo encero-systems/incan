@@ -3700,15 +3700,7 @@ impl<'a> IrEmitter<'a> {
             IrDeclKind::Function(func) => self.should_emit_decl_name(&func.name, &func.visibility),
             IrDeclKind::Struct(s) => self.should_emit_decl_name(&s.name, &s.visibility),
             IrDeclKind::Enum(e) => self.should_emit_decl_name(&e.name, &e.visibility),
-            IrDeclKind::Trait(trait_decl) => {
-                let sum_capability = trait_capabilities::iterator_sum();
-                let is_source_owned_sum_contract = trait_decl.name == sum_capability.trait_name
-                    && sum_capability
-                        .required_methods
-                        .iter()
-                        .all(|required| trait_decl.methods.iter().any(|method| method.name == *required));
-                is_source_owned_sum_contract || self.should_emit_decl_name(&trait_decl.name, &trait_decl.visibility)
-            }
+            IrDeclKind::Trait(trait_decl) => self.should_emit_decl_name(&trait_decl.name, &trait_decl.visibility),
             IrDeclKind::TypeAlias { name, visibility, .. } => self.should_emit_decl_name(name, visibility),
             IrDeclKind::SymbolAlias { name, visibility, .. } => self.should_emit_decl_name(name, visibility),
             IrDeclKind::Const { name, visibility, .. } => self.should_emit_decl_name(name, visibility),
