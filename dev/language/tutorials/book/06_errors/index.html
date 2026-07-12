@@ -50,7 +50,7 @@
     
       <link rel="stylesheet" href="../../../../stylesheets/pygments.css">
     
-      <link rel="stylesheet" href="/shared/incapunk/incapunk.css">
+      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260712-incus-flow-3">
     
     <script>__md_scope=new URL("../../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -6413,12 +6413,12 @@
 <div class="admonition tip">
 <p class="admonition-title">Coming from Python?</p>
 <p>In Python typing, you’d usually express “may be missing” as:</p>
-<p><div class="language-python highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Optional</span>
+<div class="language-python highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Optional</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">first</span><span class="p">(</span><span class="n">items</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
     <span class="k">return</span> <span class="n">items</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">if</span> <span class="n">items</span> <span class="k">else</span> <span class="kc">None</span>
 </code></pre></div>
-In Python, <code>Optional[T]</code> is mostly a type-hinting/tooling concept. In Incan, <code>Option[T]</code> is an explicit enum that the compiler can reason about and enforce.</p>
+<p>In Python, <code>Optional[T]</code> is mostly a type-hinting/tooling concept. In Incan, <code>Option[T]</code> is an explicit enum that the compiler can reason about and enforce.</p>
 </div>
 <h2 id="propagating-errors-with">Propagating errors with <code>?</code><a class="headerlink" href="#propagating-errors-with" title="Permanent link">&para;</a></h2>
 <p>The <code>?</code> operator returns early on <code>Err</code>, otherwise unwraps the <code>Ok</code> value:</p>
