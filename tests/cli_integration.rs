@@ -3400,6 +3400,75 @@ impl Expr {
 }
 
 #[test]
+fn run_rust_callback_slice_fnmut_parameters_issue835() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(
+        tmp.path(),
+        "cli_rust_callback_slice_fnmut",
+        r#"
+
+[rust-dependencies]
+audio_callback = { path = "rust/audio_callback" }
+"#,
+    )?;
+    fs::write(
+        &main_path,
+        r#"from rust::audio_callback import OutputCallbackInfo, run
+
+def write_silence(_data: &mut list[f32], _info: &OutputCallbackInfo) -> None:
+  pass
+
+def report_error(_error: str) -> None:
+  pass
+
+def main() -> None:
+  run(write_silence, report_error)
+  run((_data, _info) => println(""), report_error)
+  println("callbacks-built")
+"#,
+    )?;
+
+    let helper_src = tmp.path().join("rust").join("audio_callback").join("src");
+    fs::create_dir_all(&helper_src)?;
+    fs::write(
+        helper_src
+            .parent()
+            .ok_or("audio callback src has no parent")?
+            .join("Cargo.toml"),
+        r#"[package]
+name = "audio_callback"
+version = "0.1.0"
+edition = "2021"
+"#,
+    )?;
+    fs::write(
+        helper_src.join("lib.rs"),
+        r#"pub struct OutputCallbackInfo;
+
+pub fn run<D, E>(mut data_callback: D, mut error_callback: E)
+where
+    D: FnMut(&mut [f32], &OutputCallbackInfo) + Send + 'static,
+    E: FnMut(String),
+{
+    let mut data = [0.0_f32; 2];
+    let info = OutputCallbackInfo;
+    data_callback(&mut data, &info);
+    error_callback("synthetic callback error".to_string());
+}
+"#,
+    )?;
+
+    let output = run_incan(tmp.path(), &["run"])?;
+    assert_success(&output, "Rust FnMut borrowed-slice callbacks");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "callbacks-built",
+        "unexpected borrowed-slice callback output"
+    );
+    Ok(())
+}
+
+#[test]
 fn run_types_rust_callback_closures_in_every_match_arm_issue733() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(

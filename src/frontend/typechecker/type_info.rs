@@ -196,6 +196,12 @@ pub struct RustInteropArtifacts {
     /// whose parameter shape cannot be faithfully represented by ordinary Incan surface types, such as `&[T]`.
     /// Lowering/emission consumes the displays directly so generated closures keep Rust inference stable.
     pub closure_param_type_displays: HashMap<(usize, usize), Vec<String>>,
+    /// Exact Rust parameter displays for source functions passed directly to a Rust callable boundary.
+    ///
+    /// Source annotations intentionally use Incan collection vocabulary (`&mut list[f32]`), while Rust callback
+    /// bounds can require a slice (`&mut [f32]`). Lowering uses this fact only for the proven callback function so it
+    /// does not globally change how Incan lists are represented.
+    pub function_param_type_displays: HashMap<String, Vec<String>>,
     /// Rust async call expressions proven during call validation, keyed by the full call-expression span.
     ///
     /// Rust metadata is now loaded lazily at the call boundary rather than during import collection. `await` consumes

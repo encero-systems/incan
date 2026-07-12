@@ -3218,6 +3218,13 @@ fn test_rust_owner_path_expands_crate_relative_signature_displays() {
         ),
         ResolvedType::RustPath("demo_runtime::ScalarFunctionImplementation".to_string()),
     );
+    assert_eq!(
+        checker.rust_display_for_owner_path(
+            "impl FnMut(&mut crate::[f32], &crate::OutputCallbackInfo)",
+            "demo_runtime::run",
+        ),
+        "impl FnMut(&mut [f32], &demo_runtime::OutputCallbackInfo)",
+    );
 }
 
 #[test]
