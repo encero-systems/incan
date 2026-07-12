@@ -260,12 +260,26 @@ fn seed_builtin_stdlib_artifact_workspace_lock(workspace_lock: Option<&Path>, ar
     Ok(())
 }
 
-/// Return whether a cached artifact already carries the active development workspace lock closure.
-fn builtin_stdlib_artifact_lock_is_current(workspace_lock: Option<&Path>, artifact_root: &Path) -> bool {
-    let Some(workspace_lock) = workspace_lock else {
-        return true;
-    };
-    fs::read(workspace_lock).ok() == fs::read(artifact_root.join("Cargo.lock")).ok()
+/// Publish the fully resolved built-in stdlib closure after its library build succeeds.
+///
+/// The enclosing workspace lock is only a bootstrap input: it can omit optional stdlib dependencies such as `regex`.
+/// The artifact build's generated lock workspace contains the actual selected feature closure that downstream offline
+/// consumers must inherit.
+fn publish_builtin_stdlib_artifact_resolved_lock(stdlib_root: &Path, artifact_root: &Path) -> CliResult<()> {
+    let resolved_lock = stdlib_root.join("target").join("incan_lock").join("Cargo.lock");
+    if !resolved_lock.is_file() {
+        return Err(CliError::failure(format!(
+            "compiled built-in stdlib build did not produce a resolved Cargo.lock at {}",
+            resolved_lock.display()
+        )));
+    }
+    fs::copy(&resolved_lock, artifact_root.join("Cargo.lock")).map_err(|error| {
+        CliError::failure(format!(
+            "failed to publish compiled built-in stdlib lock from {}: {error}",
+            resolved_lock.display()
+        ))
+    })?;
+    Ok(())
 }
 
 /// Build the local built-in stdlib library artifact when a consumer imports a migrated module.
@@ -284,12 +298,7 @@ fn prepare_builtin_stdlib_artifact() -> CliResult<LibraryArtifactMetadata> {
         stdlib::BUILTIN_STDLIB_ARTIFACT_CRATE,
         artifact_root,
     );
-    let workspace_lock = builtin_stdlib_artifact_workspace_lock(&stdlib_root);
-    if metadata.manifest_path.is_file()
-        && metadata.cargo_toml_path.is_file()
-        && metadata.crate_lib_path.is_file()
-        && builtin_stdlib_artifact_lock_is_current(workspace_lock.as_deref(), &metadata.crate_root)
-    {
+    if metadata.manifest_path.is_file() && metadata.cargo_toml_path.is_file() && metadata.crate_lib_path.is_file() {
         return Ok(metadata);
     }
 
@@ -305,6 +314,7 @@ fn prepare_builtin_stdlib_artifact() -> CliResult<LibraryArtifactMetadata> {
         }
     }
 
+    let workspace_lock = builtin_stdlib_artifact_workspace_lock(&stdlib_root);
     seed_builtin_stdlib_artifact_workspace_lock(workspace_lock.as_deref(), &metadata.crate_root)?;
 
     eprintln!(
@@ -340,6 +350,7 @@ fn prepare_builtin_stdlib_artifact() -> CliResult<LibraryArtifactMetadata> {
             stdlib_root.display()
         )));
     }
+    publish_builtin_stdlib_artifact_resolved_lock(&stdlib_root, &metadata.crate_root)?;
     if !metadata.manifest_path.is_file() || !metadata.cargo_toml_path.is_file() || !metadata.crate_lib_path.is_file() {
         return Err(CliError::failure(format!(
             "compiled built-in stdlib artifact is incomplete at {}",
@@ -2604,25 +2615,22 @@ mod tests {
     }
 
     #[test]
-    fn builtin_stdlib_artifact_lock_currentness_rejects_a_stale_cached_closure()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn builtin_stdlib_artifact_publishes_the_resolved_lock_closure() -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = tempfile::tempdir()?;
-        let workspace_lock = temp_dir.path().join("Cargo.lock");
-        let artifact_root = temp_dir.path().join("artifact");
+        let stdlib_root = temp_dir.path().join("stdlib");
+        let artifact_root = stdlib_root.join("target/lib");
+        let resolved_lock = stdlib_root.join("target/incan_lock/Cargo.lock");
+        fs::create_dir_all(resolved_lock.parent().ok_or("resolved lock parent")?)?;
         fs::create_dir_all(&artifact_root)?;
-        fs::write(&workspace_lock, "workspace lock")?;
-        fs::write(artifact_root.join("Cargo.lock"), "stale artifact lock")?;
+        fs::write(&resolved_lock, "resolved closure")?;
+        fs::write(artifact_root.join("Cargo.lock"), "bootstrap closure")?;
 
-        assert!(!builtin_stdlib_artifact_lock_is_current(
-            Some(&workspace_lock),
-            &artifact_root
-        ));
-        fs::copy(&workspace_lock, artifact_root.join("Cargo.lock"))?;
-        assert!(builtin_stdlib_artifact_lock_is_current(
-            Some(&workspace_lock),
-            &artifact_root
-        ));
-        assert!(builtin_stdlib_artifact_lock_is_current(None, &artifact_root));
+        publish_builtin_stdlib_artifact_resolved_lock(&stdlib_root, &artifact_root)?;
+
+        assert_eq!(
+            fs::read_to_string(artifact_root.join("Cargo.lock"))?,
+            "resolved closure"
+        );
         Ok(())
     }
 
