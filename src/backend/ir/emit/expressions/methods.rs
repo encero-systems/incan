@@ -290,19 +290,20 @@ impl<'a> IrEmitter<'a> {
             ) || is_string_buffer_type(&arg.ty))
     }
 
-    /// Return whether `std::path::Path.new` should preserve a literal `&str` argument.
+    /// Return whether `std::path::Path.new` should preserve its `&str` argument shape.
     ///
-    /// Rust's `Path::new` takes a generic `S: AsRef<OsStr>`. The direct literal
-    /// provides the necessary inference shape; adding `.into()` introduces an
-    /// unconstrained intermediate target once consumer dependencies provide
-    /// additional `AsRef<OsStr>` implementations.
-    fn std_path_new_preserves_string_literal(receiver: &TypedExpr, method: &str, arg: &TypedExpr) -> bool {
+    /// Rust's `Path::new` takes a generic `S: AsRef<OsStr>`. A direct literal
+    /// or static string provides the necessary inference shape; adding `.into()`
+    /// introduces an unconstrained intermediate target once consumer dependencies
+    /// provide additional `AsRef<OsStr>` implementations.
+    fn std_path_new_preserves_string_argument_shape(receiver: &TypedExpr, method: &str, arg: &TypedExpr) -> bool {
         method == "new"
-            && matches!(&receiver.ty, IrType::Struct(path) if path == "std::path::Path")
             && matches!(
-                arg.kind,
-                IrExprKind::String(_) | IrExprKind::Literal(super::super::super::expr::Literal::StaticStr(_))
+                &receiver.ty,
+                IrType::Struct(path) | IrType::RustDisplay(path)
+                    if matches!(path.as_str(), "std::path::Path" | "Path")
             )
+            && matches!(arg.ty, IrType::String | IrType::StaticStr | IrType::StrRef)
     }
 
     /// Emit method-call arguments with Rust-boundary borrowing and union wrapping applied from callable metadata.
@@ -404,9 +405,7 @@ impl<'a> IrEmitter<'a> {
                     context.base_use_site,
                     ValueUseSite::ExternalCallArg { .. } | ValueUseSite::MethodArg
                 );
-                let arg_use_site = if matches!(context.base_use_site, ValueUseSite::ExternalCallArg { .. })
-                    && Self::std_path_new_preserves_string_literal(receiver, method, arg)
-                {
+                let arg_use_site = if Self::std_path_new_preserves_string_argument_shape(receiver, method, arg) {
                     ValueUseSite::MethodArg
                 } else {
                     match (context.base_use_site, param) {

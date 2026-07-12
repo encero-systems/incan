@@ -73,6 +73,12 @@
       "expected_fingerprint": "0x2b22f0e7dbaebdbd"
     },
     {
+      "path": "src/backend/ir/codegen/string_try_from_bridge.rs",
+      "category": "std.environ generic conversion bridge compatibility",
+      "expected_count": 1,
+      "expected_fingerprint": "0x3447ddc21699825d"
+    },
+    {
       "path": "src/backend/ir/conversions.rs",
       "category": "central argument conversion shape checks",
       "expected_count": 3,
@@ -123,8 +129,8 @@
     {
       "path": "src/backend/ir/emit/expressions/methods.rs",
       "category": "quarantined metadata-free method compatibility",
-      "expected_count": 6,
-      "expected_fingerprint": "0x8e7a10a90b5bbd3f"
+      "expected_count": 8,
+      "expected_fingerprint": "0x94383aa914901bb8"
     },
     {
       "path": "src/backend/ir/emit/expressions/methods/fast_paths.rs",
@@ -147,8 +153,8 @@
     {
       "path": "src/backend/ir/emit/program.rs",
       "category": "callable source-name metadata use analysis",
-      "expected_count": 4,
-      "expected_fingerprint": "0x9cbc492d11b61ac2"
+      "expected_count": 2,
+      "expected_fingerprint": "0x497886b639dd72c9"
     },
     {
       "path": "src/backend/ir/emit/types.rs",
@@ -243,8 +249,8 @@
     {
       "path": "src/cli/commands/common.rs",
       "category": "project materialization, dependency, and rust-inspect prewarm compatibility",
-      "expected_count": 7,
-      "expected_fingerprint": "0xcaeb999c51153406"
+      "expected_count": 8,
+      "expected_fingerprint": "0xe3949aed00288e5e"
     },
     {
       "path": "src/dependency_resolver.rs",

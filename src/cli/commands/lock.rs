@@ -15,6 +15,7 @@ use sha2::{Digest, Sha256};
 
 use crate::backend::ProjectGenerator;
 use crate::backend::project::generator::GENERATED_CARGO_TARGET_DIR_ENV;
+use crate::backend::project::runner::sanitize_cargo_environment;
 use crate::cli::prelude::ParsedModule;
 use crate::cli::{CliError, CliResult, ExitCode};
 use crate::dependency_resolver::{InlineRustImport, ResolvedDependencies, resolve_reachable_dependencies};
@@ -753,6 +754,7 @@ fn run_lock_dependency_preheat(
     }
 
     let mut command = Command::new("cargo");
+    sanitize_cargo_environment(&mut command);
     command.arg("test");
     command.arg("--no-run");
     command.arg("--manifest-path");
@@ -870,6 +872,7 @@ pub(crate) fn run_generated_library_dependency_preheat(
 
     let start = Instant::now();
     let mut command = Command::new("cargo");
+    sanitize_cargo_environment(&mut command);
     command.arg("build");
     command.arg("--release");
     command.arg("--manifest-path");
@@ -977,6 +980,7 @@ pub(crate) fn generate_lockfile(
     seed_builtin_stdlib_artifact_lock(&lock_dir, project_requirements)?;
 
     let mut command = Command::new("cargo");
+    sanitize_cargo_environment(&mut command);
     command.arg("generate-lockfile");
     for flag in cargo_lockfile_flags(cargo_policy, cargo_features) {
         command.arg(flag);

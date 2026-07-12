@@ -2640,6 +2640,7 @@ fn cargo_test_command(
     no_capture: bool,
 ) -> Command {
     let mut command = Command::new("cargo");
+    crate::backend::project::runner::sanitize_cargo_environment(&mut command);
     command.arg("test");
     command.arg("--lib");
     if no_run {
