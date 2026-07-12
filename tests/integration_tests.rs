@@ -6647,6 +6647,52 @@ async def main() -> None:
     }
 
     #[test]
+    fn test_run_rfc088_source_owned_iterator_sum() {
+        let Ok(output) = incan_command()
+            .args(["run", "tests/codegen_snapshots/rfc088_iterator_adapters.incn"])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()
+        else {
+            panic!("failed to run incan");
+        };
+
+        assert!(
+            output.status.success(),
+            "incan run rfc088_iterator_adapters failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "2\n3\n15\n15\n15\n3\n3\n",
+            "source-owned Iterator.sum() must preserve adapter, primitive, and checked-newtype behavior"
+        );
+    }
+
+    #[test]
+    fn test_run_rfc088_iterator_sum_float_and_newtype_matrix() {
+        let Ok(output) = incan_command()
+            .args(["run", "tests/fixtures/rfc088_iterator_sum_runtime.incn"])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()
+        else {
+            panic!("failed to run incan");
+        };
+
+        assert!(
+            output.status.success(),
+            "incan run rfc088_iterator_sum_runtime failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "6\n3.75\n3.75\n3\n",
+            "source-owned Iterator.sum() must support int, float, and checked/unchecked newtypes"
+        );
+    }
+
+    #[test]
     fn test_run_rfc064_std_encoding_behavior() {
         let Ok(output) = incan_command()
             .args(["run", "tests/fixtures/rfc064_std_encoding_behavior.incn"])

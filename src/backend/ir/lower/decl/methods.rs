@@ -1363,7 +1363,7 @@ impl AstLowering {
     /// During `@classmethod` bodies this also exposes the current impl target as the lowering target for source
     /// `cls(...)` constructor calls. The marker is scoped to the body lowering so ordinary methods and local `cls`
     /// bindings keep their normal value-call behavior.
-    fn lower_method_with_type_params(
+    pub(in crate::backend::ir::lower) fn lower_method_with_type_params(
         &mut self,
         m: &ast::MethodDecl,
         type_param_names: Option<&std::collections::HashSet<&str>>,
