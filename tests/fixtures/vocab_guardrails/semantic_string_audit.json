@@ -14,9 +14,9 @@
     },
     {
       "path": "crates/incan_core/src/interop/metadata.rs",
-      "category": "registry-backed Rust collection metadata policy and shared Rust type-shape parsing",
-      "expected_count": 23,
-      "expected_fingerprint": "0xa552cf64d66c9211"
+      "category": "registry-backed Rust collection metadata policy and shared Rust type-shape parsing, including borrowed impl-trait interop bounds",
+      "expected_count": 24,
+      "expected_fingerprint": "0x486c17db5edb246e"
     },
     {
       "path": "crates/rust_inspect/src/cache.rs",

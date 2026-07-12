@@ -7,7 +7,7 @@ use incan_core::interop::{
     RustModuleChild, RustModuleChildKind, RustModuleInfo, RustParam, RustTraitAssoc, RustTraitInfo, RustTypeInfo,
     RustTypeShape, RustTypeShapePathFallback, RustVariantInfo, RustVisibility, parse_rust_type_shape_text,
     render_rust_type_shape, rust_display_is_callable_bound, rust_source_callable_bound_for_type_param,
-    strip_rust_borrow_lifetimes,
+    rust_source_type_param_has_as_fd_bound, strip_rust_borrow_lifetimes,
 };
 use ra_ap_hir::{
     Adt, AssocItem, Crate, DisplayTarget, Enum, FieldSource, Function, HasSource, HasVisibility, HirDisplay, Impl,
@@ -598,6 +598,9 @@ fn source_function_param_type_text(f: Function, param: &ra_ap_hir::Param<'_>, db
 fn source_function_param_type_display(f: Function, param: &ra_ap_hir::Param<'_>, db: &RootDatabase) -> Option<String> {
     let text = source_function_param_type_text(f, param, db)?;
     let source = f.source(db)?;
+    if rust_source_type_param_has_as_fd_bound(source.value.syntax().text().to_string().as_str(), text.as_str()) {
+        return Some("&impl AsFd".to_string());
+    }
     if let Some(display) = rust_source_callable_bound_for_type_param(
         source.value.syntax().text().to_string().as_str(),
         text.as_str(),

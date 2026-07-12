@@ -1,0 +1,96 @@
+"""OS-backed advisory file locks for coordinated local publication."""
+
+from rust::std::fs import File as RustFile, OpenOptions
+from rust::std::io import ErrorKind
+from rust::std::path import Path as RustPath
+from rust::rustix::fs @ "1.1" with ["fs"] import FlockOperation, flock
+
+
+pub type FileLock = newtype RustFile:
+    """
+    Scoped shared or exclusive advisory file lock.
+
+    The guard retains the descriptor for a stable sibling lock entry and releases its advisory lock when it leaves
+    scope. Locks coordinate only cooperative processes; they do not prevent unrelated programs from changing the
+    protected path.
+    """
+
+
+def _lock_path(path: str) -> Result[str, str]:
+    """Derive the stable sibling entry used as the lock identity for one logical path."""
+    protected = RustPath.new(path)
+    match protected.file_name():
+        Some(name) =>
+            lock_name = f".{name.to_string_lossy().into_owned()}.incan.lock"
+            match protected.parent():
+                Some(parent) => return Ok(parent.join(lock_name).to_string_lossy().into_owned())
+                None => return Ok(lock_name)
+        None => return Err("file locks require a path with a final component")
+
+
+def _open_lock(path: str) -> Result[RustFile, str]:
+    """Open or create the persistent sibling descriptor that owns a lock identity."""
+    lock_path = _lock_path(path)?
+    mut options = OpenOptions.new()
+    options.read(true).write(true).create(true).truncate(false)
+    match options.open(RustPath.new(lock_path)):
+        Ok(file) => return Ok(file)
+        Err(err) => return Err(f"{err}")
+
+
+def _lock_shared(path: str) -> Result[FileLock, str]:
+    """Acquire a blocking shared advisory lock while retaining the owned descriptor in the guard."""
+    file = _open_lock(path)?
+    match flock(file, FlockOperation.LockShared):
+        Ok(_) => return Ok(FileLock(file))
+        Err(err) => return Err(f"{err}")
+
+
+def _lock_exclusive(path: str) -> Result[FileLock, str]:
+    """Acquire a blocking exclusive advisory lock while retaining the owned descriptor in the guard."""
+    file = _open_lock(path)?
+    match flock(file, FlockOperation.LockExclusive):
+        Ok(_) => return Ok(FileLock(file))
+        Err(err) => return Err(f"{err}")
+
+
+def _try_lock_shared(path: str) -> Result[Option[FileLock], str]:
+    """Attempt a shared lock and translate expected contention into an empty optional result."""
+    file = _open_lock(path)?
+    match flock(file, FlockOperation.NonBlockingLockShared):
+        Ok(_) => return Ok(Some(FileLock(file)))
+        Err(err) =>
+            if err.kind() == ErrorKind.WouldBlock:
+                return Ok(None)
+            return Err(f"{err}")
+
+
+def _try_lock_exclusive(path: str) -> Result[Option[FileLock], str]:
+    """Attempt an exclusive lock and translate expected contention into an empty optional result."""
+    file = _open_lock(path)?
+    match flock(file, FlockOperation.NonBlockingLockExclusive):
+        Ok(_) => return Ok(Some(FileLock(file)))
+        Err(err) =>
+            if err.kind() == ErrorKind.WouldBlock:
+                return Ok(None)
+            return Err(f"{err}")
+
+
+pub def shared(path: str) -> Result[FileLock, str]:
+    """Acquire a blocking shared advisory lock for `path`."""
+    return _lock_shared(path)
+
+
+pub def exclusive(path: str) -> Result[FileLock, str]:
+    """Acquire a blocking exclusive advisory lock for `path`."""
+    return _lock_exclusive(path)
+
+
+pub def try_shared(path: str) -> Result[Option[FileLock], str]:
+    """Try to acquire a shared advisory lock without blocking."""
+    return _try_lock_shared(path)
+
+
+pub def try_exclusive(path: str) -> Result[Option[FileLock], str]:
+    """Try to acquire an exclusive advisory lock without blocking."""
+    return _try_lock_exclusive(path)

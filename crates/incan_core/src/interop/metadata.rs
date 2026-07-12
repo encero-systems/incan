@@ -706,6 +706,51 @@ where
     None
 }
 
+/// Return whether a source function's generic parameter is constrained by Rust's `AsFd` trait.
+///
+/// `AsFd` exposes a borrowed file descriptor, so an Incan call may pass a retained descriptor by shared borrow even
+/// when the Rust function writes its parameter as a by-value generic. Rust's source signature does not preserve that
+/// ownership distinction after generic substitution; keep the constraint available to interop metadata instead of
+/// forcing Incan source to introduce a Rust-owned wrapper merely to retain the descriptor.
+#[must_use]
+pub fn rust_source_type_param_has_as_fd_bound(function_source: &str, type_param: &str) -> bool {
+    let Some(type_param) = rust_simple_type_param_name(type_param) else {
+        return false;
+    };
+    let Some(header) = rust_source_function_header(function_source) else {
+        return false;
+    };
+
+    let has_as_fd_bound = |bounds: &str| {
+        split_top_level_rust_bounds(bounds).into_iter().any(|bound| {
+            bound
+                .trim()
+                .rsplit("::")
+                .next()
+                .is_some_and(|name| name.trim() == "AsFd")
+        })
+    };
+
+    if let Some(generic_params) = header.generic_params {
+        for generic in split_top_level_rust_args(generic_params) {
+            let Some((name, bounds)) = generic.split_once(':') else {
+                continue;
+            };
+            if name.trim() == type_param && has_as_fd_bound(bounds) {
+                return true;
+            }
+        }
+    }
+
+    let Some(where_idx) = find_top_level_rust_keyword(header.tail, "where") else {
+        return false;
+    };
+    split_top_level_rust_args(&header.tail[where_idx + "where".len()..])
+        .into_iter()
+        .filter_map(|predicate| predicate.split_once(':'))
+        .any(|(name, bounds)| name.trim() == type_param && has_as_fd_bound(bounds))
+}
+
 struct RustSourceFunctionHeader<'a> {
     generic_params: Option<&'a str>,
     tail: &'a str,
@@ -1260,6 +1305,27 @@ where
             rust_source_callable_bound_for_type_param(source, "E", normalize_probe_type).as_deref(),
             Some("impl FnMut(String)")
         );
+    }
+
+    #[test]
+    fn rust_source_type_param_has_as_fd_bound_reads_inline_and_where_bounds() {
+        let inline = r#"
+pub fn lock<Fd: std::os::fd::AsFd>(fd: Fd) {
+    let _ = fd;
+}
+"#;
+        let where_bound = r#"
+pub fn lock<Fd>(fd: Fd)
+where
+    Fd: AsFd + Send,
+{
+    let _ = fd;
+}
+"#;
+
+        assert!(rust_source_type_param_has_as_fd_bound(inline, "Fd"));
+        assert!(rust_source_type_param_has_as_fd_bound(where_bound, "Fd"));
+        assert!(!rust_source_type_param_has_as_fd_bound(inline, "Other"));
     }
 
     #[test]

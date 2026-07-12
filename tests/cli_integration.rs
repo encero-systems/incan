@@ -133,6 +133,28 @@ main = "src/main.incn"
     Ok(main_path)
 }
 
+#[test]
+fn run_synchronous_result_main_issue843() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "synchronous_result_main", "")?;
+    fs::write(
+        &main_path,
+        r#"def run() -> Result[None, str]:
+  println("fallible entrypoint")
+  return Ok(None)
+
+def main() -> Result[None, str]:
+  run()?
+  return Ok(None)
+"#,
+    )?;
+
+    let output = run_incan(tmp.path(), &["run", main_path.to_str().ok_or("non-utf8 main path")?])?;
+    assert_success(&output, "incan run with a synchronous Result-returning main");
+    assert_eq!(String::from_utf8(output.stdout)?, "fallible entrypoint\n");
+    Ok(())
+}
+
 fn parse_json_stdout(output: &Output) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     Ok(serde_json::from_slice(&output.stdout)?)
 }

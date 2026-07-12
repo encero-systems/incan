@@ -2681,8 +2681,9 @@ mod codegen_tests {
     use incan::frontend::{lexer, parser, typechecker};
     use std::fs;
     use std::path::Path;
-    use std::process::Command;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::process::{Command, Stdio};
+    use std::thread;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     fn run_incan_source(source: &str) -> std::process::Output {
         incan_command()
@@ -3194,6 +3195,29 @@ def run() -> Result[None, IoError]:
     usage = moved.disk_usage()?
     println(usage.total > 0 and usage.free > 0)
 
+    staged = root.joinpath("published.next")
+    published = root.joinpath("published.txt")
+    staged.write_text("published", "utf-8", "strict", None)?
+    staged.replace(published)?
+    root.sync_directory()?
+    println(published.read_text("utf-8", "strict")?)
+    match published.sync_directory():
+        Ok(_) => println("bad")
+        Err(err) => println(err.kind)
+    rejected_staged = root.joinpath("rejected.next")
+    rejected_target = root.joinpath("rejected-directory")
+    rejected_staged.write_text("new", "utf-8", "strict", None)?
+    rejected_target.mkdir(false, false)?
+    match rejected_staged.replace(rejected_target):
+        Ok(_) => println("bad")
+        Err(err) => println(err.kind)
+    println(rejected_target.is_dir())
+    println(rejected_staged.exists())
+    held_lock = published.lock_exclusive()?
+    match published.try_lock_exclusive()?:
+        Some(_) => println("bad")
+        None => println("contended")
+
     file = NamedTemporaryFile.try_new_with("incan-", ".txt", None)?
     path = file.path()
     path.write_text("hello", "utf-8", "strict", None)?
@@ -3278,6 +3302,12 @@ def main() -> None:
                 "true",
                 "true",
                 "true",
+                "published",
+                "invalid_input",
+                "invalid_input",
+                "true",
+                "true",
+                "contended",
                 "hello",
                 "world",
                 "false",
@@ -3291,6 +3321,157 @@ def main() -> None:
             ],
             "unexpected std.fs output:\n{stdout}"
         );
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_std_fs_replace_rejects_cross_device_without_losing_target() -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::MetadataExt;
+
+        let source_root = tempfile::tempdir()?;
+        let shared_memory = Path::new("/dev/shm");
+        if !shared_memory.is_dir() || fs::metadata(source_root.path())?.dev() == fs::metadata(shared_memory)?.dev() {
+            return Ok(());
+        }
+        let target_root = shared_memory.join(format!(
+            "incan_std_fs_cross_device_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
+        fs::create_dir_all(&target_root)?;
+        let staged = source_root.path().join("staged.txt");
+        let target = target_root.join("published.txt");
+        let source = format!(
+            r#"
+from std.fs import IoError, Path
+
+def run() -> Result[None, IoError]:
+    staged = Path("{staged}")
+    target = Path("{target}")
+    staged.write_text("new", "utf-8", "strict", None)?
+    target.write_text("old", "utf-8", "strict", None)?
+    match staged.replace(target):
+        Ok(_) => println("bad")
+        Err(err) => println(err.kind)
+    println(target.read_text("utf-8", "strict")?)
+    println(staged.exists())
+    return Ok(None)
+
+def main() -> Result[None, IoError]:
+    run()?
+    return Ok(None)
+"#,
+            staged = staged.display(),
+            target = target.display(),
+        );
+        let output = incan_command()
+            .args(["run", "-c", source.as_str()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        let _ = fs::remove_dir_all(&target_root);
+        assert!(
+            output.status.success(),
+            "cross-device replace smoke failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).lines().collect::<Vec<_>>(),
+            vec!["cross_device", "old", "true"],
+            "cross-device replacement must preserve the target and staged source"
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_std_fs_locks_coordinate_between_incan_processes() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let target = root.path().join("published.lock");
+        let ready = root.path().join("holder-ready");
+        let holder_source = format!(
+            r#"
+from std.fs import IoError, Path
+from rust::std::thread import sleep
+from rust::std::time import Duration
+
+def hold() -> Result[None, IoError]:
+    guard = Path("{target}").lock_shared()?
+    Path("{ready}").write_text("ready", "utf-8", "strict", None)?
+    # Keep the proven holder alive while a fresh child compiler process builds the probe. The Rust
+    # harness terminates this process immediately after the probe, so this is a liveness ceiling,
+    # not test latency.
+    sleep(Duration.from_secs(300))
+    return Ok(None)
+
+def main() -> None:
+    match hold():
+        Ok(_) => pass
+        Err(err) => println(err.message())
+"#,
+            target = target.display(),
+            ready = ready.display(),
+        );
+        let mut holder = incan_command()
+            .args(["run", "-c", holder_source.as_str()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+
+        let mut holder_ready = false;
+        for _ in 0..1200 {
+            if ready.exists() {
+                holder_ready = true;
+                break;
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+        if !holder_ready {
+            let _ = holder.kill();
+            let output = holder.wait_with_output()?;
+            return Err(format!(
+                "Incan lock holder did not become ready. stdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            )
+            .into());
+        }
+
+        let probes = format!(
+            r#"
+from std.fs import IoError, Path
+
+def main() -> None:
+    match Path("{target}").try_lock_shared():
+        Ok(Some(_)) => println("shared")
+        Ok(None) => println("blocked")
+        Err(err) => println(err.message())
+    match Path("{target}").try_lock_exclusive():
+        Ok(Some(_)) => println("acquired")
+        Ok(None) => println("contended")
+        Err(err) => println(err.message())
+"#,
+            target = target.display(),
+        );
+        let probes = incan_command()
+            .args(["run", "-c", probes.as_str()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        let _ = holder.kill();
+        let _ = holder.wait();
+
+        assert!(
+            probes.status.success(),
+            "lock probes failed. stdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&probes.stdout),
+            String::from_utf8_lossy(&probes.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&probes.stdout).trim(), "shared\ncontended");
         Ok(())
     }
 
