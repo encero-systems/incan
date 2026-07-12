@@ -40,6 +40,21 @@ hide:
 [Duckborrowing →](contributing/explanation/duckborrowing.md){ .inc-hero__text-link }
 </div>
 
+<div class="inc-hero__quickstart" aria-label="First Incan project">
+<div class="inc-quickstart__terminal">
+<div class="inc-quickstart__terminal-bar"><img src="shared/incapunk/icons/terminal.svg" alt=""><span>First run</span><strong>ready</strong></div>
+<pre><code><span class="inc-terminal-line inc-terminal-line--command"><span aria-hidden="true">$</span> incan new hello --yes</span>
+<span class="inc-terminal-line inc-terminal-line--output">Created project 'hello' at hello</span>
+<span class="inc-terminal-line inc-terminal-line--command"><span aria-hidden="true">$</span> cd hello &amp;&amp; incan run</span>
+<span class="inc-terminal-line inc-terminal-line--success">Hello from hello!</span></code></pre>
+</div>
+<div class="inc-quickstart__incus">
+<a class="inc-quickstart__incus-link" href="project/incus/" aria-label="Meet Incus">
+<img src="shared/incapunk/incus_observer_001.png" alt="">
+</a>
+</div>
+</div>
+
 </div>
 
 <div class="inc-hero__flow" aria-label="Compiler flow">

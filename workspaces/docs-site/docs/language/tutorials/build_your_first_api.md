@@ -2,6 +2,12 @@
 
 This tutorial walks you through running the built-in web framework and serving a JSON endpoint.
 
+<ol class="inc-step-rail" style="--inc-step-count: 3" aria-label="API tutorial steps">
+  <li><strong>Build</strong>Compile the example</li>
+  <li><strong>Request</strong>Hit the endpoints</li>
+  <li><strong>Understand</strong>Trace typed responses</li>
+</ol>
+
 Prerequisite: [Install, build, and run](../../tooling/how-to/install_and_run.md).
 
 !!! note "If something fails"
@@ -32,6 +38,16 @@ Run the compiled binary:
 
 ## Step 2: Hit the endpoints
 
+```mermaid
+flowchart LR
+  A["curl request"] --> B["Incan route"]
+  B --> C["typed handler"]
+  C --> D["Json response model"]
+  D --> E["HTTP response"]
+```
+
+<p class="inc-diagram-caption">The route selects a typed handler; the response model is serialized at the HTTP boundary.</p>
+
 In another terminal:
 
 ```bash
@@ -40,6 +56,12 @@ curl http://localhost:8080/api/greet/World
 curl http://localhost:8080/api/user/42
 curl http://localhost:8080/health
 ```
+
+<section class="inc-learning-panel inc-learning-panel--result" data-label="Expected" markdown="1">
+
+The root and greeting routes return successful text or JSON responses, `/api/user/42` returns the typed user payload, and `/health` confirms the server is ready.
+
+</section>
 
 ## Step 3: Understand what you’re seeing
 
@@ -56,3 +78,9 @@ Learn more:
 - Models: [Models & Classes](../explanation/models_and_classes/index.md)
 - Errors: [Error Handling](../explanation/error_handling.md)
 - Modules: [Imports and modules (how-to)](../how-to/imports_and_modules.md)
+
+<section class="inc-learning-panel inc-learning-panel--complete inc-incus-slot" data-label="Complete" data-incus-category="success" markdown="1">
+
+You have built a native server, exercised four routes, and followed one request from route selection to a typed response model.
+
+</section>

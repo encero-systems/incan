@@ -1,5 +1,7 @@
 # 11. Traits and derives
 
+<div class="inc-book-progress" aria-label="Chapter 11 of 13"><div class="inc-book-progress__meta"><strong>Chapter 11 of 13</strong><span>Traits and derives</span></div><div class="inc-book-progress__bar" aria-hidden="true"><span style="--inc-progress: 84.6%"></span></div></div>
+
 Traits describe shared behavior. Derives automatically generate common behavior for your types.
 
 ## Derives: add behavior without boilerplate
@@ -185,8 +187,4 @@ def main() -> None:
 
 - Derives and traits (full reference): [Derives & Traits](../../reference/derives_and_traits.md)
 
-## Next
-
-Back: [10. Models vs classes](10_models_vs_classes.md)
-
-Next chapter: [12. Newtypes (stronger types)](12_newtypes.md).
+<nav class="inc-prev-next" aria-label="Book chapter navigation"><a href="../10_models_vs_classes/"><small>Previous chapter</small><strong>← 10. Models vs classes</strong></a><a href="../12_newtypes/"><small>Next chapter</small><strong>12. Newtypes →</strong></a></nav>

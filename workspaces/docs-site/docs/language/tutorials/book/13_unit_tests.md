@@ -1,4 +1,6 @@
-# Unit tests
+# 13. Unit tests
+
+<div class="inc-book-progress" aria-label="Chapter 13 of 13"><div class="inc-book-progress__meta"><strong>Chapter 13 of 13</strong><span>Unit tests</span></div><div class="inc-book-progress__bar" aria-hidden="true"><span style="--inc-progress: 100%"></span></div></div>
 
 Incan supports a testing experience via `incan test`.
 
@@ -139,3 +141,11 @@ That's the end of the Incan Book (Basics)! You now know the core language. Here 
 - [Rust interop](../../how-to/rust_interop.md) — Use Rust crates from Incan code
 - [Async programming](../../how-to/async_programming.md) — Write concurrent programs
 - [Standard library reference: `std.testing`](../../reference/stdlib/testing.md) — Full testing API: fixtures, parametrize, skip, xfail
+
+<section class="inc-learning-panel inc-learning-panel--complete inc-incus-slot" data-label="Complete" data-incus-category="success" markdown="1">
+
+You completed the Incan Book. You can now move from isolated language constructs to a real project, Rust interop, async programs, or deeper reference material.
+
+</section>
+
+<nav class="inc-prev-next" aria-label="Book chapter navigation"><a href="../12_newtypes/"><small>Previous chapter</small><strong>← 12. Newtypes</strong></a><a href="../../../../tooling/tutorials/your_first_project/"><small>Continue building</small><strong>Your first project →</strong></a></nav>

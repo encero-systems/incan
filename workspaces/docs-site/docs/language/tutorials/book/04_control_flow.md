@@ -1,5 +1,7 @@
 # 4. Control flow
 
+<div class="inc-book-progress" aria-label="Chapter 4 of 13"><div class="inc-book-progress__meta"><strong>Chapter 4 of 13</strong><span>Control flow</span></div><div class="inc-book-progress__bar" aria-hidden="true"><span style="--inc-progress: 30.8%"></span></div></div>
+
 Control flow is how you branch and loop.
 
 ## `if` / `elif` / `else`
@@ -219,8 +221,4 @@ def find_value(flag: bool) -> int:
 - Enums (often used with `match`): [Enums](../../explanation/enums.md)
 - Error handling (deep dive on `Result`/`Option`): [Error Handling](../../explanation/error_handling.md)
 
-## Next
-
-Back: [3. Functions](03_functions.md)
-
-Next chapter: [5. Modules and imports](05_modules_and_imports.md)
+<nav class="inc-prev-next" aria-label="Book chapter navigation"><a href="../03_functions/"><small>Previous chapter</small><strong>← 3. Functions</strong></a><a href="../05_modules_and_imports/"><small>Next chapter</small><strong>5. Modules and imports →</strong></a></nav>

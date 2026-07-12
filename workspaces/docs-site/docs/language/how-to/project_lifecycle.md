@@ -2,6 +2,18 @@
 
 This guide shows the practical project workflow: create a project, keep project metadata in `incan.toml`, bump the project version, and run repeatable commands through named environments.
 
+```mermaid
+flowchart LR
+  A["new or init"] --> B["incan.toml + source + tests"]
+  B --> C["run and test"]
+  C --> D["lock and build"]
+  D --> E["version bump"]
+  E --> F["release workflow"]
+  F -. "next change" .-> C
+```
+
+<p class="inc-diagram-caption">The manifest anchors a repeatable loop from scaffold through testing, locked builds, and release.</p>
+
 ## Create a project
 
 Use `incan new` when you want the CLI to create a new project directory:

@@ -1,5 +1,7 @@
 # 12. Newtypes (stronger types)
 
+<div class="inc-book-progress" aria-label="Chapter 12 of 13"><div class="inc-book-progress__meta"><strong>Chapter 12 of 13</strong><span>Newtypes</span></div><div class="inc-book-progress__bar" aria-hidden="true"><span style="--inc-progress: 92.3%"></span></div></div>
+
 A **newtype** is a “zero-cost wrapper” around another type. It lets you create **distinct types** that the compiler won’t let you accidentally mix up.
 
 ## Why newtypes?
@@ -159,8 +161,4 @@ def main() -> None:
 
 - Longer example in the repository: `examples/intermediate/newtypes.incn`
 
-## Next
-
-Back: [11. Traits and derives](11_traits_and_derives.md)
-
-Next: return to [Start here](../../../start_here/index.md) or continue in the [Language Guide](../../index.md).
+<nav class="inc-prev-next" aria-label="Book chapter navigation"><a href="../11_traits_and_derives/"><small>Previous chapter</small><strong>← 11. Traits and derives</strong></a><a href="../13_unit_tests/"><small>Final chapter</small><strong>13. Unit tests →</strong></a></nav>
