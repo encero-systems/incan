@@ -50,7 +50,7 @@
     
       <link rel="stylesheet" href="../../../../stylesheets/pygments.css">
     
-      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260712-nav-title-1">
+      <link rel="stylesheet" href="/shared/incapunk/incapunk.css">
     
     <script>__md_scope=new URL("../../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -63,6 +63,8 @@
   
   
     
+    
+      
     
     
     
@@ -123,7 +125,19 @@
     </div>
     
       
+        <form class="md-header__option" data-md-component="palette">
+  
     
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="amber"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
     
     
     
@@ -876,10 +890,6 @@
       
         
       
-        
-      
-        
-      
     
     
       
@@ -1300,74 +1310,11 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../tutorials/typed_data_processor/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Build a typed data processor
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../../tutorials/build_your_first_api/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
     Build your first API
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../tutorials/async_worker_pipeline/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Build an asynchronous worker pipeline
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../tutorials/add_a_rust_crate/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Add a Rust crate
   </span>
   
 
@@ -1398,6 +1345,27 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tutorials/web_framework/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Web framework
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1414,8 +1382,6 @@
   
     
     
-      
-        
       
         
       
@@ -1499,27 +1465,6 @@
             How-to
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../tutorials/web_framework/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Web framework guide
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
             
               
                 
@@ -2862,6 +2807,15 @@
   <a href="#copy-move-and-links" class="md-nav__link">
     <span class="md-ellipsis">
       Copy, Move, and Links
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#crash-safe-publication-and-advisory-locks" class="md-nav__link">
+    <span class="md-ellipsis">
+      Crash-safe publication and advisory locks
     </span>
   </a>
   
@@ -4393,8 +4347,6 @@
       
         
       
-        
-      
     
     
       
@@ -4459,27 +4411,6 @@
   
   <span class="md-ellipsis">
     Your first project
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../../tooling/tutorials/build_and_consume_library/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Build and consume a library
   </span>
   
 
@@ -6199,8 +6130,6 @@
       
         
       
-        
-      
     
     
       
@@ -6366,27 +6295,6 @@
 
               
             
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../../project/incus/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Meet Incus
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
           </ul>
         </nav>
       
@@ -6475,6 +6383,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#crash-safe-publication-and-advisory-locks" class="md-nav__link">
+    <span class="md-ellipsis">
+      Crash-safe publication and advisory locks
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#file" class="md-nav__link">
     <span class="md-ellipsis">
       File
@@ -6521,7 +6438,7 @@
 
 <h1 id="stdfs-reference">std.fs reference<a class="headerlink" href="#stdfs-reference" title="Permanent link">&para;</a></h1>
 <p><code>std.fs</code> is the standard-library module for filesystem paths, directory operations, metadata, and file handles.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.fs</span><span class="w"> </span><span class="kn">import</span> <span class="nc">DirEntry</span><span class="p">,</span> <span class="nc">DiskUsage</span><span class="p">,</span> <span class="nc">File</span><span class="p">,</span> <span class="nc">IoError</span><span class="p">,</span> <span class="nc">OpenFileMode</span><span class="p">,</span> <span class="nc">OpenOptions</span><span class="p">,</span> <span class="kt">Path</span><span class="p">,</span> <span class="nc">PathStat</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.fs</span><span class="w"> </span><span class="kn">import</span> <span class="nc">DirEntry</span><span class="p">,</span> <span class="nc">DiskUsage</span><span class="p">,</span> <span class="nc">File</span><span class="p">,</span> <span class="nc">FileLock</span><span class="p">,</span> <span class="nc">IoError</span><span class="p">,</span> <span class="nc">OpenFileMode</span><span class="p">,</span> <span class="nc">OpenOptions</span><span class="p">,</span> <span class="kt">Path</span><span class="p">,</span> <span class="nc">PathStat</span>
 </code></pre></div>
 <p>The public surface is path-centric. Construct a <code>Path</code>, then call path or file-handle methods from there. Host failures return <code>Result[..., IoError]</code>; the error includes the affected <code>path</code>, a normalized <code>kind</code>, and a human-readable <code>message()</code>.</p>
 <p>Current <code>std.fs</code> support follows the repository's Unix-like host target: macOS, Linux, and Windows through WSL. Native Windows filesystem semantics are not yet part of this reference contract.</p>
@@ -6701,6 +6618,11 @@
 <td><code>Result[None, IoError]</code></td>
 <td>Create the file if needed, or update access and modification times.</td>
 </tr>
+<tr>
+<td><code>path.sync_directory()</code></td>
+<td><code>Result[None, IoError]</code></td>
+<td>Request persistence of directory-entry updates.</td>
+</tr>
 </tbody>
 </table>
 <p><code>glob()</code> and <code>rglob()</code> support <code>*</code>, <code>?</code>, and bracket character classes such as <code>[abc]</code>, <code>[!abc]</code>, and <code>[a-z]</code>. <code>remove_tree()</code> is deliberately not "delete anything"; use <code>unlink()</code> for files.</p>
@@ -6805,7 +6727,7 @@
 <tr>
 <td><code>path.replace(target: Path \| str)</code></td>
 <td><code>Result[Path, IoError]</code></td>
-<td>Replace the target when supported.</td>
+<td>Atomically replace a same-filesystem non-directory target.</td>
 </tr>
 <tr>
 <td><code>path.symlink_to(target: Path \| str)</code></td>
@@ -6840,6 +6762,18 @@
 </tbody>
 </table>
 <p>Metadata preservation during copy preserves permissions plus modification and access times where the host platform exposes them. Ownership, ACLs, flags, and extended attributes remain host-sensitive and best-effort.</p>
+<p><code>replace()</code> is a publication operation, not a general move: it never unlinks the destination first and does not use a copy-delete fallback. It returns <code>IoError(kind="cross_device")</code> when the host cannot perform same-filesystem replacement. A successful replace gives atomic reader visibility, but it does not by itself request persistence across power loss.</p>
+<h2 id="crash-safe-publication-and-advisory-locks">Crash-safe publication and advisory locks<a class="headerlink" href="#crash-safe-publication-and-advisory-locks" title="Permanent link">&para;</a></h2>
+<p>Publish an authoritative local file by writing a unique sibling staging file, synchronizing its handle, atomically replacing the target, then synchronizing the target directory:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">target</span> <span class="o">=</span> <span class="kt">Path</span><span class="p">(</span><span class="s2">&quot;incan.lock&quot;</span><span class="p">)</span>
+<span class="n">staged</span> <span class="o">=</span> <span class="kt">Path</span><span class="p">(</span><span class="s2">&quot;.incan.lock.next&quot;</span><span class="p">)</span>
+<span class="n">staged</span><span class="o">.</span><span class="n">write_bytes</span><span class="p">(</span><span class="n">rendered_lockfile</span><span class="p">)</span><span class="o">?</span>
+<span class="n">staged_file</span> <span class="o">=</span> <span class="n">staged</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">&quot;rb&quot;</span><span class="p">)</span><span class="o">?</span>
+<span class="n">staged_file</span><span class="o">.</span><span class="n">sync</span><span class="p">()</span><span class="o">?</span>
+<span class="n">staged</span><span class="o">.</span><span class="nb">replace</span><span class="p">(</span><span class="n">target</span><span class="p">)</span><span class="o">?</span>
+<span class="n">target</span><span class="o">.</span><span class="n">parent</span><span class="p">()</span><span class="o">.</span><span class="n">sync_directory</span><span class="p">()</span><span class="o">?</span>
+</code></pre></div>
+<p>Use <code>path.lock_shared()</code> or <code>path.lock_exclusive()</code> to acquire a blocking advisory <code>FileLock</code>; <code>try_lock_shared()</code> and <code>try_lock_exclusive()</code> return <code>Ok(None)</code> when a conflicting lock is held. Locks apply to a stable sibling lock entry and are released when their guard leaves scope. They coordinate cooperative processes only, so they are not an authorization or mandatory-locking mechanism. Do not hold a blocking file lock across unrelated work or asynchronous suspension.</p>
 <h2 id="file">File<a class="headerlink" href="#file" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -6963,14 +6897,6 @@
       <script src="../../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
         <script src="../../../../_snippets/javascripts/mathjax.js"></script>
-      
-        <script src="../../../../_snippets/javascripts/incan_home_motion.js"></script>
-      
-        <script src="../../../../shared/incapunk/incus-library/manifest.js"></script>
-      
-        <script src="../../../../_snippets/javascripts/incan_docs_components.js"></script>
-      
-        <script src="../../../../_snippets/javascripts/incan_mermaid.js"></script>
       
         <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
       

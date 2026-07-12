@@ -50,7 +50,7 @@
     
       <link rel="stylesheet" href="../../../stylesheets/pygments.css">
     
-      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260712-nav-title-1">
+      <link rel="stylesheet" href="/shared/incapunk/incapunk.css">
     
     <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -63,6 +63,8 @@
   
   
     
+    
+      
     
     
     
@@ -123,7 +125,19 @@
     </div>
     
       
+        <form class="md-header__option" data-md-component="palette">
+  
     
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="amber"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
     
     
     
@@ -878,10 +892,6 @@
       
         
       
-        
-      
-        
-      
     
     
       
@@ -1304,74 +1314,11 @@
   
   
     <li class="md-nav__item">
-      <a href="../typed_data_processor/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Build a typed data processor
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../build_your_first_api/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
     Build your first API
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../async_worker_pipeline/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Build an asynchronous worker pipeline
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../add_a_rust_crate/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Add a Rust crate
   </span>
   
 
@@ -1402,6 +1349,27 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../web_framework/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Web framework
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1418,8 +1386,6 @@
   
     
     
-      
-        
       
         
       
@@ -1503,27 +1469,6 @@
             How-to
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../web_framework/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Web framework guide
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
             
               
                 
@@ -4272,8 +4217,6 @@
       
         
       
-        
-      
     
     
       
@@ -4338,27 +4281,6 @@
   
   <span class="md-ellipsis">
     Your first project
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../tooling/tutorials/build_and_consume_library/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Build and consume a library
   </span>
   
 
@@ -6078,8 +6000,6 @@
       
         
       
-        
-      
     
     
       
@@ -6245,27 +6165,6 @@
 
               
             
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../project/incus/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Meet Incus
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
           </ul>
         </nav>
       
@@ -6337,10 +6236,6 @@
 
 <h1 id="the-incan-book-basics">The Incan Book (Basics)<a class="headerlink" href="#the-incan-book-basics" title="Permanent link">&para;</a></h1>
 <p>This is a linear tutorial track intended for new readers.</p>
-<div class="inc-book-progress" aria-label="13-chapter learning path">
-  <div class="inc-book-progress__meta"><strong>13 chapters</strong><span>Basics → types → programs → tests</span></div>
-</div>
-
 <p>Goals:</p>
 <ul>
 <li>learn the core language fundamentals with runnable examples</li>
@@ -6348,22 +6243,21 @@
 <li>avoid mixing “how-to” and “reference” into the main learning flow</li>
 </ul>
 <h2 id="chapters">Chapters<a class="headerlink" href="#chapters" title="Permanent link">&para;</a></h2>
-<div class="inc-chapter-grid">
-  <a class="inc-chapter-link" href="01_hello_world/"><b>01</b><span>Hello world</span></a>
-  <a class="inc-chapter-link" href="02_values_variables_and_types/"><b>02</b><span>Values, variables, and types</span></a>
-  <a class="inc-chapter-link" href="03_functions/"><b>03</b><span>Functions</span></a>
-  <a class="inc-chapter-link" href="04_control_flow/"><b>04</b><span>Control flow</span></a>
-  <a class="inc-chapter-link" href="05_modules_and_imports/"><b>05</b><span>Modules, imports, and module-owned state</span></a>
-  <a class="inc-chapter-link" href="06_errors/"><b>06</b><span>Errors: Result, Option, and <code>?</code></span></a>
-  <a class="inc-chapter-link" href="07_strings_and_formatting/"><b>07</b><span>Strings and formatting</span></a>
-  <a class="inc-chapter-link" href="08_collections_and_iteration/"><b>08</b><span>Collections and iteration</span></a>
-  <a class="inc-chapter-link" href="09_enums/"><b>09</b><span>Enums and better <code>match</code></span></a>
-  <a class="inc-chapter-link" href="10_models_vs_classes/"><b>10</b><span>Models vs classes</span></a>
-  <a class="inc-chapter-link" href="11_traits_and_derives/"><b>11</b><span>Traits and derives</span></a>
-  <a class="inc-chapter-link" href="12_newtypes/"><b>12</b><span>Newtypes and stronger types</span></a>
-  <a class="inc-chapter-link" href="13_unit_tests/"><b>13</b><span>Unit tests</span></a>
-</div>
-
+<ol>
+<li><a href="01_hello_world/">Hello world</a></li>
+<li><a href="02_values_variables_and_types/">Values, variables, and types</a></li>
+<li><a href="03_functions/">Functions</a></li>
+<li><a href="04_control_flow/">Control flow</a></li>
+<li><a href="05_modules_and_imports/">Modules and imports</a> — also introduces module-owned state with <code>static</code></li>
+<li><a href="06_errors/">Errors (Result/Option and <code>?</code>)</a></li>
+<li><a href="07_strings_and_formatting/">Strings and formatting</a></li>
+<li><a href="08_collections_and_iteration/">Collections and iteration</a></li>
+<li><a href="09_enums/">Enums and better <code>match</code></a></li>
+<li><a href="10_models_vs_classes/">Models vs classes</a></li>
+<li><a href="11_traits_and_derives/">Traits and derives</a></li>
+<li><a href="12_newtypes/">Newtypes (stronger types)</a></li>
+<li><a href="13_unit_tests/">Unit tests</a></li>
+</ol>
 <h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Canonical install/build/run guidance lives under Tooling: <a href="../../../tooling/how-to/install_and_run/">Install, build, and run</a>.</li>
@@ -6424,14 +6318,6 @@
       <script src="../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
         <script src="../../../_snippets/javascripts/mathjax.js"></script>
-      
-        <script src="../../../_snippets/javascripts/incan_home_motion.js"></script>
-      
-        <script src="../../../shared/incapunk/incus-library/manifest.js"></script>
-      
-        <script src="../../../_snippets/javascripts/incan_docs_components.js"></script>
-      
-        <script src="../../../_snippets/javascripts/incan_mermaid.js"></script>
       
         <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
       

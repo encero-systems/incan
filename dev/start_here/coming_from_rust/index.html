@@ -50,7 +50,7 @@
     
       <link rel="stylesheet" href="../../stylesheets/pygments.css">
     
-      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260712-nav-title-1">
+      <link rel="stylesheet" href="/shared/incapunk/incapunk.css">
     
     <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -63,6 +63,8 @@
   
   
     
+    
+      
     
     
     
@@ -123,7 +125,19 @@
     </div>
     
       
+        <form class="md-header__option" data-md-component="palette">
+  
     
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="amber"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
     
     
     
@@ -943,10 +957,6 @@
       
         
       
-        
-      
-        
-      
     
     
       
@@ -1367,74 +1377,11 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/typed_data_processor/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Build a typed data processor
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../language/tutorials/build_your_first_api/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
     Build your first API
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../language/tutorials/async_worker_pipeline/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Build an asynchronous worker pipeline
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../language/tutorials/add_a_rust_crate/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Add a Rust crate
   </span>
   
 
@@ -1465,6 +1412,27 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/web_framework/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Web framework
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1481,8 +1449,6 @@
   
     
     
-      
-        
       
         
       
@@ -1566,27 +1532,6 @@
             How-to
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../language/tutorials/web_framework/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Web framework guide
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
             
               
                 
@@ -4335,8 +4280,6 @@
       
         
       
-        
-      
     
     
       
@@ -4401,27 +4344,6 @@
   
   <span class="md-ellipsis">
     Your first project
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../tooling/tutorials/build_and_consume_library/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Build and consume a library
   </span>
   
 
@@ -6141,8 +6063,6 @@
       
         
       
-        
-      
     
     
       
@@ -6308,27 +6228,6 @@
 
               
             
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../project/incus/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Meet Incus
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
           </ul>
         </nav>
       
@@ -6409,11 +6308,6 @@
 
 <h1 id="coming-from-rust-evaluator">Coming from Rust (evaluator)<a class="headerlink" href="#coming-from-rust-evaluator" title="Permanent link">&para;</a></h1>
 <p>This page routes Rust-first evaluators who want to understand where Incan keeps Rust-shaped semantics and where it trades surface syntax for application-code ergonomics.</p>
-<aside class="inc-bridge-note inc-bridge-note--rust inc-incus-slot" data-incus-category="rust" aria-label="Rust to Incan mental model">
-  <span class="inc-eyebrow">Rust → Incan</span>
-  <strong>Keep explicit fallibility, traits, and native compilation. Spend less surface syntax on application structure.</strong>
-</aside>
-
 <h2 id="install-first">Install first<a class="headerlink" href="#install-first" title="Permanent link">&para;</a></h2>
 <p>If you already use Cargo and want a source-built compiler, install the release source directly from Git with the LSP feature enabled so both <code>incan</code> and <code>incan-lsp</code> are installed:</p>
 <div class="language-bash highlight"><pre><span></span><code>cargo<span class="w"> </span>install<span class="w"> </span>--git<span class="w"> </span>https://github.com/encero-systems/incan.git<span class="w"> </span>--tag<span class="w"> </span>v0.4.0<span class="w"> </span>--locked<span class="w"> </span>--features<span class="w"> </span>lsp<span class="w"> </span>--bin<span class="w"> </span>incan<span class="w"> </span>--bin<span class="w"> </span>incan-lsp
@@ -6435,14 +6329,32 @@ incan<span class="w"> </span><span class="nb">test</span>
 incan<span class="w"> </span>build<span class="w"> </span>--release
 </code></pre></div>
 <h2 id="what-you-should-do-next">What you should do next<a class="headerlink" href="#what-you-should-do-next" title="Permanent link">&para;</a></h2>
-<div class="inc-route-grid">
-  <a class="inc-route-card" href="../../tooling/tutorials/getting_started/"><span class="inc-eyebrow">Quickstart</span><strong>Install and evaluate</strong><span>Use the binary toolchain or source-build path, then run the first project loop.</span></a>
-  <a class="inc-route-card" href="../../language/explanation/rust_shaped_confidence/"><span class="inc-eyebrow">Semantics</span><strong>Rust-shaped confidence</strong><span>See which safety and explicitness properties Incan carries into a smaller application surface.</span></a>
-  <a class="inc-route-card" href="../../language/how-to/rust_interop/"><span class="inc-eyebrow">Interop</span><strong>Cross the Rust boundary</strong><span>Import Rust crates and author explicit interop where native ecosystem reach matters.</span></a>
-  <a class="inc-route-card" href="../../contributing/tutorials/book/"><span class="inc-eyebrow">Internals</span><strong>Contributor Book</strong><span>Follow the compiler pipeline, layering rules, tests, formatter, LSP, and docs loop.</span></a>
-</div>
-
-<p>For the wider evaluation, read <a href="../../language/explanation/why_incan/">Why Incan?</a>, <a href="../../language/explanation/why_not_just_rust/">Why not just Rust?</a>, <a href="../../language/explanation/how_incan_works/">How Incan works</a>, <a href="../../language/tutorials/fallible_and_infallible_paths/">fallible paths</a>, <a href="../../tooling/explanation/projects_today/">projects today</a>, the <a href="../../stability/">stability policy</a>, <a href="../../release_notes/">release notes</a>, <a href="../../RFCs/">RFC index</a>, and <a href="../../roadmap/">roadmap</a>.</p>
+<ul>
+<li>Quickstart: <a href="../../tooling/tutorials/getting_started/">Getting Started</a> (toolchain install, starter project, and source-build fallback for contributors)</li>
+<li>Explanation:<ul>
+<li><a href="../../language/explanation/why_incan/">Why Incan?</a></li>
+<li><a href="../../language/explanation/why_not_just_rust/">Why not just Rust?</a></li>
+<li><a href="../../language/explanation/rust_shaped_confidence/">Rust-shaped confidence</a></li>
+<li><a href="../../language/explanation/how_incan_works/">How Incan works</a></li>
+</ul>
+</li>
+<li>Interop: <a href="../../language/how-to/rust_interop/">Rust Interop</a></li>
+<li>Error handling: <a href="../../language/tutorials/fallible_and_infallible_paths/">Fallible and infallible paths</a></li>
+<li>Projects today: <a href="../../tooling/explanation/projects_today/">Projects today</a></li>
+<li>Reference surfaces:<ul>
+<li><a href="../../language/reference/language/">Language reference (generated)</a></li>
+<li><a href="../../tooling/reference/cli_reference/">CLI reference</a></li>
+</ul>
+</li>
+<li>Stability: <a href="../../stability/">Stability policy</a> + <a href="../../release_notes/">Release notes</a></li>
+<li>Evolution surfaces:<ul>
+<li><a href="../../contributing/">Contributing start here</a></li>
+<li><a href="../../contributing/tutorials/book/">Incan Contributor Book (Advanced)</a></li>
+<li><a href="../../RFCs/">RFC index</a></li>
+<li><a href="../../roadmap/">Roadmap</a></li>
+</ul>
+</li>
+</ul>
 <h2 id="what-to-look-for">What to look for<a class="headerlink" href="#what-to-look-for" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Clear boundaries: what exists today vs roadmap (especially for WASM/frontend)</li>
@@ -6503,14 +6415,6 @@ incan<span class="w"> </span>build<span class="w"> </span>--release
       <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
         <script src="../../_snippets/javascripts/mathjax.js"></script>
-      
-        <script src="../../_snippets/javascripts/incan_home_motion.js"></script>
-      
-        <script src="../../shared/incapunk/incus-library/manifest.js"></script>
-      
-        <script src="../../_snippets/javascripts/incan_docs_components.js"></script>
-      
-        <script src="../../_snippets/javascripts/incan_mermaid.js"></script>
       
         <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
       

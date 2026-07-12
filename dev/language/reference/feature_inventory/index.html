@@ -50,7 +50,7 @@
     
       <link rel="stylesheet" href="../../../stylesheets/pygments.css">
     
-      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260712-nav-title-1">
+      <link rel="stylesheet" href="/shared/incapunk/incapunk.css">
     
     <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -63,6 +63,8 @@
   
   
     
+    
+      
     
     
     
@@ -123,7 +125,19 @@
     </div>
     
       
+        <form class="md-header__option" data-md-component="palette">
+  
     
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="amber"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
     
     
     
@@ -876,10 +890,6 @@
       
         
       
-        
-      
-        
-      
     
     
       
@@ -1300,74 +1310,11 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tutorials/typed_data_processor/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Build a typed data processor
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../tutorials/build_your_first_api/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
     Build your first API
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../tutorials/async_worker_pipeline/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Build an asynchronous worker pipeline
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../tutorials/add_a_rust_crate/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Add a Rust crate
   </span>
   
 
@@ -1398,6 +1345,27 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/web_framework/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Web framework
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1414,8 +1382,6 @@
   
     
     
-      
-        
       
         
       
@@ -1499,27 +1465,6 @@
             How-to
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../tutorials/web_framework/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Web framework guide
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
             
               
                 
@@ -4892,8 +4837,6 @@
       
         
       
-        
-      
     
     
       
@@ -4958,27 +4901,6 @@
   
   <span class="md-ellipsis">
     Your first project
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../tooling/tutorials/build_and_consume_library/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Build and consume a library
   </span>
   
 
@@ -6698,8 +6620,6 @@
       
         
       
-        
-      
     
     
       
@@ -6856,27 +6776,6 @@
   
   <span class="md-ellipsis">
     Stability policy
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../project/incus/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Meet Incus
   </span>
   
 
@@ -7855,7 +7754,7 @@
 <td><code>from std.web.routing import route</code><br><code>from std.web.response import Json</code><br><code>@route("/health")</code></td>
 <td><code>std.web</code> provides hosted web app, routing, request, response, and macro surfaces with compiler-activated web runtime dependencies.</td>
 <td>Compiler-special-cased web wrappers or direct Axum wiring for ordinary hosted Incan web apps.</td>
-<td><a href="../imports_and_modules/">Imports and modules</a>, <a href="../../tutorials/web_framework/">Web framework guide</a>, <a href="../../../release_notes/0_2/">Release 0.2</a></td>
+<td><a href="../imports_and_modules/">Imports and modules</a>, <a href="../../tutorials/web_framework/">Web framework tutorial</a>, <a href="../../../release_notes/0_2/">Release 0.2</a></td>
 </tr>
 <tr>
 <td><code>std.math</code> numeric helpers</td>
@@ -7893,9 +7792,9 @@
 <td style="text-align: right;">0.3</td>
 <td>Import from <code>std.fs</code> or submodules such as <code>std.fs.path</code>.</td>
 <td><code>from std.fs import Path</code><br><code>Path("data").join("orders.csv")</code></td>
-<td>Path-centric filesystem APIs cover paths, files, metadata, traversal, globbing, copy/move/delete, and durability syncs.</td>
+<td>Path-centric filesystem APIs cover paths, files, metadata, traversal, globbing, copy/move/delete, and crash-safe publication with directory synchronization and advisory locks.</td>
 <td>One-off Rust filesystem wrappers for ordinary path and file work.</td>
-<td><a href="../stdlib/fs/">std.fs</a>, <a href="../../how-to/file_io/">File IO</a>, <a href="../../../release_notes/0_3/">Release 0.3</a></td>
+<td><a href="../stdlib/fs/">std.fs</a>, <a href="../../how-to/file_io/">File IO</a>, <a href="../../../RFCs/closed/implemented/055_std_fs/">RFC 055</a>, <a href="../../../RFCs/closed/implemented/112_crash_safe_publication_and_file_coordination/">RFC 112</a>, <a href="../../../release_notes/0_5/">Release 0.5</a></td>
 </tr>
 <tr>
 <td><code>std.io</code> in-memory binary streams</td>
@@ -8699,7 +8598,7 @@
 <li><strong>Stability:</strong> <code>Stable</code></li>
 <li><strong>Activation:</strong> Import from <code>std.web</code> or submodules such as <code>std.web.routing</code>.</li>
 <li><strong>Use instead of:</strong> Compiler-special-cased web wrappers or direct Axum wiring for ordinary hosted Incan web apps.</li>
-<li><strong>References:</strong> <a href="../imports_and_modules/">Imports and modules</a>, <a href="../../tutorials/web_framework/">Web framework guide</a>, <a href="../../../release_notes/0_2/">Release 0.2</a></li>
+<li><strong>References:</strong> <a href="../imports_and_modules/">Imports and modules</a>, <a href="../../tutorials/web_framework/">Web framework tutorial</a>, <a href="../../../release_notes/0_2/">Release 0.2</a></li>
 </ul>
 <p><code>std.web</code> provides hosted web app, routing, request, response, and macro surfaces with compiler-activated web runtime dependencies.</p>
 <p>Canonical forms:</p>
@@ -8770,9 +8669,9 @@
 <li><strong>Stability:</strong> <code>Stable</code></li>
 <li><strong>Activation:</strong> Import from <code>std.fs</code> or submodules such as <code>std.fs.path</code>.</li>
 <li><strong>Use instead of:</strong> One-off Rust filesystem wrappers for ordinary path and file work.</li>
-<li><strong>References:</strong> <a href="../stdlib/fs/">std.fs</a>, <a href="../../how-to/file_io/">File IO</a>, <a href="../../../release_notes/0_3/">Release 0.3</a></li>
+<li><strong>References:</strong> <a href="../stdlib/fs/">std.fs</a>, <a href="../../how-to/file_io/">File IO</a>, <a href="../../../RFCs/closed/implemented/055_std_fs/">RFC 055</a>, <a href="../../../RFCs/closed/implemented/112_crash_safe_publication_and_file_coordination/">RFC 112</a>, <a href="../../../release_notes/0_5/">Release 0.5</a></li>
 </ul>
-<p>Path-centric filesystem APIs cover paths, files, metadata, traversal, globbing, copy/move/delete, and durability syncs.</p>
+<p>Path-centric filesystem APIs cover paths, files, metadata, traversal, globbing, copy/move/delete, durability syncs, and crash-safe publication through same-filesystem replacement, directory synchronization, and advisory locks.</p>
 <p>Canonical forms:</p>
 <ul>
 <li><code>from std.fs import Path</code></li>
@@ -9299,14 +9198,6 @@
       <script src="../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
         <script src="../../../_snippets/javascripts/mathjax.js"></script>
-      
-        <script src="../../../_snippets/javascripts/incan_home_motion.js"></script>
-      
-        <script src="../../../shared/incapunk/incus-library/manifest.js"></script>
-      
-        <script src="../../../_snippets/javascripts/incan_docs_components.js"></script>
-      
-        <script src="../../../_snippets/javascripts/incan_mermaid.js"></script>
       
         <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
       
