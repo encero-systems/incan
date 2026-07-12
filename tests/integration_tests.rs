@@ -12044,11 +12044,11 @@ pub def display[T](data: DataSet[T]) -> None:
         Ok(())
     }
 
-    /// Write a package whose rich clause ownership disagrees with legacy low-level keyword surface kinds.
+    /// Write a package whose rich quality-clause ownership disagrees with legacy low-level keyword surface kinds.
     ///
     /// This preserves the compatibility shape used by existing vocab packages: parser activation still receives raw
     /// keyword registrations, while the richer `DslSurface` is the authority on which nested blocks are clauses.
-    fn write_pub_library_with_mixed_expression_clause_desugarer(
+    fn write_pub_library_with_mixed_quality_clause_desugarer(
         root: &Path,
         desugarer_bytes: &[u8],
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -12064,22 +12064,40 @@ pub def display[T](data: DataSet[T]) -> None:
                     namespace: "querykit.query".to_string(),
                 },
                 keywords: vec![
-                    incan_vocab::KeywordSpec::block("query"),
-                    incan_vocab::KeywordSpec::block("FROM").in_block("query"),
-                    incan_vocab::KeywordSpec::block("WINDOW").in_block("query"),
+                    incan_vocab::KeywordSpec::block("quality"),
+                    incan_vocab::KeywordSpec::block("FROM").in_block("quality"),
+                    incan_vocab::KeywordSpec::block("REQUIRE").in_block("quality"),
+                    incan_vocab::KeywordSpec::block("GROUP")
+                        .with_compound_tokens(["BY"])
+                        .in_block("quality"),
+                    incan_vocab::KeywordSpec::block("EXPECT").in_block("quality"),
                 ],
                 valid_decorators: Vec::new(),
             })
             .with_surface(
-                incan_vocab::DslSurface::on_import("querykit.query").with_declaration(
-                    incan_vocab::DeclarationSurface::named("query")
-                        .with_mixed_body()
-                        .desugars_to_expression()
-                        .with_clauses([
-                            incan_vocab::ClauseSurface::expr("FROM").required(),
-                            incan_vocab::ClauseSurface::nested_items("WINDOW").optional(),
-                        ]),
-                ),
+                incan_vocab::DslSurface::on_import("querykit.query")
+                    .with_declaration(
+                        incan_vocab::DeclarationSurface::named("quality")
+                            .with_mixed_body()
+                            .desugars_to_expression()
+                            .with_clauses([
+                                incan_vocab::ClauseSurface::expr("FROM").optional(),
+                                incan_vocab::ClauseSurface::expr_list("GROUP BY")
+                                    .repeating()
+                                    .after("FROM"),
+                                incan_vocab::ClauseSurface::expr_list("EXPECT")
+                                    .repeating()
+                                    .after("FROM"),
+                                incan_vocab::ClauseSurface::expr_list("REQUIRE")
+                                    .repeating()
+                                    .after("FROM"),
+                            ]),
+                    )
+                    .with_scoped_surface(
+                        incan_vocab::ScopedSurfaceDescriptor::leading_dot_path("quality.group.field")
+                            .in_clause_body("quality", "GROUP")
+                            .with_receiver(incan_vocab::ScopedSurfaceReceiver::clause("FROM")),
+                    ),
             )
             .metadata();
         let mut manifest = LibraryManifest::new("querykit_core", "0.1.0");
@@ -14670,17 +14688,17 @@ def test_dependency_vocab_query_block() -> None:
     }
 
     #[test]
-    fn consumer_build_and_test_desugars_mixed_expression_vocab_clauses_issue813()
+    fn consumer_build_and_test_desugars_quality_expression_vocab_clauses_issue813()
     -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let response = incan_vocab::DesugarResponse::expression(incan_vocab::IncanExpr::Int(7));
         let output_payload = serde_json::to_string(&response)?;
         let wasm = compile_desugarer_wasm_requiring_request_substring(
             &output_payload,
-            "mixed expression vocab body did not expose FROM as a clause",
-            r#""body":[{"Clause":{"keyword":"FROM""#,
+            "quality expression vocab body did not expose EXPECT as a clause",
+            r#""keyword":"EXPECT""#,
         )?;
-        write_pub_library_with_mixed_expression_clause_desugarer(tmp.path(), &wasm)?;
+        write_pub_library_with_mixed_quality_clause_desugarer(tmp.path(), &wasm)?;
 
         let main_path = write_project_files(
             tmp.path(),
@@ -14688,37 +14706,37 @@ def test_dependency_vocab_query_block() -> None:
             r#"import pub::querykit
 
 def main() -> None:
-  selected: int = query:
-    FROM:
-      42
-    let retained = 1
-    WINDOW:
-      marker = retained
-  assert selected == 7
+    checks: int = quality {
+        FROM orders
+        REQUIRE row_count() >= 1 as non_empty_orders
+        GROUP BY .customer_id
+        EXPECT count() >= 1 as customer_groups_present
+    }
+    assert checks == 7
 "#,
         )?;
         let tests_dir = tmp.path().join("tests");
         std::fs::create_dir_all(&tests_dir)?;
-        let test_path = tests_dir.join("test_mixed_query.incn");
+        let test_path = tests_dir.join("test_quality.incn");
         std::fs::write(
             &test_path,
             r#"import pub::querykit
 
-def test_mixed_expression_vocab_result() -> None:
-  selected: int = query:
-    FROM:
-      42
-    let retained = 1
-    WINDOW:
-      marker = retained
-  assert selected == 7
+def test_quality_expression_vocab_result() -> None:
+    checks: int = quality {
+        FROM orders
+        REQUIRE row_count() >= 1 as non_empty_orders
+        GROUP BY .customer_id
+        EXPECT count() >= 1 as customer_groups_present
+    }
+    assert checks == 7
 "#,
         )?;
 
         let check_output = run_check(&main_path)?;
         assert!(
             check_output.status.success(),
-            "expected mixed expression vocab declaration to typecheck.\nstdout:\n{}\nstderr:\n{}",
+            "expected quality expression vocab declaration to typecheck.\nstdout:\n{}\nstderr:\n{}",
             String::from_utf8_lossy(&check_output.stdout),
             String::from_utf8_lossy(&check_output.stderr)
         );
@@ -14728,23 +14746,68 @@ def test_mixed_expression_vocab_result() -> None:
         let generated_main = std::fs::read_to_string(out_dir.join("src/main.rs"))?;
         assert!(
             build_output.status.success(),
-            "expected generated Rust build for the mixed expression vocab declaration to succeed.\ngenerated main.rs:\n{}\nstdout:\n{}\nstderr:\n{}",
+            "expected generated Rust build for the quality expression vocab declaration to succeed.\ngenerated main.rs:\n{}\nstdout:\n{}\nstderr:\n{}",
             generated_main,
             String::from_utf8_lossy(&build_output.stdout),
             String::from_utf8_lossy(&build_output.stderr)
         );
         assert!(
-            generated_main.contains("selected"),
+            generated_main.contains("checks"),
             "expected generated Rust to retain the desugared typed assignment.\ngenerated main.rs:\n{generated_main}"
         );
 
         let test_output = run_test(&test_path)?;
         assert!(
             test_output.status.success(),
-            "expected incan test to execute a typed result from the mixed expression vocab declaration.\nstdout:\n{}\nstderr:\n{}",
+            "expected incan test to execute a typed result from the quality expression vocab declaration.\nstdout:\n{}\nstderr:\n{}",
             String::from_utf8_lossy(&test_output.stdout),
             String::from_utf8_lossy(&test_output.stderr)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn consumer_check_desugars_each_quality_clause_issue813() -> Result<(), Box<dyn std::error::Error>> {
+        for (clause, request_fragment) in [
+            ("FROM", r#""keyword":"FROM""#),
+            ("REQUIRE", r#""keyword":"REQUIRE""#),
+            ("GROUP BY", r#""keyword":"GROUP","compound_tokens":["BY"]"#),
+            ("EXPECT", r#""keyword":"EXPECT""#),
+        ] {
+            let tmp = tempfile::tempdir()?;
+            let response = incan_vocab::DesugarResponse::expression(incan_vocab::IncanExpr::Int(7));
+            let output_payload = serde_json::to_string(&response)?;
+            let wasm = compile_desugarer_wasm_requiring_request_substring(
+                &output_payload,
+                &format!("quality expression vocab body did not expose {clause} as a clause"),
+                request_fragment,
+            )?;
+            write_pub_library_with_mixed_quality_clause_desugarer(tmp.path(), &wasm)?;
+
+            let main_path = write_project_files(
+                tmp.path(),
+                "[project]\nname = \"consumer\"\n\n[dependencies]\nquerykit = { path = \"deps/querykit\" }\n",
+                r#"import pub::querykit
+
+def main() -> None:
+    checks: int = quality {
+        FROM orders
+        REQUIRE row_count() >= 1 as non_empty_orders
+        GROUP BY .customer_id
+        EXPECT count() >= 1 as customer_groups_present
+    }
+    assert checks == 7
+"#,
+            )?;
+
+            let check_output = run_check(&main_path)?;
+            assert!(
+                check_output.status.success(),
+                "expected quality expression vocab declaration to expose {clause} to the desugarer.\nstdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&check_output.stdout),
+                String::from_utf8_lossy(&check_output.stderr)
+            );
+        }
         Ok(())
     }
 
