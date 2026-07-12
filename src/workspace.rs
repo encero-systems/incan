@@ -492,6 +492,14 @@ impl WorkspaceGraph {
 }
 
 fn canonical_start_path(path: &Path) -> Result<PathBuf, WorkspaceError> {
+    // `Path::parent()` is an empty path for a bare relative filename. Test and compiler callers use that parent as
+    // their discovery start, where it means the current directory rather than a path that should be handed to the
+    // filesystem verbatim.
+    let path = if path.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        path
+    };
     canonical_path(path)
 }
 
