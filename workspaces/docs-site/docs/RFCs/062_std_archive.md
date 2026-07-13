@@ -1,6 +1,6 @@
 # RFC 062: `std.archive` — archive container creation and extraction
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-04-14
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
