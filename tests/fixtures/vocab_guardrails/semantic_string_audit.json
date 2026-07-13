@@ -267,8 +267,8 @@
     {
       "path": "src/frontend/typechecker/check_expr/access.rs",
       "category": "method/type access surface classification",
-      "expected_count": 47,
-      "expected_fingerprint": "0x3c8d1c37b34bd570"
+      "expected_count": 46,
+      "expected_fingerprint": "0xadce01bf76021778"
     },
     {
       "path": "src/frontend/typechecker/check_expr/basics.rs",
