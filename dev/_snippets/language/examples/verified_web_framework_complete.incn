@@ -1,0 +1,35 @@
+"""A small read-only catalog API."""
+
+from std.web import App, route, Response, Json, GET
+from std.serde import json
+import std.async
+
+
+@derive(Clone, json)
+model Item:
+    id: int
+    name: str
+    price: float
+
+
+@route("/api/items", methods=[GET])
+async def list_items() -> Json[list[Item]]:
+    return Json([
+        Item(id=1, name="Keyboard", price=79.0),
+        Item(id=2, name="Mouse", price=39.0),
+    ])
+
+
+@route("/api/items/{id}", methods=[GET])
+async def get_item(id: int) -> Json[Item]:
+    return Json(Item(id=id, name=f"Item {id}", price=9.99))
+
+
+@route("/health", methods=[GET])
+async def health() -> Response:
+    return Response.ok()
+
+
+def main() -> None:
+    println("Starting API server at http://localhost:8080")
+    App.run(host="127.0.0.1", port=8080)

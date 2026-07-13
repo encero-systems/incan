@@ -6449,16 +6449,22 @@
 <p>This tutorial uses Rust's <code>regex</code> crate from ordinary Incan code. The goal is not to write Rust-shaped application code; it is to put one established Rust library behind a small Incan boundary.</p>
 <h2 id="step-1-import-a-versioned-crate">Step 1: Import a versioned crate<a class="headerlink" href="#step-1-import-a-versioned-crate" title="Permanent link">&para;</a></h2>
 <p>Create <code>main.incn</code>:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">regex</span> <span class="o">@</span> <span class="s2">&quot;1&quot;</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Regex</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">regex</span> <span class="o">@</span> <span class="s2">&quot;1&quot;</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Regex</span>  <span class="c1"># (1)</span>
 </code></pre></div>
+<ol>
+<li><code>rust::</code> selects Rust interop; <code>@ "1"</code> pins the compatible crate major version for this single-file program.</li>
+</ol>
 <p>The <code>rust::</code> prefix identifies a Rust dependency. The inline version annotation is convenient for a single-file program.</p>
 <h2 id="step-2-wrap-the-rust-facing-api">Step 2: Wrap the Rust-facing API<a class="headerlink" href="#step-2-wrap-the-rust-facing-api" title="Permanent link">&para;</a></h2>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">regex</span> <span class="o">@</span> <span class="s2">&quot;1&quot;</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Regex</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">contains_number</span><span class="p">(</span><span class="nb">input</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-    <span class="n">pattern</span> <span class="o">=</span> <span class="nc">Regex</span><span class="o">.</span><span class="n">new</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\\</span><span class="s2">d+&quot;</span><span class="p">)</span><span class="o">.</span><span class="nb">unwrap</span><span class="p">()</span>
+    <span class="n">pattern</span> <span class="o">=</span> <span class="nc">Regex</span><span class="o">.</span><span class="n">new</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\\</span><span class="s2">d+&quot;</span><span class="p">)</span><span class="o">.</span><span class="nb">unwrap</span><span class="p">()</span>  <span class="c1"># (1)</span>
     <span class="k">return</span> <span class="n">pattern</span><span class="o">.</span><span class="n">is_match</span><span class="p">(</span><span class="nb">input</span><span class="p">)</span>
 </code></pre></div>
+<ol>
+<li>The constructor is fallible. <code>unwrap()</code> is acceptable here only because <code>"\\d+"</code> is a fixed, reviewed source literal; the warning below describes the input-driven case.</li>
+</ol>
 <p>Only this helper needs to know the Rust crate's constructor and methods. Callers get an ordinary Incan function.</p>
 <div class="admonition warning">
 <p class="admonition-title">About <code>unwrap()</code></p>
@@ -6481,9 +6487,13 @@
 <p>Then make the source import versionless:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">regex</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Regex</span>
 </code></pre></div>
-<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>lock
-incan<span class="w"> </span>run<span class="w"> </span>--locked
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>lock<span class="w">          </span><span class="c1"># (1)</span>
+incan<span class="w"> </span>run<span class="w"> </span>--locked<span class="w">  </span><span class="c1"># (2)</span>
 </code></pre></div>
+<ol>
+<li><code>incan lock</code> resolves the manifest dependency and writes the reproducible lockfile.</li>
+<li><code>--locked</code> rejects dependency drift instead of silently refreshing the lockfile during the run.</li>
+</ol>
 <p>The manifest is the single source of truth for a project dependency, so do not retain the inline <code>@ "1"</code> annotation after adding the manifest entry. Commit <code>incan.lock</code> so CI and collaborators resolve the same dependency graph.</p>
 <section class="inc-learning-panel inc-learning-panel--complete inc-incus-slot" data-incus-category="success" data-label="Complete">
 <p>You added a Rust crate, contained the Rust-facing calls in one helper, and made the dependency reproducible at the project boundary.</p>

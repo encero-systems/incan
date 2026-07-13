@@ -6467,31 +6467,41 @@
 <p>Calling <code>process_job(...)</code> creates async work. <code>await</code> drives it directly; <code>spawn(...)</code> starts it as a concurrent task.</p>
 <h2 id="step-2-spawn-several-jobs">Step 2: Spawn several jobs<a class="headerlink" href="#step-2-spawn-several-jobs" title="Permanent link">&para;</a></h2>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="n">first</span> <span class="o">=</span> <span class="nb">spawn</span><span class="p">(</span><span class="n">process_job</span><span class="p">(</span><span class="s2">&quot;orders&quot;</span><span class="p">,</span> <span class="mf">0.20</span><span class="p">))</span>
+    <span class="n">first</span> <span class="o">=</span> <span class="nb">spawn</span><span class="p">(</span><span class="n">process_job</span><span class="p">(</span><span class="s2">&quot;orders&quot;</span><span class="p">,</span> <span class="mf">0.20</span><span class="p">))</span>  <span class="c1"># (1)</span>
     <span class="n">second</span> <span class="o">=</span> <span class="nb">spawn</span><span class="p">(</span><span class="n">process_job</span><span class="p">(</span><span class="s2">&quot;customers&quot;</span><span class="p">,</span> <span class="mf">0.10</span><span class="p">))</span>
     <span class="n">third</span> <span class="o">=</span> <span class="nb">spawn</span><span class="p">(</span><span class="n">process_job</span><span class="p">(</span><span class="s2">&quot;inventory&quot;</span><span class="p">,</span> <span class="mf">0.15</span><span class="p">))</span>
 
-    <span class="n">show_result</span><span class="p">(</span><span class="s2">&quot;orders&quot;</span><span class="p">,</span> <span class="k">await</span> <span class="n">first</span><span class="p">)</span>
+    <span class="n">show_result</span><span class="p">(</span><span class="s2">&quot;orders&quot;</span><span class="p">,</span> <span class="k">await</span> <span class="n">first</span><span class="p">)</span>  <span class="c1"># (2)</span>
     <span class="n">show_result</span><span class="p">(</span><span class="s2">&quot;customers&quot;</span><span class="p">,</span> <span class="k">await</span> <span class="n">second</span><span class="p">)</span>
     <span class="n">show_result</span><span class="p">(</span><span class="s2">&quot;inventory&quot;</span><span class="p">,</span> <span class="k">await</span> <span class="n">third</span><span class="p">)</span>
 </code></pre></div>
+<ol>
+<li><code>spawn(...)</code> starts each future immediately and returns a typed <code>JoinHandle</code>; the three jobs can therefore overlap.</li>
+<li>Awaiting a handle returns the task boundary's <code>Result</code>, which is passed to one explicit handler rather than discarded.</li>
+</ol>
 <p>The jobs begin before the first handle is awaited, so their delays overlap. Awaiting a <code>JoinHandle[T]</code> returns <code>Result[T, TaskJoinError]</code>: task execution itself can fail independently of the value <code>T</code>.</p>
 <h2 id="step-3-handle-join-results">Step 3: Handle join results<a class="headerlink" href="#step-3-handle-join-results" title="Permanent link">&para;</a></h2>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.task</span><span class="w"> </span><span class="kn">import</span> <span class="kt">TaskJoinError</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">show_result</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="kt">result</span><span class="p">:</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="kt">TaskJoinError</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="k">match</span> <span class="kt">result</span><span class="p">:</span>
+    <span class="k">match</span> <span class="kt">result</span><span class="p">:</span>  <span class="c1"># (1)</span>
         <span class="k">case</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">value</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
         <span class="k">case</span> <span class="nb">Err</span><span class="p">(</span><span class="n">error</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2"> failed: </span><span class="si">{</span><span class="n">error</span><span class="o">.</span><span class="n">message</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </code></pre></div>
+<ol>
+<li>This <code>match</code> is intentional terminal handling: both outcomes produce a visible side effect, so a combinator chain would hide rather than simplify the decision.</li>
+</ol>
 <p>Do not discard join failures in production paths. A spawned task is a separate failure boundary even when the worker's ordinary return value is infallible.</p>
 <h2 id="step-4-add-a-deadline">Step 4: Add a deadline<a class="headerlink" href="#step-4-add-a-deadline" title="Permanent link">&para;</a></h2>
 <p>Use <code>timeout(...)</code> when the underlying operation should be cancelled after the deadline:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">bounded_job</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="k">match</span> <span class="k">await</span> <span class="nb">timeout</span><span class="p">(</span><span class="mf">0.05</span><span class="p">,</span> <span class="n">process_job</span><span class="p">(</span><span class="s2">&quot;slow&quot;</span><span class="p">,</span> <span class="mf">0.50</span><span class="p">)):</span>
+    <span class="k">match</span> <span class="k">await</span> <span class="nb">timeout</span><span class="p">(</span><span class="mf">0.05</span><span class="p">,</span> <span class="n">process_job</span><span class="p">(</span><span class="s2">&quot;slow&quot;</span><span class="p">,</span> <span class="mf">0.50</span><span class="p">)):</span>  <span class="c1"># (1)</span>
         <span class="k">case</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">value</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
         <span class="k">case</span> <span class="nb">Err</span><span class="p">(</span><span class="n">error</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;deadline reached: </span><span class="si">{</span><span class="n">error</span><span class="o">.</span><span class="n">message</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </code></pre></div>
+<ol>
+<li><code>timeout(...)</code> owns the cancellation policy. The final <code>match</code> reports the outcome at the program boundary; it is not sequential plumbing that should be replaced with <code>map</code> or <code>and_then</code>.</li>
+</ol>
 <p>Use <code>timeout_join(...)</code> instead when already-spawned work must remain live after the caller's deadline. Its timeout outcome returns the live handle rather than silently cancelling durable work.</p>
 <p>Run the repository example:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>run<span class="w"> </span>examples/advanced/async_worker_pipeline.incn

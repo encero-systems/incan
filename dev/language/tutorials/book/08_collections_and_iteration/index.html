@@ -6635,24 +6635,25 @@
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="n">names</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;Alice&quot;</span><span class="p">,</span> <span class="s2">&quot;Alice&quot;</span><span class="p">,</span> <span class="s2">&quot;Bob&quot;</span><span class="p">,</span> <span class="s2">&quot;Bob&quot;</span><span class="p">,</span> <span class="s2">&quot;Cara&quot;</span><span class="p">]</span>
 
-    <span class="c1"># 1) Normalize + print</span>
+    <span class="c1"># 1) Normalize and print.</span>
     <span class="n">normalized</span> <span class="o">=</span> <span class="p">[</span><span class="n">name</span><span class="o">.</span><span class="nb">strip</span><span class="p">()</span><span class="o">.</span><span class="nb">lower</span><span class="p">()</span> <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">names</span><span class="p">]</span>
     <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">normalized</span><span class="p">:</span>
         <span class="nb">println</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
 
-    <span class="c1"># 2) Count occurrences</span>
-    <span class="n">name_counts</span><span class="p">:</span> <span class="kt">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="c1"># 2) Count occurrences.</span>
+    <span class="k">mut</span> <span class="n">name_counts</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
     <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">normalized</span><span class="p">:</span>
-        <span class="n">current_count</span> <span class="o">=</span> <span class="n">name_counts</span><span class="o">.</span><span class="nb">get</span><span class="p">(</span><span class="n">name</span><span class="p">)</span><span class="o">.</span><span class="nb">unwrap_or</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+        <span class="n">current_count</span> <span class="o">=</span> <span class="n">name_counts</span><span class="o">.</span><span class="nb">get</span><span class="p">(</span><span class="n">name</span><span class="p">)</span><span class="o">.</span><span class="nb">copied</span><span class="p">()</span><span class="o">.</span><span class="nb">unwrap_or</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
         <span class="n">name_counts</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="n">current_count</span> <span class="o">+</span> <span class="mi">1</span>
 
-    <span class="c1"># 3) Deduplicate + print counts (set iteration order is not guaranteed)</span>
+    <span class="c1"># 3) Deduplicate and print counts (set iteration order is not guaranteed).</span>
     <span class="n">unique</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="n">normalized</span><span class="p">)</span>
     <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">unique</span><span class="p">:</span>
-        <span class="nb">count</span> <span class="o">=</span> <span class="n">name_counts</span><span class="o">.</span><span class="nb">get</span><span class="p">(</span><span class="n">name</span><span class="p">)</span><span class="o">.</span><span class="nb">unwrap_or</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+        <span class="nb">count</span> <span class="o">=</span> <span class="n">name_counts</span><span class="o">.</span><span class="nb">get</span><span class="p">(</span><span class="n">name</span><span class="p">)</span><span class="o">.</span><span class="nb">copied</span><span class="p">()</span><span class="o">.</span><span class="nb">unwrap_or</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
         <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="nb">count</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </code></pre></div>
 </details>
+<p><code>dict.get(...)</code> returns a borrowed value. Calling <code>.copied()</code> turns <code>Option[&amp;int]</code> into <code>Option[int]</code> before <code>unwrap_or(0)</code> supplies the owned fallback.</p>
 <h2 id="where-to-learn-more">Where to learn more<a class="headerlink" href="#where-to-learn-more" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Specialized collections: <a href="../../../how-to/choosing_collections/">Choosing collection types</a></li>

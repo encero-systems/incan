@@ -6569,8 +6569,11 @@
 <p>This is usually clearer than spelling the same idea as a full <code>match</code> with an empty fallback arm.</p>
 <h2 id="pattern-defaults-unwrap_or-unwrap_or_else">Pattern: Defaults (<code>unwrap_or</code> / <code>unwrap_or_else</code>)<a class="headerlink" href="#pattern-defaults-unwrap_or-unwrap_or_else" title="Permanent link">&para;</a></h2>
 <p>Use defaults only when there is a genuinely safe fallback.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="nb">timeout</span> <span class="o">=</span> <span class="n">settings</span><span class="o">.</span><span class="nb">get</span><span class="p">(</span><span class="s2">&quot;timeout_secs&quot;</span><span class="p">)</span><span class="o">.</span><span class="nb">unwrap_or</span><span class="p">(</span><span class="s2">&quot;2.0&quot;</span><span class="p">)</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="nb">timeout</span> <span class="o">=</span> <span class="k">match</span> <span class="n">settings</span><span class="o">.</span><span class="nb">get</span><span class="p">(</span><span class="s2">&quot;timeout_secs&quot;</span><span class="p">):</span>
+    <span class="nb">Some</span><span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="nb">str</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
+    <span class="kc">None</span> <span class="o">=&gt;</span> <span class="s2">&quot;2.0&quot;</span>
 </code></pre></div>
+<p><code>dict.get(...)</code> borrows the stored value. <code>str(value)</code> materializes an owned string before it leaves the match arm.</p>
 <p>If computing the default is expensive, prefer <code>unwrap_or_else(...)</code> when available.</p>
 <h2 id="pattern-retry-a-fallible-operation">Pattern: Retry a fallible operation<a class="headerlink" href="#pattern-retry-a-fallible-operation" title="Permanent link">&para;</a></h2>
 <p>Keep retries local and explicit.</p>

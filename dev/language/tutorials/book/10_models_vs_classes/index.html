@@ -6666,14 +6666,16 @@
     <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
     <span class="n">price</span><span class="p">:</span> <span class="nb">float</span>
 
+
 <span class="k">class</span><span class="w"> </span><span class="nc">Cart</span><span class="p">:</span>
     <span class="n">items</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nc">Product</span><span class="p">]</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">total</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
-        <span class="n">total</span> <span class="o">=</span> <span class="mf">0.0</span>
+        <span class="k">mut</span> <span class="n">total</span> <span class="o">=</span> <span class="mf">0.0</span>
         <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">items</span><span class="p">:</span>
-            <span class="n">total</span> <span class="o">=</span> <span class="n">total</span> <span class="o">+</span> <span class="n">item</span><span class="o">.</span><span class="n">price</span>
+            <span class="n">total</span> <span class="o">+=</span> <span class="n">item</span><span class="o">.</span><span class="n">price</span>
         <span class="k">return</span> <span class="n">total</span>
+
 
 <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="n">cart</span> <span class="o">=</span> <span class="nc">Cart</span><span class="p">(</span><span class="n">items</span><span class="o">=</span><span class="p">[</span>

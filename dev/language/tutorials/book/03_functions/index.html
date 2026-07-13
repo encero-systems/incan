@@ -1192,9 +1192,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#multiple-returns-with-result" class="md-nav__link">
+  <a href="#fallible-returns-with-result" class="md-nav__link">
     <span class="md-ellipsis">
-      Multiple returns (with Result)
+      Fallible returns (with Result)
     </span>
   </a>
   
@@ -6580,9 +6580,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#multiple-returns-with-result" class="md-nav__link">
+  <a href="#fallible-returns-with-result" class="md-nav__link">
     <span class="md-ellipsis">
-      Multiple returns (with Result)
+      Fallible returns (with Result)
     </span>
   </a>
   
@@ -6788,13 +6788,14 @@
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="k">return</span> <span class="n">name</span><span class="o">.</span><span class="nb">strip</span><span class="p">()</span><span class="o">.</span><span class="nb">lower</span><span class="p">()</span>
 </code></pre></div>
-<h2 id="multiple-returns-with-result">Multiple returns (with <code>Result</code>)<a class="headerlink" href="#multiple-returns-with-result" title="Permanent link">&para;</a></h2>
+<h2 id="fallible-returns-with-result">Fallible returns (with <code>Result</code>)<a class="headerlink" href="#fallible-returns-with-result" title="Permanent link">&para;</a></h2>
 <p>Many “can fail” functions return <code>Result[T, E]</code> instead of throwing exceptions:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">parse_port</span><span class="p">(</span><span class="n">s</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
-    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">s</span><span class="o">.</span><span class="nb">strip</span><span class="p">())</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
-        <span class="k">return</span> <span class="nb">Err</span><span class="p">(</span><span class="s2">&quot;port must not be empty&quot;</span><span class="p">)</span>
-    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">s</span><span class="p">))</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">validate_port</span><span class="p">(</span><span class="n">port</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+    <span class="k">if</span> <span class="n">port</span> <span class="o">&lt;</span> <span class="mi">1</span> <span class="ow">or</span> <span class="n">port</span> <span class="o">&gt;</span> <span class="mi">65535</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">Err</span><span class="p">(</span><span class="s2">&quot;port must be between 1 and 65535&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">port</span><span class="p">)</span>
 </code></pre></div>
+<p>This example validates an already-typed integer. The builtin <code>int(text)</code> conversion is intentionally infallible at the type level and raises a runtime conversion error for malformed text; it is not a substitute for a <code>Result</code>-returning parser.</p>
 <p>You’ll learn the <code>Result</code> pattern in Chapter 6.</p>
 <h2 id="try-it">Try it<a class="headerlink" href="#try-it" title="Permanent link">&para;</a></h2>
 <ol>

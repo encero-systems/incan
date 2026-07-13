@@ -6534,8 +6534,8 @@
 </tr>
 <tr>
 <td><code>dict.get(key, default)</code></td>
-<td><code>map.get(&amp;key).unwrap_or(default)</code></td>
-<td>Default if missing</td>
+<td><code>map.get(&amp;key).copied().unwrap_or(default)</code></td>
+<td>Copy a scalar value or use the default</td>
 </tr>
 <tr>
 <td><code>str(x)</code></td>
@@ -6552,7 +6552,7 @@
 <h2 id="option-and-result-unwrap-like-patterns">Option and Result: unwrap-like patterns<a class="headerlink" href="#option-and-result-unwrap-like-patterns" title="Permanent link">&para;</a></h2>
 <p>Rust APIs often return <code>Option</code>/<code>Result</code> instead of raising exceptions.</p>
 <p><code>unwrap()</code> is a “this must exist” assertion (it panics if missing), so prefer <code>unwrap_or(...)</code> or <code>match</code> when the value can be absent.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">value</span> <span class="o">=</span> <span class="n">my_dict</span><span class="o">.</span><span class="nb">get</span><span class="p">(</span><span class="s2">&quot;key&quot;</span><span class="p">)</span><span class="o">.</span><span class="nb">unwrap_or</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">value</span> <span class="o">=</span> <span class="n">my_dict</span><span class="o">.</span><span class="nb">get</span><span class="p">(</span><span class="s2">&quot;key&quot;</span><span class="p">)</span><span class="o">.</span><span class="nb">copied</span><span class="p">()</span><span class="o">.</span><span class="nb">unwrap_or</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
 
 <span class="k">match</span> <span class="n">my_dict</span><span class="o">.</span><span class="nb">get</span><span class="p">(</span><span class="s2">&quot;key&quot;</span><span class="p">):</span>
     <span class="k">case</span> <span class="nb">Some</span><span class="p">(</span><span class="n">v</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="n">v</span><span class="p">)</span>

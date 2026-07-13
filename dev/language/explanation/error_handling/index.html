@@ -6760,7 +6760,9 @@
 <h3 id="provide-defaults-with-unwrap_or">Provide defaults with <code>unwrap_or</code><a class="headerlink" href="#provide-defaults-with-unwrap_or" title="Permanent link">&para;</a></h3>
 <p>Use this for optional values where a default makes sense.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">get_setting</span><span class="p">(</span><span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-    <span class="k">return</span> <span class="n">settings</span><span class="o">.</span><span class="nb">get</span><span class="p">(</span><span class="n">key</span><span class="p">)</span><span class="o">.</span><span class="nb">unwrap_or</span><span class="p">(</span><span class="s2">&quot;default_value&quot;</span><span class="p">)</span>
+    <span class="k">match</span> <span class="n">settings</span><span class="o">.</span><span class="nb">get</span><span class="p">(</span><span class="n">key</span><span class="p">):</span>
+        <span class="nb">Some</span><span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
+        <span class="kc">None</span> <span class="o">=&gt;</span> <span class="k">return</span> <span class="s2">&quot;default_value&quot;</span>
 </code></pre></div>
 <h3 id="convert-optiont-to-resultt-e-with-ok_or">Convert <code>Option[T]</code> to <code>Result[T, E]</code> with <code>ok_or</code><a class="headerlink" href="#convert-optiont-to-resultt-e-with-ok_or" title="Permanent link">&para;</a></h3>
 <p>Use this when absence should become a recoverable error.</p>

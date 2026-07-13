@@ -1658,18 +1658,9 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#query-parameters" class="md-nav__link">
+  <a href="#query-parameters-and-json-bodies" class="md-nav__link">
     <span class="md-ellipsis">
-      Query Parameters
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#json-body" class="md-nav__link">
-    <span class="md-ellipsis">
-      JSON Body
+      Query parameters and JSON bodies
     </span>
   </a>
   
@@ -6627,18 +6618,9 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#query-parameters" class="md-nav__link">
+  <a href="#query-parameters-and-json-bodies" class="md-nav__link">
     <span class="md-ellipsis">
-      Query Parameters
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#json-body" class="md-nav__link">
-    <span class="md-ellipsis">
-      JSON Body
+      Query parameters and JSON bodies
     </span>
   </a>
   
@@ -6749,21 +6731,24 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">std.serde</span><span class="w"> </span><span class="kn">import</span> <span class="n">json</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">std.async</span>
 
+
 <span class="nd">@derive</span><span class="p">(</span><span class="n">json</span><span class="p">)</span>
 <span class="k">model</span> <span class="nc">Greeting</span><span class="p">:</span>
     <span class="n">message</span><span class="p">:</span> <span class="nb">str</span>
+
 
 <span class="nd">@route</span><span class="p">(</span><span class="s2">&quot;/&quot;</span><span class="p">)</span>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">index</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Response</span><span class="p">:</span>
     <span class="k">return</span> <span class="kt">Response</span><span class="o">.</span><span class="n">html</span><span class="p">(</span><span class="s2">&quot;&lt;h1&gt;Hello from Incan!&lt;/h1&gt;&quot;</span><span class="p">)</span>
 
+
 <span class="nd">@route</span><span class="p">(</span><span class="s2">&quot;/api/greet/</span><span class="si">{name}</span><span class="s2">&quot;</span><span class="p">)</span>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">greet</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Json</span><span class="p">[</span><span class="nc">Greeting</span><span class="p">]:</span>
     <span class="k">return</span> <span class="kt">Json</span><span class="p">(</span><span class="nc">Greeting</span><span class="p">(</span><span class="n">message</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;Hello, </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">!&quot;</span><span class="p">))</span>
 
+
 <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="n">app</span> <span class="o">=</span> <span class="kt">App</span><span class="p">()</span>
-    <span class="n">app</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">port</span><span class="o">=</span><span class="mi">8080</span><span class="p">)</span>
+    <span class="kt">App</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">port</span><span class="o">=</span><span class="mi">8080</span><span class="p">)</span>
 </code></pre></div>
 <p>Build and run:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>build<span class="w"> </span>examples/web/hello_web.incn
@@ -6814,17 +6799,17 @@
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">list_items</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Json</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="nc">Item</span><span class="p">]]:</span>
     <span class="o">...</span>
 
-<span class="nd">@route</span><span class="p">(</span><span class="s2">&quot;/items&quot;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="nc">POST</span><span class="p">])</span>
-<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">create_item</span><span class="p">(</span><span class="n">body</span><span class="p">:</span> <span class="kt">Json</span><span class="p">[</span><span class="nc">CreateItem</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kt">Json</span><span class="p">[</span><span class="nc">Item</span><span class="p">]:</span>
-    <span class="o">...</span>
+<span class="nd">@route</span><span class="p">(</span><span class="s2">&quot;/items/reindex&quot;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="nc">POST</span><span class="p">])</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">reindex_items</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Response</span><span class="p">:</span>
+    <span class="k">return</span> <span class="kt">Response</span><span class="o">.</span><span class="n">status</span><span class="p">(</span><span class="mi">202</span><span class="p">,</span> <span class="s2">&quot;reindex queued&quot;</span><span class="p">)</span>
 
 <span class="nd">@route</span><span class="p">(</span><span class="s2">&quot;/items/</span><span class="si">{id}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="nc">PUT</span><span class="p">])</span>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">update_item</span><span class="p">(</span><span class="nb">id</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Response</span><span class="p">:</span>
-    <span class="o">...</span>
+    <span class="k">return</span> <span class="kt">Response</span><span class="o">.</span><span class="n">ok</span><span class="p">()</span>
 
 <span class="nd">@route</span><span class="p">(</span><span class="s2">&quot;/items/</span><span class="si">{id}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="nc">DELETE</span><span class="p">])</span>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">delete_item</span><span class="p">(</span><span class="nb">id</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Response</span><span class="p">:</span>
-    <span class="o">...</span>
+    <span class="k">return</span> <span class="kt">Response</span><span class="o">.</span><span class="n">ok</span><span class="p">()</span>
 </code></pre></div>
 <h2 id="responses">Responses<a class="headerlink" href="#responses" title="Permanent link">&para;</a></h2>
 <h3 id="json-responses">JSON Responses<a class="headerlink" href="#json-responses" title="Permanent link">&para;</a></h3>
@@ -6864,23 +6849,23 @@
 
 <span class="nd">@route</span><span class="p">(</span><span class="s2">&quot;/created&quot;</span><span class="p">)</span>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">created</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Response</span><span class="p">:</span>
-    <span class="k">return</span> <span class="kt">Response</span><span class="o">.</span><span class="n">created</span><span class="p">()</span>  <span class="c1"># 201</span>
+    <span class="k">return</span> <span class="kt">Response</span><span class="o">.</span><span class="n">status</span><span class="p">(</span><span class="mi">201</span><span class="p">,</span> <span class="s2">&quot;created&quot;</span><span class="p">)</span>
 
 <span class="nd">@route</span><span class="p">(</span><span class="s2">&quot;/empty&quot;</span><span class="p">)</span>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">empty</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Response</span><span class="p">:</span>
-    <span class="k">return</span> <span class="kt">Response</span><span class="o">.</span><span class="n">no_content</span><span class="p">()</span>  <span class="c1"># 204</span>
+    <span class="k">return</span> <span class="kt">Response</span><span class="o">.</span><span class="n">status</span><span class="p">(</span><span class="mi">204</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
 
 <span class="nd">@route</span><span class="p">(</span><span class="s2">&quot;/error&quot;</span><span class="p">)</span>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">error</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Response</span><span class="p">:</span>
-    <span class="k">return</span> <span class="kt">Response</span><span class="o">.</span><span class="n">bad_request</span><span class="p">(</span><span class="s2">&quot;Invalid input&quot;</span><span class="p">)</span>  <span class="c1"># 400</span>
+    <span class="k">return</span> <span class="kt">Response</span><span class="o">.</span><span class="n">status</span><span class="p">(</span><span class="mi">400</span><span class="p">,</span> <span class="s2">&quot;Invalid input&quot;</span><span class="p">)</span>
 
 <span class="nd">@route</span><span class="p">(</span><span class="s2">&quot;/missing&quot;</span><span class="p">)</span>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">missing</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Response</span><span class="p">:</span>
-    <span class="k">return</span> <span class="kt">Response</span><span class="o">.</span><span class="n">not_found</span><span class="p">(</span><span class="s2">&quot;Resource not found&quot;</span><span class="p">)</span>  <span class="c1"># 404</span>
+    <span class="k">return</span> <span class="kt">Response</span><span class="o">.</span><span class="n">status</span><span class="p">(</span><span class="mi">404</span><span class="p">,</span> <span class="s2">&quot;Resource not found&quot;</span><span class="p">)</span>
 
 <span class="nd">@route</span><span class="p">(</span><span class="s2">&quot;/server-error&quot;</span><span class="p">)</span>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">server_error</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Response</span><span class="p">:</span>
-    <span class="k">return</span> <span class="kt">Response</span><span class="o">.</span><span class="n">internal_error</span><span class="p">(</span><span class="s2">&quot;Something went wrong&quot;</span><span class="p">)</span>  <span class="c1"># 500</span>
+    <span class="k">return</span> <span class="kt">Response</span><span class="o">.</span><span class="n">status</span><span class="p">(</span><span class="mi">500</span><span class="p">,</span> <span class="s2">&quot;Something went wrong&quot;</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="request-data">Request Data<a class="headerlink" href="#request-data" title="Permanent link">&para;</a></h2>
 <h3 id="extracting-path-parameters">Extracting Path Parameters<a class="headerlink" href="#extracting-path-parameters" title="Permanent link">&para;</a></h3>
@@ -6892,46 +6877,15 @@
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">get_post</span><span class="p">(</span><span class="n">user_id</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">post_id</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Json</span><span class="p">[</span><span class="nc">Post</span><span class="p">]:</span>
     <span class="o">...</span>
 </code></pre></div>
-<h3 id="query-parameters">Query Parameters<a class="headerlink" href="#query-parameters" title="Permanent link">&para;</a></h3>
-<p>Use <code>Query[T]</code> for query string parameters:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.web</span><span class="w"> </span><span class="kn">import</span> <span class="n">route</span><span class="p">,</span> <span class="kt">Json</span><span class="p">,</span> <span class="kt">Query</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">std.serde</span><span class="w"> </span><span class="kn">import</span> <span class="n">json</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">std.async</span>
-
-<span class="nd">@derive</span><span class="p">(</span><span class="n">json</span><span class="p">)</span>
-<span class="k">model</span> <span class="nc">SearchParams</span><span class="p">:</span>
-    <span class="n">q</span><span class="p">:</span> <span class="nb">str</span>
-    <span class="n">limit</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">10</span>
-
-<span class="nd">@route</span><span class="p">(</span><span class="s2">&quot;/search&quot;</span><span class="p">)</span>
-<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">search</span><span class="p">(</span><span class="n">params</span><span class="p">:</span> <span class="kt">Query</span><span class="p">[</span><span class="nc">SearchParams</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kt">Json</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="kt">Result</span><span class="p">]]:</span>
-    <span class="n">results</span> <span class="o">=</span> <span class="n">do_search</span><span class="p">(</span><span class="n">params</span><span class="o">.</span><span class="n">q</span><span class="p">,</span> <span class="n">params</span><span class="o">.</span><span class="n">limit</span><span class="p">)</span>
-    <span class="k">return</span> <span class="kt">Json</span><span class="p">(</span><span class="n">results</span><span class="p">)</span>
-</code></pre></div>
-<h3 id="json-body">JSON Body<a class="headerlink" href="#json-body" title="Permanent link">&para;</a></h3>
-<p>Use <code>Json[T]</code> as a parameter for JSON request bodies:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.web</span><span class="w"> </span><span class="kn">import</span> <span class="n">route</span><span class="p">,</span> <span class="kt">Json</span><span class="p">,</span> <span class="nc">POST</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">std.serde</span><span class="w"> </span><span class="kn">import</span> <span class="n">json</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">std.async</span>
-
-<span class="nd">@derive</span><span class="p">(</span><span class="n">json</span><span class="p">)</span>
-<span class="k">model</span> <span class="nc">CreateUser</span><span class="p">:</span>
-    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
-    <span class="n">email</span><span class="p">:</span> <span class="nb">str</span>
-
-<span class="nd">@route</span><span class="p">(</span><span class="s2">&quot;/users&quot;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="nc">POST</span><span class="p">])</span>
-<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">create_user</span><span class="p">(</span><span class="n">body</span><span class="p">:</span> <span class="kt">Json</span><span class="p">[</span><span class="nc">CreateUser</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kt">Json</span><span class="p">[</span><span class="nc">User</span><span class="p">]:</span>
-    <span class="n">user</span> <span class="o">=</span> <span class="nc">User</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="n">body</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">email</span><span class="o">=</span><span class="n">body</span><span class="o">.</span><span class="n">email</span><span class="p">)</span>
-    <span class="k">return</span> <span class="kt">Json</span><span class="p">(</span><span class="n">user</span><span class="p">)</span>
-</code></pre></div>
+<h3 id="query-parameters-and-json-bodies">Query parameters and JSON bodies<a class="headerlink" href="#query-parameters-and-json-bodies" title="Permanent link">&para;</a></h3>
+<p>Typed <code>Query[T]</code> and <code>Json[T]</code> request extractors are part of the intended surface, but the current development compiler accepts them during typechecking and then emits an invalid Rust handler signature. Until <a href="https://github.com/encero-systems/incan/issues/867">the extractor code-generation bug is fixed</a>, this verified guide does not present those forms as runnable examples.</p>
 <h2 id="application">Application<a class="headerlink" href="#application" title="Permanent link">&para;</a></h2>
 <h3 id="starting-the-server">Starting the Server<a class="headerlink" href="#starting-the-server" title="Permanent link">&para;</a></h3>
-<p>Create an <code>App</code> and call <code>run()</code>:</p>
+<p>Call the static <code>App.run()</code> entrypoint:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.web</span><span class="w"> </span><span class="kn">import</span> <span class="kt">App</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="n">app</span> <span class="o">=</span> <span class="kt">App</span><span class="p">()</span>
-    <span class="n">app</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">host</span><span class="o">=</span><span class="s2">&quot;0.0.0.0&quot;</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">3000</span><span class="p">)</span>
+    <span class="kt">App</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">host</span><span class="o">=</span><span class="s2">&quot;0.0.0.0&quot;</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">3000</span><span class="p">)</span>
 </code></pre></div>
 <p>Parameters:</p>
 <ul>
@@ -6944,7 +6898,7 @@
 <li><strong>Routes are collected</strong> from <code>@route</code> decorators</li>
 <li><strong>Handlers become async Rust functions</strong> with Axum extractors</li>
 <li><strong>Models with <code>@derive(json)</code></strong> get serde derives</li>
-<li><strong><code>app.run()</code></strong> becomes Axum router setup + tokio server</li>
+<li><strong><code>App.run()</code></strong> becomes Axum router setup + tokio server</li>
 </ol>
 <p>The generated Rust code uses:</p>
 <ul>
@@ -6955,70 +6909,50 @@
 <li><code>tokio</code> for async runtime</li>
 </ul>
 <h2 id="complete-example">Complete Example<a class="headerlink" href="#complete-example" title="Permanent link">&para;</a></h2>
-<div class="language-incan highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">A simple REST API for managing items.</span>
-<span class="sd">&quot;&quot;&quot;</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="sd">&quot;&quot;&quot;A small read-only catalog API.&quot;&quot;&quot;</span>
 
-<span class="kn">from</span><span class="w"> </span><span class="nn">std.web</span><span class="w"> </span><span class="kn">import</span> <span class="kt">App</span><span class="p">,</span> <span class="n">route</span><span class="p">,</span> <span class="kt">Response</span><span class="p">,</span> <span class="kt">Json</span><span class="p">,</span> <span class="nc">GET</span><span class="p">,</span> <span class="nc">POST</span><span class="p">,</span> <span class="nc">DELETE</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.web</span><span class="w"> </span><span class="kn">import</span> <span class="kt">App</span><span class="p">,</span> <span class="n">route</span><span class="p">,</span> <span class="kt">Response</span><span class="p">,</span> <span class="kt">Json</span><span class="p">,</span> <span class="nc">GET</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">std.serde</span><span class="w"> </span><span class="kn">import</span> <span class="n">json</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">std.async</span>
 
 
-<span class="nd">@derive</span><span class="p">(</span><span class="n">json</span><span class="p">)</span>
+<span class="nd">@derive</span><span class="p">(</span><span class="kt">Clone</span><span class="p">,</span> <span class="n">json</span><span class="p">)</span>
 <span class="k">model</span> <span class="nc">Item</span><span class="p">:</span>
     <span class="nb">id</span><span class="p">:</span> <span class="nb">int</span>
     <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
     <span class="n">price</span><span class="p">:</span> <span class="nb">float</span>
 
 
-<span class="c1"># In-memory storage (in a real app, use a database)</span>
-<span class="n">items</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nc">Item</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
-
-
 <span class="nd">@route</span><span class="p">(</span><span class="s2">&quot;/api/items&quot;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="nc">GET</span><span class="p">])</span>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">list_items</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Json</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="nc">Item</span><span class="p">]]:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;List all items.&quot;&quot;&quot;</span>
-    <span class="k">return</span> <span class="kt">Json</span><span class="p">(</span><span class="n">items</span><span class="p">)</span>
-
-
-<span class="nd">@route</span><span class="p">(</span><span class="s2">&quot;/api/items&quot;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="nc">POST</span><span class="p">])</span>
-<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">create_item</span><span class="p">(</span><span class="n">body</span><span class="p">:</span> <span class="kt">Json</span><span class="p">[</span><span class="nc">Item</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kt">Json</span><span class="p">[</span><span class="nc">Item</span><span class="p">]:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Create a new item.&quot;&quot;&quot;</span>
-    <span class="n">items</span><span class="o">.</span><span class="nb">append</span><span class="p">(</span><span class="n">body</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
-    <span class="k">return</span> <span class="kt">Json</span><span class="p">(</span><span class="n">body</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
+    <span class="k">return</span> <span class="kt">Json</span><span class="p">([</span>
+        <span class="nc">Item</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Keyboard&quot;</span><span class="p">,</span> <span class="n">price</span><span class="o">=</span><span class="mf">79.0</span><span class="p">),</span>
+        <span class="nc">Item</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Mouse&quot;</span><span class="p">,</span> <span class="n">price</span><span class="o">=</span><span class="mf">39.0</span><span class="p">),</span>
+    <span class="p">])</span>
 
 
 <span class="nd">@route</span><span class="p">(</span><span class="s2">&quot;/api/items/</span><span class="si">{id}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="nc">GET</span><span class="p">])</span>
-<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">get_item</span><span class="p">(</span><span class="nb">id</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Response</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Get an item by ID.&quot;&quot;&quot;</span>
-    <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">items</span><span class="p">:</span>
-        <span class="k">if</span> <span class="n">item</span><span class="o">.</span><span class="n">id</span> <span class="o">==</span> <span class="nb">id</span><span class="p">:</span>
-            <span class="k">return</span> <span class="kt">Json</span><span class="p">(</span><span class="n">item</span><span class="p">)</span>
-    <span class="k">return</span> <span class="kt">Response</span><span class="o">.</span><span class="n">not_found</span><span class="p">(</span><span class="s2">&quot;Item not found&quot;</span><span class="p">)</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">get_item</span><span class="p">(</span><span class="nb">id</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Json</span><span class="p">[</span><span class="nc">Item</span><span class="p">]:</span>
+    <span class="k">return</span> <span class="kt">Json</span><span class="p">(</span><span class="nc">Item</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="nb">id</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;Item </span><span class="si">{</span><span class="nb">id</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">price</span><span class="o">=</span><span class="mf">9.99</span><span class="p">))</span>
 
 
-<span class="nd">@route</span><span class="p">(</span><span class="s2">&quot;/api/items/</span><span class="si">{id}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="nc">DELETE</span><span class="p">])</span>
-<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">delete_item</span><span class="p">(</span><span class="nb">id</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Response</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Delete an item by ID.&quot;&quot;&quot;</span>
-    <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">item</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">items</span><span class="p">):</span>
-        <span class="k">if</span> <span class="n">item</span><span class="o">.</span><span class="n">id</span> <span class="o">==</span> <span class="nb">id</span><span class="p">:</span>
-            <span class="n">items</span><span class="o">.</span><span class="nb">pop</span><span class="p">(</span><span class="n">i</span><span class="p">)</span>
-            <span class="k">return</span> <span class="kt">Response</span><span class="o">.</span><span class="n">no_content</span><span class="p">()</span>
-    <span class="k">return</span> <span class="kt">Response</span><span class="o">.</span><span class="n">not_found</span><span class="p">(</span><span class="s2">&quot;Item not found&quot;</span><span class="p">)</span>
+<span class="nd">@route</span><span class="p">(</span><span class="s2">&quot;/health&quot;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="nc">GET</span><span class="p">])</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">health</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Response</span><span class="p">:</span>
+    <span class="k">return</span> <span class="kt">Response</span><span class="o">.</span><span class="n">ok</span><span class="p">()</span>
 
 
 <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;Starting API server at http://localhost:8080&quot;</span><span class="p">)</span>
-    <span class="n">app</span> <span class="o">=</span> <span class="kt">App</span><span class="p">()</span>
-    <span class="n">app</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">port</span><span class="o">=</span><span class="mi">8080</span><span class="p">)</span>
+    <span class="kt">App</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">host</span><span class="o">=</span><span class="s2">&quot;127.0.0.1&quot;</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">8080</span><span class="p">)</span>
 </code></pre></div>
+<p>The example is deliberately read-only. Once you add persistence, keep database failures explicit and give each handler one coherent response type across all branches.</p>
 <h2 id="performance">Performance<a class="headerlink" href="#performance" title="Permanent link">&para;</a></h2>
 <p>With the current Rust/Axum-backed path, your web application runs with:</p>
 <ul>
 <li><strong>Native server path</strong> — no Python interpreter process in the request path</li>
 <li><strong>Tokio-backed async</strong> — an efficient async runtime without Python event-loop compatibility claims</li>
-<li><strong>No garbage collector</strong> — predictable latency</li>
-<li><strong>Low memory usage</strong> — Rust's ownership model</li>
+<li><strong>Deterministic ownership</strong> — generated Rust does not depend on a tracing garbage collector</li>
+<li><strong>Workload-dependent performance</strong> — latency and memory use still depend on handlers, dependencies, traffic, and deployment settings, so benchmark the service you intend to run</li>
 </ul>
 <p>That makes Incan a reasonable fit for API and microservice code where Python-readable source and a native async server backend both matter.</p>
 <h2 id="see-also">See Also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
