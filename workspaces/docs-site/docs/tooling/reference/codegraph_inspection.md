@@ -19,6 +19,18 @@ Strict mode is the default. If parsing, import resolution, or type checking prod
 
 The 0.4 exporter emits `language: "incan"` facts only. First-class Rust graph records, MCP tools, task-ranked context packing, process-risk signals, and architecture findings are RFC 106 follow-up work. Generated Rust remains inspectable through `incan inspect rust`, but that command is not a substitute for Rust codegraph facts.
 
+## External importer experiment
+
+`examples/pro/codegraph_importer` is an Incan-authored external-consumer experiment for this JSONL contract. It takes an exported `codegraph.jsonl` file, requires the schema-v1 header and fact envelope, counts the current record kinds, preserves unknown future kinds as opaque, and prints a deterministic JSON summary.
+
+```bash
+incan inspect codegraph src/main.incn --format jsonl > codegraph.jsonl
+cd examples/pro/codegraph_importer
+incan run src/main.incn
+```
+
+The experiment does not parse `.incn`, resolve names, infer missing edges, or store graph data. It demonstrates the intended boundary: an importer may validate, persist, compare, or visualize compiler-owned facts, but must not become their semantic authority. Schema version 1 is explicit; adapters for later versions must be deliberate rather than silently accepting a changed contract.
+
 ## JSONL records
 
 Every line is a standalone JSON object with a `record` discriminator. Current record kinds are:

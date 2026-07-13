@@ -1595,6 +1595,82 @@ pub def entrypoint() -> int:
 }
 
 #[test]
+fn codegraph_importer_experiment_consumes_compiler_jsonl_issue776() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let source_dir = tmp.path().join("source");
+    fs::create_dir_all(&source_dir)?;
+    fs::write(
+        source_dir.join("incan.toml"),
+        r#"[project]
+name = "codegraph_importer_source"
+version = "0.1.0"
+"#,
+    )?;
+    let source_main = source_dir.join("main.incn");
+    fs::write(
+        &source_main,
+        r#"pub def greet(name: str) -> str:
+    return f"hello {name}"
+
+def main() -> None:
+    println(greet("Incan"))
+"#,
+    )?;
+
+    let graph = run_incan(
+        &source_dir,
+        &[
+            "inspect",
+            "codegraph",
+            source_main.to_str().ok_or("source path was not valid UTF-8")?,
+            "--format",
+            "jsonl",
+        ],
+    )?;
+    assert_success(&graph, "compiler codegraph export for importer experiment");
+    let graph_records = parse_jsonl_stdout(&graph)?;
+    assert_codegraph_v04_record_contract(&graph_records);
+
+    let importer_dir = tmp.path().join("importer");
+    let importer_src = importer_dir.join("src");
+    fs::create_dir_all(&importer_src)?;
+    fs::write(
+        importer_dir.join("incan.toml"),
+        include_str!("../examples/pro/codegraph_importer/incan.toml"),
+    )?;
+    fs::write(
+        importer_src.join("importer.incn"),
+        include_str!("../examples/pro/codegraph_importer/src/importer.incn"),
+    )?;
+    fs::write(
+        importer_src.join("main.incn"),
+        include_str!("../examples/pro/codegraph_importer/src/main.incn"),
+    )?;
+    fs::write(importer_dir.join("codegraph.jsonl"), &graph.stdout)?;
+
+    let first = run_incan(&importer_dir, &["run", "src/main.incn"])?;
+    assert_success(&first, "Incan-authored codegraph importer experiment");
+    let second = run_incan(&importer_dir, &["run", "src/main.incn"])?;
+    assert_success(&second, "second Incan-authored codegraph importer experiment");
+    assert_eq!(first.stdout, second.stdout, "importer summary must be deterministic");
+
+    let summary = parse_json_stdout(&first)?;
+    assert_eq!(summary["schema_version"], serde_json::json!(1));
+    assert_eq!(summary["mode"], serde_json::json!("strict"));
+    assert_eq!(summary["header_count"], serde_json::json!(1));
+    assert!(
+        summary["fact_count"].as_i64().is_some_and(|count| count > 0),
+        "importer must observe compiler-owned graph facts: {summary}"
+    );
+    assert!(
+        summary["declaration_count"].as_i64().is_some_and(|count| count > 0),
+        "importer must preserve declaration records without parsing source itself: {summary}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn inspect_codegraph_tolerant_directory_keeps_parseable_facts_and_diagnostics() -> Result<(), Box<dyn std::error::Error>>
 {
     let tmp = tempfile::tempdir()?;

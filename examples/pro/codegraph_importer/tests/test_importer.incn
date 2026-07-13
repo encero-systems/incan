@@ -1,0 +1,36 @@
+from importer import import_jsonl
+from std.testing import fail
+
+
+def test_imports_known_and_future_records_without_reinterpreting_them() -> None:
+    source = "{\"record\":\"header\",\"schema_version\":1,\"mode\":\"strict\",\"degraded\":false}\n{\"record\":\"file\",\"degraded\":false}\n{\"record\":\"declaration\",\"degraded\":false}\n{\"record\":\"call\",\"degraded\":true}\n{\"record\":\"future_record\",\"degraded\":false}\n"
+
+    match import_jsonl(source):
+        Err(error) => fail(error.message())
+        Ok(summary) =>
+            assert summary.schema_version == 1
+            assert summary.mode == "strict"
+            assert summary.header_count == 1
+            assert summary.fact_count == 4
+            assert summary.file_count == 1
+            assert summary.declaration_count == 1
+            assert summary.call_count == 1
+            assert summary.degraded_fact_count == 1
+            assert summary.unknown_record_count == 1
+
+
+def test_rejects_missing_or_repeated_headers() -> None:
+    missing = "{\"record\":\"file\",\"degraded\":false}"
+    repeated = "{\"record\":\"header\",\"schema_version\":1,\"mode\":\"strict\",\"degraded\":false}\n{\"record\":\"header\",\"schema_version\":1,\"mode\":\"strict\",\"degraded\":false}\n"
+
+    match import_jsonl(missing):
+        Ok(_) =>
+            assert false
+        Err(error) =>
+            assert error.kind_name() == "type"
+
+    match import_jsonl(repeated):
+        Ok(_) =>
+            assert false
+        Err(error) =>
+            assert error.kind_name() == "type"

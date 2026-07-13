@@ -1,0 +1,132 @@
+"""
+Minimal external-consumer experiment for `incan inspect codegraph` JSONL.
+
+This project deliberately consumes compiler-owned records without resolving names,
+following imports, or inferring extra semantics. It validates the stable envelope,
+keeps unknown future record kinds opaque, and produces a deterministic summary that
+an external indexer can persist or compare.
+"""
+
+from std.json import JsonError, JsonErrorKind, JsonValue
+
+
+pub model GraphSummary:
+    """Deterministic, storage-agnostic summary of one codegraph JSONL snapshot."""
+
+    pub schema_version: int
+    pub mode: str
+    pub degraded: bool
+    pub header_count: int
+    pub fact_count: int
+    pub file_count: int
+    pub module_count: int
+    pub declaration_count: int
+    pub import_count: int
+    pub export_count: int
+    pub reference_count: int
+    pub call_count: int
+    pub containment_count: int
+    pub diagnostic_count: int
+    pub degraded_fact_count: int
+    pub unknown_record_count: int
+
+    def to_json(self) -> Result[str, JsonError]:
+        """Return the deterministic JSON summary emitted by this importer experiment."""
+
+        return JsonValue
+            .object(
+                {"call_count": JsonValue.int(self.call_count), "containment_count": JsonValue.int(self.containment_count), "declaration_count": JsonValue.int(
+                    self.declaration_count,
+                ), "degraded": JsonValue.bool(self.degraded), "degraded_fact_count": JsonValue.int(
+                    self.degraded_fact_count,
+                ), "diagnostic_count": JsonValue.int(self.diagnostic_count), "export_count": JsonValue.int(
+                    self.export_count,
+                ), "fact_count": JsonValue.int(self.fact_count), "file_count": JsonValue.int(self.file_count), "header_count": JsonValue.int(
+                    self.header_count,
+                ), "import_count": JsonValue.int(self.import_count), "mode": JsonValue.string(self.mode), "module_count": JsonValue.int(
+                    self.module_count,
+                ), "reference_count": JsonValue.int(self.reference_count), "schema_version": JsonValue.int(
+                    self.schema_version,
+                ), "unknown_record_count": JsonValue.int(self.unknown_record_count)},
+            )
+            .to_json()
+
+
+pub def import_jsonl(source: str) -> Result[GraphSummary, JsonError]:
+    """Import one JSONL snapshot without assigning any semantic authority to it."""
+
+    mut summary = GraphSummary(
+        schema_version=0,
+        mode="",
+        degraded=false,
+        header_count=0,
+        fact_count=0,
+        file_count=0,
+        module_count=0,
+        declaration_count=0,
+        import_count=0,
+        export_count=0,
+        reference_count=0,
+        call_count=0,
+        containment_count=0,
+        diagnostic_count=0,
+        degraded_fact_count=0,
+        unknown_record_count=0,
+    )
+    for raw_line in source.split("\n"):
+        line = raw_line.strip()
+        if line == "":
+            continue
+
+        value = JsonValue.parse(line)?
+        record = value.require("record")?.expect_str()?
+
+        if summary.header_count == 0:
+            if record != "header":
+                return Err(_invalid_snapshot("the first JSONL record must be a header"))
+            summary.schema_version = value.require("schema_version")?.expect_int()?
+            if summary.schema_version != 1:
+                return Err(_invalid_snapshot("unsupported codegraph schema version"))
+            summary.mode = value.require("mode")?.expect_str()?
+            summary.degraded = value.require("degraded")?.expect_bool()?
+            summary.header_count = 1
+            continue
+
+        if record == "header":
+            return Err(_invalid_snapshot("a codegraph snapshot must contain exactly one header"))
+
+        summary.fact_count = summary.fact_count + 1
+        if value.require("degraded")?.expect_bool()?:
+            summary.degraded_fact_count = summary.degraded_fact_count + 1
+
+        if record == "file":
+            summary.file_count = summary.file_count + 1
+        elif record == "module":
+            summary.module_count = summary.module_count + 1
+        elif record == "declaration":
+            summary.declaration_count = summary.declaration_count + 1
+        elif record == "import":
+            summary.import_count = summary.import_count + 1
+        elif record == "export":
+            summary.export_count = summary.export_count + 1
+        elif record == "reference":
+            summary.reference_count = summary.reference_count + 1
+        elif record == "call":
+            summary.call_count = summary.call_count + 1
+        elif record == "containment":
+            summary.containment_count = summary.containment_count + 1
+        elif record == "diagnostic":
+            summary.diagnostic_count = summary.diagnostic_count + 1
+        else:
+            summary.unknown_record_count = summary.unknown_record_count + 1
+
+    if summary.header_count == 0:
+        return Err(_invalid_snapshot("a codegraph snapshot must contain a header"))
+
+    return Ok(summary)
+
+
+def _invalid_snapshot(detail: str) -> JsonError:
+    """Create the stable JSON type error used for invalid codegraph snapshot envelopes."""
+
+    return JsonError(kind_value=JsonErrorKind.Type, detail_value=detail)

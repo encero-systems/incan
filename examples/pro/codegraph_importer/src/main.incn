@@ -1,0 +1,15 @@
+"""Import `codegraph.jsonl` in the current directory and print a deterministic summary."""
+
+from importer import import_jsonl
+
+
+def main() -> None:
+    match read_file("codegraph.jsonl"):
+        Err(error) => println(error)
+        Ok(source) =>
+            match import_jsonl(source):
+                Err(error) => println(error.message())
+                Ok(summary) =>
+                    match summary.to_json():
+                        Err(error) => println(error.message())
+                        Ok(output) => println(output)
