@@ -7180,6 +7180,85 @@ def test_generic_callable_name_ignores_unrelated_signatures() -> None:
 }
 
 #[test]
+fn build_metadata_free_into_bound_tokenizer_encode_issue804() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let helper_dir = tmp.path().join("rust").join("tokenizers");
+    fs::create_dir_all(helper_dir.join("src"))?;
+    fs::write(
+        helper_dir.join("Cargo.toml"),
+        "[package]\nname = \"tokenizers\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    fs::write(
+        helper_dir.join("src").join("lib.rs"),
+        r#"pub struct Tokenizer;
+
+pub struct EncodeInput<'a>(&'a str);
+
+impl<'a> From<&'a str> for EncodeInput<'a> {
+    fn from(value: &'a str) -> Self {
+        Self(value)
+    }
+}
+
+impl Tokenizer {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn encode<'a, E>(&self, value: E, _add_special_tokens: bool) -> Result<(), ()>
+    where
+        E: Into<EncodeInput<'a>>,
+    {
+        let _ = value.into();
+        Ok(())
+    }
+}
+"#,
+    )?;
+    let main_path = write_minimal_project(
+        tmp.path(),
+        "metadata_free_into_bound_tokenizer_encode_issue804",
+        r#"
+[rust-dependencies]
+tokenizers = { path = "rust/tokenizers" }
+"#,
+    )?;
+    fs::write(
+        &main_path,
+        r#"from rust::tokenizers import Tokenizer
+
+def main() -> None:
+    tokenizer = Tokenizer.new()
+    literal = tokenizer.encode("literal", False)
+    text = "variable"
+    variable = tokenizer.encode(text, False)
+"#,
+    )?;
+
+    let build_output = run_incan(
+        tmp.path(),
+        &["build", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(
+        &build_output,
+        "incan build for metadata-free Into-bound tokenizer encode issue804",
+    );
+    let generated = fs::read_to_string(
+        tmp.path()
+            .join("target/incan/metadata_free_into_bound_tokenizer_encode_issue804/src/main.rs"),
+    )?;
+    assert!(
+        generated.contains("tokenizer.encode(\"literal\", false)"),
+        "literal must preserve its direct &str shape, got:\n{generated}"
+    );
+    assert!(
+        generated.contains("tokenizer.encode((text).as_str(), false)"),
+        "owned Incan strings must become &str for the Into-bound method, got:\n{generated}"
+    );
+    Ok(())
+}
+
+#[test]
 fn build_frozen_uses_existing_lockfile_without_network() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "cli_frozen_existing_lock_project", "")?;
