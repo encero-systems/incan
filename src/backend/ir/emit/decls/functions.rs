@@ -7,7 +7,10 @@ use std::collections::{HashMap, HashSet};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
-use incan_core::lang::conventions;
+use incan_core::lang::{
+    conventions,
+    traits::{self as core_traits, TraitId},
+};
 
 use super::super::super::decl::{IrRustAttrArg, IrRustLintAllow};
 use super::super::super::expr::{
@@ -958,12 +961,15 @@ impl<'a> IrEmitter<'a> {
         trait_decl: &super::super::super::decl::IrTrait,
     ) -> Result<TokenStream, EmitError> {
         let name = format_ident!("{}", &trait_decl.name);
+        let iterator_trait_name = core_traits::as_str(TraitId::Iterator);
+        let iterator_trait = format_ident!("{iterator_trait_name}");
+        let sum_trait = format_ident!("{}", core_traits::as_str(TraitId::Sum));
         let methods: Vec<TokenStream> = trait_decl
             .methods
             .iter()
             .map(|m| {
                 let iterator_sum_bound =
-                    (trait_decl.name == "Iterator" && m.name == "sum").then(|| quote! { T: Sum<T> });
+                    (trait_decl.name == iterator_trait_name && m.name == "sum").then(|| quote! { T: #sum_trait<T> });
                 self.emit_trait_method_with_where(m, iterator_sum_bound)
             })
             .collect::<Result<_, _>>()?;
@@ -983,9 +989,9 @@ impl<'a> IrEmitter<'a> {
             let rest = bound_tokens.iter().skip(1).map(|b| quote! { + #b });
             quote! { : #first #(#rest)* }
         };
-        let iterator_mut_forwarding = if trait_decl.name == "Iterator" {
+        let iterator_mut_forwarding = if trait_decl.name == iterator_trait_name {
             quote! {
-                impl<T, I: Iterator<T> + ?Sized> Iterator<T> for &mut I {
+                impl<T, I: #iterator_trait<T> + ?Sized> #iterator_trait<T> for &mut I {
                     fn __next__(&mut self) -> Option<T> {
                         (**self).__next__()
                     }

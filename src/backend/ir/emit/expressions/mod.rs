@@ -3752,7 +3752,7 @@ mod tests {
     }
 
     #[test]
-    fn known_iterator_terminal_methods_emit_incan_next_loops() -> Result<(), String> {
+    fn known_iterator_terminal_methods_emit_incan_next_loops_except_source_owned_sum() -> Result<(), String> {
         let registry = FunctionRegistry::new();
         let emitter = IrEmitter::new(&registry);
 
@@ -3862,8 +3862,8 @@ mod tests {
 
         let sum_rendered = render(IteratorMethodKind::Sum, Vec::new())?;
         assert!(
-            sum_rendered.contains("collection :: Iterator :: __next__")
-                && sum_rendered.contains("__incan_sum += __incan_item"),
+            sum_rendered.contains("collection :: Iterator :: sum (& mut __incan_iterator_sum)")
+                && !sum_rendered.contains("__incan_sum += __incan_item"),
             "unexpected sum emission: {sum_rendered}"
         );
 
