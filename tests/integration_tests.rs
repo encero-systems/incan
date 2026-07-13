@@ -10837,8 +10837,13 @@ def parse_value() -> Value:
     return json_parse("{}").unwrap()
 
 
+def accept_value(value: Value) -> None:
+    pass
+
+
 def main() -> None:
     value: Value = parse_value()
+    accept_value(json_parse("{}").unwrap())
 "#,
         )?;
 
@@ -10857,6 +10862,31 @@ def main() -> None:
             "expected generated Rust to compile for the inferred generic JSON result.\nstdout:\n{}\nstderr:\n{}",
             String::from_utf8_lossy(&build_output.stdout),
             String::from_utf8_lossy(&build_output.stderr)
+        );
+
+        let tests_dir = tmp.path().join("tests");
+        std::fs::create_dir_all(&tests_dir)?;
+        std::fs::write(
+            tests_dir.join("test_generic_json_return.incn"),
+            r#"from rust::serde_json import Value
+from rust::serde_json import from_str as json_parse
+
+
+def accept_value(value: Value) -> None:
+    pass
+
+
+def test_generic_json_result_infers_from_parameter_context() -> None:
+    accept_value(json_parse("{}").unwrap())
+    assert true
+"#,
+        )?;
+        let test_output = run_test(&tests_dir)?;
+        assert!(
+            test_output.status.success(),
+            "expected the package test batch to compile and run the inferred generic JSON result.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&test_output.stdout),
+            String::from_utf8_lossy(&test_output.stderr)
         );
         Ok(())
     }

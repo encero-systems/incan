@@ -18,6 +18,7 @@ use incan_core::interop::{
 };
 use incan_core::lang::magic_methods;
 use incan_core::lang::surface::collection_helpers::{self, BuiltinCollectionHelperId};
+use incan_core::lang::surface::result_methods::ResultMethodId;
 use incan_core::lang::surface::types as surface_types;
 use incan_core::lang::surface::types::{SEMAPHORE_ACQUIRE_ERROR_TYPE_NAME, SEMAPHORE_PERMIT_TYPE_NAME, SurfaceTypeId};
 use incan_core::lang::surface::{
@@ -3283,7 +3284,10 @@ impl TypeChecker {
 
         let mut base_ty = self.check_type_receiver_expr(base);
         if let Some(expected) = expected_return_ty
-            && matches!(method, "unwrap" | "unwrap_or")
+            && matches!(
+                result_methods::from_str(method),
+                Some(ResultMethodId::Unwrap | ResultMethodId::UnwrapOr)
+            )
             && matches!(&base.node, Expr::Call(_, _, _))
             && matches!(
                 &base_ty,
@@ -3292,8 +3296,10 @@ impl TypeChecker {
                         && args.first().is_some_and(Self::contains_unbound_rust_type_var)
             )
         {
-            let expected_result =
-                ResolvedType::Generic("Result".to_string(), vec![expected.clone(), ResolvedType::Unknown]);
+            let expected_result = ResolvedType::Generic(
+                collection_name(CollectionTypeId::Result).to_string(),
+                vec![expected.clone(), ResolvedType::Unknown],
+            );
             base_ty = self.check_expr_with_expected(base, Some(&expected_result));
         }
 
