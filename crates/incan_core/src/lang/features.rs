@@ -791,13 +791,18 @@ pub const FEATURES: &[FeatureDescriptor] = &[
         introduced_in_rfc: RFC::_055,
         stability: Stability::Stable,
         activation: "Import from `std.fs` or submodules such as `std.fs.path`.",
-        summary: "Path-centric filesystem APIs cover paths, files, metadata, traversal, globbing, copy/move/delete, and durability syncs.",
+        summary: "Path-centric filesystem APIs cover paths, files, metadata, traversal, globbing, copy/move/delete, durability syncs, and crash-safe publication through same-filesystem replacement, directory synchronization, and advisory locks.",
         canonical_forms: &["from std.fs import Path", "Path(\"data\").join(\"orders.csv\")"],
         prefer_over: "One-off Rust filesystem wrappers for ordinary path and file work.",
         references: links![
             ("std.fs", "stdlib/fs.md"),
             ("File IO", "../how-to/file_io.md"),
-            ("Release 0.3", "../../release_notes/0_3.md"),
+            ("RFC 055", "../../RFCs/closed/implemented/055_std_fs.md"),
+            (
+                "RFC 112",
+                "../../RFCs/closed/implemented/112_crash_safe_publication_and_file_coordination.md"
+            ),
+            ("Release 0.5", "../../release_notes/0_5.md"),
         ],
     },
     FeatureDescriptor {

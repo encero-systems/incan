@@ -538,7 +538,9 @@ mod tests {
 
     fn write_source_block(root: &Path, relative_path: &str, id: &str, name: &str) -> std::io::Result<()> {
         let path = root.join(relative_path);
-        let parent = path.parent().expect("source path should have a parent");
+        let parent = path
+            .parent()
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "source path should have a parent"))?;
         fs::create_dir_all(parent)?;
         fs::write(path, source_block(id, name))
     }
