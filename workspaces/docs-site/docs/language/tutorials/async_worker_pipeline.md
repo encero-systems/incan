@@ -1,6 +1,6 @@
 # Build an asynchronous worker pipeline
 
-This tutorial runs several independent jobs concurrently, waits for their typed results, and applies a deadline to slow work. It uses the currently verified task APIs: `spawn`, `JoinHandle`, and `timeout`.
+This tutorial runs several independent jobs concurrently, waits for their typed results, and applies a deadline to slow work. It uses the task APIs `spawn`, `JoinHandle`, and `timeout`.
 
 <ol class="inc-step-rail" style="--inc-step-count: 4" aria-label="Async worker tutorial steps">
   <li><strong>Work</strong>Define an async job</li>
@@ -78,9 +78,6 @@ Run the repository example:
 ```bash
 incan run examples/advanced/async_worker_pipeline.incn
 ```
-
-!!! note "Why this tutorial does not use channels yet"
-    The intended bounded-channel surface is documented under `std.async.channel`, but its typed constructor and imported wrapper methods currently fail compiler verification. This tutorial stays on task APIs that pass end-to-end checks rather than presenting an unverified queue example.
 
 <section class="inc-learning-panel inc-learning-panel--complete inc-incus-slot" data-label="Complete" data-incus-category="success" markdown="1">
 
