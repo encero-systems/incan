@@ -24,6 +24,7 @@ use crate::frontend::ast::{ImportKind, Program, Span};
 use crate::frontend::contract_metadata::{
     CanonicalModelBundle, materialize_contract_models, read_project_model_bundles,
 };
+use crate::frontend::hir::build_semantic_module_snapshot_v0;
 use crate::frontend::library_manifest_index::{
     LibraryArtifactMetadata, LibraryManifestFailureKind, LibraryManifestIndex, LibraryManifestIndexEntry,
 };
@@ -34,6 +35,7 @@ use crate::frontend::testing_markers::{
     TestingMarkerSemantics, load_testing_marker_semantics, testing_marker_semantics_from_manifest,
 };
 use crate::frontend::typechecker::TypeCheckInfo;
+use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
 use crate::frontend::{ast_walk, diagnostics, lexer, parser, typechecker, vocab_desugar_pass};
 use crate::library_manifest::{
     LibraryManifest, ProviderCargoDependency, ProviderCargoDependencySource, ProviderModuleClaim,
@@ -1323,6 +1325,49 @@ pub(crate) fn discover_effective_project_manifest(start_dir: &Path) -> CliResult
         .map_err(|error| CliError::failure(error.to_string()))
 }
 
+/// Checked products produced by one [`CompilationSession`] analysis pass.
+///
+/// The current Rust-source backend still lowers from [`TypeCheckInfo`], while compiler-facing consumers use the
+/// portable snapshot. Keeping both products in one analysis result prevents a CLI command from independently checking
+/// the same sources and then treating its second result as authoritative.
+///
+/// The `TypeCheckInfo` half is a transition bridge. Remove it when Body IR owns every lowering query tracked by #225.
+#[derive(Debug, Clone)]
+pub(crate) struct CompilationAnalysis {
+    type_info_by_path: BTreeMap<PathBuf, TypeCheckInfo>,
+    type_info_by_module_path: BTreeMap<Vec<String>, TypeCheckInfo>,
+    semantic_snapshots_by_path: BTreeMap<PathBuf, incan_semantics_core::SemanticModuleSnapshot>,
+    stdlib_cache: StdlibAstCache,
+}
+
+impl CompilationAnalysis {
+    /// Return the lowering input for one collected source file.
+    pub(crate) fn type_info_for_path(&self, path: &Path) -> Option<&TypeCheckInfo> {
+        self.type_info_by_path.get(path)
+    }
+
+    /// Return the lowering input for one compiler module identity.
+    ///
+    /// Identity is distinct from a source file path because the test runner may create multiple compiler modules rooted
+    /// at the same file.
+    pub(crate) fn type_info_for_module_path(&self, path: &[String]) -> Option<&TypeCheckInfo> {
+        self.type_info_by_module_path.get(path)
+    }
+
+    /// Return portable HIR and semantic fact snapshots keyed by source path.
+    pub(crate) fn semantic_snapshots(&self) -> &BTreeMap<PathBuf, incan_semantics_core::SemanticModuleSnapshot> {
+        &self.semantic_snapshots_by_path
+    }
+
+    /// Return the source-backed stdlib metadata accumulated by this analysis.
+    ///
+    /// Lowering currently queries this cache for source-defined trait and type metadata. It stays part of the session
+    /// result until those queries move to portable semantic facts and Body IR (#225).
+    pub(crate) fn stdlib_cache(&self) -> &StdlibAstCache {
+        &self.stdlib_cache
+    }
+}
+
 /// Shared source-analysis context for CLI commands and the LSP.
 ///
 /// This owns the project-level inputs that affect context-sensitive parsing and typechecking so entrypoints do not
@@ -1523,6 +1568,53 @@ impl CompilationSession {
         })
         .map(Arc::new)
         .map_err(|error| CliError::failure(error.to_string()))
+    }
+
+    /// Analyze one collected module graph exactly once.
+    ///
+    /// This is the v0.5 session bridge: code generation receives the checked lowering inputs it currently needs, and
+    /// codegraph/LSP-facing callers receive compiler-owned semantic facts from the same pass. No command may re-run
+    /// typechecking merely to derive its own authority.
+    pub(crate) fn analyze_modules(
+        &self,
+        modules: &[ParsedModule],
+        #[cfg(feature = "rust_inspect")] rust_inspect_manifest_dir: Option<&Path>,
+    ) -> Result<CompilationAnalysis, CliDiagnosticFailure> {
+        let provider_plan = self.provider_plan_for_modules(modules).map_err(|error| {
+            let module = modules.last();
+            CliDiagnosticFailure::single(
+                module
+                    .map(|module| module.file_path.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                module.map(|module| module.source.clone()).unwrap_or_default(),
+                diagnostics::CompileError::new(error.message, Span::default()),
+                diagnostics::DiagnosticPhase::Import,
+            )
+        })?;
+        let typecheck_artifacts = typecheck_modules_with_import_graph_artifacts(
+            modules,
+            self.manifest.as_ref(),
+            &provider_plan,
+            #[cfg(feature = "rust_inspect")]
+            rust_inspect_manifest_dir,
+        )?;
+        let mut type_info_by_path = BTreeMap::new();
+        let mut type_info_by_module_path = BTreeMap::new();
+        let mut semantic_snapshots_by_path = BTreeMap::new();
+
+        for (module, type_info) in modules.iter().zip(typecheck_artifacts.type_infos) {
+            let snapshot = build_semantic_module_snapshot_v0(&module.ast, &module.path_segments, &type_info);
+            type_info_by_path.insert(module.file_path.clone(), type_info.clone());
+            type_info_by_module_path.insert(module.path_segments.clone(), type_info);
+            semantic_snapshots_by_path.insert(module.file_path.clone(), snapshot);
+        }
+
+        Ok(CompilationAnalysis {
+            type_info_by_path,
+            type_info_by_module_path,
+            semantic_snapshots_by_path,
+            stdlib_cache: typecheck_artifacts.stdlib_cache,
+        })
     }
 
     /// Resolve the test runner's marker contract from the same checked provider plan used by compilation.
@@ -3599,6 +3691,7 @@ pub(crate) fn imported_module_deps_for_with_index<'m>(
 ///
 /// This helper centralizes the per-module checker setup used by `build` and `check` paths so warning/error rendering
 /// stays consistent across command flows.
+#[cfg(test)]
 pub(crate) fn typecheck_modules_with_import_graph(
     modules: &[ParsedModule],
     manifest: Option<&ProjectManifest>,
@@ -3639,15 +3732,48 @@ pub(crate) fn typecheck_modules_with_import_graph_info(
     provider_plan: &Arc<ProviderPlan>,
     #[cfg(feature = "rust_inspect")] rust_inspect_manifest_dir: Option<&Path>,
 ) -> Result<BTreeMap<PathBuf, TypeCheckInfo>, CliDiagnosticFailure> {
+    let typecheck_artifacts = typecheck_modules_with_import_graph_artifacts(
+        modules,
+        manifest,
+        provider_plan,
+        #[cfg(feature = "rust_inspect")]
+        rust_inspect_manifest_dir,
+    )?;
+    Ok(modules
+        .iter()
+        .zip(typecheck_artifacts.type_infos)
+        .map(|(module, type_info)| (module.file_path.clone(), type_info))
+        .collect())
+}
+
+/// Products retained from one dependency-safe typechecking pass.
+struct TypecheckModuleArtifacts {
+    type_infos: Vec<TypeCheckInfo>,
+    stdlib_cache: StdlibAstCache,
+}
+
+/// Typecheck a collected graph in dependency-safe order and retain one result for every input module plus the
+/// source-backed stdlib metadata lowering needs.
+///
+/// Ordering is intentional: session analysis also needs an identity-keyed representation for synthetic modules that
+/// share a source file path.
+fn typecheck_modules_with_import_graph_artifacts(
+    modules: &[ParsedModule],
+    manifest: Option<&ProjectManifest>,
+    provider_plan: &Arc<ProviderPlan>,
+    #[cfg(feature = "rust_inspect")] rust_inspect_manifest_dir: Option<&Path>,
+) -> Result<TypecheckModuleArtifacts, CliDiagnosticFailure> {
     let declared = manifest.map(|m| m.declared_rust_crate_names());
     let module_idx_by_key = module_key_index(modules);
     let mut diagnostics_out = Vec::new();
-    let mut type_info_by_path = BTreeMap::new();
+    let mut type_infos = Vec::with_capacity(modules.len());
+    let mut stdlib_cache = StdlibAstCache::new();
 
     for (idx, module) in modules.iter().enumerate() {
         let deps_for_module = imported_module_deps_for_with_index(modules, idx, &module_idx_by_key);
 
         let mut checker = typechecker::TypeChecker::new();
+        checker.stdlib_cache = stdlib_cache.clone();
         if let Some(names) = declared.clone() {
             checker.set_declared_crate_names(names);
         }
@@ -3672,9 +3798,11 @@ pub(crate) fn typecheck_modules_with_import_graph_info(
                         diagnostics::format_error(module.file_path.to_string_lossy().as_ref(), &module.source, warn)
                     );
                 }
-                type_info_by_path.insert(module.file_path.clone(), checker.type_info().clone());
+                type_infos.push(checker.type_info().clone());
+                stdlib_cache = checker.stdlib_cache.clone();
             }
             Err(errs) => {
+                stdlib_cache = checker.stdlib_cache.clone();
                 diagnostics_out.extend(errs.into_iter().map(|error| CliDiagnostic {
                     file_path: module.file_path.to_string_lossy().to_string(),
                     source: module.source.clone(),
@@ -3686,7 +3814,10 @@ pub(crate) fn typecheck_modules_with_import_graph_info(
     }
 
     if diagnostics_out.is_empty() {
-        Ok(type_info_by_path)
+        Ok(TypecheckModuleArtifacts {
+            type_infos,
+            stdlib_cache,
+        })
     } else {
         Err(CliDiagnosticFailure {
             diagnostics: diagnostics_out,
@@ -5491,6 +5622,89 @@ def main() -> None:
 
         assert!(message.contains("was built with package features [alpha]"));
         assert!(message.contains("requires [beta]"));
+        Ok(())
+    }
+
+    #[test]
+    fn compilation_session_analysis_bundles_lowering_inputs_with_semantic_facts()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path();
+        let source_root = project_root.join("src");
+        std::fs::create_dir_all(&source_root)?;
+        std::fs::write(
+            project_root.join("incan.toml"),
+            "[project]\nname = \"analysis_consumer\"\n",
+        )?;
+        let main_path = source_root.join("main.incn");
+        std::fs::write(
+            &main_path,
+            "from std.testing import assert_eq\n\ndef helper() -> int:\n  return 1\n\ndef main() -> int:\n  assert_eq(helper(), 1)\n  return helper()\n",
+        )?;
+
+        let session = CompilationSession::discover_with_feature_selection(&main_path, &FeatureSelection::default())?;
+        let modules = collect_modules_detailed_with_session(main_path.clone(), &session)
+            .map_err(|failure| failure.render_human())?;
+        let analysis = session
+            .analyze_modules(
+                &modules,
+                #[cfg(feature = "rust_inspect")]
+                None,
+            )
+            .map_err(|failure| failure.render_human())?;
+        let snapshot = analysis
+            .semantic_snapshots()
+            .get(&main_path)
+            .ok_or("expected a session semantic snapshot for the entry module")?;
+
+        assert!(analysis.type_info_for_path(&main_path).is_some());
+        assert!(snapshot.render_snapshot().contains("decl:main::helper type=() -> int"));
+        assert!(
+            snapshot
+                .render_snapshot()
+                .contains("symbol_target=function:main::helper")
+        );
+        let mut stdlib_cache = analysis.stdlib_cache().clone();
+        assert!(
+            stdlib_cache
+                .lookup_function_symbol(&["std".to_string(), "testing".to_string()], "assert_eq")
+                .is_some(),
+            "session analysis must retain source-backed stdlib metadata for lowering"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn compilation_session_analysis_preserves_same_file_module_identities() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let source_root = tmp.path().join("src");
+        std::fs::create_dir_all(&source_root)?;
+        std::fs::write(
+            tmp.path().join("incan.toml"),
+            "[project]\nname = \"identity_consumer\"\n",
+        )?;
+        let shared_path = source_root.join("shared.incn");
+        std::fs::write(&shared_path, "def value() -> int:\n  return 1\n")?;
+
+        let mut first = parsed_module_for_test("def first() -> int:\n  return 1\n")?;
+        first.name = "first".to_string();
+        first.path_segments = vec!["first".to_string()];
+        first.file_path = shared_path.clone();
+        let mut second = parsed_module_for_test("def second() -> int:\n  return 2\n")?;
+        second.name = "second".to_string();
+        second.path_segments = vec!["second".to_string()];
+        second.file_path = shared_path.clone();
+
+        let analysis = CompilationSession::discover_with_feature_selection(&shared_path, &FeatureSelection::default())?
+            .analyze_modules(
+                &[first, second],
+                #[cfg(feature = "rust_inspect")]
+                None,
+            )
+            .map_err(|failure| failure.render_human())?;
+
+        assert!(analysis.type_info_for_module_path(&["first".to_string()]).is_some());
+        assert!(analysis.type_info_for_module_path(&["second".to_string()]).is_some());
         Ok(())
     }
 }
