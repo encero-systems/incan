@@ -8,7 +8,11 @@ use crate::frontend::ast::{self, Declaration, Expr, ImportKind, ImportPath, Prog
 use crate::frontend::decorator_resolution;
 use crate::frontend::module::canonicalize_source_module_segments;
 use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
-use incan_core::lang::{generated_support, stdlib, surface::result_methods};
+use incan_core::lang::{
+    generated_support, stdlib,
+    surface::result_methods,
+    traits::{self as core_traits, TraitId},
+};
 
 /// Collect field-alias metadata for exported models.
 pub(super) fn collect_model_field_aliases(
@@ -596,13 +600,13 @@ fn trait_emission_references(trait_decl: &ast::TraitDecl) -> HashSet<String> {
         }
         collect_type_signature_references(&method.node.return_type.node, &mut names);
     }
-    if trait_decl.name == "Iterator"
+    if trait_decl.name == core_traits::as_str(TraitId::Iterator)
         && trait_decl
             .methods
             .iter()
             .any(|method| method.node.name == "sum" && method.node.body.is_some())
     {
-        names.insert("Sum".to_string());
+        names.insert(core_traits::as_str(TraitId::Sum).to_string());
     }
     names
 }
@@ -787,17 +791,19 @@ mod tests {
 
     #[test]
     fn selected_trait_keeps_same_module_trait_used_by_its_signature() {
-        let main = parse("from std.derives.collection import Sum\n");
-        let collection = parse(
+        let iterator = core_traits::as_str(TraitId::Iterator);
+        let sum = core_traits::as_str(TraitId::Sum);
+        let main = parse(&format!("from std.derives.collection import {sum}\n"));
+        let collection = parse(&format!(
             r#"
-pub trait Iterator[T]:
+pub trait {iterator}[T]:
     def __next__(mut self) -> Option[T]: ...
 
-pub trait Sum[T]:
+pub trait {sum}[T]:
     @classmethod
-    def sum(cls, items: Iterator[T]) -> Self: ...
+    def sum(cls, items: {iterator}[T]) -> Self: ...
 "#,
-        );
+        ));
         let reachable = collect_externally_reachable_items_by_module(
             &main,
             &[(
@@ -814,26 +820,28 @@ pub trait Sum[T]:
         let Some(selected) = reachable.get(&collection_path) else {
             panic!("collection should be reachable");
         };
-        assert!(selected.contains("Sum"));
-        assert!(selected.contains("Iterator"));
+        assert!(selected.contains(sum));
+        assert!(selected.contains(iterator));
     }
 
     #[test]
     fn selected_iterator_keeps_sum_used_by_source_owned_default() {
-        let main = parse("from std.derives.collection import Iterator\n");
-        let collection = parse(
+        let iterator = core_traits::as_str(TraitId::Iterator);
+        let sum = core_traits::as_str(TraitId::Sum);
+        let main = parse(&format!("from std.derives.collection import {iterator}\n"));
+        let collection = parse(&format!(
             r#"
-pub trait Iterator[T]:
+pub trait {iterator}[T]:
     def __next__(mut self) -> Option[T]: ...
 
     def sum(mut self) -> T:
         return T.sum(self)
 
-pub trait Sum[T]:
+pub trait {sum}[T]:
     @classmethod
-    def sum(cls, items: Iterator[T]) -> Self: ...
+    def sum(cls, items: {iterator}[T]) -> Self: ...
 "#,
-        );
+        ));
         let reachable = collect_externally_reachable_items_by_module(
             &main,
             &[(
@@ -850,8 +858,8 @@ pub trait Sum[T]:
         let Some(selected) = reachable.get(&collection_path) else {
             panic!("collection should be reachable");
         };
-        assert!(selected.contains("Iterator"));
-        assert!(selected.contains("Sum"));
+        assert!(selected.contains(iterator));
+        assert!(selected.contains(sum));
     }
 }
 

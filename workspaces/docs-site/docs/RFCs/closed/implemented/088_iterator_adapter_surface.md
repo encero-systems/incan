@@ -356,6 +356,7 @@ This feature is additive. Existing `for` loops, comprehensions, collection metho
 - [x] Emit Rust iterator chains for standard adapters where equivalent.
 - [x] Add runtime/generated support for `.batch()`.
 - [x] Preserve existing collection iteration, comprehensions, and `for` loops.
+- [x] Move `Iterator.sum()` to the source-owned `Sum[T]` default method (v0.5, #510). Primitive arithmetic and checked-newtype reconstruction remain an explicit temporary compiler bridge until source-level primitive operation and trait-bound declarations can express them directly.
 
 ### Tests
 

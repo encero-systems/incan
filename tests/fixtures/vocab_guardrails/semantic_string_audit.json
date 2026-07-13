@@ -62,9 +62,9 @@
     },
     {
       "path": "src/backend/ir/codegen/dependency_metadata.rs",
-      "category": "dependency metadata compatibility and web route preservation",
-      "expected_count": 4,
-      "expected_fingerprint": "0x867785162699b96a"
+      "category": "dependency metadata compatibility, web route preservation, and registry-backed iterator trait reachability",
+      "expected_count": 3,
+      "expected_fingerprint": "0xee7f98cf89bfc22b"
     },
     {
       "path": "src/backend/ir/codegen/serde_activation.rs",
@@ -80,9 +80,9 @@
     },
     {
       "path": "src/backend/ir/emit/decls/functions.rs",
-      "category": "callable and Rust macro emission compatibility",
-      "expected_count": 4,
-      "expected_fingerprint": "0x77f3c730b657f4c8"
+      "category": "callable and Rust macro emission compatibility with registry-backed iterator trait emission",
+      "expected_count": 3,
+      "expected_fingerprint": "0xcfacf5792303196e"
     },
     {
       "path": "src/backend/ir/emit/decls/impls.rs",
