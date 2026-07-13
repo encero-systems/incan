@@ -7,11 +7,19 @@ Use these templates to keep worker and orchestrator outputs consistent without b
 ```md
 You own one bounded slice of a larger Ralph-loop task.
 
+Loop identity:
+- <loop-id>
+
+Repository and scope role:
+- Repo: <owner/repo>
+- Scope role: <implementation | verification>
+
 Owned scope:
 - <files / directories / modules>
 
 Do not edit:
 - <paths outside your scope>
+- <forbidden repositories or consumer product paths>
 
 Worktree:
 - <absolute path>
@@ -31,6 +39,8 @@ Constraints:
 - You are not alone in the repo.
 - Do not revert others' work.
 - Do not expand your scope.
+- Do not use stale durable state from another loop identity.
+- If your scope role is `verification`, run checks and collect evidence only; do not change consumer product code.
 - If you are a child loop under an RFC parent loop, do not draft a PR description, do not propose a standalone PR, and do not own RFC lifecycle edits.
 - If you are a child loop and need more decomposition, use `orchestrate-parallel-work` only for leaf workers in your owned scope; do not spawn another `ralph-loop`.
 - Do not commit or push unless explicitly told.
@@ -38,6 +48,8 @@ Constraints:
 Return:
 ## Slice plan
 - Goal:
+- Loop identity:
+- Repo / scope role:
 - Owned scope:
 - Verification:
 - Risks/blockers:
