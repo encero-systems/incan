@@ -26,9 +26,9 @@
     },
     {
       "path": "crates/rust_inspect/src/cache_tests.rs",
-      "category": "rust-inspect generated enum metadata regression assertions",
-      "expected_count": 16,
-      "expected_fingerprint": "0x6868ad0500373ab2"
+      "category": "rust-inspect generated metadata regression assertions",
+      "expected_count": 17,
+      "expected_fingerprint": "0xe71187e6045075ce"
     },
     {
       "path": "crates/rust_inspect/src/cache_timing.rs",

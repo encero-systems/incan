@@ -460,12 +460,11 @@ impl TypeChecker {
             {
                 return RustArgBoundaryMatch::Exact;
             }
-            if !is_mut {
-                if Self::incan_boundary_type_display(arg_ty).is_none()
-                    && self.types_compatible(arg_ty, &target_inner_ty)
-                {
-                    return RustArgBoundaryMatch::Coercion(RustArgCoercionKind::Borrow { mutable: false });
-                }
+            if !is_mut
+                && Self::incan_boundary_type_display(arg_ty).is_none()
+                && self.types_compatible(arg_ty, &target_inner_ty)
+            {
+                return RustArgBoundaryMatch::Coercion(RustArgCoercionKind::Borrow { mutable: false });
             }
             if is_mut {
                 if self.types_compatible(arg_ty, &target_inner_ty) {
