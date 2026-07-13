@@ -6536,30 +6536,41 @@
 </code></pre></div>
 <p>This function knows nothing about files. Keeping the domain transformation pure makes it straightforward to test and reuse.</p>
 <h2 id="step-4-connect-the-file-boundary">Step 4: Connect the file boundary<a class="headerlink" href="#step-4-connect-the-file-boundary" title="Permanent link">&para;</a></h2>
-<p>In <code>src/main.incn</code>, read the source through <code>std.fs.Path</code>, parse it through the model, and write the derived report:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">domain</span><span class="w"> </span><span class="kn">import</span> <span class="nc">OrderBatch</span>
+<p>In <code>src/main.incn</code>, read the source through <code>std.fs.Path</code>, parse it through the model, and write the derived report. Each <code>map_err</code> converts a boundary-specific error into a useful message, while <code>?</code> propagates it without nested <code>match</code> blocks:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">domain</span><span class="w"> </span><span class="kn">import</span> <span class="nc">OrderBatch</span><span class="p">,</span> <span class="nc">OrderReport</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">transform</span><span class="w"> </span><span class="kn">import</span> <span class="n">build_report</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">std.fs</span><span class="w"> </span><span class="kn">import</span> <span class="kt">Path</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">std.serde.json</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Deserialize</span><span class="p">,</span> <span class="nc">Serialize</span>
 
-<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="n">input_path</span> <span class="o">=</span> <span class="kt">Path</span><span class="p">(</span><span class="s2">&quot;orders.json&quot;</span><span class="p">)</span>
-    <span class="n">output_path</span> <span class="o">=</span> <span class="kt">Path</span><span class="p">(</span><span class="s2">&quot;order-report.json&quot;</span><span class="p">)</span>
 
-    <span class="k">match</span> <span class="n">input_path</span><span class="o">.</span><span class="n">read_text</span><span class="p">(</span><span class="s2">&quot;utf-8&quot;</span><span class="p">,</span> <span class="s2">&quot;strict&quot;</span><span class="p">):</span>
-        <span class="k">case</span> <span class="nb">Err</span><span class="p">(</span><span class="n">error</span><span class="p">):</span>
-            <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Could not read input: </span><span class="si">{</span><span class="n">error</span><span class="o">.</span><span class="n">message</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-        <span class="k">case</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">source</span><span class="p">):</span>
-            <span class="k">match</span> <span class="nc">OrderBatch</span><span class="o">.</span><span class="n">from_json</span><span class="p">(</span><span class="n">source</span><span class="p">):</span>
-                <span class="k">case</span> <span class="nb">Err</span><span class="p">(</span><span class="n">error</span><span class="p">):</span>
-                    <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Invalid order data: </span><span class="si">{</span><span class="n">error</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-                <span class="k">case</span> <span class="nb">Ok</span><span class="p">(</span><span class="nb">batch</span><span class="p">):</span>
-                    <span class="n">report</span> <span class="o">=</span> <span class="n">build_report</span><span class="p">(</span><span class="nb">batch</span><span class="p">)</span>
-                    <span class="k">match</span> <span class="n">output_path</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="n">report</span><span class="o">.</span><span class="n">to_json</span><span class="p">(),</span> <span class="s2">&quot;utf-8&quot;</span><span class="p">,</span> <span class="s2">&quot;strict&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">):</span>
-                        <span class="k">case</span> <span class="nb">Err</span><span class="p">(</span><span class="n">error</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Could not write report: </span><span class="si">{</span><span class="n">error</span><span class="o">.</span><span class="n">message</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-                        <span class="k">case</span><span class="w"> </span><span class="nb">Ok</span><span class="p">(</span><span class="k">_</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Wrote </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">report</span><span class="o">.</span><span class="n">accepted</span><span class="p">)</span><span class="si">}</span><span class="s2"> accepted orders&quot;</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">create_report</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">OrderReport</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+    <span class="n">input_path</span> <span class="o">=</span> <span class="kt">Path</span><span class="p">(</span><span class="s2">&quot;orders.json&quot;</span><span class="p">)</span>
+    <span class="n">output_dir</span> <span class="o">=</span> <span class="kt">Path</span><span class="p">(</span><span class="s2">&quot;target/tutorial-output&quot;</span><span class="p">)</span>
+    <span class="n">output_path</span> <span class="o">=</span> <span class="n">output_dir</span> <span class="o">/</span> <span class="s2">&quot;order-report.json&quot;</span>
+
+    <span class="n">source</span> <span class="o">=</span> <span class="n">input_path</span>
+        <span class="o">.</span><span class="n">read_text</span><span class="p">(</span><span class="s2">&quot;utf-8&quot;</span><span class="p">,</span> <span class="s2">&quot;strict&quot;</span><span class="p">)</span>
+        <span class="o">.</span><span class="nb">map_err</span><span class="p">((</span><span class="n">error</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="sa">f</span><span class="s2">&quot;Could not read orders.json: </span><span class="si">{</span><span class="n">error</span><span class="o">.</span><span class="n">message</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span><span class="o">?</span>
+    <span class="nb">batch</span> <span class="o">=</span> <span class="nc">OrderBatch</span><span class="o">.</span><span class="n">from_json</span><span class="p">(</span><span class="n">source</span><span class="p">)</span><span class="o">.</span><span class="nb">map_err</span><span class="p">((</span><span class="n">error</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="sa">f</span><span class="s2">&quot;Invalid order data: </span><span class="si">{</span><span class="n">error</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span><span class="o">?</span>
+    <span class="n">report</span> <span class="o">=</span> <span class="n">build_report</span><span class="p">(</span><span class="nb">batch</span><span class="p">)</span>
+
+    <span class="n">output_dir</span>
+        <span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="k">true</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="k">true</span><span class="p">)</span>
+        <span class="o">.</span><span class="nb">map_err</span><span class="p">((</span><span class="n">error</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="sa">f</span><span class="s2">&quot;Could not prepare output directory: </span><span class="si">{</span><span class="n">error</span><span class="o">.</span><span class="n">message</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span><span class="o">?</span>
+    <span class="n">output_path</span>
+        <span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="n">report</span><span class="o">.</span><span class="n">to_json</span><span class="p">(),</span> <span class="s2">&quot;utf-8&quot;</span><span class="p">,</span> <span class="s2">&quot;strict&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+        <span class="o">.</span><span class="nb">map_err</span><span class="p">((</span><span class="n">error</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="sa">f</span><span class="s2">&quot;Could not write report: </span><span class="si">{</span><span class="n">error</span><span class="o">.</span><span class="n">message</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span><span class="o">?</span>
+    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">report</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">match</span> <span class="n">create_report</span><span class="p">():</span>
+        <span class="nb">Err</span><span class="p">(</span><span class="n">error</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="n">error</span><span class="p">)</span>
+        <span class="nb">Ok</span><span class="p">(</span><span class="n">report</span><span class="p">)</span> <span class="o">=&gt;</span>
+            <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Wrote </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">report</span><span class="o">.</span><span class="n">accepted</span><span class="p">)</span><span class="si">}</span><span class="s2"> accepted orders to order-report.json&quot;</span><span class="p">)</span>
+            <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Rejected </span><span class="si">{</span><span class="n">report</span><span class="o">.</span><span class="n">rejected_count</span><span class="si">}</span><span class="s2"> invalid order(s)&quot;</span><span class="p">)</span>
 </code></pre></div>
-<p>There are two failure domains, so they remain explicit: filesystem operations return <code>IoError</code>, while typed JSON parsing returns a JSON error.</p>
+<p>The boundaries remain explicit—filesystem operations return <code>IoError</code>, while typed JSON parsing returns a JSON error—but RFC 070's <code>map_err</code> combinator gives the sequential workflow one error type. The final <code>match</code> is reserved for the point where the program actually handles success or failure.</p>
 <h2 id="step-5-test-the-transformation">Step 5: Test the transformation<a class="headerlink" href="#step-5-test-the-transformation" title="Permanent link">&para;</a></h2>
 <p>Create <code>tests/test_transform.incn</code>:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">domain</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Order</span><span class="p">,</span> <span class="nc">OrderBatch</span>
@@ -6592,6 +6603,7 @@ cat<span class="w"> </span>examples/advanced/typed_data_processor/target/tutoria
 <li><a href="../../how-to/dynamic_json/">Dynamic JSON</a></li>
 <li><a href="../../reference/derives/serialization/">Serialization derives</a></li>
 <li><a href="../fallible_and_infallible_paths/">Fallible and infallible paths</a></li>
+<li><a href="../../../RFCs/closed/implemented/070_result_combinators_for_result_types/">RFC 070: Result combinators</a></li>
 </ul>
 
 
