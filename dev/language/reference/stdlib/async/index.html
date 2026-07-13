@@ -6667,9 +6667,9 @@
 <p><code>spawn()</code> and <code>spawn_blocking()</code> create work that is durable once spawned. Dropping a <code>JoinHandle[T]</code> detaches the task and loses the result; it does not cancel the task. Use <code>JoinHandle.abort()</code> to request cancellation for async tasks. <code>spawn_blocking()</code> work cannot be cancelled after it starts running; <code>abort()</code> can only prevent queued blocking work from starting.</p>
 <p>Awaiting a <code>JoinHandle[T]</code> returns <code>Result[T, TaskJoinError]</code>. A task cancelled through <code>abort()</code> reports a join error unless it had already completed.</p>
 <h2 id="module-stdasyncchannel">Module: <code>std.async.channel</code><a class="headerlink" href="#module-stdasyncchannel" title="Permanent link">&para;</a></h2>
-<div class="admonition warning">
-<p class="admonition-title">Current compiler limitation</p>
-<p>These declarations are present in the standard library, but the current compiler rejects the documented typed constructor and imported wrapper methods. This section records the intended library contract; it is not presently a verified runnable authoring path.</p>
+<div class="admonition note">
+<p class="admonition-title">Availability in Incan 0.4</p>
+<p>Typed channels are not part of the supported Incan 0.4 authoring surface. The declarations below record the planned standard-library contract for contributors and future releases. For runnable 0.4 coordination patterns, use <a href="#module-stdasynctask"><code>std.async.task</code></a> and <a href="#module-stdasynctime"><code>std.async.time</code></a>.</p>
 </div>
 <p>Top-level API:</p>
 <ul>
