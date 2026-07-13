@@ -12,7 +12,7 @@
     - RFC 056 (`std.io` in-memory byte streams and binary parsing helpers)
     - RFC 058 (`std.datetime` durations and time handling)
 - **Issue:** https://github.com/encero-systems/incan/issues/341
-- **RFC PR:** —
+- **RFC PR:** #860
 - **Written against:** v0.2
 - **Shipped in:** —
 
