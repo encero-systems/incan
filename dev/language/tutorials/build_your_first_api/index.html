@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../dates_and_times/">
+        <link rel="prev" href="../typed_data_processor/">
       
       
-        <link rel="next" href="../fallible_and_infallible_paths/">
+        <link rel="next" href="../async_worker_pipeline/">
       
       
       <link rel="icon" href="../../../assets/images/favicon.png">
@@ -50,7 +50,7 @@
     
       <link rel="stylesheet" href="../../../stylesheets/pygments.css">
     
-      <link rel="stylesheet" href="/shared/incapunk/incapunk.css">
+      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260712-nav-title-1">
     
     <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -63,8 +63,6 @@
   
   
     
-    
-      
     
     
     
@@ -125,19 +123,7 @@
     </div>
     
       
-        <form class="md-header__option" data-md-component="palette">
-  
     
-    
-    
-    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="amber"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
-    
-  
-</form>
-      
-    
-    
-      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
     
     
     
@@ -892,6 +878,10 @@
       
         
       
+        
+      
+        
+      
     
     
       
@@ -1309,6 +1299,27 @@
                 
   
   
+  
+  
+    <li class="md-nav__item">
+      <a href="../typed_data_processor/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Build a typed data processor
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
     
   
   
@@ -1400,11 +1411,11 @@
   
   
     <li class="md-nav__item">
-      <a href="../fallible_and_infallible_paths/" class="md-nav__link">
+      <a href="../async_worker_pipeline/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
-    Fallible and infallible paths
+    Build an asynchronous worker pipeline
   </span>
   
 
@@ -1421,11 +1432,32 @@
   
   
     <li class="md-nav__item">
-      <a href="../web_framework/" class="md-nav__link">
+      <a href="../add_a_rust_crate/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
-    Web framework
+    Add a Rust crate
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../fallible_and_infallible_paths/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Fallible and infallible paths
   </span>
   
 
@@ -1451,6 +1483,8 @@
   
     
     
+      
+        
       
         
       
@@ -1534,6 +1568,27 @@
             How-to
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../web_framework/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Web framework guide
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
             
               
                 
@@ -4282,6 +4337,8 @@
       
         
       
+        
+      
     
     
       
@@ -4346,6 +4403,27 @@
   
   <span class="md-ellipsis">
     Your first project
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/tutorials/build_and_consume_library/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Build and consume a library
   </span>
   
 
@@ -6065,6 +6143,8 @@
       
         
       
+        
+      
     
     
       
@@ -6230,6 +6310,27 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../project/incus/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Meet Incus
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -6310,6 +6411,12 @@
 
 <h1 id="build-your-first-api-tutorial">Build your first API (tutorial)<a class="headerlink" href="#build-your-first-api-tutorial" title="Permanent link">&para;</a></h1>
 <p>This tutorial walks you through running the built-in web framework and serving a JSON endpoint.</p>
+<ol class="inc-step-rail" style="--inc-step-count: 3" aria-label="API tutorial steps">
+  <li><strong>Build</strong>Compile the example</li>
+  <li><strong>Request</strong>Hit the endpoints</li>
+  <li><strong>Understand</strong>Trace typed responses</li>
+</ol>
+
 <p>Prerequisite: <a href="../../../tooling/how-to/install_and_run/">Install, build, and run</a>.</p>
 <div class="admonition note">
 <p class="admonition-title">If something fails</p>
@@ -6343,12 +6450,22 @@
 <div class="language-bash highlight"><pre><span></span><code>./target/incan/.cargo-target/release/hello_web
 </code></pre></div>
 <h2 id="step-2-hit-the-endpoints">Step 2: Hit the endpoints<a class="headerlink" href="#step-2-hit-the-endpoints" title="Permanent link">&para;</a></h2>
+<pre class="inc-diagram"><code>flowchart LR
+  A["curl request"] --&gt; B["Incan route"]
+  B --&gt; C["typed handler"]
+  C --&gt; D["Json response model"]
+  D --&gt; E["HTTP response"]</code></pre>
+<p class="inc-diagram-caption">The route selects a typed handler; the response model is serialized at the HTTP boundary.</p>
+
 <p>In another terminal:</p>
 <div class="language-bash highlight"><pre><span></span><code>curl<span class="w"> </span>http://localhost:8080/
 curl<span class="w"> </span>http://localhost:8080/api/greet/World
 curl<span class="w"> </span>http://localhost:8080/api/user/42
 curl<span class="w"> </span>http://localhost:8080/health
 </code></pre></div>
+<section class="inc-learning-panel inc-learning-panel--result" data-label="Expected">
+<p>The root and greeting routes return successful text or JSON responses, <code>/api/user/42</code> returns the typed user payload, and <code>/health</code> confirms the server is ready.</p>
+</section>
 <h2 id="step-3-understand-what-youre-seeing">Step 3: Understand what you’re seeing<a class="headerlink" href="#step-3-understand-what-youre-seeing" title="Permanent link">&para;</a></h2>
 <p>The example demonstrates:</p>
 <ul>
@@ -6359,11 +6476,14 @@ curl<span class="w"> </span>http://localhost:8080/health
 </ul>
 <p>Learn more:</p>
 <ul>
-<li>Web framework guide: <a href="../web_framework/">Web Framework</a></li>
+<li>Web framework guide: <a href="../web_framework/">Web framework guide</a></li>
 <li>Models: <a href="../../explanation/models_and_classes/">Models &amp; Classes</a></li>
 <li>Errors: <a href="../../explanation/error_handling/">Error Handling</a></li>
 <li>Modules: <a href="../../how-to/imports_and_modules/">Imports and modules (how-to)</a></li>
 </ul>
+<section class="inc-learning-panel inc-learning-panel--complete inc-incus-slot" data-incus-category="success" data-label="Complete">
+<p>You have built a native server, exercised four routes, and followed one request from route selection to a typed response model.</p>
+</section>
 
 
 
@@ -6418,6 +6538,14 @@ curl<span class="w"> </span>http://localhost:8080/health
       <script src="../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
         <script src="../../../_snippets/javascripts/mathjax.js"></script>
+      
+        <script src="../../../_snippets/javascripts/incan_home_motion.js"></script>
+      
+        <script src="../../../shared/incapunk/incus-library/manifest.js"></script>
+      
+        <script src="../../../_snippets/javascripts/incan_docs_components.js"></script>
+      
+        <script src="../../../_snippets/javascripts/incan_mermaid.js"></script>
       
         <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
       
