@@ -1,6 +1,6 @@
 # RFC 063: `std.process` — process spawning and command execution
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-04-14
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
