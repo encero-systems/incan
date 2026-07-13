@@ -3225,6 +3225,14 @@ fn test_rust_owner_path_expands_crate_relative_signature_displays() {
         ),
         "impl FnMut(&mut [f32], &demo_runtime::OutputCallbackInfo)",
     );
+    assert_eq!(
+        checker.rust_display_for_owner_path("&mut super::Header", "demo_runtime::writer::Writer.mutate",),
+        "&mut demo_runtime::Header",
+    );
+    assert_eq!(
+        checker.rust_display_for_owner_path("self::Nested", "demo_runtime::writer::Writer.new",),
+        "demo_runtime::writer::Nested",
+    );
 }
 
 #[test]

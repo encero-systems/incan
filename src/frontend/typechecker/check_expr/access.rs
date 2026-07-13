@@ -1674,7 +1674,7 @@ impl TypeChecker {
         if preserves_lookup_arg_shape {
             self.type_info.record_regular_method_arg_shape(receiver_span, method);
         }
-        let Some(metadata) = self.rust_item_metadata_for_path(rust_path) else {
+        let Some(metadata) = self.rust_item_metadata_for_method_call(rust_path) else {
             if let Some(import_use) = self.record_unique_rust_trait_import_for_method_call(method, span)
                 && let Some(sig) = import_use.signature.as_ref()
             {

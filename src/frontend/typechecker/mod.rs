@@ -572,12 +572,54 @@ impl TypeChecker {
         }
     }
 
+    #[cfg(feature = "rust_inspect")]
+    /// Return Rust type metadata suitable for resolving an inherent method call.
+    ///
+    /// Fast source metadata does not guarantee a complete method surface. Escalate only when a method call reaches a
+    /// partial record so field and variant compatibility checks retain their cache-only behavior.
+    pub(crate) fn rust_item_metadata_for_method_call(&self, canonical_path: &str) -> Option<RustItemMetadata> {
+        let metadata = self.rust_item_metadata_for_path(canonical_path)?;
+        let RustItemKind::Type(type_info) = &metadata.kind else {
+            return Some(metadata);
+        };
+        if type_info.metadata_completeness.has_methods() {
+            return Some(metadata);
+        }
+
+        let canonical_path = Self::normalize_rust_namespace_path(canonical_path);
+        let lookup_path = Self::rust_metadata_lookup_path(canonical_path)?;
+        if lookup_path.starts_with("incan_stdlib::") {
+            return Some(metadata);
+        }
+        let dir = self.rust_inspect_manifest_dir.as_ref()?;
+        match self
+            .rust_inspect_cache
+            .get_or_extract_complete(dir, lookup_path, &|_| ())
+        {
+            Ok(metadata) => Some((*metadata).clone()),
+            Err(err) => {
+                tracing::debug!(
+                    "rust-inspect complete method metadata lookup failed for `{}` (query `{}`): {err}",
+                    canonical_path,
+                    lookup_path
+                );
+                Some(metadata)
+            }
+        }
+    }
+
     #[cfg(not(feature = "rust_inspect"))]
     /// Return Rust item metadata from shipped dependency ABI when rust-inspect support is not compiled in.
     pub(crate) fn rust_item_metadata_for_path(&self, canonical_path: &str) -> Option<RustItemMetadata> {
         let canonical_path = Self::normalize_rust_namespace_path(canonical_path);
         let lookup_path = Self::rust_metadata_lookup_path(canonical_path)?;
         self.library_manifests.rust_abi_item(lookup_path)
+    }
+
+    #[cfg(not(feature = "rust_inspect"))]
+    /// Return Rust item metadata from shipped dependency ABI when rust-inspect support is not compiled in.
+    pub(crate) fn rust_item_metadata_for_method_call(&self, canonical_path: &str) -> Option<RustItemMetadata> {
+        self.rust_item_metadata_for_path(canonical_path)
     }
 
     #[cfg(not(feature = "rust_inspect"))]
@@ -651,7 +693,11 @@ impl TypeChecker {
     /// displays before compatibility checks or contextual argument checking run.
     pub(crate) fn rust_display_for_owner_path(&self, rust_ty: &str, owner_path: &str) -> String {
         let owner = Self::normalize_rust_namespace_path(owner_path);
-        let Some(crate_name) = owner.split("::").next().filter(|segment| !segment.is_empty()) else {
+        let owner_definition = self
+            .rust_definition_for_path(owner)
+            .unwrap_or_else(|| owner.to_string());
+        let owner_segments = owner_definition.split("::").collect::<Vec<_>>();
+        let Some(crate_name) = owner_segments.first().filter(|segment| !segment.is_empty()) else {
             return rust_ty.to_string();
         };
         let replacement = format!("{crate_name}::");
@@ -672,7 +718,47 @@ impl TypeChecker {
             remaining = &after["crate::".len()..];
         }
         rendered.push_str(remaining);
-        rendered
+
+        let owner_module = &owner_segments[..owner_segments.len().saturating_sub(1)];
+        let self_replacement = owner_module.join("::");
+        let mut self_expanded = String::with_capacity(rendered.len() + self_replacement.len());
+        let mut remaining = rendered.as_str();
+        while let Some(idx) = remaining.find("self::") {
+            let (before, after) = remaining.split_at(idx);
+            self_expanded.push_str(before);
+            let prev = self_expanded.chars().next_back();
+            if prev.is_some_and(|ch| ch == '_' || ch.is_ascii_alphanumeric()) || self_replacement.is_empty() {
+                self_expanded.push_str("self::");
+            } else {
+                self_expanded.push_str(self_replacement.as_str());
+                self_expanded.push_str("::");
+            }
+            remaining = &after["self::".len()..];
+        }
+        self_expanded.push_str(remaining);
+
+        let mut super_expanded = String::with_capacity(self_expanded.len() + owner_definition.len());
+        let mut remaining = self_expanded.as_str();
+        while let Some(idx) = remaining.find("super::") {
+            let (before, after) = remaining.split_at(idx);
+            super_expanded.push_str(before);
+            let prev = super_expanded.chars().next_back();
+            let mut rest = after;
+            let mut parent_count = 0usize;
+            while let Some(next) = rest.strip_prefix("super::") {
+                parent_count += 1;
+                rest = next;
+            }
+            if prev.is_some_and(|ch| ch == '_' || ch.is_ascii_alphanumeric()) || parent_count >= owner_module.len() {
+                super_expanded.push_str(&after[..after.len() - rest.len()]);
+            } else {
+                super_expanded.push_str(owner_module[..owner_module.len() - parent_count].join("::").as_str());
+                super_expanded.push_str("::");
+            }
+            remaining = rest;
+        }
+        super_expanded.push_str(remaining);
+        super_expanded
     }
 
     /// Return the Rust definition metadata for a canonical path.

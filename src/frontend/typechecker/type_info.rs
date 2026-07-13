@@ -504,6 +504,11 @@ pub enum RustArgCoercionKind {
     RustTypeUnwrap,
     /// Rusttype alias uses a declared `interop:` adapter edge.
     RustTypeInterop,
+    /// Rust metadata requires a concrete reference, so preserve its borrow shape during emission.
+    Borrow {
+        /// Whether Rust requires an exclusive mutable borrow.
+        mutable: bool,
+    },
 }
 
 /// Lowering metadata for one Rust-boundary call argument.

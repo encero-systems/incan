@@ -447,6 +447,13 @@ impl TypeChecker {
         let borrowed_shared = matches!(Self::rust_display_borrow_kind(display.as_str()), Some((false, _)));
         if let Some((is_mut, inner)) = Self::rust_display_borrow_kind(display.as_str()) {
             let inner_normalized = Self::compact_rust_display(inner);
+            let target_inner_ty = self.resolved_type_from_rust_display(inner_normalized.as_str());
+            if matches!(arg_ty, ResolvedType::RefMut(existing) if self.types_compatible(existing, &target_inner_ty))
+                || (!is_mut
+                    && matches!(arg_ty, ResolvedType::Ref(existing) if self.types_compatible(existing, &target_inner_ty)))
+            {
+                return RustArgBoundaryMatch::Exact;
+            }
             if Self::is_rust_generic_type_param_display(inner_normalized.as_str())
                 && !is_mut
                 && !matches!(arg_ty, ResolvedType::Ref(_) | ResolvedType::RefMut(_))
@@ -454,17 +461,15 @@ impl TypeChecker {
                 return RustArgBoundaryMatch::Exact;
             }
             if !is_mut {
-                let target_inner_ty = self.resolved_type_from_rust_display(inner_normalized.as_str());
                 if Self::incan_boundary_type_display(arg_ty).is_none()
                     && self.types_compatible(arg_ty, &target_inner_ty)
                 {
-                    return RustArgBoundaryMatch::Exact;
+                    return RustArgBoundaryMatch::Coercion(RustArgCoercionKind::Borrow { mutable: false });
                 }
             }
             if is_mut {
-                let target_inner_ty = self.resolved_type_from_rust_display(inner_normalized.as_str());
                 if self.types_compatible(arg_ty, &target_inner_ty) {
-                    return RustArgBoundaryMatch::Exact;
+                    return RustArgBoundaryMatch::Coercion(RustArgCoercionKind::Borrow { mutable: true });
                 }
                 if let Some(incan_display) = Self::incan_boundary_type_display(arg_ty)
                     && let Some(CoercionPolicy::Exact) =
@@ -497,6 +502,19 @@ impl TypeChecker {
             return RustArgBoundaryMatch::Coercion(RustArgCoercionKind::Builtin(policy));
         }
         RustArgBoundaryMatch::NoMatch
+    }
+
+    /// Reject an immutable source binding when a planned Rust boundary borrow is exclusive.
+    fn validate_rust_borrow_mutability(&mut self, kind: RustArgCoercionKind, arg_expr: &Spanned<Expr>) -> bool {
+        if matches!(kind, RustArgCoercionKind::Borrow { mutable: true })
+            && let Expr::Ident(name) = &arg_expr.node
+            && !self.mutable_bindings.contains(name)
+        {
+            self.errors
+                .push(errors::mutable_rust_borrow_requires_mut(name, arg_expr.span));
+            return false;
+        }
+        true
     }
 
     /// Validate one expression used at a Rust value boundary and record the exact coercion lowering must preserve.
@@ -537,6 +555,9 @@ impl TypeChecker {
                 }
             }
             RustArgBoundaryMatch::Coercion(kind) => {
+                if !self.validate_rust_borrow_mutability(kind, arg_expr) {
+                    return;
+                }
                 self.type_info.rust.arg_coercions.insert(
                     (arg_expr.span.start, arg_expr.span.end),
                     RustArgCoercionInfo {
@@ -814,6 +835,9 @@ impl TypeChecker {
             match self.rust_arg_boundary_match(arg_ty, param_display.as_str()) {
                 RustArgBoundaryMatch::Exact => {}
                 RustArgBoundaryMatch::Coercion(kind) => {
+                    if !self.validate_rust_borrow_mutability(kind, arg_expr) {
+                        continue;
+                    }
                     self.type_info.rust.arg_coercions.insert(
                         (arg_expr.span.start, arg_expr.span.end),
                         RustArgCoercionInfo {
@@ -882,11 +906,12 @@ impl TypeChecker {
 
 #[cfg(test)]
 mod validate_rust_function_call_tests {
-    use super::TypeChecker;
+    use super::{RustArgBoundaryMatch, TypeChecker};
     use crate::frontend::ast::{CallArg, Expr, IntLiteral, Literal, Span, Spanned};
     use crate::frontend::symbols::{
         CallableParam, NewtypeInfo, ResolvedType, ScopeKind, Symbol, SymbolKind, TypeInfo, VariableInfo,
     };
+    use crate::frontend::typechecker::RustArgCoercionKind;
     use incan_core::interop::{RustFunctionSig, RustParam};
     use incan_core::lang::types::numerics::NumericTypeId;
     use std::collections::HashMap;
@@ -928,6 +953,101 @@ mod validate_rust_function_call_tests {
             TypeChecker::rust_identity_metadata_base_should_probe("datafusion_expr::expr::WindowFunction"),
             "nominal dependency item displays should still reuse cache-only identity metadata"
         );
+    }
+
+    #[test]
+    fn rust_concrete_reference_parameters_record_the_required_borrow_shape() {
+        let checker = TypeChecker::new();
+        let header = ResolvedType::RustPath("demo::Header".to_string());
+
+        assert_eq!(
+            checker.rust_arg_boundary_match(&header, "&demo::Header"),
+            RustArgBoundaryMatch::Coercion(RustArgCoercionKind::Borrow { mutable: false })
+        );
+        assert_eq!(
+            checker.rust_arg_boundary_match(&header, "&mut demo::Header"),
+            RustArgBoundaryMatch::Coercion(RustArgCoercionKind::Borrow { mutable: true })
+        );
+        assert_eq!(
+            checker.rust_arg_boundary_match(&ResolvedType::Ref(Box::new(header.clone())), "&demo::Header"),
+            RustArgBoundaryMatch::Exact
+        );
+        assert_eq!(
+            checker.rust_arg_boundary_match(&ResolvedType::RefMut(Box::new(header)), "&mut demo::Header"),
+            RustArgBoundaryMatch::Exact
+        );
+    }
+
+    #[test]
+    fn mutable_rust_reference_rejects_an_immutable_binding() {
+        let span = Span::new(10, 16);
+        let header = ResolvedType::RustPath("demo::Header".to_string());
+        let argument = Spanned::new(Expr::Ident("header".to_string()), span);
+
+        let mut immutable_checker = TypeChecker::new();
+        immutable_checker.validate_rust_boundary_value("demo::Writer", "&mut demo::Header", &argument, &header, false);
+        assert!(
+            immutable_checker.errors.iter().any(|error| error
+                .message
+                .contains("Rust parameter requires a mutable borrow of 'header'")),
+            "expected an immutable-binding diagnostic, got {:?}",
+            immutable_checker.errors
+        );
+
+        let mut mutable_checker = TypeChecker::new();
+        mutable_checker.mutable_bindings.insert("header".to_string());
+        mutable_checker.validate_rust_boundary_value("demo::Writer", "&mut demo::Header", &argument, &header, false);
+        assert!(
+            mutable_checker.errors.is_empty(),
+            "mutable binding should satisfy a Rust mutable reference, got {:?}",
+            mutable_checker.errors
+        );
+        assert_eq!(
+            mutable_checker
+                .type_info
+                .rust
+                .arg_coercions
+                .get(&(span.start, span.end))
+                .map(|coercion| coercion.kind),
+            Some(RustArgCoercionKind::Borrow { mutable: true })
+        );
+    }
+
+    #[test]
+    fn rust_method_mutable_reference_rejects_an_immutable_binding() {
+        let span = Span::new(10, 16);
+        let argument = Spanned::new(Expr::Ident("header".to_string()), span);
+        let args = [CallArg::Positional(argument)];
+        let sig = RustFunctionSig {
+            params: vec![
+                RustParam {
+                    name: Some("self".to_string()),
+                    type_display: "&mut demo::Writer".to_string(),
+                },
+                RustParam {
+                    name: Some("header".to_string()),
+                    type_display: "&mut demo::Header".to_string(),
+                },
+            ],
+            return_type: "()".to_string(),
+            is_async: false,
+            is_unsafe: false,
+        };
+        let mut checker = TypeChecker::new();
+        let _ = checker.validate_rust_method_call(
+            "rust::demo::Writer.mutate",
+            &sig,
+            &args,
+            &[ResolvedType::RustPath("demo::Header".to_string())],
+            false,
+            Span::new(0, 20),
+        );
+        assert!(checker.errors.iter().any(|error| {
+            error
+                .message
+                .contains("Rust parameter requires a mutable borrow of 'header'")
+        }));
+        assert!(checker.type_info.rust.arg_coercions.is_empty());
     }
 
     #[test]

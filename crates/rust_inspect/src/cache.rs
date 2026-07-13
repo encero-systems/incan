@@ -162,7 +162,7 @@ struct DiskCacheEnvelope {
 }
 
 // Bump when extracted metadata semantics change in a way that makes previously persisted items unsafe to reuse.
-const DISK_CACHE_FORMAT: u32 = 16;
+const DISK_CACHE_FORMAT: u32 = 17;
 const DISK_CACHE_FILE: &str = ".incan_rust_inspect_cache.json";
 // Backward-compatibility read path for caches written before the crate/module rename.
 const LEGACY_DISK_CACHE_FILE: &str = ".incan_rust_metadata_cache.json";
@@ -3527,6 +3527,7 @@ impl WorkspaceExtractionRoute {
 enum ExtractionPolicy {
     FastOnly,
     Full,
+    Complete,
 }
 
 /// Return whether an extraction error is a route miss that can fall through to the next route.
@@ -3735,53 +3736,55 @@ fn extract_in_workspace_set(
                 "status=miss owner_hint=true",
             );
         }
-        let source_started = Instant::now();
-        if let Some(meta) = dependency_source_metadata(
-            inner,
-            root,
-            &dep_root,
-            canonical_path,
-            registry_src_roots,
-            &preferred_external_paths,
-        ) {
+        if policy != ExtractionPolicy::Complete {
+            let source_started = Instant::now();
+            if let Some(meta) = dependency_source_metadata(
+                inner,
+                root,
+                &dep_root,
+                canonical_path,
+                registry_src_roots,
+                &preferred_external_paths,
+            ) {
+                log_timing_stage(
+                    timing_enabled,
+                    root,
+                    canonical_path,
+                    "extract.dependency.source",
+                    source_started.elapsed(),
+                    "status=hit",
+                );
+                return Ok(meta);
+            }
             log_timing_stage(
                 timing_enabled,
                 root,
                 canonical_path,
                 "extract.dependency.source",
                 source_started.elapsed(),
-                "status=hit",
+                "status=miss",
             );
-            return Ok(meta);
-        }
-        log_timing_stage(
-            timing_enabled,
-            root,
-            canonical_path,
-            "extract.dependency.source",
-            source_started.elapsed(),
-            "status=miss",
-        );
-        let generated_started = Instant::now();
-        if let Some(meta) = generated_out_dir_metadata(root, &dep_root, canonical_path, &include_owners) {
+            let generated_started = Instant::now();
+            if let Some(meta) = generated_out_dir_metadata(root, &dep_root, canonical_path, &include_owners) {
+                log_timing_stage(
+                    timing_enabled,
+                    root,
+                    canonical_path,
+                    "extract.dependency.generated_out_dir",
+                    generated_started.elapsed(),
+                    "status=hit",
+                );
+                return Ok(meta);
+            }
             log_timing_stage(
                 timing_enabled,
                 root,
                 canonical_path,
                 "extract.dependency.generated_out_dir",
                 generated_started.elapsed(),
-                "status=hit",
+                "status=miss",
             );
-            return Ok(meta);
         }
-        log_timing_stage(
-            timing_enabled,
-            root,
-            canonical_path,
-            "extract.dependency.generated_out_dir",
-            generated_started.elapsed(),
-            "status=miss",
-        );
         if policy == ExtractionPolicy::FastOnly {
             return Err(RustMetadataError::PathNotResolved(canonical_path.to_string()));
         }
@@ -3828,33 +3831,35 @@ fn extract_in_workspace_set(
             .get(root)
             .cloned()
             .unwrap_or_default();
-        let source_started = Instant::now();
-        if let Some(meta) = dependency_source_metadata(
-            inner,
-            root,
-            root,
-            canonical_path,
-            registry_src_roots,
-            &preferred_external_paths,
-        ) {
+        if policy != ExtractionPolicy::Complete {
+            let source_started = Instant::now();
+            if let Some(meta) = dependency_source_metadata(
+                inner,
+                root,
+                root,
+                canonical_path,
+                registry_src_roots,
+                &preferred_external_paths,
+            ) {
+                log_timing_stage(
+                    timing_enabled,
+                    root,
+                    canonical_path,
+                    "extract.root.source",
+                    source_started.elapsed(),
+                    "status=hit",
+                );
+                return Ok(meta);
+            }
             log_timing_stage(
                 timing_enabled,
                 root,
                 canonical_path,
                 "extract.root.source",
                 source_started.elapsed(),
-                "status=hit",
+                "status=miss",
             );
-            return Ok(meta);
         }
-        log_timing_stage(
-            timing_enabled,
-            root,
-            canonical_path,
-            "extract.root.source",
-            source_started.elapsed(),
-            "status=miss",
-        );
     }
 
     if policy == ExtractionPolicy::FastOnly {
@@ -4114,6 +4119,82 @@ impl RustMetadataCache {
     ) -> Result<Arc<RustItemMetadata>, RustMetadataError> {
         self.get_or_extract_inner(manifest_dir, canonical_path, None, progress, true)
             .map(|access| access.metadata)
+    }
+
+    /// Return complete metadata for a canonical Rust path, replacing a cached partial source fallback when needed.
+    ///
+    /// Fast source extraction does not guarantee inherent method signatures. A compiler path that needs them can opt
+    /// into this targeted refresh without invalidating unrelated metadata in the manifest.
+    pub fn get_or_extract_complete(
+        &self,
+        manifest_dir: &Path,
+        canonical_path: &str,
+        progress: &(dyn Fn(String) + Sync),
+    ) -> Result<Arc<RustItemMetadata>, RustMetadataError> {
+        self.get_or_extract_complete_inner(manifest_dir, canonical_path, progress)
+            .map(|access| access.metadata)
+    }
+
+    /// Run complete semantic extraction and replace metadata for this one canonical path.
+    fn get_or_extract_complete_inner(
+        &self,
+        manifest_dir: &Path,
+        canonical_path: &str,
+        progress: &(dyn Fn(String) + Sync),
+    ) -> Result<CacheAccess, RustMetadataError> {
+        let root = manifest_dir.canonicalize()?;
+        let timing_enabled = rust_inspect_timing_enabled();
+        let mut trace = CallTrace::new(timing_enabled, &root, canonical_path);
+        let mut inner = self.inner.lock().map_err(|e| RustMetadataError::LoadWorkspace {
+            path: root.clone(),
+            message: format!("metadata cache lock poisoned: {e}"),
+        })?;
+        let disk_load_started = Instant::now();
+        let disk_report = ensure_disk_cache_loaded(&mut inner, &root)?;
+        log_timing_stage(
+            timing_enabled,
+            &root,
+            canonical_path,
+            "disk_cache.ensure_loaded",
+            disk_load_started.elapsed(),
+            disk_report.detail().as_str(),
+        );
+        let mut last_err = None;
+        for candidate in canonical_path_candidates(canonical_path) {
+            match extract_in_workspace_set(
+                &mut inner,
+                &root,
+                candidate.as_str(),
+                None,
+                progress,
+                timing_enabled,
+                ExtractionPolicy::Complete,
+            ) {
+                Ok(mut metadata) => {
+                    metadata.canonical_path = canonical_path.to_owned();
+                    let metadata = Arc::new(metadata);
+                    insert_cached_item(&mut inner, &root, Arc::clone(&metadata));
+                    if let Err(err) = persist_item_to_disk_cache(&inner, &root) {
+                        tracing::warn!(
+                            root = %root.display(),
+                            query = %canonical_path,
+                            error = %err,
+                            "failed to persist rust-inspect disk cache after complete extraction"
+                        );
+                    }
+                    trace.set_outcome(CacheAccessOutcome::Extracted.trace_label());
+                    return Ok(CacheAccess {
+                        metadata,
+                        outcome: CacheAccessOutcome::Extracted,
+                    });
+                }
+                Err(err) => last_err = Some(err),
+            }
+        }
+        let err = last_err
+            .unwrap_or_else(|| RustMetadataError::CrateNotFound(crate_name_for_path(canonical_path).to_string()));
+        trace.set_outcome("miss.complete");
+        Err(err)
     }
 
     /// Return metadata for a canonical Rust path while deferring disk-cache persistence to the caller.
