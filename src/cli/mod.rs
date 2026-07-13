@@ -695,6 +695,18 @@ pub enum InspectCommand {
         #[command(flatten)]
         sdk_profile: SdkProfileCliFlags,
     },
+    /// Inspect one complete compiler-checked typed registry without executing user modules
+    Registry {
+        /// Canonical registry identity, such as `package::module::functions`
+        #[arg(value_name = "CANONICAL_IDENTITY")]
+        identity: String,
+        /// Source project root; defaults to the current directory
+        #[arg(long, value_name = "PATH")]
+        project: Option<PathBuf>,
+        /// Output format
+        #[arg(long = "format", value_enum, default_value = "json")]
+        format: commands::tools::RegistryInspectionFormat,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -942,6 +954,11 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 &package_features.into(),
                 sdk_profile.profile(),
             ),
+            InspectCommand::Registry {
+                identity,
+                project,
+                format,
+            } => commands::tools::inspect_registry(&identity, project.as_deref(), format),
             InspectCommand::Providers {
                 path,
                 format,

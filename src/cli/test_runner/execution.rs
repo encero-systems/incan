@@ -934,6 +934,7 @@ pub(super) struct PreparedTestFile {
     pub project_root: PathBuf,
     pub resolved: ResolvedDependencies,
     pub project_requirements: ProjectRequirements,
+    pub registry_package_identity: String,
     pub cargo_package_name: String,
     pub lock_payload: Option<String>,
     pub cargo_lock_projection_root: Option<String>,
@@ -3432,6 +3433,7 @@ pub(super) fn run_file_tests_batch(
             project_root,
             resolved: lock_resolution.resolved,
             project_requirements: lock_resolution.project_requirements,
+            registry_package_identity: project_name,
             cargo_package_name: lock_resolution.cargo_package_name,
             cargo_lock_projection_root,
             clear_cargo_lock,
@@ -3459,6 +3461,7 @@ pub(super) fn run_file_tests_batch(
     let (main_type_info, dependency_type_info, stdlib_cache) = &prepared.prechecked_type_info;
     codegen.set_stdlib_cache(stdlib_cache.clone());
     codegen.set_prechecked_type_info(main_type_info.clone(), dependency_type_info.clone());
+    codegen.set_registry_package_identity(Some(prepared.registry_package_identity.clone()));
     let compiled_sdk_modules = CompiledSdkModules::from_provider_plan(&prepared.provider_plan);
     #[cfg(feature = "rust_inspect")]
     {

@@ -6,12 +6,13 @@ The crate owns record types, schema versioning, language/provenance vocabulary, 
 
 ## Scope
 
-The 0.4 schema is the first RFC 106 codegraph slice. It covers:
+The 0.5 schema is the first RFC 106 codegraph slice. It covers:
 
 - export headers with schema version, compiler version, mode, root, languages, package identity, and degraded state
 - source files and modules
 - top-level declarations
 - imports and public exports
+- compiler-checked registry entries, including public facade projections that preserve one canonical subject identity
 - body-level reference and call syntax, with conservative checked `target_id` values when the compiler has a source declaration identity
 - containment relationships
 - stable diagnostic records in tolerant exports
@@ -19,12 +20,12 @@ The 0.4 schema is the first RFC 106 codegraph slice. It covers:
 
 This crate deliberately has no dependency on compiler internals, graph databases, embeddings, MCP servers, or storage engines.
 
-## 0.4 Contract
+## 0.5 Contract
 
-The 0.4 exporter emits Incan-language facts only:
+The 0.5 exporter emits Incan-language facts only:
 
 ```json
-{"record":"header","schema_version":1,"languages":["incan"]}
+{"record":"header","schema_version":2,"languages":["incan"]}
 ```
 
 Every non-header fact record carries:
@@ -33,7 +34,7 @@ Every non-header fact record carries:
 - `provenance`
 - `degraded`
 
-The schema already has a `rust` language value because Rust is Incan's host, generated-code target, and interop substrate. That is reserved for follow-up work; the 0.4 CLI must not emit Rust graph facts until first-class Rust support lands.
+The schema already has a `rust` language value because Rust is Incan's host, generated-code target, and interop substrate. That is reserved for follow-up work; the 0.5 CLI must not emit Rust graph facts until first-class Rust support lands.
 
 ## Non-goals
 

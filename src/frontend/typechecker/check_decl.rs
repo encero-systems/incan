@@ -13,16 +13,18 @@ use crate::frontend::testing_markers::{
 use crate::frontend::typechecker::helpers::{collection_type_id, dict_ty, list_ty};
 
 use super::collect::decorators::resolve_decorator_id;
+use super::type_info::{RegistryDefinitionInfo, RegistryDescriptionInfo, RegistryExplicitEntryInfo};
 use super::{DecoratedFunctionBindingInfo, DecoratedMethodBindingInfo, TestingFixtureInfo, TypeChecker, YieldContext};
 use incan_core::interop::{RustItemKind, RustItemMetadata, RustTraitAssoc};
 use incan_core::lang::decorators::{self, DecoratorId};
 use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::magic_methods;
 use incan_core::lang::stdlib;
+use incan_core::lang::surface::constructors::{self, ConstructorId};
 use incan_core::lang::testing;
 use incan_core::lang::traits::{self as builtin_traits, TraitId};
 use incan_core::lang::types::collections::CollectionTypeId;
-use incan_semantics_core::SurfaceModifierTypeCheck;
+use incan_semantics_core::{SemanticRegistrySubjectKind, SemanticRegistryValue, SurfaceModifierTypeCheck};
 use std::collections::{HashMap, HashSet};
 
 /// Structural equality for trait method signatures (RFC 042 diamond / obligation merging).
@@ -2348,7 +2350,11 @@ impl TypeChecker {
     /// Validate a module static declaration and record its final type for later lowering.
     fn check_static(&mut self, static_decl: &StaticDecl, span: Span) {
         let expected_ty = self.resolve_type_checked(&static_decl.ty);
+        let previous_registry_entry_context = self.checking_registry_entry_static_initializer;
+        self.checking_registry_entry_static_initializer = Self::registry_entry_type_arguments(&expected_ty).is_some()
+            && matches!(&static_decl.value.node, Expr::MethodCall(_, method, _, _) if method == "entry");
         let value_ty = self.check_expr_with_expected(&static_decl.value, Some(&expected_ty));
+        self.checking_registry_entry_static_initializer = previous_registry_entry_context;
         if !self.types_compatible(&value_ty, &expected_ty)
             && !self.record_validated_newtype_coercion_if_possible(&value_ty, &expected_ty, static_decl.value.span)
         {
@@ -2375,7 +2381,557 @@ impl TypeChecker {
             );
         }
 
+        if let Some((key_type, descriptor_type)) = Self::registry_type_arguments(&expected_ty) {
+            match self.registry_definition_subjects(static_decl) {
+                Ok(subjects) => {
+                    self.type_info.registry.definitions.insert(
+                        static_decl.name.clone(),
+                        RegistryDefinitionInfo {
+                            key_type: key_type.clone(),
+                            descriptor_type: descriptor_type.clone(),
+                            subjects,
+                            is_public: static_decl.visibility == Visibility::Public,
+                        },
+                    );
+                }
+                Err(message) => self
+                    .errors
+                    .push(CompileError::type_error(message, static_decl.value.span)),
+            }
+        }
+
+        self.check_registry_explicit_entry_static(static_decl, &expected_ty, span);
+
         let _ = span;
+    }
+
+    /// Return the typed key and descriptor arguments when `ty` is `Registry[K, T]`.
+    fn registry_type_arguments(ty: &ResolvedType) -> Option<(&ResolvedType, &ResolvedType)> {
+        let ResolvedType::Generic(name, arguments) = ty else {
+            return None;
+        };
+        let [key, descriptor] = arguments.as_slice() else {
+            return None;
+        };
+        (name == "Registry").then_some((key, descriptor))
+    }
+
+    /// Return the typed key and descriptor arguments when `ty` is `RegistryEntry[K, T]`.
+    fn registry_entry_type_arguments(ty: &ResolvedType) -> Option<(&ResolvedType, &ResolvedType)> {
+        let ResolvedType::Generic(name, arguments) = ty else {
+            return None;
+        };
+        let [key, descriptor] = arguments.as_slice() else {
+            return None;
+        };
+        (name == "RegistryEntry").then_some((key, descriptor))
+    }
+
+    /// Validate a real static `registry.entry(...)` value that describes the current compilation unit or package.
+    ///
+    /// Unlike a declaration decorator this entry's subject is supplied explicitly, but its key and descriptor are
+    /// still compiler-checked structural facts. The source static remains the runtime value; this records the
+    /// non-runtime projection without executing any user code.
+    fn check_registry_explicit_entry_static(
+        &mut self,
+        static_decl: &StaticDecl,
+        expected_ty: &ResolvedType,
+        span: Span,
+    ) {
+        let Some((entry_key_type, entry_descriptor_type)) = Self::registry_entry_type_arguments(expected_ty) else {
+            return;
+        };
+        let Expr::MethodCall(receiver, method, _, arguments) = &static_decl.value.node else {
+            return;
+        };
+        if method != "entry" {
+            return;
+        }
+        let Expr::Ident(registry_name) = &receiver.node else {
+            self.errors.push(CompileError::type_error(
+                "RegistryEntry statics must call a module static registry's entry(...) method".to_string(),
+                receiver.span,
+            ));
+            return;
+        };
+        let Some(definition) = self.type_info.registry.definitions.get(registry_name).cloned() else {
+            self.errors.push(CompileError::type_error(
+                format!("registry `{registry_name}` must be initialized by Registry.define(...) before entry(...)"),
+                receiver.span,
+            ));
+            return;
+        };
+        if definition.key_type != *entry_key_type || definition.descriptor_type != *entry_descriptor_type {
+            self.errors.push(CompileError::type_error(
+                format!(
+                    "RegistryEntry `{}` must use the same K and T as registry `{registry_name}`",
+                    static_decl.name
+                ),
+                static_decl.ty.span,
+            ));
+            return;
+        }
+
+        let mut key = None;
+        let mut subject = None;
+        let mut descriptor = None;
+        for argument in arguments {
+            let CallArg::Named(name, value) = argument else {
+                self.errors.push(CompileError::type_error(
+                    "registry.entry for checked compilation-unit or package entries requires named key, subject, and descriptor arguments".to_string(),
+                    static_decl.value.span,
+                ));
+                return;
+            };
+            let target = match name.as_str() {
+                "key" => &mut key,
+                "subject" => &mut subject,
+                "descriptor" => &mut descriptor,
+                _ => {
+                    self.errors.push(CompileError::type_error(
+                        format!("registry.entry does not accept checked registry argument `{name}`"),
+                        value.span,
+                    ));
+                    return;
+                }
+            };
+            if target.replace(value).is_some() {
+                self.errors.push(CompileError::type_error(
+                    format!("registry.entry received duplicate `{name}` argument"),
+                    value.span,
+                ));
+                return;
+            }
+        }
+        let (Some(key), Some(subject), Some(descriptor)) = (key, subject, descriptor) else {
+            self.errors.push(CompileError::type_error(
+                "registry.entry for checked compilation-unit or package entries requires key, subject, and descriptor"
+                    .to_string(),
+                static_decl.value.span,
+            ));
+            return;
+        };
+        let subject_kind = match self.registry_explicit_subject_kind(subject) {
+            Ok(subject_kind) => subject_kind,
+            Err(message) => {
+                self.errors.push(CompileError::type_error(message, subject.span));
+                return;
+            }
+        };
+        if !definition.subjects.contains(&subject_kind) {
+            self.errors.push(CompileError::type_error(
+                format!("registry `{registry_name}` does not enable SubjectKind.{subject_kind}"),
+                subject.span,
+            ));
+            return;
+        }
+        if !self.registry_descriptor_type_is_valid(entry_descriptor_type) {
+            self.errors.push(CompileError::type_error(
+                format!(
+                    "registry.entry descriptor type `{entry_descriptor_type}` must be a model with @derive(Descriptor)"
+                ),
+                descriptor.span,
+            ));
+            return;
+        }
+
+        let key_actual = self.check_expr_with_expected(key, Some(entry_key_type));
+        let descriptor_actual = self.check_expr_with_expected(descriptor, Some(entry_descriptor_type));
+        if !self.types_compatible(&key_actual, entry_key_type) {
+            self.errors.push(errors::type_mismatch(
+                &entry_key_type.to_string(),
+                &key_actual.to_string(),
+                key.span,
+            ));
+            return;
+        }
+        if !self.types_compatible(&descriptor_actual, entry_descriptor_type) {
+            self.errors.push(errors::type_mismatch(
+                &entry_descriptor_type.to_string(),
+                &descriptor_actual.to_string(),
+                descriptor.span,
+            ));
+            return;
+        }
+        let key_value = match self.registry_structural_value(key) {
+            Ok(value) => value,
+            Err(message) => {
+                self.errors.push(CompileError::type_error(message, key.span));
+                return;
+            }
+        };
+        let descriptor_value = match self.registry_structural_value(descriptor) {
+            Ok(value) => value,
+            Err(message) => {
+                self.errors.push(CompileError::type_error(message, descriptor.span));
+                return;
+            }
+        };
+        if self.registry_has_key(registry_name, &key_value) {
+            self.errors.push(CompileError::type_error(
+                format!("duplicate checked registry key in `{registry_name}`"),
+                key.span,
+            ));
+            return;
+        }
+        self.type_info
+            .registry
+            .explicit_entries
+            .push(RegistryExplicitEntryInfo {
+                registry_name: registry_name.clone(),
+                key: key_value,
+                descriptor: descriptor_value,
+                subject_kind,
+                entry_name: static_decl.name.clone(),
+                declaration_span: (span.start, span.end),
+                key_span: (key.span.start, key.span.end),
+                subject_span: (subject.span.start, subject.span.end),
+                descriptor_span: (descriptor.span.start, descriptor.span.end),
+            });
+    }
+
+    /// Resolve the bounded explicit registry subject surface without evaluating a source expression.
+    fn registry_explicit_subject_kind(&self, subject: &Spanned<Expr>) -> Result<SemanticRegistrySubjectKind, String> {
+        let Expr::MethodCall(receiver, method, _, arguments) = &subject.node else {
+            return Err(
+                "registry.entry subject must be RegistrySubject.current_unit() or RegistrySubject.package()"
+                    .to_string(),
+            );
+        };
+        if !matches!(&receiver.node, Expr::Ident(name) if name == "RegistrySubject") || !arguments.is_empty() {
+            return Err(
+                "registry.entry subject must be RegistrySubject.current_unit() or RegistrySubject.package()"
+                    .to_string(),
+            );
+        }
+        match method.as_str() {
+            "current_unit" => Ok(SemanticRegistrySubjectKind::CompilationUnit),
+            "package" => Ok(SemanticRegistrySubjectKind::Package),
+            _ => Err(
+                "registry.entry subject must be RegistrySubject.current_unit() or RegistrySubject.package()"
+                    .to_string(),
+            ),
+        }
+    }
+
+    /// Return whether a checked description or explicit entry already owns `key` in `registry_name`.
+    fn registry_has_key(&self, registry_name: &str, key: &SemanticRegistryValue) -> bool {
+        self.type_info
+            .registry
+            .descriptions
+            .iter()
+            .any(|entry| entry.registry_name == registry_name && &entry.key == key)
+            || self
+                .type_info
+                .registry
+                .explicit_entries
+                .iter()
+                .any(|entry| entry.registry_name == registry_name && &entry.key == key)
+    }
+
+    /// Extract the subject contract from a static `Registry.define(subjects=[...])` initializer.
+    fn registry_definition_subjects(
+        &self,
+        static_decl: &StaticDecl,
+    ) -> Result<Vec<SemanticRegistrySubjectKind>, String> {
+        let Expr::MethodCall(receiver, method, _, arguments) = &static_decl.value.node else {
+            return Err("Registry statics must be initialized with Registry.define(subjects=[...])".to_string());
+        };
+        if !matches!(&receiver.node, Expr::Ident(name) if name == "Registry") || method != "define" {
+            return Err("Registry statics must be initialized with Registry.define(subjects=[...])".to_string());
+        }
+        let subjects = match arguments.as_slice() {
+            [CallArg::Positional(value)] => value,
+            [CallArg::Named(name, value)] if name == "subjects" => value,
+            _ => {
+                return Err("Registry.define requires exactly one `subjects` argument".to_string());
+            }
+        };
+        let Expr::List(entries) = &subjects.node else {
+            return Err("Registry.define subjects must be a literal list of SubjectKind values".to_string());
+        };
+
+        let mut result = Vec::new();
+        for entry in entries {
+            let ListEntry::Element(value) = entry else {
+                return Err("Registry.define subjects cannot use list spreads".to_string());
+            };
+            let Expr::Field(base, variant) = &value.node else {
+                return Err("Registry.define subjects must use SubjectKind.<kind> values".to_string());
+            };
+            if !matches!(&base.node, Expr::Ident(name) if name == "SubjectKind") {
+                return Err("Registry.define subjects must use SubjectKind.<kind> values".to_string());
+            }
+            let subject = match variant.as_str() {
+                "Function" => SemanticRegistrySubjectKind::Function,
+                "Method" => SemanticRegistrySubjectKind::Method,
+                "CompilationUnit" => SemanticRegistrySubjectKind::CompilationUnit,
+                "Package" => SemanticRegistrySubjectKind::Package,
+                _ => return Err(format!("unknown Registry subject kind `{variant}`")),
+            };
+            if result.contains(&subject) {
+                return Err(format!("duplicate Registry subject kind `{variant}`"));
+            }
+            result.push(subject);
+        }
+        if result.is_empty() {
+            return Err("Registry.define requires at least one allowed subject kind".to_string());
+        }
+        Ok(result)
+    }
+
+    /// Keep `@derive(Descriptor)` scoped to structural models; classes, enums, and newtypes have incompatible
+    /// construction semantics for a checked descriptor snapshot.
+    fn validate_descriptor_derive_attachment(&mut self, decorators: &[Spanned<Decorator>], kind: &str) {
+        for decorator in decorators {
+            if self.decorator_id_with_import_aliases(&decorator.node) != Some(DecoratorId::Derive) {
+                continue;
+            }
+            for argument in &decorator.node.args {
+                let DecoratorArg::Positional(value) = argument else {
+                    continue;
+                };
+                if matches!(&value.node, Expr::Ident(name) if derives::from_str(name) == Some(DeriveId::Descriptor)) {
+                    self.errors.push(CompileError::type_error(
+                        format!("@derive(Descriptor) is only supported on models, not {kind}s"),
+                        value.span,
+                    ));
+                }
+            }
+        }
+    }
+
+    /// Validate the field contract that `@derive(Descriptor)` opts into.
+    ///
+    /// A registry snapshot is a typed, non-executing value. Mutable containers, functions, open generics, Rust
+    /// handles, and recursive descriptor graphs cannot meet that promise. Keeping this validation on the model derive
+    /// prevents a registry use site from being the first place a domain author learns that its descriptor is not
+    /// serializable and replay-safe.
+    fn validate_descriptor_model_shape(&mut self, model: &ModelDecl, derives: &[String]) {
+        if !derives
+            .iter()
+            .any(|derive_| derives::from_str(derive_) == Some(DeriveId::Descriptor))
+        {
+            return;
+        }
+        if !model.type_params.is_empty() {
+            self.errors.push(CompileError::type_error(
+                "@derive(Descriptor) does not support generic models; use a concrete descriptor model".to_string(),
+                model.fields.first().map(|field| field.span).unwrap_or_default(),
+            ));
+        }
+        for field in &model.fields {
+            let ty = self.resolve_type_checked(&field.node.ty);
+            let mut visiting = HashSet::new();
+            if let Err(reason) = self.registry_descriptor_value_type_is_valid(&ty, &mut visiting) {
+                self.errors.push(CompileError::type_error(
+                    format!(
+                        "@derive(Descriptor) field `{}.{}` has unsupported type `{ty}`: {reason}",
+                        model.name, field.node.name
+                    ),
+                    field.span,
+                ));
+            }
+        }
+    }
+
+    /// Return whether a descriptor field can be preserved as a finite structural snapshot.
+    fn registry_descriptor_value_type_is_valid(
+        &self,
+        ty: &ResolvedType,
+        visiting: &mut HashSet<String>,
+    ) -> Result<(), String> {
+        match ty {
+            ResolvedType::Int
+            | ResolvedType::Float
+            | ResolvedType::Numeric(_)
+            | ResolvedType::Bool
+            | ResolvedType::Str
+            | ResolvedType::Bytes
+            | ResolvedType::FrozenStr
+            | ResolvedType::FrozenBytes
+            | ResolvedType::Unit => Ok(()),
+            ResolvedType::FrozenList(element) => self.registry_descriptor_value_type_is_valid(element, visiting),
+            ResolvedType::FrozenDict(key, value) => {
+                self.registry_descriptor_dict_key_type_is_valid(key, visiting)?;
+                self.registry_descriptor_value_type_is_valid(value, visiting)
+            }
+            ResolvedType::FrozenSet(_) => {
+                Err("FrozenSet values do not yet have an RFC 113 structural encoding".to_string())
+            }
+            ResolvedType::Named(name) => self.registry_descriptor_named_type_is_valid(name, visiting),
+            ResolvedType::Generic(name, arguments) => match collection_type_id(name) {
+                Some(CollectionTypeId::Option) if arguments.len() == 1 => {
+                    self.registry_descriptor_value_type_is_valid(&arguments[0], visiting)
+                }
+                Some(CollectionTypeId::FrozenList) if arguments.len() == 1 => {
+                    self.registry_descriptor_value_type_is_valid(&arguments[0], visiting)
+                }
+                Some(CollectionTypeId::FrozenDict) if arguments.len() == 2 => {
+                    self.registry_descriptor_dict_key_type_is_valid(&arguments[0], visiting)?;
+                    self.registry_descriptor_value_type_is_valid(&arguments[1], visiting)
+                }
+                Some(CollectionTypeId::List | CollectionTypeId::Dict | CollectionTypeId::Set) => {
+                    Err("mutable collections are not descriptor snapshots; use FrozenList or FrozenDict".to_string())
+                }
+                Some(CollectionTypeId::Tuple | CollectionTypeId::Result | CollectionTypeId::Generator) => {
+                    Err("this collection shape has no RFC 113 structural encoding".to_string())
+                }
+                Some(CollectionTypeId::FrozenSet) => {
+                    Err("FrozenSet values do not yet have an RFC 113 structural encoding".to_string())
+                }
+                Some(kind) => Err(format!("collection `{kind:?}` has an invalid descriptor arity")),
+                None => Err(format!("generic type `{name}` is not a concrete descriptor value")),
+            },
+            ResolvedType::Tuple(_) => Err("tuple values do not yet have an RFC 113 structural encoding".to_string()),
+            ResolvedType::Function(_, _) => {
+                Err("functions require runtime execution and cannot be snapshotted".to_string())
+            }
+            ResolvedType::TypeToken(inner) => self.registry_type_reference_is_valid(inner),
+            ResolvedType::Never => Err("Never has no value that can be preserved in a descriptor snapshot".to_string()),
+            ResolvedType::TypeVar(_) | ResolvedType::SelfType => {
+                Err("open type parameters cannot be structural snapshots".to_string())
+            }
+            ResolvedType::Ref(_) | ResolvedType::RefMut(_) => {
+                Err("borrowed values cannot escape into descriptor snapshots".to_string())
+            }
+            ResolvedType::RustPath(_) => Err("Rust handles cannot be descriptor snapshots".to_string()),
+            ResolvedType::CallSiteInfer | ResolvedType::Unknown => {
+                Err("the field type could not be resolved to a structural value".to_string())
+            }
+        }
+    }
+
+    /// Validate a concrete Incan type token retained inside a descriptor snapshot.
+    ///
+    /// Type references are source identities, not Rust handles or an invitation to execute reflection. The token must
+    /// therefore be fully concrete and stay within the Incan type universe that the compiler can render stably.
+    fn registry_type_reference_is_valid(&self, ty: &ResolvedType) -> Result<(), String> {
+        match ty {
+            ResolvedType::Never
+            | ResolvedType::Int
+            | ResolvedType::Float
+            | ResolvedType::Numeric(_)
+            | ResolvedType::Bool
+            | ResolvedType::Str
+            | ResolvedType::Bytes
+            | ResolvedType::FrozenStr
+            | ResolvedType::FrozenBytes
+            | ResolvedType::Unit
+            | ResolvedType::Named(_) => Ok(()),
+            ResolvedType::Generic(_, arguments) | ResolvedType::Tuple(arguments) => {
+                for argument in arguments {
+                    self.registry_type_reference_is_valid(argument)?;
+                }
+                Ok(())
+            }
+            ResolvedType::FrozenList(element)
+            | ResolvedType::TypeToken(element)
+            | ResolvedType::Ref(element)
+            | ResolvedType::RefMut(element) => self.registry_type_reference_is_valid(element),
+            ResolvedType::FrozenDict(key, value) => {
+                self.registry_type_reference_is_valid(key)?;
+                self.registry_type_reference_is_valid(value)
+            }
+            ResolvedType::FrozenSet(element) => self.registry_type_reference_is_valid(element),
+            ResolvedType::Function(_, _) => Err("function type tokens are not descriptor snapshots".to_string()),
+            ResolvedType::TypeVar(_) | ResolvedType::SelfType => {
+                Err("open type parameters cannot be descriptor type references".to_string())
+            }
+            ResolvedType::RustPath(_) => Err("Rust type handles cannot be descriptor type references".to_string()),
+            ResolvedType::CallSiteInfer | ResolvedType::Unknown => {
+                Err("the type token could not be resolved to a concrete Incan type".to_string())
+            }
+        }
+    }
+
+    /// Restrict frozen-map keys to deterministic scalar identities rather than arbitrary descriptor objects.
+    fn registry_descriptor_dict_key_type_is_valid(
+        &self,
+        ty: &ResolvedType,
+        visiting: &mut HashSet<String>,
+    ) -> Result<(), String> {
+        match ty {
+            ResolvedType::Int
+            | ResolvedType::Float
+            | ResolvedType::Numeric(_)
+            | ResolvedType::Bool
+            | ResolvedType::Str
+            | ResolvedType::Bytes
+            | ResolvedType::FrozenStr
+            | ResolvedType::FrozenBytes => Ok(()),
+            ResolvedType::Named(name) => match self.lookup_type_info(name) {
+                Some(TypeInfo::Enum(info)) if info.variant_fields.values().all(Vec::is_empty) => Ok(()),
+                Some(TypeInfo::Newtype(info)) if !info.is_rusttype => {
+                    self.registry_descriptor_value_type_is_valid(&info.underlying, visiting)
+                }
+                _ => Err("map keys must be primitives, fieldless enums, or structural newtypes".to_string()),
+            },
+            _ => Err("map keys must be deterministic scalar identities".to_string()),
+        }
+    }
+
+    /// Validate nominal descriptor components while detecting recursive snapshot graphs.
+    fn registry_descriptor_named_type_is_valid(
+        &self,
+        name: &str,
+        visiting: &mut HashSet<String>,
+    ) -> Result<(), String> {
+        let Some(type_info) = self.lookup_type_info(name).cloned() else {
+            return Err(format!("unknown nominal type `{name}`"));
+        };
+        match type_info {
+            TypeInfo::Enum(info) => info
+                .variant_fields
+                .values()
+                .all(Vec::is_empty)
+                .then_some(())
+                .ok_or_else(|| "enums with payload variants are not structural descriptor values".to_string()),
+            TypeInfo::Newtype(info) => {
+                if info.is_rusttype {
+                    return Err("rusttype aliases cannot be descriptor snapshots".to_string());
+                }
+                if !info.type_params.is_empty() {
+                    return Err("generic newtypes cannot be descriptor snapshots".to_string());
+                }
+                let visit = format!("newtype:{name}");
+                if !visiting.insert(visit.clone()) {
+                    return Err("recursive newtype snapshots are not supported".to_string());
+                }
+                let result = self.registry_descriptor_value_type_is_valid(&info.underlying, visiting);
+                visiting.remove(&visit);
+                result
+            }
+            TypeInfo::Model(info) => {
+                if !info
+                    .derives
+                    .iter()
+                    .any(|derive_| derives::from_str(derive_) == Some(DeriveId::Descriptor))
+                {
+                    return Err("nested models must also use @derive(Descriptor)".to_string());
+                }
+                if !info.type_params.is_empty() {
+                    return Err("generic descriptor models are not supported".to_string());
+                }
+                let visit = format!("model:{name}");
+                if !visiting.insert(visit.clone()) {
+                    return Err("recursive descriptor model snapshots are not supported".to_string());
+                }
+                let result = info.field_order.iter().try_for_each(|field_name| {
+                    let field = info
+                        .fields
+                        .get(field_name)
+                        .ok_or_else(|| format!("descriptor model field `{field_name}` is missing"))?;
+                    self.registry_descriptor_value_type_is_valid(&field.ty, visiting)
+                });
+                visiting.remove(&visit);
+                result
+            }
+            TypeInfo::Class(_) => Err("classes are mutable and cannot be descriptor snapshots".to_string()),
+            TypeInfo::Builtin | TypeInfo::TypeAlias => Err(format!(
+                "builtin or alias type `{name}` is not a structural descriptor value"
+            )),
+        }
     }
 
     /// Validate a model declaration after collection, including decorators, trait conformance, fields, and methods.
@@ -2383,10 +2939,12 @@ impl TypeChecker {
         self.symbols.enter_scope(ScopeKind::Model);
 
         self.validate_decorators_rejecting_user_defined(&model.decorators, "model");
+        self.reject_registry_description_decorators(&model.decorators, "model");
         // Validate @derive decorators
         self.validate_derives(&model.decorators);
         self.validate_rust_derives(&model.decorators, "model", false, &model.traits);
         let derives = self.extract_derive_names(&model.decorators);
+        self.validate_descriptor_model_shape(model, &derives);
         let has_validate = derives
             .iter()
             .any(|d| derives::from_str(d.as_str()) == Some(DeriveId::Validate));
@@ -2796,8 +3354,10 @@ impl TypeChecker {
         }
 
         self.validate_decorators_rejecting_user_defined(&class.decorators, "class");
+        self.reject_registry_description_decorators(&class.decorators, "class");
         // Validate @derive decorators
         self.validate_derives(&class.decorators);
+        self.validate_descriptor_derive_attachment(&class.decorators, "class");
         self.validate_rust_derives(&class.decorators, "class", false, &class.traits);
         let derives = self.extract_derive_names(&class.decorators);
 
@@ -3041,6 +3601,7 @@ impl TypeChecker {
         }
 
         self.validate_decorators_rejecting_user_defined(&tr.decorators, "trait");
+        self.reject_registry_description_decorators(&tr.decorators, "trait");
         self.reject_rust_allow_on_unsupported_declaration(&tr.decorators, "trait");
         let requires_map: HashMap<String, ResolvedType> = self
             .symbols
@@ -3067,6 +3628,7 @@ impl TypeChecker {
 
         for method in &tr.methods {
             self.validate_decorators_allowing_user_defined(&method.node.decorators);
+            self.reject_registry_description_decorators(&method.node.decorators, "trait method");
             let prev_method_seen = self.current_trait_missing_requires_emitted.take();
             self.current_trait_missing_requires_emitted = Some(std::collections::HashSet::new());
             // Trait methods are checked against `Self` (the eventual adopter type). Abstract methods have no body, but
@@ -3276,7 +3838,9 @@ impl TypeChecker {
         self.validate_type_param_bound_type_names(&nt.type_params);
 
         self.validate_decorators_rejecting_user_defined(&nt.decorators, "newtype");
+        self.reject_registry_description_decorators(&nt.decorators, "newtype");
         self.validate_derives(&nt.decorators);
+        self.validate_descriptor_derive_attachment(&nt.decorators, "newtype");
         self.validate_rust_derives(&nt.decorators, "newtype", nt.is_rusttype, &nt.traits);
         let derives = self.extract_derive_names(&nt.decorators);
 
@@ -3588,7 +4152,9 @@ impl TypeChecker {
         self.symbols.enter_scope(ScopeKind::Block);
 
         self.validate_decorators_rejecting_user_defined(&en.decorators, "enum");
+        self.reject_registry_description_decorators(&en.decorators, "enum");
         self.validate_derives(&en.decorators);
+        self.validate_descriptor_derive_attachment(&en.decorators, "enum");
         self.validate_rust_derives(&en.decorators, "enum", false, &en.traits);
         let derives = self.extract_derive_names(&en.decorators);
 
@@ -4156,11 +4722,331 @@ impl TypeChecker {
         expr
     }
 
+    /// Validate compiler-recognised typed declaration descriptions before the callable body opens its local scope.
+    fn check_registry_description_decorators(
+        &mut self,
+        decorators: &[Spanned<Decorator>],
+        declaration_name: &str,
+        decl_span: Span,
+        subject_kind: SemanticRegistrySubjectKind,
+    ) {
+        for decorator in decorators {
+            if self.decorator_id_with_import_aliases(&decorator.node) != Some(DecoratorId::Describe) {
+                continue;
+            }
+            let [
+                DecoratorArg::Positional(registry),
+                DecoratorArg::Positional(key),
+                DecoratorArg::Positional(descriptor),
+            ] = decorator.node.args.as_slice()
+            else {
+                self.errors.push(CompileError::type_error(
+                    "@describe requires exactly three positional arguments: registry, key, descriptor".to_string(),
+                    decorator.span,
+                ));
+                continue;
+            };
+            let Expr::Ident(registry_name) = &registry.node else {
+                self.errors.push(CompileError::type_error(
+                    "@describe registry must be a module static Registry binding".to_string(),
+                    registry.span,
+                ));
+                continue;
+            };
+            let Some(static_info) = self.lookup_static_info(registry_name).cloned() else {
+                self.errors.push(CompileError::type_error(
+                    format!("@describe registry `{registry_name}` must be a module static Registry binding"),
+                    registry.span,
+                ));
+                continue;
+            };
+            let Some((key_type, descriptor_type)) = Self::registry_type_arguments(&static_info.ty) else {
+                self.errors.push(CompileError::type_error(
+                    format!("@describe registry `{registry_name}` must have type Registry[K, T]"),
+                    registry.span,
+                ));
+                continue;
+            };
+            let Some(definition) = self.type_info.registry.definitions.get(registry_name).cloned() else {
+                self.errors.push(CompileError::type_error(
+                    format!("@describe registry `{registry_name}` must be initialized by Registry.define(...) before it is described"),
+                    registry.span,
+                ));
+                continue;
+            };
+            if definition.key_type != *key_type || definition.descriptor_type != *descriptor_type {
+                self.errors.push(CompileError::type_error(
+                    format!("@describe registry `{registry_name}` has inconsistent Registry.define type arguments"),
+                    registry.span,
+                ));
+                continue;
+            }
+            if !definition.subjects.contains(&subject_kind) {
+                self.errors.push(CompileError::type_error(
+                    format!("@describe cannot attach a {subject_kind} to registry `{registry_name}` because SubjectKind.{subject_kind} is not enabled"),
+                    decorator.span,
+                ));
+                continue;
+            }
+            if !self.registry_descriptor_type_is_valid(descriptor_type) {
+                self.errors.push(CompileError::type_error(
+                    format!("@describe descriptor type `{descriptor_type}` must be a model with @derive(Descriptor)"),
+                    descriptor.span,
+                ));
+                continue;
+            }
+
+            let key_actual = self.check_expr_with_expected(key, Some(key_type));
+            if !self.types_compatible(&key_actual, key_type) {
+                self.errors.push(errors::type_mismatch(
+                    &key_type.to_string(),
+                    &key_actual.to_string(),
+                    key.span,
+                ));
+                continue;
+            }
+            let descriptor_actual = self.check_expr_with_expected(descriptor, Some(descriptor_type));
+            if !self.types_compatible(&descriptor_actual, descriptor_type) {
+                self.errors.push(errors::type_mismatch(
+                    &descriptor_type.to_string(),
+                    &descriptor_actual.to_string(),
+                    descriptor.span,
+                ));
+                continue;
+            }
+            let key_value = match self.registry_structural_value(key) {
+                Ok(value) => value,
+                Err(message) => {
+                    self.errors.push(CompileError::type_error(message, key.span));
+                    continue;
+                }
+            };
+            let descriptor_value = match self.registry_structural_value(descriptor) {
+                Ok(value) => value,
+                Err(message) => {
+                    self.errors.push(CompileError::type_error(message, descriptor.span));
+                    continue;
+                }
+            };
+            if self.registry_has_key(registry_name, &key_value) {
+                self.errors.push(CompileError::type_error(
+                    format!("duplicate @describe key in registry `{registry_name}`"),
+                    key.span,
+                ));
+                continue;
+            }
+            self.type_info.registry.descriptions.push(RegistryDescriptionInfo {
+                registry_name: registry_name.clone(),
+                key: key_value,
+                descriptor: descriptor_value,
+                subject_kind,
+                declaration_name: declaration_name.to_string(),
+                declaration_span: (decl_span.start, decl_span.end),
+                decorator_span: (decorator.span.start, decorator.span.end),
+                key_span: (key.span.start, key.span.end),
+                descriptor_span: (descriptor.span.start, descriptor.span.end),
+            });
+        }
+    }
+
+    /// Reject `@describe` where RFC 113 has no stable source subject yet.
+    ///
+    /// The decorator resolver deliberately recognises compiler-owned decorators on broad syntactic targets. Keeping
+    /// this target check beside the actual registry collector prevents an unsupported declaration from being silently
+    /// accepted merely because it is a known decorator, while leaving future model/trait/module support open to a
+    /// concrete subject-identity contract.
+    fn reject_registry_description_decorators(&mut self, decorators: &[Spanned<Decorator>], target: &str) {
+        for decorator in decorators {
+            if self.decorator_id_with_import_aliases(&decorator.node) == Some(DecoratorId::Describe) {
+                self.errors.push(CompileError::type_error(
+                    format!("@describe is currently supported only on concrete functions and methods, not a {target}"),
+                    decorator.span,
+                ));
+            }
+        }
+    }
+
+    /// Return whether a type is an RFC 113 descriptor model.
+    fn registry_descriptor_type_is_valid(&self, ty: &ResolvedType) -> bool {
+        let ResolvedType::Named(name) = ty else {
+            return false;
+        };
+        let mut visiting = HashSet::new();
+        self.registry_descriptor_named_type_is_valid(name, &mut visiting)
+            .is_ok()
+    }
+
+    /// Convert one expression to an RFC 113 structural snapshot without evaluating user code.
+    fn registry_structural_value(&self, expr: &Spanned<Expr>) -> Result<SemanticRegistryValue, String> {
+        self.registry_structural_value_with_consts(expr, &mut HashSet::new())
+    }
+
+    /// Convert one expression to a checked structural snapshot, expanding local const declarations through the
+    /// compiler's already-parsed declaration graph. This is not runtime evaluation: only the RFC 113 literal/model
+    /// subset is traversed, and cycles are rejected explicitly.
+    fn registry_structural_value_with_consts(
+        &self,
+        expr: &Spanned<Expr>,
+        expanding_consts: &mut HashSet<String>,
+    ) -> Result<SemanticRegistryValue, String> {
+        match &expr.node {
+            Expr::Literal(Literal::Int(value)) => Ok(SemanticRegistryValue::Int(value.value)),
+            Expr::Literal(Literal::Float(value)) => Ok(SemanticRegistryValue::Float(value.repr.clone())),
+            Expr::Literal(Literal::Decimal(value)) => Ok(SemanticRegistryValue::Float(value.repr.clone())),
+            Expr::Literal(Literal::String(value)) => Ok(SemanticRegistryValue::String(value.clone())),
+            Expr::Literal(Literal::Bytes(value)) => Ok(SemanticRegistryValue::Bytes(value.clone())),
+            Expr::Literal(Literal::Bool(value)) => Ok(SemanticRegistryValue::Bool(*value)),
+            Expr::Literal(Literal::None) => Ok(SemanticRegistryValue::None),
+            Expr::Paren(inner) => self.registry_structural_value_with_consts(inner, expanding_consts),
+            Expr::List(entries) => entries
+                .iter()
+                .map(|entry| match entry {
+                    ListEntry::Element(value) => self.registry_structural_value_with_consts(value, expanding_consts),
+                    ListEntry::Spread(_) => Err("@describe structural values cannot use list spreads".to_string()),
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map(SemanticRegistryValue::List),
+            Expr::Dict(entries) => entries
+                .iter()
+                .map(|entry| match entry {
+                    DictEntry::Pair(key, value) => Ok((
+                        self.registry_structural_value_with_consts(key, expanding_consts)?,
+                        self.registry_structural_value_with_consts(value, expanding_consts)?,
+                    )),
+                    DictEntry::Spread(_) => Err("@describe structural values cannot use dict spreads".to_string()),
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map(SemanticRegistryValue::Dict),
+            Expr::Ident(name) if self.const_decls.contains_key(name) => {
+                let Some(konst) = self.const_decls.get(name) else {
+                    return Err(format!("unknown const `{name}` in registry descriptor"));
+                };
+                if !expanding_consts.insert(name.clone()) {
+                    return Err(format!("registry descriptor const `{name}` is cyclic"));
+                }
+                let value = self.registry_structural_value_with_consts(&konst.0.value, expanding_consts);
+                expanding_consts.remove(name);
+                value
+            }
+            Expr::Ident(name) if self.lookup_type_info(name).is_some() => Ok(SemanticRegistryValue::Type(name.clone())),
+            Expr::Field(_, _) => self
+                .registry_structural_path(expr)
+                .ok_or_else(|| "@describe structural references must name a const or enum variant".to_string())
+                .map(SemanticRegistryValue::ConstRef),
+            Expr::Call(callee, _, arguments) => {
+                let Expr::Ident(name) = &callee.node else {
+                    return Err("@describe structural calls must construct a newtype or Descriptor model".to_string());
+                };
+                if name == constructors::as_str(ConstructorId::Some) {
+                    return self.registry_structural_some(arguments, expanding_consts);
+                }
+                if matches!(self.lookup_type_info(name), Some(TypeInfo::Model(_))) {
+                    return self.registry_structural_model_with_consts(name, arguments, expanding_consts);
+                }
+                if !matches!(self.lookup_type_info(name), Some(TypeInfo::Newtype(_))) {
+                    return Err("@describe structural calls must construct a newtype or Descriptor model".to_string());
+                }
+                let [CallArg::Positional(value)] = arguments.as_slice() else {
+                    return Err("@describe newtype keys require exactly one positional structural value".to_string());
+                };
+                Ok(SemanticRegistryValue::Newtype {
+                    name: name.clone(),
+                    value: Box::new(self.registry_structural_value_with_consts(value, expanding_consts)?),
+                })
+            }
+            Expr::Constructor(name, arguments) if name == constructors::as_str(ConstructorId::Some) => {
+                self.registry_structural_some(arguments, expanding_consts)
+            }
+            Expr::Constructor(name, arguments) => {
+                self.registry_structural_model_with_consts(name, arguments, expanding_consts)
+            }
+            _ => Err("@describe values must be literals, safe const references, collections, newtypes, or Descriptor model literals".to_string()),
+        }
+    }
+
+    /// Snapshot `Some(value)` as a structural option without evaluating user code.
+    fn registry_structural_some(
+        &self,
+        arguments: &[CallArg],
+        expanding_consts: &mut HashSet<String>,
+    ) -> Result<SemanticRegistryValue, String> {
+        let [CallArg::Positional(value)] = arguments else {
+            return Err("@describe Some(...) requires exactly one positional structural value".to_string());
+        };
+        Ok(SemanticRegistryValue::Option(Box::new(
+            self.registry_structural_value_with_consts(value, expanding_consts)?,
+        )))
+    }
+
+    /// Snapshot a descriptor model constructor while preserving expanded local const values.
+    fn registry_structural_model_with_consts(
+        &self,
+        name: &str,
+        arguments: &[CallArg],
+        expanding_consts: &mut HashSet<String>,
+    ) -> Result<SemanticRegistryValue, String> {
+        if !matches!(self.lookup_type_info(name), Some(TypeInfo::Model(_))) {
+            return Err("@describe structural constructors must be models".to_string());
+        }
+        let mut fields = Vec::new();
+        for argument in arguments {
+            let CallArg::Named(field, value) = argument else {
+                return Err("@describe Descriptor model literals require named fields without spreads".to_string());
+            };
+            fields.push((
+                field.clone(),
+                self.registry_structural_value_with_consts(value, expanding_consts)?,
+            ));
+        }
+        fields.sort_by(|left, right| left.0.cmp(&right.0));
+        Ok(SemanticRegistryValue::Model {
+            name: name.to_string(),
+            fields,
+        })
+    }
+
+    /// Return a safe const or enum-variant path for a structural reference expression.
+    fn registry_structural_path(&self, expr: &Spanned<Expr>) -> Option<Vec<String>> {
+        /// Collect only plain identifier/member segments, rejecting every computed expression form.
+        fn collect(expr: &Expr, out: &mut Vec<String>) -> bool {
+            match expr {
+                Expr::Ident(name) => {
+                    out.push(name.clone());
+                    true
+                }
+                Expr::Field(base, field) => {
+                    if !collect(&base.node, out) {
+                        return false;
+                    }
+                    out.push(field.clone());
+                    true
+                }
+                _ => false,
+            }
+        }
+        let mut path = Vec::new();
+        if !collect(&expr.node, &mut path) {
+            return None;
+        }
+        let first = path.first()?;
+        if self.const_decls.contains_key(first) || matches!(self.lookup_type_info(first), Some(TypeInfo::Enum(_))) {
+            Some(path)
+        } else {
+            None
+        }
+    }
+
     /// Typecheck one function body with its parameters, return type, decorators, and generic bounds in scope.
     fn check_function(&mut self, func: &FunctionDecl, decl_span: Span) {
         self.symbols.enter_scope(ScopeKind::Function);
 
         self.validate_decorators_allowing_user_defined(&func.decorators);
+        self.check_registry_description_decorators(
+            &func.decorators,
+            &func.name,
+            decl_span,
+            SemanticRegistrySubjectKind::Function,
+        );
         self.validate_callable_rest_params(&func.params);
         let fixture_span = fixture_function_span(func);
         let fixture_args = self.testing_fixture_marker_args(&func.decorators, fixture_span);
@@ -4326,6 +5212,13 @@ impl TypeChecker {
     /// Validate a model, class, enum, or newtype method body using the concrete nominal owner as `self`.
     fn check_method_with_owner_type_params(&mut self, method: &MethodDecl, owner: &str, owner_params: &[TypeParam]) {
         self.validate_decorators_allowing_user_defined(&method.decorators);
+        let declaration_name = format!("{owner}.{}", method.name);
+        self.check_registry_description_decorators(
+            &method.decorators,
+            &declaration_name,
+            method.return_type.span,
+            SemanticRegistrySubjectKind::Method,
+        );
         if method.body.is_none() {
             self.errors.push(errors::concrete_method_requires_body(
                 &method.name,

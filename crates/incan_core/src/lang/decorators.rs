@@ -26,6 +26,7 @@ pub enum DecoratorId {
     StaticMethod,
     ClassMethod,
     Requires,
+    Describe,
 }
 
 // ---- Decorator namespace constants ----
@@ -131,6 +132,14 @@ pub const DECORATORS: &[DecoratorInfo] = &[
         "Declare required fields for trait default methods.",
         RFC::_000,
         Since(0, 1),
+    ),
+    info(
+        DecoratorId::Describe,
+        "std.registry.describe",
+        &[],
+        "Attach a compiler-checked typed registry descriptor to a declaration.",
+        RFC::_113,
+        Since(0, 5),
     ),
 ];
 

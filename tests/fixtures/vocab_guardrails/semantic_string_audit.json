@@ -188,9 +188,9 @@
     },
     {
       "path": "src/backend/ir/lower/decl/mod.rs",
-      "category": "derive const lowering compatibility",
-      "expected_count": 1,
-      "expected_fingerprint": "0x41b88bc9914484bf"
+      "category": "derive and checked registry lowering compatibility",
+      "expected_count": 3,
+      "expected_fingerprint": "0xcfe26b0d4677ee08"
     },
     {
       "path": "src/backend/ir/lower/decl/traits.rs",
@@ -266,15 +266,15 @@
     },
     {
       "path": "src/frontend/typechecker/check_decl.rs",
-      "category": "declaration-level stdlib and derive compatibility",
-      "expected_count": 3,
-      "expected_fingerprint": "0xe83eca1f5db018d2"
+      "category": "declaration-level stdlib, derive, and checked registry compatibility",
+      "expected_count": 20,
+      "expected_fingerprint": "0x4d8a9ca24e3309e1"
     },
     {
       "path": "src/frontend/typechecker/check_expr/access.rs",
-      "category": "method/type access surface classification",
-      "expected_count": 46,
-      "expected_fingerprint": "0xadce01bf76021778"
+      "category": "method/type access and checked registry boundary classification",
+      "expected_count": 52,
+      "expected_fingerprint": "0x9c35a66ff95fa1ef"
     },
     {
       "path": "src/frontend/typechecker/check_expr/basics.rs",

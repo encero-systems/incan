@@ -1177,6 +1177,7 @@ pub fn trait_requires_missing_field(trait_name: &str, field: &str, span: Span) -
     .with_note("Trait default methods may only access fields declared in @requires(...)")
 }
 
+/// Report that a type does not meet a required trait and add the most useful source-level remedy.
 pub fn trait_not_implemented(type_name: &str, trait_name: &str, span: Span) -> CompileError {
     let mut error = CompileError::type_error(
         format!("Type '{}' does not implement trait '{}'", type_name, trait_name),
@@ -1221,6 +1222,11 @@ pub fn trait_not_implemented(type_name: &str, trait_name: &str, span: Span) -> C
         Some(DeriveId::Validate) => {
             error = error.with_hint("Add @derive(Validate) to enable validated construction via TypeName.new(...)");
             error = error.with_hint("Then implement: def validate(self) -> Result[Self, E]: ...");
+        }
+        Some(DeriveId::Descriptor) => {
+            error = error.with_hint(
+                "@derive(Descriptor) enables structural registry snapshots; it does not add a runtime trait",
+            );
         }
         None => {
             error = error.with_hint(format!(

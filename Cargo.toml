@@ -152,6 +152,11 @@ name = "incan-lsp"
 path = "src/bin/lsp.rs"
 required-features = ["lsp"]
 
+[[bin]]
+name = "generate_feature_inventory"
+path = "src/bin/generate_feature_inventory.rs"
+required-features = ["cli"]
+
 [lib]
 name = "incan"
 path = "src/lib.rs"

@@ -37,7 +37,7 @@ use std::sync::Arc;
 
 use super::TypedExpr;
 use super::decl::{FunctionParam, IrDecl, IrDeclKind, IrImportOrigin, IrImportQualifier, IrTypeParam};
-use super::expr::{IrCallArg, IrCallArgKind, IrExprKind, VarAccess, VarRefKind};
+use super::expr::{IrCallArg, IrCallArgKind, IrExprKind, MethodCallArgPolicy, VarAccess, VarRefKind};
 use super::stmt::{IrStmt, IrStmtKind};
 use super::types::IrType;
 use super::{FunctionReexport, FunctionSignature, IrProgram, Mutability};
@@ -180,6 +180,11 @@ pub struct AstLowering {
     pub(super) type_method_rebindings: HashMap<String, HashMap<String, String>>,
     /// Best-effort source module name for compiler-provided call-site metadata.
     pub(super) current_source_module_name: Option<String>,
+    /// Canonical package identity supplied by the build or test orchestration layer.
+    ///
+    /// Explicit `RegistrySubject.package()` entries need this boundary-owned fact so their runtime value agrees with
+    /// the checked package artifact rather than preserving a source placeholder.
+    pub(super) registry_package_identity: Option<String>,
 }
 
 impl AstLowering {
@@ -291,12 +296,18 @@ impl AstLowering {
             rusttype_interop_edges: HashMap::new(),
             type_method_rebindings: HashMap::new(),
             current_source_module_name: None,
+            registry_package_identity: None,
         }
     }
 
     /// Override the source module name used for compiler-provided call-site metadata.
     pub fn set_current_source_module_name(&mut self, name: Option<String>) {
         self.current_source_module_name = name;
+    }
+
+    /// Set the canonical defining package identity used by compiler-materialized registry subjects.
+    pub fn set_registry_package_identity(&mut self, identity: Option<String>) {
+        self.registry_package_identity = identity;
     }
 
     /// Provide a warmed stdlib metadata cache for lowering stages that need stdlib-backed decorator or helper
@@ -1719,6 +1730,10 @@ impl AstLowering {
                                 }
                                 Err(e) => errors.push(e),
                             }
+                            match self.lower_registry_description_method_inits(&struct_ir.name, &m.methods) {
+                                Ok(inits) => ir_program.module_init.extend(inits),
+                                Err(e) => errors.push(e),
+                            }
 
                             // Generate trait impls for each trait this model implements
                             for trait_ref in &m.traits {
@@ -1808,6 +1823,10 @@ impl AstLowering {
                                 }
                                 Err(e) => errors.push(e),
                             }
+                            match self.lower_registry_description_method_inits(&struct_ir.name, &c.methods) {
+                                Ok(inits) => ir_program.module_init.extend(inits),
+                                Err(e) => errors.push(e),
+                            }
 
                             // Generate trait impls for each trait this class implements
                             for trait_ref in &c.traits {
@@ -1860,6 +1879,10 @@ impl AstLowering {
                             Ok(ir_decl) => {
                                 ir_program.declarations.push(ir_decl);
                             }
+                            Err(e) => errors.push(e),
+                        }
+                        match self.lower_registry_description_method_inits(&n.name, &n.methods) {
+                            Ok(inits) => ir_program.module_init.extend(inits),
                             Err(e) => errors.push(e),
                         }
                         for trait_ref in &n.traits {
@@ -1916,6 +1939,10 @@ impl AstLowering {
                                     }
                                     Err(e) => errors.push(e),
                                 }
+                                match self.lower_registry_description_method_inits(&struct_ir.name, &n.methods) {
+                                    Ok(inits) => ir_program.module_init.extend(inits),
+                                    Err(e) => errors.push(e),
+                                }
                             }
                             for trait_ref in &n.traits {
                                 for (trait_name, trait_type_args) in self.trait_impl_targets_for_adopted_trait_bound(
@@ -1960,6 +1987,10 @@ impl AstLowering {
                                 Ok(impl_ir) => {
                                     ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(impl_ir)));
                                 }
+                                Err(e) => errors.push(e),
+                            }
+                            match self.lower_registry_description_method_inits(&enum_ir.name, &e.methods) {
+                                Ok(inits) => ir_program.module_init.extend(inits),
                                 Err(e) => errors.push(e),
                             }
                         }
@@ -2021,6 +2052,10 @@ impl AstLowering {
                             }
                         }
                         ir_program.declarations.extend(decls);
+                        match self.lower_registry_description_function_init(f) {
+                            Ok(inits) => ir_program.module_init.extend(inits),
+                            Err(error) => errors.push(error),
+                        }
                     }
                     Err(e) => errors.push(e),
                 },
@@ -2215,6 +2250,164 @@ impl AstLowering {
             }),
             IrDecl::new(IrDeclKind::Function(wrapper)),
         ])
+    }
+
+    /// Lower the runtime half of one compiler-recognised RFC 113 function description.
+    ///
+    /// Registry declarations are facts first: the frontend validates their arguments and records the static projection.
+    /// When a module loads, the same descriptor must be reflected in the source-authored `Registry` value.  Ordinary
+    /// function arguments would clone a module static, so this deliberately lowers the registry receiver as a real
+    /// static-cell mutation executed after declaration-order static construction.
+    fn lower_registry_description_function_init(
+        &mut self,
+        function: &ast::FunctionDecl,
+    ) -> Result<Vec<IrStmt>, LoweringError> {
+        self.lower_registry_description_inits(
+            &function.decorators,
+            incan_semantics_core::SemanticRegistrySubjectKind::Function,
+            &function.name,
+        )
+    }
+
+    /// Lower all compiler-approved descriptions attached to the methods owned by one concrete type.
+    fn lower_registry_description_method_inits(
+        &mut self,
+        owner: &str,
+        methods: &[ast::Spanned<ast::MethodDecl>],
+    ) -> Result<Vec<IrStmt>, LoweringError> {
+        let mut inits = Vec::new();
+        for method in methods {
+            let declaration_name = format!("{owner}.{}", method.node.name);
+            inits.extend(self.lower_registry_description_inits(
+                &method.node.decorators,
+                incan_semantics_core::SemanticRegistrySubjectKind::Method,
+                &declaration_name,
+            )?);
+        }
+        Ok(inits)
+    }
+
+    /// Emit runtime registrations from frontend-approved registry artifacts.
+    ///
+    /// The source expressions remain the materialization syntax for typed key and descriptor values, but they are
+    /// paired with the exact checked decorator span and subject kind first. This makes the frontend artifact the
+    /// semantic authority while keeping registry runtime behavior authored in `std.registry`.
+    fn lower_registry_description_inits(
+        &mut self,
+        decorators_for_declaration: &[ast::Spanned<ast::Decorator>],
+        expected_subject_kind: incan_semantics_core::SemanticRegistrySubjectKind,
+        expected_declaration_name: &str,
+    ) -> Result<Vec<IrStmt>, LoweringError> {
+        let mut inits = Vec::new();
+
+        for decorator in decorators_for_declaration {
+            let resolved = decorator_resolution::resolve_decorator_path(&decorator.node, &self.import_aliases);
+            if decorators::from_segments(&resolved) != Some(DecoratorId::Describe) {
+                continue;
+            }
+            let description = self
+                .type_info
+                .as_ref()
+                .and_then(|type_info| {
+                    type_info.registry.descriptions.iter().find(|entry| {
+                        entry.subject_kind == expected_subject_kind
+                            && entry.declaration_name == expected_declaration_name
+                            && entry.decorator_span == (decorator.span.start, decorator.span.end)
+                    })
+                })
+                .cloned()
+                .ok_or_else(|| LoweringError {
+                    message: "@describe lowering requires the checked registry description artifact".to_string(),
+                    span: decorator.span.into(),
+                })?;
+            if description.subject_kind != expected_subject_kind {
+                return Err(LoweringError {
+                    message: "@describe lowering received an unexpected registry subject".to_string(),
+                    span: decorator.span.into(),
+                });
+            }
+
+            let [
+                ast::DecoratorArg::Positional(registry),
+                ast::DecoratorArg::Positional(key),
+                ast::DecoratorArg::Positional(descriptor),
+            ] = decorator.node.args.as_slice()
+            else {
+                return Err(LoweringError {
+                    message: "@describe must receive registry, key, and descriptor positional arguments".to_string(),
+                    span: decorator.span.into(),
+                });
+            };
+            if key.span.start != description.key_span.0
+                || key.span.end != description.key_span.1
+                || descriptor.span.start != description.descriptor_span.0
+                || descriptor.span.end != description.descriptor_span.1
+            {
+                return Err(LoweringError {
+                    message: "@describe lowering expression does not match the checked registry description artifact"
+                        .to_string(),
+                    span: decorator.span.into(),
+                });
+            }
+
+            // The frontend-selected name is authoritative. The raw identifier is lowered only to preserve its
+            // resolved type while the runtime registration deliberately targets the real module-static cell.
+            let mut lowered_registry = self.lower_expr_spanned(registry)?;
+            lowered_registry.kind = IrExprKind::StaticRead {
+                name: description.registry_name.clone(),
+            };
+            let key = self.lower_expr_spanned(key)?;
+            let descriptor = self.lower_expr_spanned(descriptor)?;
+            let qualified_name = self
+                .current_source_module_name
+                .as_deref()
+                .filter(|module| !module.is_empty())
+                .map(|module| format!("{module}.{}", description.declaration_name))
+                .unwrap_or_else(|| description.declaration_name.clone());
+            let subject_name = TypedExpr::new(IrExprKind::String(qualified_name), IrType::String);
+
+            inits.push(IrStmt::new(IrStmtKind::Expr(TypedExpr::new(
+                IrExprKind::MethodCall {
+                    receiver: Box::new(lowered_registry),
+                    method: match expected_subject_kind {
+                        incan_semantics_core::SemanticRegistrySubjectKind::Function => "_describe_function",
+                        incan_semantics_core::SemanticRegistrySubjectKind::Method => "_describe_method",
+                        incan_semantics_core::SemanticRegistrySubjectKind::CompilationUnit
+                        | incan_semantics_core::SemanticRegistrySubjectKind::Package => {
+                            return Err(LoweringError {
+                                message: "@describe only supports function and method subjects".to_string(),
+                                span: decorator.span.into(),
+                            });
+                        }
+                    }
+                    .to_string(),
+                    dispatch: None,
+                    type_args: Vec::new(),
+                    args: vec![
+                        IrCallArg {
+                            name: None,
+                            kind: IrCallArgKind::Positional,
+                            expr: key,
+                        },
+                        IrCallArg {
+                            name: None,
+                            kind: IrCallArgKind::Positional,
+                            expr: descriptor,
+                        },
+                        IrCallArg {
+                            name: None,
+                            kind: IrCallArgKind::Positional,
+                            expr: subject_name,
+                        },
+                    ],
+                    callable_signature: None,
+                    arg_policy: MethodCallArgPolicy::Default,
+                },
+                IrType::Unit,
+            ))));
+        }
+
+        Ok(inits)
     }
 
     /// Lower a generic decorated function wrapper by applying decorators in the wrapper's concrete type-parameter

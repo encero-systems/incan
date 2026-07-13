@@ -62,6 +62,7 @@ use super::lock::{
 };
 #[cfg(feature = "rust_inspect")]
 use super::lock::{RustInspectWorkspaceRequest, prepare_rust_inspect_workspace};
+use super::tools::collect_registry_metadata_package;
 use super::vocab_extraction::{PendingDesugarerArtifact, collect_library_vocab_metadata};
 use crate::cli::prelude::ParsedModule;
 #[cfg(feature = "rust_inspect")]
@@ -869,6 +870,8 @@ fn prepare_project_with_options(
     // ---- Setup codegen ----
     let mut codegen = IrCodegen::new();
     codegen.set_preserve_dependency_public_items(false);
+    codegen.set_registry_package_identity(Some(project_name.clone()));
+    codegen.set_root_source_module_name(path.file_stem().and_then(|stem| stem.to_str()).map(str::to_string));
     if let Some(m) = manifest.as_ref() {
         codegen.set_declared_crate_names(m.declared_rust_crate_names());
     }
@@ -1556,6 +1559,15 @@ fn prepare_library_project(
         &provider_metadata_modules,
         lib_module,
     )?;
+    let mut registry_metadata = collect_registry_metadata_package(&project_root)?;
+    for module in &mut registry_metadata.modules {
+        module.registries.retain(|registry| registry.public);
+        module.entries.retain(|entry| entry.registry_public);
+    }
+    registry_metadata
+        .modules
+        .retain(|module| !module.registries.is_empty() || !module.entries.is_empty());
+    library_manifest.contract_metadata.registry = Some(registry_metadata);
     #[cfg(feature = "rust_inspect")]
     {
         library_manifest.rust_abi = collect_library_rust_abi(&rust_inspect_manifest_dir, &metadata_query_paths)?;
@@ -1578,6 +1590,14 @@ fn prepare_library_project(
 
     let mut codegen = IrCodegen::new();
     codegen.set_preserve_dependency_public_items(true);
+    codegen.set_registry_package_identity(Some(project_name.clone()));
+    codegen.set_root_source_module_name(
+        lib_module
+            .file_path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .map(str::to_string),
+    );
     codegen.set_stdlib_cache(stdlib_cache);
     codegen.set_declared_crate_names(declared);
     codegen.set_provider_plan(Arc::clone(&provider_plan));
@@ -3403,6 +3423,183 @@ impl ChildId {
             "stale flat dataset.rs should not exist after nested library build"
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn build_library_publishes_only_public_checked_registry_metadata() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path();
+        let src_dir = project_root.join("src");
+        std::fs::create_dir_all(&src_dir)?;
+
+        std::fs::write(
+            project_root.join("incan.toml"),
+            "[project]\nname = \"registrylib\"\nversion = \"0.1.0\"\n",
+        )?;
+        std::fs::write(
+            src_dir.join("lib.incn"),
+            r#"
+from std.registry import Registry, SubjectKind, describe
+
+@derive(Clone, Eq)
+pub type FunctionId = newtype str
+
+@derive(Descriptor)
+pub model FunctionSpec:
+    pub summary: str
+
+pub static public_functions: Registry[FunctionId, FunctionSpec] = Registry.define(
+    subjects=[SubjectKind.Function],
+)
+static private_functions: Registry[FunctionId, FunctionSpec] = Registry.define(
+    subjects=[SubjectKind.Function],
+)
+
+@describe(public_functions, FunctionId("public"), FunctionSpec(summary="public"))
+pub def public_function() -> None:
+    pass
+
+@describe(private_functions, FunctionId("private"), FunctionSpec(summary="private"))
+def private_function() -> None:
+    pass
+"#,
+        )?;
+
+        let cargo_lock_payload = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock"))?;
+        let fingerprint = compute_deps_fingerprint(&[], &[], &CargoFeatureSelection::default(), Some(project_root));
+        let incan_lock = IncanLock::new(fingerprint, CargoFeatureSelection::default(), cargo_lock_payload);
+        incan_lock.write(&project_root.join("incan.lock"))?;
+
+        let lib_path = src_dir.join("lib.incn");
+        let lib_path_str = lib_path
+            .to_str()
+            .ok_or("lib path should be valid utf-8 for build_library test")?;
+        let exit = build_library(
+            Some(lib_path_str),
+            None,
+            BuildCommandOptions::default(),
+            BuildReportOptions::default(),
+        )?;
+        assert_eq!(exit, ExitCode::SUCCESS);
+
+        let manifest = LibraryManifest::read_from_path(&project_root.join("target/lib/registrylib.incnlib"))?;
+        let registry = manifest
+            .contract_metadata
+            .registry
+            .ok_or("library should publish checked registry metadata")?;
+        assert_eq!(
+            registry.schema_version,
+            crate::frontend::registry_metadata::CHECKED_REGISTRY_METADATA_SCHEMA_VERSION
+        );
+        assert_eq!(
+            registry.package,
+            Some(crate::frontend::registry_metadata::CheckedRegistryPackageIdentity {
+                name: "registrylib".to_string(),
+                version: Some("0.1.0".to_string()),
+            })
+        );
+        assert_eq!(registry.modules.len(), 1);
+        assert_eq!(registry.modules[0].module_path, vec!["lib".to_string()]);
+        assert_eq!(registry.modules[0].registries.len(), 1);
+        assert_eq!(registry.modules[0].registries[0].identity, "lib::public_functions");
+        assert_eq!(registry.modules[0].entries.len(), 1);
+        assert_eq!(registry.modules[0].entries[0].subject_identity, "lib.public_function");
+        assert!(
+            !registry
+                .modules
+                .iter()
+                .flat_map(|module| module.registries.iter())
+                .any(
+                    |definition| definition.identity.contains("__incan_std") || definition.identity.contains("private")
+                ),
+            "library artifact must contain only its explicit public registry surface"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn build_library_preserves_public_registry_facade_projections() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path();
+        let src_dir = project_root.join("src");
+        std::fs::create_dir_all(&src_dir)?;
+
+        std::fs::write(
+            project_root.join("incan.toml"),
+            "[project]\nname = \"registryfacadelib\"\nversion = \"0.1.0\"\n",
+        )?;
+        std::fs::write(
+            src_dir.join("feature.incn"),
+            r#"
+from std.registry import Registry, SubjectKind, describe
+
+@derive(Clone, Eq)
+pub type FunctionId = newtype str
+
+@derive(Descriptor)
+pub model FunctionSpec:
+    pub summary: str
+
+pub static functions: Registry[FunctionId, FunctionSpec] = Registry.define(
+    subjects=[SubjectKind.Function],
+)
+
+@describe(functions, FunctionId("normalize"), FunctionSpec(summary="Normalize text"))
+pub def normalize(value: str) -> str:
+    return value
+"#,
+        )?;
+        std::fs::write(
+            src_dir.join("lib.incn"),
+            "pub from crate.feature import functions as public_functions\npub from crate.feature import normalize as public_normalize\n",
+        )?;
+
+        let cargo_lock_payload = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock"))?;
+        let fingerprint = compute_deps_fingerprint(&[], &[], &CargoFeatureSelection::default(), Some(project_root));
+        let incan_lock = IncanLock::new(fingerprint, CargoFeatureSelection::default(), cargo_lock_payload);
+        incan_lock.write(&project_root.join("incan.lock"))?;
+
+        let lib_path = src_dir.join("lib.incn");
+        let lib_path_str = lib_path
+            .to_str()
+            .ok_or("lib path should be valid utf-8 for facade metadata test")?;
+        let exit = build_library(
+            Some(lib_path_str),
+            None,
+            BuildCommandOptions::default(),
+            BuildReportOptions::default(),
+        )?;
+        assert_eq!(exit, ExitCode::SUCCESS);
+
+        let manifest = LibraryManifest::read_from_path(&project_root.join("target/lib/registryfacadelib.incnlib"))?;
+        let registry = manifest
+            .contract_metadata
+            .registry
+            .ok_or("library should publish checked registry metadata")?;
+        let feature = registry
+            .modules
+            .iter()
+            .find(|module| module.module_path == ["feature".to_string()])
+            .ok_or("feature module should retain canonical registry facts")?;
+        assert_eq!(feature.registries.len(), 1);
+        assert_eq!(feature.entries.len(), 1);
+        assert_eq!(
+            feature.registries[0]
+                .reexport_paths
+                .iter()
+                .map(|projection| projection.path.clone())
+                .collect::<Vec<_>>(),
+            vec![vec!["lib".to_string(), "public_functions".to_string()]]
+        );
+        assert_eq!(
+            feature.entries[0]
+                .reexport_paths
+                .iter()
+                .map(|projection| projection.path.clone())
+                .collect::<Vec<_>>(),
+            vec![vec!["lib".to_string(), "public_normalize".to_string()]]
+        );
         Ok(())
     }
 

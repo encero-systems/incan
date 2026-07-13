@@ -1,12 +1,14 @@
 //! Local toolchain inspection commands.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use clap::ValueEnum;
+use incan_core::lang::stdlib as core_stdlib;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::cli::prelude::ParsedModule;
@@ -20,7 +22,12 @@ use crate::frontend::contract_metadata::{
     CanonicalModelBundle, read_model_bundles_from_json, read_project_model_bundles,
 };
 use crate::frontend::diagnostics;
-use crate::frontend::library_manifest_index::LibraryManifestIndex;
+use crate::frontend::library_manifest_index::{LibraryManifestIndex, LibraryManifestIndexEntry};
+use crate::frontend::registry_metadata::{
+    CHECKED_REGISTRY_METADATA_SCHEMA_VERSION, CheckedRegistryDefinition, CheckedRegistryEntry,
+    CheckedRegistryMetadataPackage, CheckedRegistryPackageIdentity, CheckedRegistryValue,
+    collect_checked_registry_metadata, materialize_registry_reexport_projections,
+};
 use crate::frontend::typechecker;
 use crate::library_manifest::{LibraryManifest, ParamExport, ParamKindExport, TypeRef};
 use crate::manifest::ProjectManifest;
@@ -57,6 +64,34 @@ pub enum ToolsModelMetadataFormat {
     Json,
 }
 
+/// Output format for checked registry inspection.
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegistryInspectionFormat {
+    /// Deterministic checked registry JSON suitable for tools and generated documentation.
+    Json,
+}
+
+/// One selected registry returned by `incan inspect registry`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct RegistryInspection {
+    schema_version: u32,
+    provenance: &'static str,
+    package: Option<CheckedRegistryPackageIdentity>,
+    registry: CheckedRegistryDefinition,
+    entries: Vec<CheckedRegistryEntry>,
+}
+
+/// One registry candidate drawn from the checked local package or a resolved library artifact.
+///
+/// The inspection command deliberately consumes this typed projection instead of reparsing dependency source or
+/// evaluating a runtime registry. That keeps a published `.incnlib` the only dependency authority.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RegistryInspectionCandidate {
+    package: Option<CheckedRegistryPackageIdentity>,
+    registry: CheckedRegistryDefinition,
+    entries: Vec<CheckedRegistryEntry>,
+}
+
 /// Run local toolchain diagnostics for CLI and editor setup.
 pub fn tools_doctor(format: ToolsDoctorFormat) -> CliResult<ExitCode> {
     let report = DoctorReport::collect();
@@ -81,6 +116,430 @@ pub fn tools_metadata_api(path: &Path, format: ToolsMetadataFormat) -> CliResult
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// Inspect one complete checked registry across the local package and resolved library artifacts without executing
+/// user modules.
+pub fn inspect_registry(
+    identity: &str,
+    project: Option<&Path>,
+    format: RegistryInspectionFormat,
+) -> CliResult<ExitCode> {
+    let project = project.map(Path::to_path_buf).unwrap_or(
+        env::current_dir()
+            .map_err(|error| CliError::failure(format!("failed to determine current directory: {error}")))?,
+    );
+    let entry_path = resolve_metadata_entry_path(&project)?;
+    let package = collect_registry_metadata_package(&entry_path)?;
+    let project_root = resolve_project_root(&entry_path);
+    let manifest = ProjectManifest::discover(&project_root).map_err(|error| CliError::failure(error.to_string()))?;
+    let library_manifest_index = manifest
+        .as_ref()
+        .map(LibraryManifestIndex::from_project_manifest)
+        .unwrap_or_default();
+
+    let mut all_candidates = registry_candidates_from_package(&package, true);
+    let mut unavailable_dependencies = Vec::new();
+    for dependency_key in library_manifest_index.known_libraries() {
+        let Some(entry) = library_manifest_index.get(&dependency_key) else {
+            continue;
+        };
+        match entry {
+            LibraryManifestIndexEntry::Loaded { manifest, .. } => {
+                let Some(registry) = manifest.contract_metadata.registry.as_ref() else {
+                    unavailable_dependencies.push(format!(
+                        "dependency `pub::{dependency_key}` does not publish checked registry metadata"
+                    ));
+                    continue;
+                };
+                if registry.schema_version != CHECKED_REGISTRY_METADATA_SCHEMA_VERSION {
+                    unavailable_dependencies.push(format!(
+                        "dependency `pub::{dependency_key}` publishes unsupported checked registry metadata schema {}",
+                        registry.schema_version
+                    ));
+                    continue;
+                }
+                all_candidates.extend(registry_candidates_from_package(registry, false));
+            }
+            LibraryManifestIndexEntry::Failed(failure) => unavailable_dependencies.push(format!(
+                "dependency `pub::{dependency_key}` registry metadata is unavailable: {}",
+                failure.message
+            )),
+        }
+    }
+    all_candidates.sort_by(|left, right| {
+        left.registry
+            .identity
+            .cmp(&right.registry.identity)
+            .then_with(|| registry_candidate_package_name(left).cmp(registry_candidate_package_name(right)))
+    });
+    let candidates = all_candidates
+        .iter()
+        .filter(|candidate| registry_identity_matches(&candidate.registry.identity, identity))
+        .cloned()
+        .collect::<Vec<_>>();
+    let candidate = match candidates.as_slice() {
+        [candidate] => candidate.clone(),
+        [] => {
+            let mut available = all_candidates
+                .iter()
+                .map(|candidate| candidate.registry.identity.clone())
+                .collect::<Vec<_>>();
+            available.sort();
+            available.dedup();
+            let unavailable = if unavailable_dependencies.is_empty() {
+                String::new()
+            } else {
+                format!("; {}", unavailable_dependencies.join("; "))
+            };
+            return Err(CliError::failure(format!(
+                "checked registry `{identity}` was not found; available registries: {}{unavailable}",
+                if available.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    available.join(", ")
+                }
+            )));
+        }
+        _ => {
+            return Err(CliError::failure(format!(
+                "registry identity `{identity}` is ambiguous; use one of: {}",
+                candidates
+                    .iter()
+                    .map(|candidate| {
+                        let package = candidate
+                            .package
+                            .as_ref()
+                            .map(|package| package.name.as_str())
+                            .unwrap_or("local source");
+                        format!("{} from {package}", candidate.registry.identity)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )));
+        }
+    };
+    let inspection = RegistryInspection {
+        schema_version: CHECKED_REGISTRY_METADATA_SCHEMA_VERSION,
+        provenance: "checked",
+        package: candidate.package,
+        registry: candidate.registry,
+        entries: candidate.entries,
+    };
+    match format {
+        RegistryInspectionFormat::Json => println!(
+            "{}",
+            serde_json::to_string_pretty(&inspection)
+                .map_err(|error| CliError::failure(format!("failed to serialize checked registry: {error}")))?
+        ),
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Regenerate the public feature inventory from the checked `std.capabilities` registry.
+///
+/// This deliberately walks the same checked registry metadata used by `incan inspect registry`; it never scrapes
+/// Incan comments, rereads descriptor source, or evaluates the runtime registry. The descriptor shape is owned by the
+/// standard library module and is validated here only at the documentation boundary that renders its public contract.
+pub fn write_feature_inventory_reference(path: &Path) -> CliResult<()> {
+    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib/stdlib/capabilities.incn");
+    let package = collect_registry_metadata_package(&source)?;
+    let entries = stdlib_capability_inventory(&package)?;
+    let mut output = String::new();
+    output.push_str("# Incan feature inventory\n\n");
+    output.push_str("!!! warning \"Generated file\"\n");
+    output.push_str(
+        "    Do not edit this page by hand. If it looks wrong/outdated, update `crates/incan_stdlib/stdlib/capabilities.incn` and regenerate it.\n",
+    );
+    output.push('\n');
+    output.push_str("    Regenerate with: `cargo run --features cli --bin generate_feature_inventory`\n\n");
+    output.push_str(
+        "This page is a generated, present-tense atlas of user-facing Incan capabilities. It is intentionally higher-level than the generated language vocabulary tables: one feature can span syntax, type checking, stdlib source, manifests, tooling, and examples.\n\n",
+    );
+    output.push_str("Use it when deciding whether code should use an existing Incan surface before adding wrappers, Rust fallbacks, or project-local conventions.\n\n");
+    output.push_str("## Contents\n\n");
+    output.push_str("- [All features](#all-features)\n");
+    output.push_str("- [Feature details](#feature-details)\n\n");
+
+    output.push_str("## All features\n\n");
+    output.push_str(
+        "| Feature | Category | Since | Activation | Canonical forms | Summary | Prefer over | References |\n",
+    );
+    output.push_str("|---|---|---:|---|---|---|---|---|\n");
+    for entry in &entries {
+        let canonical_forms = if entry.canonical_forms.is_empty() {
+            "-".to_string()
+        } else {
+            entry
+                .canonical_forms
+                .iter()
+                .map(|form| markdown_table_cell(&markdown_code(form)))
+                .collect::<Vec<_>>()
+                .join("<br>")
+        };
+        output.push_str(&format!(
+            "| {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            markdown_table_cell(&entry.name),
+            entry.category,
+            entry.since,
+            markdown_table_cell(&entry.activation),
+            canonical_forms,
+            markdown_table_cell(&entry.summary),
+            markdown_table_cell(&entry.prefer_over),
+            markdown_links(&entry.references),
+        ));
+    }
+    output.push_str("\n## Feature details\n\n");
+    for entry in &entries {
+        output.push_str(&format!("### {}\n\n", entry.name));
+        output.push_str(&format!("- **Id:** `{}`\n", entry.id));
+        output.push_str(&format!("- **Category:** `{}`\n", entry.category));
+        output.push_str(&format!("- **Since:** `{}`\n", entry.since));
+        output.push_str(&format!("- **RFC:** `{}`\n", entry.rfc));
+        output.push_str(&format!("- **Stability:** `{}`\n", entry.stability));
+        output.push_str(&format!("- **Activation:** {}\n", entry.activation));
+        output.push_str(&format!("- **Use instead of:** {}\n", entry.prefer_over));
+        output.push_str(&format!("- **References:** {}\n\n", markdown_links(&entry.references)));
+        output.push_str(&entry.summary);
+        output.push_str("\n\n");
+        if !entry.canonical_forms.is_empty() {
+            output.push_str("Canonical forms:\n\n");
+            for form in &entry.canonical_forms {
+                output.push_str(&format!("- `{}`\n", form.replace('`', "\\`")));
+            }
+            output.push('\n');
+        }
+    }
+    while output.ends_with('\n') {
+        output.pop();
+    }
+    output.push('\n');
+    fs::write(path, output).map_err(|error| CliError::failure(format!("failed to write {}: {error}", path.display())))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CapabilityInventoryEntry {
+    id: String,
+    name: String,
+    category: String,
+    since: String,
+    rfc: String,
+    stability: String,
+    activation: String,
+    summary: String,
+    canonical_forms: Vec<String>,
+    prefer_over: String,
+    references: Vec<(String, String)>,
+}
+
+/// Decode the stable standard-library capability descriptor using only checked structural values.
+fn stdlib_capability_inventory(package: &CheckedRegistryMetadataPackage) -> CliResult<Vec<CapabilityInventoryEntry>> {
+    let Some(module) = package.modules.iter().find(|module| {
+        module
+            .registries
+            .iter()
+            .any(|registry| registry.identity == "capabilities::capabilities")
+    }) else {
+        return Err(CliError::failure("checked std.capabilities registry was not found"));
+    };
+    let entries = module
+        .entries
+        .iter()
+        .filter(|entry| entry.registry_identity == "capabilities::capabilities")
+        .map(capability_inventory_entry)
+        .collect::<CliResult<Vec<_>>>()?;
+    if entries.is_empty() {
+        return Err(CliError::failure(
+            "checked std.capabilities inventory must contain at least one entry",
+        ));
+    }
+    Ok(entries)
+}
+
+/// Decode one checked `CapabilityDescriptor` entry into the generator's presentation model.
+fn capability_inventory_entry(entry: &CheckedRegistryEntry) -> CliResult<CapabilityInventoryEntry> {
+    let fields = checked_model_fields(&entry.descriptor, "CapabilityDescriptor")?;
+    let id = checked_newtype_string(checked_required_field(&fields, "id")?, "CapabilityId")?;
+    let name = checked_string(checked_required_field(&fields, "name")?)?;
+    let category = checked_enum_variant(checked_required_field(&fields, "category")?, "CapabilityCategory")?;
+    let since = checked_string(checked_required_field(&fields, "since")?)?;
+    let rfc = checked_string(checked_required_field(&fields, "rfc")?)?;
+    let stability = checked_enum_variant(checked_required_field(&fields, "stability")?, "CapabilityStability")?;
+    let activation = checked_string(checked_required_field(&fields, "activation")?)?;
+    let summary = checked_string(checked_required_field(&fields, "summary")?)?;
+    let canonical_forms = checked_list(checked_required_field(&fields, "canonical_forms")?)?
+        .iter()
+        .map(checked_string)
+        .collect::<CliResult<Vec<_>>>()?;
+    let prefer_over = checked_string(checked_required_field(&fields, "prefer_over")?)?;
+    let references = checked_list(checked_required_field(&fields, "references")?)?
+        .iter()
+        .map(|reference| {
+            let fields = checked_model_fields(reference, "CapabilityReference")?;
+            Ok((
+                checked_string(checked_required_field(&fields, "label")?)?,
+                checked_string(checked_required_field(&fields, "path")?)?,
+            ))
+        })
+        .collect::<CliResult<Vec<_>>>()?;
+    Ok(CapabilityInventoryEntry {
+        id,
+        name,
+        category,
+        since,
+        rfc,
+        stability,
+        activation,
+        summary,
+        canonical_forms,
+        prefer_over,
+        references,
+    })
+}
+
+/// Return the named fields of a checked model value after confirming its descriptor type.
+fn checked_model_fields(
+    value: &CheckedRegistryValue,
+    expected_name: &str,
+) -> CliResult<BTreeMap<String, CheckedRegistryValue>> {
+    let CheckedRegistryValue::Model { name, fields } = value else {
+        return Err(CliError::failure(format!("expected {expected_name} descriptor model")));
+    };
+    if name != expected_name {
+        return Err(CliError::failure(format!(
+            "expected {expected_name} descriptor model, found {name}"
+        )));
+    }
+    Ok(fields
+        .iter()
+        .map(|field| (field.name.clone(), field.value.clone()))
+        .collect())
+}
+
+/// Return one required descriptor field or report the schema drift at the documentation boundary.
+fn checked_required_field<'a>(
+    fields: &'a BTreeMap<String, CheckedRegistryValue>,
+    name: &str,
+) -> CliResult<&'a CheckedRegistryValue> {
+    fields
+        .get(name)
+        .ok_or_else(|| CliError::failure(format!("CapabilityDescriptor is missing `{name}`")))
+}
+
+/// Extract a checked string value without coercing other structural shapes.
+fn checked_string(value: &CheckedRegistryValue) -> CliResult<String> {
+    match value {
+        CheckedRegistryValue::String(value) => Ok(value.clone()),
+        _ => Err(CliError::failure("expected checked string descriptor value")),
+    }
+}
+
+/// Extract the string payload of one checked newtype with the expected domain identity.
+fn checked_newtype_string(value: &CheckedRegistryValue, expected_name: &str) -> CliResult<String> {
+    let CheckedRegistryValue::Newtype { name, value } = value else {
+        return Err(CliError::failure(format!("expected {expected_name} newtype value")));
+    };
+    if name != expected_name {
+        return Err(CliError::failure(format!(
+            "expected {expected_name} newtype value, found {name}"
+        )));
+    }
+    checked_string(value)
+}
+
+/// Extract a checked enum variant and ensure that it belongs to the expected enum.
+fn checked_enum_variant(value: &CheckedRegistryValue, expected_enum: &str) -> CliResult<String> {
+    let CheckedRegistryValue::ConstRef(path) = value else {
+        return Err(CliError::failure(format!("expected {expected_enum} enum value")));
+    };
+    if path.first().map(String::as_str) != Some(expected_enum) {
+        return Err(CliError::failure(format!("expected {expected_enum} enum value")));
+    }
+    path.last()
+        .cloned()
+        .ok_or_else(|| CliError::failure(format!("expected {expected_enum} enum variant")))
+}
+
+/// Borrow a checked structural list without accepting a runtime-shaped substitute.
+fn checked_list(value: &CheckedRegistryValue) -> CliResult<&[CheckedRegistryValue]> {
+    match value {
+        CheckedRegistryValue::List(values) => Ok(values),
+        _ => Err(CliError::failure("expected checked descriptor list value")),
+    }
+}
+
+/// Escape table delimiters and line breaks in generated Markdown table cells.
+fn markdown_table_cell(value: &str) -> String {
+    value.replace('|', "\\|").replace('\n', " ")
+}
+
+/// Render one generated inline-code value with embedded backticks escaped.
+fn markdown_code(value: &str) -> String {
+    format!("`{}`", value.replace('`', "\\`"))
+}
+
+/// Render descriptor-provided documentation links in their checked source order.
+fn markdown_links(links: &[(String, String)]) -> String {
+    links
+        .iter()
+        .map(|(label, path)| format!("[{label}]({path})"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Return a stable package tie-breaker for one local or dependency registry candidate.
+fn registry_candidate_package_name(candidate: &RegistryInspectionCandidate) -> &str {
+    candidate
+        .package
+        .as_ref()
+        .map(|package| package.name.as_str())
+        .unwrap_or("")
+}
+
+/// Project inspectable registry definitions and their entries from one checked package payload.
+fn registry_candidates_from_package(
+    package: &CheckedRegistryMetadataPackage,
+    include_private: bool,
+) -> Vec<RegistryInspectionCandidate> {
+    let mut candidates = Vec::new();
+    for module in &package.modules {
+        for registry in &module.registries {
+            if !include_private && !registry.public {
+                continue;
+            }
+            let mut entries = module
+                .entries
+                .iter()
+                .filter(|entry| {
+                    entry.registry_identity == registry.identity && (include_private || entry.registry_public)
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            entries.sort_by(|left, right| {
+                (
+                    &left.subject_identity,
+                    left.registration_anchor.start,
+                    left.registration_anchor.end,
+                )
+                    .cmp(&(
+                        &right.subject_identity,
+                        right.registration_anchor.start,
+                        right.registration_anchor.end,
+                    ))
+            });
+            candidates.push(RegistryInspectionCandidate {
+                package: package.package.clone(),
+                registry: registry.clone(),
+                entries,
+            });
+        }
+    }
+    candidates
+}
+
+/// Match either the canonical double-colon identity or the accepted dotted CLI spelling.
+fn registry_identity_matches(canonical: &str, requested: &str) -> bool {
+    canonical == requested || canonical.replace("::", ".") == requested
 }
 
 /// Render a compact Markdown API reference from checked API metadata.
@@ -450,6 +909,92 @@ fn collect_api_metadata_package(path: &Path) -> CliResult<CheckedApiMetadataPack
     })
 }
 
+/// Type-check a registry inspection entry path and collect compiler-owned metadata for all local modules.
+pub(crate) fn collect_registry_metadata_package(path: &Path) -> CliResult<CheckedRegistryMetadataPackage> {
+    let entry_path = resolve_metadata_entry_path(path)?;
+    let entry_path_string = entry_path.to_string_lossy();
+    let modules = collect_modules(&entry_path_string)?;
+    let project_root = resolve_project_root(&entry_path);
+    // Imported source modules are canonicalized by module resolution. Keep the producer-boundary comparison in the
+    // same path space so macOS's `/var` -> `/private/var` alias cannot silently drop a local module from checked
+    // registry inspection or the artifact it publishes.
+    let canonical_project_root = project_root.canonicalize().unwrap_or_else(|_| project_root.clone());
+    let manifest = ProjectManifest::discover(&project_root).map_err(|error| CliError::failure(error.to_string()))?;
+    let runtime_package_identity = manifest
+        .as_ref()
+        .and_then(|manifest| manifest.project.as_ref())
+        .and_then(|project| project.name.as_deref())
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            entry_path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| "<unpackaged>".to_string());
+    let declared = manifest.as_ref().map(ProjectManifest::declared_rust_crate_names);
+    let library_manifest_index = manifest
+        .as_ref()
+        .map(LibraryManifestIndex::from_project_manifest)
+        .unwrap_or_default();
+    let module_idx_by_key = module_key_index(&modules);
+    let mut all_errors = String::new();
+    let mut metadata_modules = Vec::new();
+    let mut api_metadata_modules = Vec::new();
+
+    for (idx, module) in modules.iter().enumerate() {
+        // `collect_modules` includes compiler-provided modules needed to type-check the entry module. They are not
+        // producer source and must never be republished as this package's registry metadata, except when the caller
+        // intentionally selected that stdlib source entry (the capability-inventory generator does exactly that).
+        let selected_source_entry = module.file_path == entry_path;
+        if !selected_source_entry
+            && (!module.file_path.starts_with(&canonical_project_root)
+                || module.path_segments.first().map(String::as_str) == Some(core_stdlib::INCAN_STD_NAMESPACE))
+        {
+            continue;
+        }
+        let deps_for_module = imported_module_deps_for_with_index(&modules, idx, &module_idx_by_key);
+        let mut checker = typechecker::TypeChecker::new();
+        if let Some(names) = declared.clone() {
+            checker.set_declared_crate_names(names);
+        }
+        checker.set_library_manifest_index(library_manifest_index.clone());
+        match checker.check_with_imports(&module.ast, &deps_for_module) {
+            Ok(()) => {
+                let module_path = metadata_module_path(module, &entry_path);
+                metadata_modules.push(collect_checked_registry_metadata(
+                    checker.type_info(),
+                    module_path.clone(),
+                    &runtime_package_identity,
+                ));
+                api_metadata_modules.push(collect_checked_api_metadata(&module.ast, &checker, module_path));
+            }
+            Err(errs) => {
+                for err in &errs {
+                    all_errors.push_str(&diagnostics::format_error(
+                        module.file_path.to_string_lossy().as_ref(),
+                        &module.source,
+                        err,
+                    ));
+                }
+            }
+        }
+    }
+    if !all_errors.is_empty() {
+        return Err(CliError::failure(all_errors.trim_end()));
+    }
+    materialize_api_alias_projections(&mut api_metadata_modules);
+    materialize_registry_reexport_projections(&mut metadata_modules, &api_metadata_modules);
+    metadata_modules.sort_by(|left, right| left.module_path.cmp(&right.module_path));
+    Ok(CheckedRegistryMetadataPackage {
+        schema_version: CHECKED_REGISTRY_METADATA_SCHEMA_VERSION,
+        package: manifest.as_ref().and_then(checked_registry_package_identity),
+        modules: metadata_modules,
+    })
+}
+
 /// Extract checked API package identity from the project manifest when the manifest declares a non-empty name.
 fn checked_api_package_identity(manifest: &ProjectManifest) -> Option<CheckedApiPackageIdentity> {
     let project = manifest.project.as_ref()?;
@@ -458,6 +1003,24 @@ fn checked_api_package_identity(manifest: &ProjectManifest) -> Option<CheckedApi
         return None;
     }
     Some(CheckedApiPackageIdentity {
+        name: name.to_string(),
+        version: project
+            .version
+            .as_ref()
+            .map(|version| version.trim())
+            .filter(|version| !version.is_empty())
+            .map(str::to_string),
+    })
+}
+
+/// Convert a manifest project identity into the optional checked-registry package identity.
+fn checked_registry_package_identity(manifest: &ProjectManifest) -> Option<CheckedRegistryPackageIdentity> {
+    let project = manifest.project.as_ref()?;
+    let name = project.name.as_ref()?.trim();
+    if name.is_empty() {
+        return None;
+    }
+    Some(CheckedRegistryPackageIdentity {
         name: name.to_string(),
         version: project
             .version
@@ -1246,7 +1809,283 @@ fn display_option_path(path: &Option<PathBuf>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::commands::build::{BuildCommandOptions, build_library};
+    use crate::cli::commands::build_report::BuildReportOptions;
     use crate::frontend::api_metadata::ApiDeclaration;
+    use crate::lockfile::{CargoFeatureSelection, IncanLock, compute_deps_fingerprint};
+
+    #[test]
+    fn std_capability_inventory_is_checked_and_generates_reference() -> Result<(), Box<dyn std::error::Error>> {
+        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib/stdlib/capabilities.incn");
+        let package = collect_registry_metadata_package(&source)?;
+        let entries = stdlib_capability_inventory(&package)?;
+        assert!(!entries.is_empty());
+        assert!(entries.iter().any(|entry| {
+            entry.id == "StdRegistry"
+                && entry.name == "`std.registry` typed declaration catalogues"
+                && entry.references.iter().any(|(label, _)| label == "RFC 113")
+        }));
+
+        let output_dir = tempfile::tempdir()?;
+        let output = output_dir.path().join("feature_inventory.md");
+        write_feature_inventory_reference(&output)?;
+        let rendered = fs::read_to_string(output)?;
+        assert!(rendered.contains("`std.registry` typed declaration catalogues"));
+        assert!(rendered.contains("crates/incan_stdlib/stdlib/capabilities.incn"));
+        Ok(())
+    }
+
+    #[test]
+    fn collect_registry_metadata_preserves_checked_entries_and_dependency_visibility()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let src = tmp.path().join("src");
+        fs::create_dir_all(&src)?;
+        fs::write(
+            tmp.path().join("incan.toml"),
+            r#"
+[project]
+name = "registry_demo"
+version = "0.1.0"
+"#,
+        )?;
+        fs::write(
+            src.join("lib.incn"),
+            r#"
+from std.registry import Registry, SubjectKind, describe
+
+@derive(Clone, Eq)
+type FunctionId = newtype str
+
+@derive(Descriptor)
+model FunctionSpec:
+    summary: str
+
+pub static public_functions: Registry[FunctionId, FunctionSpec] = Registry.define(
+    subjects=[SubjectKind.Function],
+)
+static private_functions: Registry[FunctionId, FunctionSpec] = Registry.define(
+    subjects=[SubjectKind.Function],
+)
+
+@describe(public_functions, FunctionId("public"), FunctionSpec(summary="public"))
+pub def public_function() -> None:
+    pass
+
+@describe(private_functions, FunctionId("private"), FunctionSpec(summary="private"))
+def private_function() -> None:
+    pass
+"#,
+        )?;
+
+        let package = collect_registry_metadata_package(tmp.path())?;
+        assert_eq!(package.schema_version, CHECKED_REGISTRY_METADATA_SCHEMA_VERSION);
+        assert_eq!(
+            package.package,
+            Some(CheckedRegistryPackageIdentity {
+                name: "registry_demo".to_string(),
+                version: Some("0.1.0".to_string()),
+            })
+        );
+        assert_eq!(
+            package.modules.len(),
+            1,
+            "registry collection should exclude compiler-provided modules: {:#?}",
+            package
+                .modules
+                .iter()
+                .map(|module| &module.module_path)
+                .collect::<Vec<_>>()
+        );
+        let module = &package.modules[0];
+        assert_eq!(module.module_path, vec!["lib".to_string()]);
+        assert_eq!(module.registries.len(), 2);
+        assert_eq!(module.entries.len(), 2);
+        assert!(
+            module
+                .entries
+                .iter()
+                .any(|entry| entry.subject_identity == "lib.public_function")
+        );
+        assert!(
+            module
+                .entries
+                .iter()
+                .any(|entry| entry.subject_identity == "lib.private_function")
+        );
+
+        let source_candidates = registry_candidates_from_package(&package, true);
+        assert_eq!(source_candidates.len(), 2);
+        let dependency_candidates = registry_candidates_from_package(&package, false);
+        assert_eq!(dependency_candidates.len(), 1);
+        assert_eq!(dependency_candidates[0].registry.identity, "lib::public_functions");
+        assert_eq!(dependency_candidates[0].entries.len(), 1);
+        assert_eq!(
+            dependency_candidates[0].entries[0].provenance,
+            crate::frontend::registry_metadata::CheckedRegistryProvenance::CheckedDeclaration
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn collect_registry_metadata_projects_public_facade_paths_without_duplicate_entries()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let src = tmp.path().join("src");
+        fs::create_dir_all(&src)?;
+        fs::write(
+            tmp.path().join("incan.toml"),
+            "[project]\nname = \"registry_facade\"\nversion = \"0.1.0\"\n",
+        )?;
+        fs::write(
+            src.join("feature.incn"),
+            r#"
+from std.registry import Registry, SubjectKind, describe
+
+@derive(Clone, Eq)
+pub type FunctionId = newtype str
+
+@derive(Descriptor)
+pub model FunctionSpec:
+    pub summary: str
+
+pub static functions: Registry[FunctionId, FunctionSpec] = Registry.define(
+    subjects=[SubjectKind.Function],
+)
+
+@describe(functions, FunctionId("normalize"), FunctionSpec(summary="Normalize text"))
+pub def normalize() -> None:
+    pass
+"#,
+        )?;
+        fs::write(
+            src.join("lib.incn"),
+            r#"
+pub from crate.feature import functions as public_functions
+pub from crate.feature import normalize as public_normalize
+"#,
+        )?;
+
+        let package = collect_registry_metadata_package(tmp.path())?;
+        let feature = package
+            .modules
+            .iter()
+            .find(|module| module.module_path == vec!["feature".to_string()])
+            .ok_or_else(|| format!("missing feature registry module: {package:#?}"))?;
+        assert_eq!(feature.registries.len(), 1);
+        assert_eq!(feature.entries.len(), 1);
+        assert_eq!(
+            feature.registries[0]
+                .reexport_paths
+                .iter()
+                .map(|projection| projection.path.clone())
+                .collect::<Vec<_>>(),
+            vec![vec!["lib".to_string(), "public_functions".to_string()]]
+        );
+        assert_eq!(
+            feature.entries[0]
+                .reexport_paths
+                .iter()
+                .map(|projection| projection.path.clone())
+                .collect::<Vec<_>>(),
+            vec![vec!["lib".to_string(), "public_normalize".to_string()]]
+        );
+        assert_eq!(feature.entries[0].subject_identity, "feature.normalize");
+        Ok(())
+    }
+
+    #[test]
+    fn inspect_registry_reads_only_public_facts_from_a_library_consumer() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let producer_root = tmp.path().join("registrylib");
+        let producer_src = producer_root.join("src");
+        fs::create_dir_all(&producer_src)?;
+        fs::write(
+            producer_root.join("incan.toml"),
+            "[project]\nname = \"registrylib\"\nversion = \"0.1.0\"\n",
+        )?;
+        fs::write(
+            producer_src.join("lib.incn"),
+            r#"
+from std.registry import Registry, SubjectKind, describe
+
+@derive(Clone, Eq)
+pub type FunctionId = newtype str
+
+@derive(Descriptor)
+pub model FunctionSpec:
+    pub summary: str
+
+pub static public_functions: Registry[FunctionId, FunctionSpec] = Registry.define(
+    subjects=[SubjectKind.Function],
+)
+static private_functions: Registry[FunctionId, FunctionSpec] = Registry.define(
+    subjects=[SubjectKind.Function],
+)
+
+@describe(public_functions, FunctionId("public"), FunctionSpec(summary="public"))
+pub def public_function() -> None:
+    pass
+
+@describe(private_functions, FunctionId("private"), FunctionSpec(summary="private"))
+def private_function() -> None:
+    pass
+"#,
+        )?;
+        write_test_incan_lock(&producer_root)?;
+        let producer_entry = producer_src.join("lib.incn");
+        let exit = build_library(
+            producer_entry.to_str(),
+            None,
+            BuildCommandOptions::default(),
+            BuildReportOptions::default(),
+        )?;
+        assert_eq!(exit, ExitCode::SUCCESS);
+
+        let consumer_root = tmp.path().join("consumer");
+        let consumer_src = consumer_root.join("src");
+        fs::create_dir_all(&consumer_src)?;
+        fs::write(
+            consumer_root.join("incan.toml"),
+            "[project]\nname = \"consumer\"\nversion = \"0.1.0\"\n\n[dependencies]\nregistrylib = { path = \"../registrylib\" }\n",
+        )?;
+        fs::write(
+            consumer_src.join("main.incn"),
+            "from pub::registrylib import FunctionId\n\ndef main() -> None:\n    assert FunctionId(\"consumer\") == FunctionId(\"consumer\")\n",
+        )?;
+
+        assert_eq!(
+            inspect_registry(
+                "lib::public_functions",
+                Some(&consumer_root),
+                RegistryInspectionFormat::Json,
+            )?,
+            ExitCode::SUCCESS
+        );
+        let private_error = match inspect_registry(
+            "lib::private_functions",
+            Some(&consumer_root),
+            RegistryInspectionFormat::Json,
+        ) {
+            Ok(code) => {
+                return Err(format!("consumer inspection unexpectedly exposed a private registry: {code:?}").into());
+            }
+            Err(error) => error,
+        };
+        assert!(
+            private_error.to_string().contains("was not found"),
+            "expected private registry to be absent from consumer inspection, got: {private_error}"
+        );
+        Ok(())
+    }
+
+    fn write_test_incan_lock(project_root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+        let cargo_lock_payload = fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock"))?;
+        let features = CargoFeatureSelection::default();
+        let fingerprint = compute_deps_fingerprint(&[], &[], &features, Some(project_root));
+        IncanLock::new(fingerprint, features, cargo_lock_payload).write(&project_root.join("incan.lock"))?;
+        Ok(())
+    }
 
     #[test]
     fn collect_api_metadata_package_extracts_project_lib() -> Result<(), Box<dyn std::error::Error>> {

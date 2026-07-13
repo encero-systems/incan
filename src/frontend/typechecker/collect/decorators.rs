@@ -438,7 +438,7 @@ impl TypeChecker {
     }
 
     /// Resolve a decorator identifier through import aliases.
-    fn decorator_id_with_import_aliases(&self, dec: &Decorator) -> Option<DecoratorId> {
+    pub(crate) fn decorator_id_with_import_aliases(&self, dec: &Decorator) -> Option<DecoratorId> {
         let resolved = resolve_decorator_path(dec, &self.symbols);
         if let Some(id) = decorators::from_segments(&resolved) {
             return Some(id);

@@ -28,7 +28,8 @@ mod types;
 
 pub use facts::{
     CompilerNodeId, CompilerNodeKind, SemanticFact, SemanticFactKind, SemanticFactStore, SemanticFactValue,
-    SemanticSourceTarget, SemanticSourceTargetKind,
+    SemanticRegistryEntry, SemanticRegistrySubjectKind, SemanticRegistryValue, SemanticSourceTarget,
+    SemanticSourceTargetKind,
 };
 pub use hir::{HirDeclaration, HirDeclarationKind, HirModule, HirSourceSpan, SemanticModuleSnapshot};
 pub use types::{
@@ -60,6 +61,7 @@ pub enum DecoratorFeature {
     ClassMethod,
     NoImplicitCoercion,
     Requires,
+    Describe,
     StdlibDecoratorFunction,
 }
 
@@ -361,5 +363,6 @@ pub fn decorator_feature_from_id(id: DecoratorId) -> DecoratorFeature {
         DecoratorId::ClassMethod => DecoratorFeature::ClassMethod,
         DecoratorId::NoImplicitCoercion => DecoratorFeature::NoImplicitCoercion,
         DecoratorId::Requires => DecoratorFeature::Requires,
+        DecoratorId::Describe => DecoratorFeature::Describe,
     }
 }

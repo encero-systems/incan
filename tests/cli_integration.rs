@@ -2739,10 +2739,10 @@ def main() -> None:
     Ok(())
 }
 
-fn assert_codegraph_v04_record_contract(records: &[serde_json::Value]) {
-    assert!(!records.is_empty(), "codegraph export should include snapshot metadata");
+fn assert_codegraph_v05_record_contract(records: &[serde_json::Value]) {
+    assert!(!records.is_empty(), "codegraph export should include a header record");
     assert_eq!(records[0]["record"], serde_json::json!("header"));
-    assert_eq!(records[0]["schema_version"], serde_json::json!(1));
+    assert_eq!(records[0]["schema_version"], serde_json::json!(2));
     assert_eq!(records[0]["languages"], serde_json::json!(["incan"]));
     assert!(
         records[0]["degraded"].is_boolean(),
@@ -2754,7 +2754,7 @@ fn assert_codegraph_v04_record_contract(records: &[serde_json::Value]) {
         assert_eq!(
             record["language"],
             serde_json::json!("incan"),
-            "v0.4 codegraph fact records should be explicitly Incan-language facts: {record}"
+            "v0.5 codegraph fact records should be explicitly Incan-language facts: {record}"
         );
         assert!(
             record["provenance"].is_string(),
@@ -2874,8 +2874,10 @@ def main() -> None:
         "incan inspect codegraph --format jsonl semantic inspection fixture",
     );
     let records = parse_jsonl_stdout(&codegraph)?;
-    assert_codegraph_v04_record_contract(&records);
-    assert_eq!(records[0]["schema_version"], build_json["schema_version"]);
+    assert_codegraph_v05_record_contract(&records);
+    // Codegraph is a separate versioned projection. RFC 113 adds checked registry records under codegraph schema v2,
+    // while build reports retain their independently versioned schema.
+    assert_eq!(build_json["schema_version"], serde_json::json!(1));
     assert_eq!(records[0]["compiler_version"], build_json["compiler_version"]);
     assert_eq!(records[0]["package"]["name"], serde_json::json!("semantic_probe"));
     assert!(records.iter().any(|record| {
@@ -3618,7 +3620,7 @@ pub def entrypoint() -> int:
     assert_eq!(first.stdout, second.stdout, "codegraph JSONL should be deterministic");
 
     let records = parse_jsonl_stdout(&first)?;
-    assert_codegraph_v04_record_contract(&records);
+    assert_codegraph_v05_record_contract(&records);
     assert_eq!(records[0]["record"], serde_json::json!("header"));
     assert_eq!(records[0]["package"]["name"], serde_json::json!("graph_demo"));
     assert!(records.iter().any(|record| {
@@ -3736,6 +3738,146 @@ pub def entrypoint() -> int:
             && record["provenance"] == serde_json::json!("checked")
     }));
 
+    Ok(())
+}
+
+#[test]
+fn inspect_codegraph_exports_checked_registry_facts() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let src_dir = tmp.path().join("src");
+    fs::create_dir_all(&src_dir)?;
+    fs::write(
+        tmp.path().join("incan.toml"),
+        r#"[project]
+name = "registry_graph"
+version = "0.1.0"
+"#,
+    )?;
+    let main_path = src_dir.join("main.incn");
+    fs::write(
+        &main_path,
+        r#"from std.registry import Registry, SubjectKind, describe
+
+@derive(Clone, Eq)
+type FunctionId = newtype str
+
+@derive(Descriptor)
+model FunctionSpec:
+    summary: str
+
+pub static functions: Registry[FunctionId, FunctionSpec] = Registry.define(
+    subjects=[SubjectKind.Function],
+)
+
+@describe(functions, FunctionId("normalize"), FunctionSpec(summary="Normalize text"))
+pub def normalize(value: str) -> str:
+    return value
+"#,
+    )?;
+
+    let output = run_incan(
+        tmp.path(),
+        &[
+            "inspect",
+            "codegraph",
+            main_path.to_str().ok_or("main path was not valid UTF-8")?,
+            "--format",
+            "jsonl",
+        ],
+    )?;
+    assert_success(&output, "registry codegraph export");
+    let records = parse_jsonl_stdout(&output)?;
+    assert!(records.iter().any(|record| {
+        record["record"] == serde_json::json!("registry")
+            && record["registry_identity"] == serde_json::json!("main::functions")
+            && record["registry_public"] == serde_json::json!(true)
+            && record["subject_kind"] == serde_json::json!("function")
+            && record["subject_identity"] == serde_json::json!("main.normalize")
+            && record["key"]["kind"] == serde_json::json!("newtype")
+            && record["descriptor"]["kind"] == serde_json::json!("model")
+            && record["registration_span"].is_object()
+            && record["subject_span"].is_object()
+            && record["provenance"] == serde_json::json!("checked")
+    }));
+    Ok(())
+}
+
+#[test]
+fn inspect_codegraph_attaches_facade_paths_to_checked_registry_facts() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let src_dir = tmp.path().join("src");
+    fs::create_dir_all(&src_dir)?;
+    fs::write(
+        tmp.path().join("incan.toml"),
+        "[project]\nname = \"registry_graph_facade\"\nversion = \"0.1.0\"\n",
+    )?;
+    fs::write(
+        src_dir.join("feature.incn"),
+        r#"from std.registry import Registry, SubjectKind, describe
+
+@derive(Clone, Eq)
+pub type FunctionId = newtype str
+
+@derive(Descriptor)
+pub model FunctionSpec:
+    pub summary: str
+
+pub static functions: Registry[FunctionId, FunctionSpec] = Registry.define(
+    subjects=[SubjectKind.Function],
+)
+
+@describe(functions, FunctionId("normalize"), FunctionSpec(summary="Normalize text"))
+pub def normalize(value: str) -> str:
+    return value
+"#,
+    )?;
+    fs::write(
+        src_dir.join("main.incn"),
+        r#"pub from crate.feature import functions as public_functions
+pub from crate.feature import normalize as public_normalize
+"#,
+    )?;
+
+    let output = run_incan(
+        tmp.path(),
+        &[
+            "inspect",
+            "codegraph",
+            src_dir
+                .join("main.incn")
+                .to_str()
+                .ok_or("main path was not valid UTF-8")?,
+            "--format",
+            "jsonl",
+        ],
+    )?;
+    assert_success(&output, "registry facade codegraph export");
+    let records = parse_jsonl_stdout(&output)?;
+    let registry = records
+        .iter()
+        .find(|record| {
+            record["record"] == serde_json::json!("registry")
+                && record["registry_identity"] == serde_json::json!("feature::functions")
+        })
+        .ok_or("missing checked feature registry record")?;
+    assert_eq!(registry["subject_identity"], serde_json::json!("feature.normalize"));
+    let reexport_paths = registry["reexport_paths"]
+        .as_array()
+        .ok_or("checked registry record must expose facade projections")?;
+    assert_eq!(
+        reexport_paths
+            .iter()
+            .map(|projection| projection["path"].clone())
+            .collect::<Vec<_>>(),
+        vec![
+            serde_json::json!(["main", "public_functions"]),
+            serde_json::json!(["main", "public_normalize"]),
+        ]
+    );
+    assert!(
+        reexport_paths.iter().all(|path| path["span"].is_object()),
+        "facade projections must retain their public-import anchors: {registry}"
+    );
     Ok(())
 }
 
@@ -4087,7 +4229,7 @@ def main() -> None:
     )?;
     assert_success(&graph, "compiler codegraph export for importer example");
     let graph_records = parse_jsonl_stdout(&graph)?;
-    assert_codegraph_v04_record_contract(&graph_records);
+    assert_codegraph_v05_record_contract(&graph_records);
 
     let importer_dir = tmp.path().join("importer");
     let importer_src = importer_dir.join("src");
@@ -4173,7 +4315,7 @@ fn inspect_codegraph_tolerant_directory_keeps_parseable_facts_and_diagnostics() 
     )?;
     assert_success(&tolerant, "tolerant incan inspect codegraph");
     let records = parse_jsonl_stdout(&tolerant)?;
-    assert_codegraph_v04_record_contract(&records);
+    assert_codegraph_v05_record_contract(&records);
     assert_eq!(records[0]["degraded"], serde_json::json!(true));
     assert!(records.iter().any(|record| {
         record["record"] == serde_json::json!("declaration")
@@ -4239,7 +4381,7 @@ fn inspect_codegraph_strict_directory_rejects_semantic_diagnostics() -> Result<(
         "tolerant incan inspect codegraph should keep syntax facts for directory typecheck diagnostics",
     );
     let records = parse_jsonl_stdout(&tolerant)?;
-    assert_codegraph_v04_record_contract(&records);
+    assert_codegraph_v05_record_contract(&records);
     assert_eq!(records[0]["degraded"], serde_json::json!(true));
     assert!(records.iter().any(|record| {
         record["record"] == serde_json::json!("declaration")
@@ -8832,6 +8974,101 @@ def test_decorator_can_use_reexported_partial_spec() -> None:
         &test_output,
         "incan test for imported partial in decorator argument issue698",
     );
+    Ok(())
+}
+
+#[test]
+fn test_std_registry_runs_in_a_compiled_test_batch() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "std_registry_test_batch", "")?;
+    let src_dir = main_path.parent().ok_or("main path had no parent")?;
+    let tests_dir = tmp.path().join("tests");
+    fs::create_dir_all(&tests_dir)?;
+    fs::write(
+        src_dir.join("feature.incn"),
+        r#"from std.registry import Registry, SubjectKind, describe
+
+@derive(Clone, Eq)
+pub type FunctionId = newtype str
+
+@derive(Descriptor)
+pub model FunctionSpec:
+    pub summary: str
+
+pub static functions: Registry[FunctionId, FunctionSpec] = Registry.define(
+    subjects=[SubjectKind.Function],
+)
+
+@describe(functions, FunctionId("normalize"), FunctionSpec(summary="Normalize text"))
+pub def normalize(value: str) -> str:
+    return value
+"#,
+    )?;
+    fs::write(
+        tests_dir.join("test_std_registry_batch.incn"),
+        r#"from std.testing import assert_eq
+from feature import FunctionId, functions, normalize
+
+def test_loaded_entries_keep_checked_description_shape() -> None:
+    assert_eq(normalize("value"), "value")
+    entries = functions.loaded_entries()
+    assert_eq(len(entries), 1)
+    assert_eq(entries[0].key, FunctionId("normalize"))
+    assert_eq(entries[0].descriptor.summary, "Normalize text")
+    assert_eq(entries[0].subject.qualified_name, "feature.normalize")
+"#,
+    )?;
+
+    let test_path = tests_dir.join("test_std_registry_batch.incn");
+    let output = run_incan(
+        tmp.path(),
+        &["test", test_path.to_str().ok_or("test path was not valid UTF-8")?],
+    )?;
+    assert_success(&output, "compiled test batch for std.registry");
+    Ok(())
+}
+
+/// RFC 113: compiling an application must typecheck the Incan-authored standard registry implementation, including the
+/// compiler-reserved helper boundary.
+#[test]
+fn build_std_registry_consumer_compiles_the_source_stdlib() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "std_registry_source_build", "")?;
+    let src_dir = main_path.parent().ok_or("main path had no parent")?;
+    fs::write(
+        src_dir.join("feature.incn"),
+        r#"from std.registry import Registry, SubjectKind, describe
+
+@derive(Clone, Eq)
+pub type FunctionId = newtype str
+
+@derive(Descriptor)
+pub model FunctionSpec:
+    pub target: Type[int]
+
+pub static functions: Registry[FunctionId, FunctionSpec] = Registry.define(
+    subjects=[SubjectKind.Function],
+)
+
+@describe(functions, FunctionId("normalize"), FunctionSpec(target=int))
+pub def normalize(value: int) -> int:
+    return value
+"#,
+    )?;
+    fs::write(
+        &main_path,
+        r#"from feature import normalize
+
+def main() -> None:
+    println(normalize(1))
+"#,
+    )?;
+
+    let output = run_incan(
+        tmp.path(),
+        &["build", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(&output, "build of an std.registry source consumer");
     Ok(())
 }
 

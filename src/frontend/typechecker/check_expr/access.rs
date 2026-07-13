@@ -3304,6 +3304,45 @@ impl TypeChecker {
             self.check_call_args(args);
             return ResolvedType::Unknown;
         }
+
+        if let ResolvedType::Generic(name, type_arguments) = &base_ty
+            && name == "Registry"
+            && method == "entry"
+        {
+            self.check_call_args(args);
+            if !self.checking_registry_entry_static_initializer {
+                self.errors.push(CompileError::type_error(
+                    "Registry.entry(...) is declaration-only; use it as a module static RegistryEntry[K, T] initializer with RegistrySubject.current_unit() or RegistrySubject.package()"
+                        .to_string(),
+                    span,
+                ));
+            }
+            return ResolvedType::Generic("RegistryEntry".to_string(), type_arguments.clone());
+        }
+
+        if let ResolvedType::Generic(name, _) = &base_ty
+            && name == "Registry"
+            && matches!(method, "_describe" | "_describe_function" | "_describe_method")
+        {
+            self.check_call_args(args);
+            self.errors.push(CompileError::type_error(
+                format!("Registry.{method}(...) is compiler-reserved and cannot be called from source"),
+                span,
+            ));
+            return ResolvedType::Unit;
+        }
+
+        if matches!(&base.node, Expr::Ident(name) if name == "RegistrySubject")
+            && matches!(method, "_checked_current_unit" | "_checked_package")
+        {
+            self.check_call_args(args);
+            self.errors.push(CompileError::type_error(
+                format!("RegistrySubject.{method}(...) is compiler-reserved and cannot be called from source"),
+                span,
+            ));
+            return ResolvedType::Named("RegistrySubject".to_string());
+        }
+
         if method == "to_vec"
             && args.is_empty()
             && matches!(

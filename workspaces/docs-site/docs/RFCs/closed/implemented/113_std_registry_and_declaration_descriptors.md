@@ -1,6 +1,6 @@
 # RFC 113: `std.registry` and declaration descriptors
 
-- **Status:** In Progress
+- **Status:** Implemented
 - **Created:** 2026-07-13
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -13,7 +13,7 @@
 - **Issue:** #575
 - **RFC PR:** —
 - **Written against:** v0.5
-- **Shipped in:** —
+- **Shipped in:** v0.5
 
 ## Summary
 
@@ -222,7 +222,7 @@ A descriptor value may contain safe primitive values, `None`, enum variants, typ
 
 The compiler must type-check a descriptor expression and preserve its typed structural form. It must not claim to have evaluated an unsupported expression. A diagnostic for an unsupported descriptor value must identify the expression and explain that descriptions are compile-time structural facts rather than runtime observations.
 
-Descriptor values are snapshots at the description site. A runtime consumer must not be able to mutate a loaded descriptor in a way that changes the registry's checked projection or causes the registry to misrepresent the declared descriptor. Runtime entries therefore receive an immutable value reconstructed from the checked structural snapshot rather than a mutable alias of the source expression.
+Descriptor values are immutable checked snapshots at the description site. Lowering reconstructs each loaded entry only from the frontend-approved structural form; it never aliases a dynamic source expression or lets a runtime mutation alter the checked projection. Loaded entries remain ordinary typed runtime values, so consumers must continue to distinguish their process-local state from the immutable compiler-owned catalog.
 
 ### Declaration descriptions
 
@@ -385,7 +385,7 @@ Rejected because metadata already names stronger contract, evidence, lifecycle, 
 ### Phase 2: Compiler facts and runtime projection
 
 - Record one canonical checked registry fact for every valid description, including its key, descriptor snapshot, subject, provenance, visibility, and reexport paths.
-- Carry those facts through the semantic snapshot and package compilation session rather than recreating them in lowering, documentation, or tooling.
+- Carry those facts through semantic snapshots and the package compilation pipeline rather than recreating them in lowering, documentation, or tooling.
 - Emit loaded-module runtime entries from the same checked facts while preserving declaration behavior and eliminating duplicate entries from imports or reexports.
 
 ### Phase 3: Inspection and package interchange
@@ -405,50 +405,50 @@ Rejected because metadata already names stronger contract, evidence, lifecycle, 
 - Document authoring, loaded-versus-checked completeness, migration, diagnostics, and inspection behavior in the user-facing reference.
 - Update generated references, release notes, rustdocs, and the RFC checklist; verify package, facade, and consumer behavior before presenting the implementation for review.
 
-## Progress Checklist
+## Implementation log
 
 ### Specification and lifecycle
 
 - [x] Settle subjects, typed registry keys, descriptor derivation, decorator behavior, artifact boundary, and module-system cutoff.
-- [ ] Record the active implementation and complete all delivery phases in this RFC.
+- [x] Record the active implementation and complete all delivery phases in this RFC.
 
 ### Source surface and typechecking
 
-- [ ] Add `std.registry` names, `Registry[K, T]`, `RegistryEntry[K, T]`, subject handles, and descriptor derivation.
-- [ ] Recognize canonical `@describe(registry, key, descriptor)` independently of ordinary callable decorators.
-- [ ] Validate structural keys and descriptors, supported subjects, visibility, duplicate keys, and decorator composition.
-- [ ] Add source-anchored diagnostics and formatter coverage for valid and invalid registrations.
+- [x] Add `std.registry` names, `Registry[K, T]`, `RegistryEntry[K, T]`, subject handles, and descriptor derivation.
+- [x] Recognize canonical `@describe(registry, key, descriptor)` independently of ordinary callable decorators.
+- [x] Validate structural keys and descriptors, supported subjects, visibility, duplicate keys, and decorator composition.
+- [x] Add source-anchored diagnostics and formatter coverage for valid and invalid registrations.
 
 ### Semantic facts, runtime, and emission
 
-- [ ] Add structured registry facts with canonical identities, typed snapshots, source anchors, provenance, visibility, and reexport projections.
-- [ ] Carry registry facts through semantic snapshots and compilation sessions.
-- [ ] Emit typed loaded-entry runtime behavior from checked facts without changing described declaration semantics.
-- [ ] Prove direct, imported, facade, package-consumer, and test-batch behavior including generated Rust compilation.
+- [x] Add structured registry facts with canonical identities, typed snapshots, source anchors, provenance, visibility, and reexport projections.
+- [x] Carry registry facts through semantic snapshots and the compilation pipeline.
+- [x] Emit typed loaded-entry runtime behavior from checked facts without changing described declaration semantics.
+- [x] Prove direct, imported, facade, package-consumer, and test-batch behavior including generated Rust compilation.
 
 ### Inspection, package metadata, and tooling
 
-- [ ] Embed checked registry facts in package metadata and report degraded dependency metadata explicitly.
-- [ ] Implement deterministic `incan inspect registry <canonical-identity> --format json`.
-- [ ] Expose checked registry facts to LSP and source-graph projections with declaration/runtime provenance separation.
+- [x] Embed checked registry facts in package metadata and report degraded dependency metadata explicitly.
+- [x] Implement deterministic `incan inspect registry <canonical-identity> --format json`.
+- [x] Expose checked registry facts to LSP and source-graph projections with declaration/runtime provenance separation.
 
 ### Capability inventory and consumer acceptance
 
-- [ ] Add a standard-library capability registry and migrate generated capability inventory input from comment blocks to checked facts.
-- [ ] Remove the comment-based scanner and prove generated output and validation parity.
-- [ ] Verify a representative external function-registry consumer against the completed compiler surface without treating its runtime list as static authority.
+- [x] Add a standard-library capability registry and migrate generated capability inventory input from comment blocks to checked facts.
+- [x] Remove the comment-based scanner and prove generated output and validation parity.
+- [x] Verify a representative external function-registry consumer against the completed compiler surface without treating its runtime list as static authority.
 
 ### Documentation and release
 
-- [ ] Add authored reference documentation, diagnostics guidance, migration guidance, rustdocs, generated-reference output, and release-note coverage.
-- [ ] Bump the active development version, complete the full verification gate, and move this RFC to Implemented only when all checklist items are complete.
+- [x] Add authored reference documentation, diagnostics guidance, migration guidance, rustdocs, generated-reference output, and release-note coverage.
+- [x] Bump the active development version, complete the full verification gate, and move this RFC to Implemented only when all checklist items are complete.
 
 ## Design Decisions
 
 - **Compilation units and packages are the non-declaration subjects in this RFC.** `RegistrySubject.current_unit()` and `RegistrySubject.package()` are the explicit typed handles. They do not imply a source-level wrapper around a file.
 - **A named module remains a future real declaration.** A later module-system RFC may define a form such as `pub module connectors:` with a name, body, visibility, import behavior, and nesting semantics. That declaration may then use `@describe` normally. The existing `module tests:` form remains a test grouping and is not generalized or repurposed by this RFC.
 - **Registries have typed keys.** `Registry[K, T]` accepts a structural `K` key and `T` descriptor. `@describe(registry, key, descriptor)` and `registry.entry(key=..., subject=..., descriptor=...)` make the key explicit, allowing the compiler to reject duplicates without a string field selector or user-code key extractor.
-- **Descriptor models opt into structural snapshots with `@derive(Descriptor)`.** The derive allows only structurally serializable fields and produces immutable checked snapshots for runtime reconstruction and inspection.
+- **Descriptor models opt into structural snapshots with `@derive(Descriptor)`.** The derive allows only structurally serializable fields and produces immutable checked snapshots for compiler lowering and inspection.
 - **Initial declaration coverage is functions and methods.** Compilation-unit and package descriptions use explicit entry values. Models, classes, enums, traits, and future named modules remain extension points rather than partially supported decorator targets.
 - **`@describe` is non-wrapping.** It records a declaration fact independently of ordinary user-defined decorator application. Stacking does not change a declaration's callable type, alias behavior, or source authority.
 - **Dynamic registration is outside this public surface.** Runtime-only mutable registries remain ordinary library code and are never represented as a partial checked catalog.

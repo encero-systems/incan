@@ -19,10 +19,11 @@ use incan_codegraph::{
     CodegraphFeatureReasonProjection, CodegraphFileRecord, CodegraphHeaderRecord, CodegraphImportRecord,
     CodegraphLanguage, CodegraphMode, CodegraphModuleRecord, CodegraphPackage, CodegraphPackageFeatureProjection,
     CodegraphProvenance, CodegraphProviderParticipation, CodegraphProviderProjection, CodegraphProviderProvenance,
-    CodegraphRecord, CodegraphReferenceRecord, CodegraphSdkComponentProjection, CodegraphSdkProjection,
-    CodegraphSemanticContext, CodegraphSourceSpan, to_jsonl,
+    CodegraphRecord, CodegraphReferenceRecord, CodegraphRegistryRecord, CodegraphRegistryReexportProjection,
+    CodegraphSdkComponentProjection, CodegraphSdkProjection, CodegraphSemanticContext, CodegraphSourceSpan, to_jsonl,
 };
 use incan_semantics_core::{CompilerNodeId, SemanticModuleSnapshot, SemanticSourceTarget};
+use serde_json::{Value, json};
 
 use crate::cli::prelude::ParsedModule;
 use crate::cli::{CliError, CliResult, ExitCode};
@@ -789,6 +790,95 @@ impl CodegraphBuilder {
                 }));
         }
         self.collect_program_records(module, &module_id, degraded);
+        if !degraded {
+            self.collect_checked_registry_records(module, &module_id);
+        }
+    }
+
+    /// Project RFC 113 registry facts from the existing typechecker artifact. This shares the compiler-owned
+    /// declaration model with inspection and package metadata rather than inferring registrations from decorators.
+    fn collect_checked_registry_records(&mut self, module: &ParsedModule, module_id: &str) {
+        let Some(type_info) = self.type_info_by_path.get(&module.file_path) else {
+            return;
+        };
+        let module_identity = module.path_segments.join("::");
+        let package_identity = self
+            .package
+            .as_ref()
+            .and_then(|package| package.name.clone())
+            .unwrap_or_else(|| module_identity.clone());
+
+        for description in &type_info.registry.descriptions {
+            let Some(definition) = type_info.registry.definitions.get(&description.registry_name) else {
+                continue;
+            };
+            let registry_identity = format!("{module_identity}::{}", description.registry_name);
+            self.records.push(CodegraphRecord::Registry(CodegraphRegistryRecord {
+                id: registry_record_id(
+                    &registry_identity,
+                    &format!("{module_identity}.{}", description.declaration_name),
+                    description.decorator_span.0,
+                ),
+                language: CodegraphLanguage::Incan,
+                module_id: module_id.to_string(),
+                registry_identity,
+                registry_public: definition.is_public,
+                key: semantic_registry_value_json(&description.key),
+                descriptor: semantic_registry_value_json(&description.descriptor),
+                subject_kind: description.subject_kind.to_string(),
+                subject_identity: format!("{module_identity}.{}", description.declaration_name),
+                registration_span: source_span(
+                    &module.file_path,
+                    &module.source,
+                    Span::new(description.decorator_span.0, description.decorator_span.1),
+                ),
+                subject_span: source_span(
+                    &module.file_path,
+                    &module.source,
+                    Span::new(description.declaration_span.0, description.declaration_span.1),
+                ),
+                provenance: CodegraphProvenance::Checked,
+                reexport_paths: Vec::new(),
+                degraded: false,
+            }));
+        }
+
+        for entry in &type_info.registry.explicit_entries {
+            let Some(definition) = type_info.registry.definitions.get(&entry.registry_name) else {
+                continue;
+            };
+            let registry_identity = format!("{module_identity}::{}", entry.registry_name);
+            let subject_identity = match entry.subject_kind {
+                incan_semantics_core::SemanticRegistrySubjectKind::CompilationUnit => module_identity.clone(),
+                incan_semantics_core::SemanticRegistrySubjectKind::Package => package_identity.clone(),
+                incan_semantics_core::SemanticRegistrySubjectKind::Function
+                | incan_semantics_core::SemanticRegistrySubjectKind::Method => continue,
+            };
+            self.records.push(CodegraphRecord::Registry(CodegraphRegistryRecord {
+                id: registry_record_id(&registry_identity, &subject_identity, entry.declaration_span.0),
+                language: CodegraphLanguage::Incan,
+                module_id: module_id.to_string(),
+                registry_identity,
+                registry_public: definition.is_public,
+                key: semantic_registry_value_json(&entry.key),
+                descriptor: semantic_registry_value_json(&entry.descriptor),
+                subject_kind: entry.subject_kind.to_string(),
+                subject_identity,
+                registration_span: source_span(
+                    &module.file_path,
+                    &module.source,
+                    Span::new(entry.declaration_span.0, entry.declaration_span.1),
+                ),
+                subject_span: source_span(
+                    &module.file_path,
+                    &module.source,
+                    Span::new(entry.subject_span.0, entry.subject_span.1),
+                ),
+                provenance: CodegraphProvenance::Checked,
+                reexport_paths: Vec::new(),
+                degraded: false,
+            }));
+        }
     }
 
     /// Add declaration, import, export, and containment records for a parsed module body.
@@ -1561,6 +1651,7 @@ impl CodegraphBuilder {
 
     /// Assemble the final header, syntax records, and diagnostic records in stable JSONL order.
     fn finish(mut self) -> Vec<CodegraphRecord> {
+        self.materialize_registry_reexport_projections();
         let degraded = self.records.iter().any(record_degraded) || !self.diagnostics.is_empty();
         let mut records = vec![CodegraphRecord::Header(CodegraphHeaderRecord {
             schema_version: CODEGRAPH_SCHEMA_VERSION,
@@ -1577,6 +1668,94 @@ impl CodegraphBuilder {
             records.push(CodegraphRecord::Diagnostic(diagnostic_record(index, diagnostic)));
         }
         records
+    }
+
+    /// Attach public facade paths to the one checked source-owned registry fact they expose.
+    ///
+    /// Registry entries are emitted only after successful typechecking. This pass reuses the already-exported public
+    /// import graph to resolve facade aliases; it does not inspect decorators, execute registry code, or emit a second
+    /// semantic entry. An import chain that cannot be resolved to a source path is omitted rather than guessed.
+    fn materialize_registry_reexport_projections(&mut self) {
+        let module_paths = self
+            .records
+            .iter()
+            .filter_map(|record| match record {
+                CodegraphRecord::Module(module) => Some((module.id.clone(), module.module_path.clone())),
+                _ => None,
+            })
+            .collect::<BTreeMap<_, _>>();
+        let mut aliases = BTreeMap::new();
+
+        for record in &self.records {
+            let CodegraphRecord::Import(import) = record else {
+                continue;
+            };
+            if import.degraded || import.visibility != "public" || import.kind != "from" {
+                continue;
+            }
+            let Some(facade_module) = module_paths.get(&import.module_id) else {
+                continue;
+            };
+            let Some(imported_module) = codegraph_source_import_path(&import.path) else {
+                continue;
+            };
+            let Some(span) = import.span.clone() else {
+                continue;
+            };
+            for item in &import.items {
+                let Some((source_name, local_name)) = codegraph_import_item_names(item) else {
+                    continue;
+                };
+                let mut facade_path = facade_module.clone();
+                facade_path.push(local_name);
+                let mut target_path = imported_module.clone();
+                target_path.push(source_name);
+                aliases.insert(facade_path, (target_path, span.clone()));
+            }
+        }
+
+        let projections = aliases
+            .keys()
+            .filter_map(|path| {
+                let (_, span) = aliases.get(path)?;
+                let target = resolve_codegraph_alias_target(path, &aliases)?;
+                Some((
+                    target,
+                    CodegraphRegistryReexportProjection {
+                        path: path.clone(),
+                        span: span.clone(),
+                    },
+                ))
+            })
+            .collect::<Vec<_>>();
+
+        for record in &mut self.records {
+            let CodegraphRecord::Registry(registry) = record else {
+                continue;
+            };
+            if !registry.registry_public {
+                continue;
+            }
+            let mut canonical_paths = vec![registry_identity_path(&registry.registry_identity)];
+            if let Some(subject_path) = registry_subject_path(&registry.subject_identity) {
+                canonical_paths.push(subject_path);
+            }
+            let mut paths = projections
+                .iter()
+                .filter(|(target, _)| canonical_paths.iter().any(|canonical| canonical == target))
+                .map(|(_, projection)| projection.clone())
+                .collect::<Vec<_>>();
+            paths.sort_by(|left, right| {
+                (&left.path, &left.span.file, left.span.start, left.span.end).cmp(&(
+                    &right.path,
+                    &right.span.file,
+                    right.span.start,
+                    right.span.end,
+                ))
+            });
+            paths.dedup_by(|left, right| left.path == right.path && left.span == right.span);
+            registry.reexport_paths = paths;
+        }
     }
 
     /// Return a declaration record id for a compiler-proven source target at `span`.
@@ -1621,6 +1800,62 @@ fn record_degraded(record: &CodegraphRecord) -> bool {
         CodegraphRecord::Call(record) => record.degraded,
         CodegraphRecord::Containment(record) => record.degraded,
         CodegraphRecord::Diagnostic(record) => record.degraded,
+        CodegraphRecord::Registry(record) => record.degraded,
+    }
+}
+
+/// Construct a deterministic id for one registry entry without depending on runtime loading order.
+fn registry_record_id(registry_identity: &str, subject_identity: &str, anchor_start: usize) -> String {
+    format!(
+        "registry:{}:{}:{anchor_start}",
+        sanitize_record_label(registry_identity),
+        sanitize_record_label(subject_identity)
+    )
+}
+
+/// Convert one compiler structural registry value into a schema-stable JSON value without requiring the codegraph
+/// crate to depend on frontend semantic types.
+fn semantic_registry_value_json(value: &incan_semantics_core::SemanticRegistryValue) -> Value {
+    use incan_semantics_core::SemanticRegistryValue;
+
+    match value {
+        SemanticRegistryValue::Int(value) => json!({ "kind": "int", "value": value }),
+        SemanticRegistryValue::Float(value) => json!({ "kind": "float", "value": value }),
+        SemanticRegistryValue::Bool(value) => json!({ "kind": "bool", "value": value }),
+        SemanticRegistryValue::String(value) => json!({ "kind": "string", "value": value }),
+        SemanticRegistryValue::Bytes(value) => json!({ "kind": "bytes", "value": value }),
+        SemanticRegistryValue::None => json!({ "kind": "none", "value": null }),
+        SemanticRegistryValue::Type(value) => json!({ "kind": "type", "value": value }),
+        SemanticRegistryValue::Option(value) => json!({
+            "kind": "option",
+            "value": semantic_registry_value_json(value),
+        }),
+        SemanticRegistryValue::List(values) => json!({
+            "kind": "list",
+            "value": values.iter().map(semantic_registry_value_json).collect::<Vec<_>>(),
+        }),
+        SemanticRegistryValue::Dict(entries) => json!({
+            "kind": "dict",
+            "value": entries.iter().map(|(key, value)| json!({
+                "key": semantic_registry_value_json(key),
+                "value": semantic_registry_value_json(value),
+            })).collect::<Vec<_>>(),
+        }),
+        SemanticRegistryValue::ConstRef(path) => json!({ "kind": "const_ref", "value": path }),
+        SemanticRegistryValue::Newtype { name, value } => json!({
+            "kind": "newtype",
+            "value": { "name": name, "value": semantic_registry_value_json(value) },
+        }),
+        SemanticRegistryValue::Model { name, fields } => json!({
+            "kind": "model",
+            "value": {
+                "name": name,
+                "fields": fields.iter().map(|(name, value)| json!({
+                    "name": name,
+                    "value": semantic_registry_value_json(value),
+                })).collect::<Vec<_>>(),
+            },
+        }),
     }
 }
 
@@ -2012,6 +2247,57 @@ fn import_item_display(item: &ImportItem) -> String {
     } else {
         item.name.clone()
     }
+}
+
+/// Parse the source-path spelling retained by a checked public `from` import.
+fn codegraph_source_import_path(path: &str) -> Option<Vec<String>> {
+    let mut segments = path.split("::").map(str::to_string).collect::<Vec<_>>();
+    if segments.first().is_some_and(|segment| segment == "crate") {
+        segments.remove(0);
+    }
+    (!segments.is_empty() && !segments.iter().any(|segment| segment == ".." || segment.is_empty())).then_some(segments)
+}
+
+/// Recover source and local names from the deterministic import-item display form.
+fn codegraph_import_item_names(item: &str) -> Option<(String, String)> {
+    let (source, local) = item.split_once(" as ").unwrap_or((item, item));
+    (!source.is_empty() && !local.is_empty()).then(|| (source.to_string(), local.to_string()))
+}
+
+/// Follow public facade aliases to the source-owned target path, refusing cycles.
+fn resolve_codegraph_alias_target(
+    path: &[String],
+    aliases: &BTreeMap<Vec<String>, (Vec<String>, CodegraphSourceSpan)>,
+) -> Option<Vec<String>> {
+    let mut current = aliases.get(path)?.0.clone();
+    let mut visited = BTreeSet::new();
+    visited.insert(path.to_vec());
+    while let Some((next, _)) = aliases.get(&current) {
+        if !visited.insert(current.clone()) {
+            return None;
+        }
+        current = next.clone();
+    }
+    Some(current)
+}
+
+/// Convert `<module>::<binding>` to the import-path vocabulary used by source exports.
+fn registry_identity_path(identity: &str) -> Vec<String> {
+    identity.split("::").map(str::to_string).collect()
+}
+
+/// Convert function subject identity such as `pkg::text.normalize` into an import path.
+///
+/// A model reexport does not create a named import path for one of its methods, so methods deliberately retain only
+/// their canonical source subject in the first registry schema.
+fn registry_subject_path(identity: &str) -> Option<Vec<String>> {
+    let (module, declaration) = identity.rsplit_once('.')?;
+    if declaration.contains('.') {
+        return None;
+    }
+    let mut path = module.split("::").map(str::to_string).collect::<Vec<_>>();
+    path.push(declaration.to_string());
+    Some(path)
 }
 
 /// Format a parsed Incan import path without resolving it to a filesystem path.

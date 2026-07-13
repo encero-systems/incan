@@ -419,6 +419,32 @@ def increment_first(mut values: list[int]) -> None:
     }
 
     #[test]
+    fn test_format_source_preserves_registry_description_decorator() -> Result<(), FormatError> {
+        let source = r#"from std.registry import Registry, SubjectKind, describe
+
+type FunctionId = newtype str
+
+@derive(Descriptor)
+model FunctionSpec:
+  summary: str
+
+static functions: Registry[FunctionId, FunctionSpec] = Registry.define(subjects=[SubjectKind.Function])
+
+@describe(functions,FunctionId("normalize"),FunctionSpec(summary="Normalize text"))
+def normalize(value: str) -> str:
+  return value
+"#;
+        let formatted = format_source(source)?;
+        assert!(
+            formatted
+                .contains("@describe(functions, FunctionId(\"normalize\"), FunctionSpec(summary=\"Normalize text\"))"),
+            "expected @describe to retain its ordinary typed arguments, got:\n{formatted}"
+        );
+        assert_eq!(format_source(&formatted)?, formatted);
+        Ok(())
+    }
+
+    #[test]
     fn test_format_source_rest_params_and_call_unpacking() -> Result<(), FormatError> {
         let source = r#"def collect(prefix: str, *items: int, **labels: str) -> int:
   return collect(prefix,*items,**labels)

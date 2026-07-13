@@ -31,6 +31,9 @@ pub enum DeriveId {
 
     // Validation
     Validate,
+
+    // Compiler-checked structural descriptions
+    Descriptor,
 }
 
 /// Compiler-generated derive name that emits model/class field metadata.
@@ -115,6 +118,13 @@ pub const DERIVES: &[DeriveInfo] = &[
         RFC::_000,
         Since(0, 1),
     ),
+    info(
+        DeriveId::Descriptor,
+        "Descriptor",
+        "Opt a model into compiler-checked structural registry descriptors.",
+        RFC::_113,
+        Since(0, 5),
+    ),
 ];
 
 /// Resolve a spelling to a [`DeriveId`].
@@ -150,6 +160,7 @@ pub fn info_for(id: DeriveId) -> DeriveInfo {
         DeriveId::Copy => DERIVES[8],
         DeriveId::Default => DERIVES[9],
         DeriveId::Validate => DERIVES[10],
+        DeriveId::Descriptor => DERIVES[11],
     }
 }
 

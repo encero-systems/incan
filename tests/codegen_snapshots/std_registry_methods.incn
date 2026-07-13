@@ -1,0 +1,25 @@
+from std.registry import Registry, SubjectKind, describe
+
+@derive(Clone, Eq)
+type MethodId = newtype str
+
+@derive(Descriptor)
+model MethodSpec:
+    summary: str
+
+pub static methods: Registry[MethodId, MethodSpec] = Registry.define(
+    subjects=[SubjectKind.Method],
+)
+
+model Normalizer:
+    @describe(methods, MethodId("normalize"), MethodSpec(summary="Normalize text"))
+    def normalize(self, value: str) -> str:
+        return value.strip().lower()
+
+def main() -> None:
+    entries = methods.loaded_entries()
+    normalizer = Normalizer()
+    assert len(entries) == 1
+    assert entries[0].subject.kind == SubjectKind.Method
+    assert entries[0].subject.qualified_name == "Normalizer.normalize"
+    assert normalizer.normalize("  INCAN  ") == "incan"

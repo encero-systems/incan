@@ -157,6 +157,7 @@ nav:
       - Reference:
           - Language reference (generated): language/reference/language.md
           - Feature inventory (generated): language/reference/feature_inventory.md
+          - std.registry: language/reference/stdlib/registry.md
           - Code style guide: language/reference/code_style.md
           - Functions and calls: language/reference/functions.md
           - Generators: language/reference/generators.md

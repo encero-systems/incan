@@ -244,6 +244,8 @@ impl<'program> GeneratedUseAnalyzer<'program> {
             analyzer.mark_reachable_overload_items(name);
         }
 
+        analyzer.scan_stmt_list(&program.module_init);
+
         while let Some(name) = analyzer.pending.pop() {
             if let Some(decl) = analyzer.declarations_by_name.get(&name).copied() {
                 analyzer.scan_decl(decl);
@@ -3420,7 +3422,10 @@ impl<'a> IrEmitter<'a> {
                 quote! { #ident(); }
             })
             .collect();
-        if !static_names.is_empty() || !imported_static_init_calls.is_empty() {
+        let previous_static_initializer = self.in_static_initializer.replace(true);
+        let module_init_stmts = self.emit_stmts(&program.module_init)?;
+        self.in_static_initializer.replace(previous_static_initializer);
+        if !static_names.is_empty() || !imported_static_init_calls.is_empty() || !module_init_stmts.is_empty() {
             let force_calls: Vec<TokenStream> = static_names
                 .iter()
                 .map(|name| {
@@ -3448,6 +3453,7 @@ impl<'a> IrEmitter<'a> {
                         let _guard = __IncanStaticInitGuard(&__INCAN_STATIC_INIT_RUNNING);
                         #(#imported_static_init_calls)*
                         #(#force_calls)*
+                        #(#module_init_stmts)*
                     });
                 }
             });

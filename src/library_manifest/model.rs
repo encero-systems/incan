@@ -20,6 +20,7 @@ use crate::frontend::library_exports::{
     CheckedPartialTargetKind, CheckedPresetValue, CheckedStaticExport, CheckedTraitExport, CheckedTypeAliasExport,
     CheckedTypeBound, CheckedTypeParam,
 };
+use crate::frontend::registry_metadata::CheckedRegistryMetadataPackage;
 use crate::frontend::symbols::{CallableParam, NewtypePrimitiveConstraint, ValueEnumBacking, ValueEnumValue};
 use incan_core::interop::RustItemMetadata;
 
@@ -171,6 +172,9 @@ pub struct LibraryContractMetadata {
     /// Checked public API metadata extracted from the producer source.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api: Option<CheckedApiMetadataPackage>,
+    /// Complete typed-registry facts checked from producer source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registry: Option<CheckedRegistryMetadataPackage>,
     /// Stable semantic identities for public exports.
     #[serde(default, skip_serializing_if = "LibraryIdentityGraph::is_empty")]
     pub identity_graph: LibraryIdentityGraph,

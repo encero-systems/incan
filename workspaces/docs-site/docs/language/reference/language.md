@@ -101,6 +101,7 @@ Soft keywords are only reserved when their activating `std.*` namespace is impor
 | `std.web` | `web` | `std.web.app`, `std.web.routing`, `std.web.request`, `std.web.response`, `std.web.macros`, `std.web.prelude` | - |
 | `std.testing` | - | - | - |
 | `std.logging` | - | - | - |
+| `std.registry` | - | - | - |
 | `std.telemetry` | - | `std.telemetry.core` | - |
 | `std.environ` | - | - | - |
 | `std.async` | `async` | `std.async.time`, `std.async.task`, `std.async.channel`, `std.async.race`, `std.async.sync`, `std.async.prelude` | `async`, `await` |
@@ -364,6 +365,7 @@ Class, model, trait, enum, newtype, field, alias, and module decorators remain l
 | StaticMethod | `@staticmethod` |  | Mark a method as static (no self receiver). | RFC 000 | 0.1 | Stable |
 | ClassMethod | `@classmethod` |  | Mark a method as a class method (no implicit self receiver). | RFC 000 | 0.2 | Stable |
 | Requires | `@requires` |  | Declare required fields for trait default methods. | RFC 000 | 0.1 | Stable |
+| Describe | `@std.registry.describe` |  | Attach a compiler-checked typed registry descriptor to a declaration. | RFC 113 | 0.5 | Stable |
 
 ## Derives
 
@@ -380,6 +382,7 @@ Class, model, trait, enum, newtype, field, alias, and module decorators remain l
 | Copy | `Copy` |  | Derive copy semantics for simple value types. | RFC 000 | 0.1 | Stable |
 | Default | `Default` |  | Derive a default value constructor. | RFC 000 | 0.1 | Stable |
 | Validate | `Validate` |  | Enable validated construction via `TypeName.new(...)` and require a `validate(self) -> Result[Self, E]` method. | RFC 000 | 0.1 | Stable |
+| Descriptor | `Descriptor` |  | Opt a model into compiler-checked structural registry descriptors. | RFC 113 | 0.5 | Stable |
 
 ## Builtin traits
 
