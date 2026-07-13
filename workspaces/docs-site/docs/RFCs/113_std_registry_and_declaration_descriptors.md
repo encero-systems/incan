@@ -1,6 +1,6 @@
 # RFC 113: `std.registry` and declaration descriptors
 
-- **Status:** Planned
+- **Status:** In Progress
 - **Created:** 2026-07-13
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -373,6 +373,75 @@ Rejected because metadata already names stronger contract, evidence, lifecycle, 
 - **LSP / editor tooling:** must provide completion, hover, go-to-definition, registry-membership navigation, and source diagnostics from checked facts.
 - **Documentation and artifact tooling:** must consume checked registry projections for capability inventories and other catalog views rather than source scanners.
 - **Source graph / agent tooling:** must expose registry facts and distinguish checked declarations from runtime observations.
+
+## Implementation Plan
+
+### Phase 1: Public source contract and structural values
+
+- Add the `std.registry` public surface: typed registries and entries, subject handles, descriptor derivation, and non-wrapping declaration descriptions.
+- Validate structural keys and descriptor values without evaluating user code, and provide source-anchored diagnostics for unsupported values and incompatible registrations.
+- Keep the initial declaration matrix bounded to functions, methods, compilation units, and packages.
+
+### Phase 2: Compiler facts and runtime projection
+
+- Record one canonical checked registry fact for every valid description, including its key, descriptor snapshot, subject, provenance, visibility, and reexport paths.
+- Carry those facts through the semantic snapshot and package compilation session rather than recreating them in lowering, documentation, or tooling.
+- Emit loaded-module runtime entries from the same checked facts while preserving declaration behavior and eliminating duplicate entries from imports or reexports.
+
+### Phase 3: Inspection and package interchange
+
+- Embed checked registry facts in package metadata and expose deterministic JSON inspection for source packages and dependencies.
+- Project the same facts into formatter, LSP, source-graph, documentation, and agent-tooling consumers where their existing surfaces can expose them.
+- Report unavailable or incompatible dependency metadata explicitly rather than silently presenting an incomplete catalog.
+
+### Phase 4: Capability-inventory migration and consumer proof
+
+- Define the standard-library capability descriptor and move the generated capability inventory to checked registry facts.
+- Remove the comment-block scanner and prove output, validation, and generated-reference parity from the new projection.
+- Exercise a representative external consumer as a compiler acceptance lane without making its runtime registry the authority for static discovery.
+
+### Phase 5: Documentation and release readiness
+
+- Document authoring, loaded-versus-checked completeness, migration, diagnostics, and inspection behavior in the user-facing reference.
+- Update generated references, release notes, rustdocs, and the RFC checklist; verify package, facade, and consumer behavior before presenting the implementation for review.
+
+## Progress Checklist
+
+### Specification and lifecycle
+
+- [x] Settle subjects, typed registry keys, descriptor derivation, decorator behavior, artifact boundary, and module-system cutoff.
+- [ ] Record the active implementation and complete all delivery phases in this RFC.
+
+### Source surface and typechecking
+
+- [ ] Add `std.registry` names, `Registry[K, T]`, `RegistryEntry[K, T]`, subject handles, and descriptor derivation.
+- [ ] Recognize canonical `@describe(registry, key, descriptor)` independently of ordinary callable decorators.
+- [ ] Validate structural keys and descriptors, supported subjects, visibility, duplicate keys, and decorator composition.
+- [ ] Add source-anchored diagnostics and formatter coverage for valid and invalid registrations.
+
+### Semantic facts, runtime, and emission
+
+- [ ] Add structured registry facts with canonical identities, typed snapshots, source anchors, provenance, visibility, and reexport projections.
+- [ ] Carry registry facts through semantic snapshots and compilation sessions.
+- [ ] Emit typed loaded-entry runtime behavior from checked facts without changing described declaration semantics.
+- [ ] Prove direct, imported, facade, package-consumer, and test-batch behavior including generated Rust compilation.
+
+### Inspection, package metadata, and tooling
+
+- [ ] Embed checked registry facts in package metadata and report degraded dependency metadata explicitly.
+- [ ] Implement deterministic `incan inspect registry <canonical-identity> --format json`.
+- [ ] Expose checked registry facts to LSP and source-graph projections with declaration/runtime provenance separation.
+
+### Capability inventory and consumer acceptance
+
+- [ ] Add a standard-library capability registry and migrate generated capability inventory input from comment blocks to checked facts.
+- [ ] Remove the comment-based scanner and prove generated output and validation parity.
+- [ ] Verify a representative external function-registry consumer against the completed compiler surface without treating its runtime list as static authority.
+
+### Documentation and release
+
+- [ ] Add authored reference documentation, diagnostics guidance, migration guidance, rustdocs, generated-reference output, and release-note coverage.
+- [ ] Bump the active development version, complete the full verification gate, and move this RFC to Implemented only when all checklist items are complete.
 
 ## Design Decisions
 
