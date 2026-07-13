@@ -6491,8 +6491,8 @@
 <p>Create <code>src/domain.incn</code>:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde</span><span class="w"> </span><span class="kn">import</span> <span class="n">json</span>
 
-<span class="nd">@derive</span><span class="p">(</span><span class="kt">Debug</span><span class="p">,</span> <span class="kt">Clone</span><span class="p">,</span> <span class="n">json</span><span class="p">)</span>
-<span class="k">pub</span> <span class="k">model</span> <span class="nc">Order</span><span class="p">:</span>
+<span class="nd">@derive</span><span class="p">(</span><span class="kt">Debug</span><span class="p">,</span> <span class="kt">Clone</span><span class="p">,</span> <span class="n">json</span><span class="p">)</span>  <span class="c1"># (1)</span>
+<span class="k">pub</span> <span class="k">model</span> <span class="nc">Order</span><span class="p">:</span>  <span class="c1"># (2)</span>
     <span class="nb">id</span><span class="p">:</span> <span class="nb">str</span>
     <span class="n">product</span><span class="p">:</span> <span class="nb">str</span>
     <span class="n">quantity</span><span class="p">:</span> <span class="nb">int</span>
@@ -6500,7 +6500,7 @@
 
 <span class="nd">@derive</span><span class="p">(</span><span class="kt">Debug</span><span class="p">,</span> <span class="kt">Clone</span><span class="p">,</span> <span class="n">json</span><span class="p">)</span>
 <span class="k">pub</span> <span class="k">model</span> <span class="nc">OrderBatch</span><span class="p">:</span>
-    <span class="n">orders</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nc">Order</span><span class="p">]</span>
+    <span class="n">orders</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nc">Order</span><span class="p">]</span>  <span class="c1"># (3)</span>
 
 <span class="nd">@derive</span><span class="p">(</span><span class="kt">Debug</span><span class="p">,</span> <span class="kt">Clone</span><span class="p">,</span> <span class="n">json</span><span class="p">)</span>
 <span class="k">pub</span> <span class="k">model</span> <span class="nc">OrderSummary</span><span class="p">:</span>
@@ -6510,21 +6510,27 @@
 
 <span class="nd">@derive</span><span class="p">(</span><span class="kt">Debug</span><span class="p">,</span> <span class="kt">Clone</span><span class="p">,</span> <span class="n">json</span><span class="p">)</span>
 <span class="k">pub</span> <span class="k">model</span> <span class="nc">OrderReport</span><span class="p">:</span>
-    <span class="n">accepted</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nc">OrderSummary</span><span class="p">]</span>
+    <span class="n">accepted</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nc">OrderSummary</span><span class="p">]</span>  <span class="c1"># (4)</span>
     <span class="n">rejected_count</span><span class="p">:</span> <span class="nb">int</span>
 </code></pre></div>
+<ol>
+<li><code>@derive(...)</code> asks the compiler to generate debugging, cloning, and typed JSON support for the model.</li>
+<li><code>model</code> declares a data-first type; <code>pub</code> makes it available to the other modules in this project.</li>
+<li>Collection types use brackets: this field contains a <code>list</code> whose elements must all be <code>Order</code> values.</li>
+<li>The output contract is typed too. Invalid input cannot silently leak into the accepted-order list.</li>
+</ol>
 <p><code>@derive(json)</code> supplies typed serialization and deserialization. The JSON boundary is checked against these model fields instead of being passed through as an unstructured dictionary.</p>
 <h2 id="step-3-write-the-transformation">Step 3: Write the transformation<a class="headerlink" href="#step-3-write-the-transformation" title="Permanent link">&para;</a></h2>
 <p>Create <code>src/transform.incn</code>:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">domain</span><span class="w"> </span><span class="kn">import</span> <span class="nc">OrderBatch</span><span class="p">,</span> <span class="nc">OrderReport</span><span class="p">,</span> <span class="nc">OrderSummary</span>
 
-<span class="k">pub</span> <span class="k">def</span><span class="w"> </span><span class="nf">build_report</span><span class="p">(</span><span class="nb">batch</span><span class="p">:</span> <span class="nc">OrderBatch</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">OrderReport</span><span class="p">:</span>
-    <span class="k">mut</span> <span class="n">accepted</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nc">OrderSummary</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+<span class="k">pub</span> <span class="k">def</span><span class="w"> </span><span class="nf">build_report</span><span class="p">(</span><span class="nb">batch</span><span class="p">:</span> <span class="nc">OrderBatch</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">OrderReport</span><span class="p">:</span>  <span class="c1"># (1)</span>
+    <span class="k">mut</span> <span class="n">accepted</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nc">OrderSummary</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>  <span class="c1"># (2)</span>
     <span class="k">mut</span> <span class="n">rejected_count</span> <span class="o">=</span> <span class="mi">0</span>
 
     <span class="k">for</span> <span class="n">order</span> <span class="ow">in</span> <span class="nb">batch</span><span class="o">.</span><span class="n">orders</span><span class="p">:</span>
         <span class="k">if</span> <span class="n">order</span><span class="o">.</span><span class="n">quantity</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="ow">and</span> <span class="n">order</span><span class="o">.</span><span class="n">unit_price</span> <span class="o">&gt;=</span> <span class="mf">0.0</span><span class="p">:</span>
-            <span class="n">accepted</span><span class="o">.</span><span class="nb">append</span><span class="p">(</span><span class="nc">OrderSummary</span><span class="p">(</span>
+            <span class="n">accepted</span><span class="o">.</span><span class="nb">append</span><span class="p">(</span><span class="nc">OrderSummary</span><span class="p">(</span>  <span class="c1"># (3)</span>
                 <span class="nb">id</span><span class="o">=</span><span class="n">order</span><span class="o">.</span><span class="n">id</span><span class="p">,</span>
                 <span class="n">product</span><span class="o">=</span><span class="n">order</span><span class="o">.</span><span class="n">product</span><span class="p">,</span>
                 <span class="n">total</span><span class="o">=</span><span class="nb">float</span><span class="p">(</span><span class="n">order</span><span class="o">.</span><span class="n">quantity</span><span class="p">)</span> <span class="o">*</span> <span class="n">order</span><span class="o">.</span><span class="n">unit_price</span><span class="p">,</span>
@@ -6532,8 +6538,14 @@
         <span class="k">else</span><span class="p">:</span>
             <span class="n">rejected_count</span> <span class="o">+=</span> <span class="mi">1</span>
 
-    <span class="k">return</span> <span class="nc">OrderReport</span><span class="p">(</span><span class="n">accepted</span><span class="o">=</span><span class="n">accepted</span><span class="p">,</span> <span class="n">rejected_count</span><span class="o">=</span><span class="n">rejected_count</span><span class="p">)</span>
+    <span class="k">return</span> <span class="nc">OrderReport</span><span class="p">(</span><span class="n">accepted</span><span class="o">=</span><span class="n">accepted</span><span class="p">,</span> <span class="n">rejected_count</span><span class="o">=</span><span class="n">rejected_count</span><span class="p">)</span>  <span class="c1"># (4)</span>
 </code></pre></div>
+<ol>
+<li>The signature makes the whole transformation contract visible: typed input in, typed report out.</li>
+<li>Mutation is explicit in Incan. Without <code>mut</code>, appending to <code>accepted</code> would be rejected.</li>
+<li>Accepted rows become <code>OrderSummary</code> values immediately rather than loose dictionaries.</li>
+<li>Model construction uses named arguments, so the returned fields remain clear at the call site.</li>
+</ol>
 <p>This function knows nothing about files. Keeping the domain transformation pure makes it straightforward to test and reuse.</p>
 <h2 id="step-4-connect-the-file-boundary">Step 4: Connect the file boundary<a class="headerlink" href="#step-4-connect-the-file-boundary" title="Permanent link">&para;</a></h2>
 <p>In <code>src/main.incn</code>, read the source through <code>std.fs.Path</code>, parse it through the model, and write the derived report. Each <code>map_err</code> converts a boundary-specific error into a useful message, while <code>?</code> propagates it without nested <code>match</code> blocks:</p>
@@ -6543,14 +6555,14 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">std.serde.json</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Deserialize</span><span class="p">,</span> <span class="nc">Serialize</span>
 
 
-<span class="k">def</span><span class="w"> </span><span class="nf">create_report</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">OrderReport</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">create_report</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">OrderReport</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>  <span class="c1"># (1)</span>
     <span class="n">input_path</span> <span class="o">=</span> <span class="kt">Path</span><span class="p">(</span><span class="s2">&quot;orders.json&quot;</span><span class="p">)</span>
     <span class="n">output_dir</span> <span class="o">=</span> <span class="kt">Path</span><span class="p">(</span><span class="s2">&quot;target/tutorial-output&quot;</span><span class="p">)</span>
-    <span class="n">output_path</span> <span class="o">=</span> <span class="n">output_dir</span> <span class="o">/</span> <span class="s2">&quot;order-report.json&quot;</span>
+    <span class="n">output_path</span> <span class="o">=</span> <span class="n">output_dir</span> <span class="o">/</span> <span class="s2">&quot;order-report.json&quot;</span>  <span class="c1"># (2)</span>
 
     <span class="n">source</span> <span class="o">=</span> <span class="n">input_path</span>
         <span class="o">.</span><span class="n">read_text</span><span class="p">(</span><span class="s2">&quot;utf-8&quot;</span><span class="p">,</span> <span class="s2">&quot;strict&quot;</span><span class="p">)</span>
-        <span class="o">.</span><span class="nb">map_err</span><span class="p">((</span><span class="n">error</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="sa">f</span><span class="s2">&quot;Could not read orders.json: </span><span class="si">{</span><span class="n">error</span><span class="o">.</span><span class="n">message</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span><span class="o">?</span>
+        <span class="o">.</span><span class="nb">map_err</span><span class="p">((</span><span class="n">error</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="sa">f</span><span class="s2">&quot;Could not read orders.json: </span><span class="si">{</span><span class="n">error</span><span class="o">.</span><span class="n">message</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span><span class="o">?</span>  <span class="c1"># (3)</span>
     <span class="nb">batch</span> <span class="o">=</span> <span class="nc">OrderBatch</span><span class="o">.</span><span class="n">from_json</span><span class="p">(</span><span class="n">source</span><span class="p">)</span><span class="o">.</span><span class="nb">map_err</span><span class="p">((</span><span class="n">error</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="sa">f</span><span class="s2">&quot;Invalid order data: </span><span class="si">{</span><span class="n">error</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span><span class="o">?</span>
     <span class="n">report</span> <span class="o">=</span> <span class="n">build_report</span><span class="p">(</span><span class="nb">batch</span><span class="p">)</span>
 
@@ -6558,18 +6570,26 @@
         <span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="k">true</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="k">true</span><span class="p">)</span>
         <span class="o">.</span><span class="nb">map_err</span><span class="p">((</span><span class="n">error</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="sa">f</span><span class="s2">&quot;Could not prepare output directory: </span><span class="si">{</span><span class="n">error</span><span class="o">.</span><span class="n">message</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span><span class="o">?</span>
     <span class="n">output_path</span>
-        <span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="n">report</span><span class="o">.</span><span class="n">to_json</span><span class="p">(),</span> <span class="s2">&quot;utf-8&quot;</span><span class="p">,</span> <span class="s2">&quot;strict&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+        <span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="n">report</span><span class="o">.</span><span class="n">to_json</span><span class="p">(),</span> <span class="s2">&quot;utf-8&quot;</span><span class="p">,</span> <span class="s2">&quot;strict&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>  <span class="c1"># (4)</span>
         <span class="o">.</span><span class="nb">map_err</span><span class="p">((</span><span class="n">error</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="sa">f</span><span class="s2">&quot;Could not write report: </span><span class="si">{</span><span class="n">error</span><span class="o">.</span><span class="n">message</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span><span class="o">?</span>
-    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">report</span><span class="p">)</span>
+    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">report</span><span class="p">)</span>  <span class="c1"># (5)</span>
 
 
 <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="k">match</span> <span class="n">create_report</span><span class="p">():</span>
+    <span class="k">match</span> <span class="n">create_report</span><span class="p">():</span>  <span class="c1"># (6)</span>
         <span class="nb">Err</span><span class="p">(</span><span class="n">error</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="n">error</span><span class="p">)</span>
         <span class="nb">Ok</span><span class="p">(</span><span class="n">report</span><span class="p">)</span> <span class="o">=&gt;</span>
             <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Wrote </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">report</span><span class="o">.</span><span class="n">accepted</span><span class="p">)</span><span class="si">}</span><span class="s2"> accepted orders to order-report.json&quot;</span><span class="p">)</span>
             <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Rejected </span><span class="si">{</span><span class="n">report</span><span class="o">.</span><span class="n">rejected_count</span><span class="si">}</span><span class="s2"> invalid order(s)&quot;</span><span class="p">)</span>
 </code></pre></div>
+<ol>
+<li><code>Result[OrderReport, str]</code> means success carries an <code>OrderReport</code>, while failure carries a readable error string.</li>
+<li><code>Path</code> overloads <code>/</code> to join path segments without manual string concatenation.</li>
+<li><code>map_err</code> translates the filesystem error; the trailing <code>?</code> returns that error immediately or unwraps the successful text.</li>
+<li><code>to_json()</code> serializes the typed report before the filesystem boundary writes it.</li>
+<li><code>Ok(report)</code> wraps the successful value in the success branch of <code>Result</code>.</li>
+<li>After the sequential work is complete, one <code>match</code> handles the two outcomes and performs the program's visible side effects.</li>
+</ol>
 <p>The boundaries remain explicit—filesystem operations return <code>IoError</code>, while typed JSON parsing returns a JSON error—but RFC 070's <code>map_err</code> combinator gives the sequential workflow one error type. The final <code>match</code> is reserved for the point where the program actually handles success or failure.</p>
 <h2 id="step-5-test-the-transformation">Step 5: Test the transformation<a class="headerlink" href="#step-5-test-the-transformation" title="Permanent link">&para;</a></h2>
 <p>Create <code>tests/test_transform.incn</code>:</p>
@@ -6577,18 +6597,23 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">transform</span><span class="w"> </span><span class="kn">import</span> <span class="n">build_report</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="nf">assert_eq</span>
 
-<span class="k">def</span><span class="w"> </span><span class="nf">test_build_report_keeps_valid_orders</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="nb">batch</span> <span class="o">=</span> <span class="nc">OrderBatch</span><span class="p">(</span><span class="n">orders</span><span class="o">=</span><span class="p">[</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">test_build_report_keeps_valid_orders</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>  <span class="c1"># (1)</span>
+    <span class="nb">batch</span> <span class="o">=</span> <span class="nc">OrderBatch</span><span class="p">(</span><span class="n">orders</span><span class="o">=</span><span class="p">[</span>  <span class="c1"># (2)</span>
         <span class="nc">Order</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="s2">&quot;A-1&quot;</span><span class="p">,</span> <span class="n">product</span><span class="o">=</span><span class="s2">&quot;keyboard&quot;</span><span class="p">,</span> <span class="n">quantity</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">unit_price</span><span class="o">=</span><span class="mf">50.0</span><span class="p">),</span>
         <span class="nc">Order</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="s2">&quot;A-2&quot;</span><span class="p">,</span> <span class="n">product</span><span class="o">=</span><span class="s2">&quot;invalid&quot;</span><span class="p">,</span> <span class="n">quantity</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">unit_price</span><span class="o">=</span><span class="mf">12.0</span><span class="p">),</span>
     <span class="p">])</span>
 
     <span class="n">report</span> <span class="o">=</span> <span class="n">build_report</span><span class="p">(</span><span class="nb">batch</span><span class="p">)</span>
 
-    <span class="nf">assert_eq</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">report</span><span class="o">.</span><span class="n">accepted</span><span class="p">),</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="nf">assert_eq</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">report</span><span class="o">.</span><span class="n">accepted</span><span class="p">),</span> <span class="mi">1</span><span class="p">)</span>  <span class="c1"># (3)</span>
     <span class="nf">assert_eq</span><span class="p">(</span><span class="n">report</span><span class="o">.</span><span class="n">accepted</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">total</span><span class="p">,</span> <span class="mf">100.0</span><span class="p">)</span>
     <span class="nf">assert_eq</span><span class="p">(</span><span class="n">report</span><span class="o">.</span><span class="n">rejected_count</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
 </code></pre></div>
+<ol>
+<li>Test discovery recognizes functions whose names begin with <code>test_</code>.</li>
+<li>The test exercises the same typed input contract as production code, including one deliberately invalid order.</li>
+<li>Incan's standard testing assertions compare actual and expected values and report failures with source context.</li>
+</ol>
 <p>Run the test and the complete example from the repository root:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>examples/advanced/typed_data_processor/tests
 incan<span class="w"> </span>run<span class="w"> </span>examples/advanced/typed_data_processor/src/main.incn
