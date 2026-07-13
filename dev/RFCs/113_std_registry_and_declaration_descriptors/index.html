@@ -18,7 +18,7 @@
     
     
       
-        <title>RFC 063: std.process — process spawning and command execution - Incan Documentation</title>
+        <title>RFC 113: std.registry and declaration descriptors - Incan Documentation</title>
       
     
     
@@ -74,7 +74,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfc-063-stdprocess-process-spawning-and-command-execution" class="md-skip">
+        <a href="#rfc-113-stdregistry-and-declaration-descriptors" class="md-skip">
           Skip to content
         </a>
       
@@ -113,7 +113,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 063: std.process — process spawning and command execution
+              RFC 113: std.registry and declaration descriptors
             
           </span>
         </div>
@@ -6193,6 +6193,24 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#core-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      Core model
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prior-art-and-concrete-lessons" class="md-nav__link">
+    <span class="md-ellipsis">
+      Prior art and concrete lessons
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#motivation" class="md-nav__link">
     <span class="md-ellipsis">
       Motivation
@@ -6226,6 +6244,48 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Guide-level explanation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#describe-a-declaration-once" class="md-nav__link">
+    <span class="md-ellipsis">
+      Describe a declaration once
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#inspect-a-complete-catalog-without-loading-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      Inspect a complete catalog without loading it
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#describe-a-compilation-unit-or-package-without-a-fake-function" class="md-nav__link">
+    <span class="md-ellipsis">
+      Describe a compilation unit or package without a fake function
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#use-domains-without-creating-a-metadata-monoculture" class="md-nav__link">
+    <span class="md-ellipsis">
+      Use domains without creating a metadata monoculture
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -6239,27 +6299,81 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#module-scope" class="md-nav__link">
+  <a href="#registry-types-and-identities" class="md-nav__link">
     <span class="md-ellipsis">
-      Module scope
+      Registry types and identities
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#core-model" class="md-nav__link">
+  <a href="#descriptor-values" class="md-nav__link">
     <span class="md-ellipsis">
-      Core model
+      Descriptor values
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#core-api-direction" class="md-nav__link">
+  <a href="#declaration-descriptions" class="md-nav__link">
     <span class="md-ellipsis">
-      Core API direction
+      Declaration descriptions
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compilation-unit-named-submodule-and-package-descriptions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Compilation-unit, named-submodule, and package descriptions
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#runtime-projection" class="md-nav__link">
+    <span class="md-ellipsis">
+      Runtime projection
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#checked-projection-and-artifacts" class="md-nav__link">
+    <span class="md-ellipsis">
+      Checked projection and artifacts
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#domain-validation-and-duplicate-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      Domain validation and duplicate rules
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#visibility-imports-and-package-boundaries" class="md-nav__link">
+    <span class="md-ellipsis">
+      Visibility, imports, and package boundaries
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#diagnostics-and-tooling" class="md-nav__link">
+    <span class="md-ellipsis">
+      Diagnostics and tooling
     </span>
   </a>
   
@@ -6281,72 +6395,45 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#shell-boundary" class="md-nav__link">
+  <a href="#relationship-to-rfc-096" class="md-nav__link">
     <span class="md-ellipsis">
-      Shell boundary
+      Relationship to RFC 096
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#vocab-dsl-integration" class="md-nav__link">
+  <a href="#relationship-to-rfc-048-and-rfc-082" class="md-nav__link">
     <span class="md-ellipsis">
-      Vocab DSL integration
+      Relationship to RFC 048 and RFC 082
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#interpolation-policy-for-shell-dsl" class="md-nav__link">
+  <a href="#relationship-to-rfc-104" class="md-nav__link">
     <span class="md-ellipsis">
-      Interpolation policy for shell DSL
+      Relationship to RFC 104
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#run_checked-contract" class="md-nav__link">
+  <a href="#relationship-to-rfc-079" class="md-nav__link">
     <span class="md-ellipsis">
-      run_checked() contract
+      Relationship to RFC 079
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#pipelines-as-first-class" class="md-nav__link">
+  <a href="#compatibility-and-migration" class="md-nav__link">
     <span class="md-ellipsis">
-      Pipelines as first-class
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#timeout-and-termination" class="md-nav__link">
-    <span class="md-ellipsis">
-      Timeout and termination
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#stdio-and-composition-with-stdlib" class="md-nav__link">
-    <span class="md-ellipsis">
-      Stdio and composition with stdlib
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#error-model" class="md-nav__link">
-    <span class="md-ellipsis">
-      Error model
+      Compatibility and migration
     </span>
   </a>
   
@@ -6364,12 +6451,90 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Alternatives considered">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#introduce-a-feature-keyword" class="md-nav__link">
+    <span class="md-ellipsis">
+      Introduce a feature keyword
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#keep-comment-based-source-scanners" class="md-nav__link">
+    <span class="md-ellipsis">
+      Keep comment-based source scanners
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#use-only-runtime-registration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Use only runtime registration
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#use-only-checked-metadata-and-remove-runtime-registries" class="md-nav__link">
+    <span class="md-ellipsis">
+      Use only checked metadata and remove runtime registries
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#make-every-decorator-compiler-visible" class="md-nav__link">
+    <span class="md-ellipsis">
+      Make every decorator compiler-visible
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#expand-rfc-096-into-a-general-declaration-metadata-system" class="md-nav__link">
+    <span class="md-ellipsis">
+      Expand RFC 096 into a general declaration metadata system
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#put-this-surface-under-stdmetadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      Put this surface under std.metadata
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
   <a href="#drawbacks" class="md-nav__link">
     <span class="md-ellipsis">
       Drawbacks
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      Implementation architecture
     </span>
   </a>
   
@@ -6385,9 +6550,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#design-decisions" class="md-nav__link">
+  <a href="#unresolved-questions" class="md-nav__link">
     <span class="md-ellipsis">
-      Design Decisions
+      Unresolved questions
     </span>
   </a>
   
@@ -6411,240 +6576,285 @@
   
 
 
-<h1 id="rfc-063-stdprocess-process-spawning-and-command-execution">RFC 063: <code>std.process</code> — process spawning and command execution<a class="headerlink" href="#rfc-063-stdprocess-process-spawning-and-command-execution" title="Permanent link">&para;</a></h1>
+<h1 id="rfc-113-stdregistry-and-declaration-descriptors">RFC 113: <code>std.registry</code> and declaration descriptors<a class="headerlink" href="#rfc-113-stdregistry-and-declaration-descriptors" title="Permanent link">&para;</a></h1>
 <ul>
-<li><strong>Status:</strong> Planned</li>
-<li><strong>Created:</strong> 2026-04-14</li>
+<li><strong>Status:</strong> Draft</li>
+<li><strong>Created:</strong> 2026-07-13</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong><ul>
-<li>RFC 027 (<code>incan-vocab</code> block registration and desugaring)</li>
-<li>RFC 040 (scoped DSL surface forms)</li>
-<li>RFC 022 (namespaced stdlib modules and compiler handoff)</li>
-<li>RFC 023 (compilable stdlib and Rust module binding)</li>
-<li>RFC 055 (<code>std.fs</code> path-centric filesystem APIs)</li>
-<li>RFC 056 (<code>std.io</code> in-memory byte streams and binary parsing helpers)</li>
-<li>RFC 058 (<code>std.datetime</code> durations and time handling)</li>
+<li>RFC 048 (checked contract metadata, Incan emit, and interrogation tooling)</li>
+<li>RFC 079 (<code>incan.pub</code> artifact graph)</li>
+<li>RFC 082 (checked API documentation generation)</li>
+<li>RFC 096 (declaration metadata blocks)</li>
+<li>RFC 102 (Incan semantic layer inspection surface)</li>
+<li>RFC 104 (ambient runtime capabilities and receipts)</li>
 </ul>
 </li>
-<li><strong>Issue:</strong> https://github.com/encero-systems/incan/issues/341</li>
-<li><strong>RFC PR:</strong> #860</li>
-<li><strong>Written against:</strong> v0.2</li>
+<li><strong>Issue:</strong> #575</li>
+<li><strong>RFC PR:</strong> —</li>
+<li><strong>Written against:</strong> v0.5</li>
 <li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>This RFC proposes <code>std.process</code> as Incan's standard library module for explicit process spawning, command composition, pipelines, and process I/O control. The contract is argument-vector-first by default, shell execution is explicit opt-in, and timeout/termination behavior is first-class. The module also exposes a shell-oriented <code>sh { ... }</code> vocab DSL lane for DevOps-style authoring without changing the default safety model.</p>
+<p>This RFC introduces <code>std.registry</code>: a typed, declaration-centered catalog mechanism. A registry associates a domain-owned descriptor with a declaration, an implicit compilation unit, a future named submodule, or a package, makes the association available to ordinary runtime code when participating modules are loaded, and exposes the same association as a complete compiler-checked projection without executing user modules. <code>@describe(...)</code> is the primary declaration-side spelling, but the design is broader than a decorator: registries establish stable identity, provenance, deterministic collection, typed descriptor values, inspection, and package-artifact interchange. This gives libraries one honest pattern for function catalogs, adapters, commands, capabilities, policies, and documentation inventories without creating a second metadata system or asking tools to scrape source.</p>
+<h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
+<p>Read this RFC as eight foundations:</p>
+<ol>
+<li><strong>A registry is a declaration catalog:</strong> <code>std.registry</code> associates descriptors with source subjects. It is not a replacement for ordinary lists, maps, caches, event buses, dependency injection containers, or arbitrary application state.</li>
+<li><strong>Descriptors are domain-owned typed values:</strong> a function library may define <code>FunctionSpec</code>, a command library may define <code>CommandSpec</code>, and a package may define <code>CapabilityDescriptor</code>. The registry owns their association and discovery, not their field vocabulary or business semantics.</li>
+<li><strong>One declaration has two honest projections:</strong> loading a module may make its descriptions available to runtime code; compiler inspection must expose every checked description independently of which modules a process happened to load.</li>
+<li><strong>Static inspection never executes user code:</strong> compiler projection type-checks and validates declaration descriptors, but must not import modules, invoke constructors with user behavior, call decorators, or rely on global registration side effects.</li>
+<li><strong>Registry facts have stable subjects and provenance:</strong> every entry records the registry identity, descriptor value, subject identity, source anchor, defining package and module, and whether it is checked, runtime-observed, imported, or derived.</li>
+<li><strong>Runtime incompleteness is explicit:</strong> an ordinary runtime registry contains descriptions from modules loaded in that process. It must not claim to enumerate a package's complete catalog unless an explicit package-loading contract makes that claim true.</li>
+<li><strong>Description is composable:</strong> a declaration may be described by more than one registry, and a registry may receive entries for declarations, compilation units, named submodules, or packages. Reexports project source-owned entries; they do not create duplicate semantic entries.</li>
+<li><strong>The registry is a bridge, not a metadata plane:</strong> contract metadata, evidence attachments, runtime capability authority, package cards, and documentation all retain their existing owners. They may use registries to publish typed descriptors.</li>
+</ol>
+<h2 id="prior-art-and-concrete-lessons">Prior art and concrete lessons<a class="headerlink" href="#prior-art-and-concrete-lessons" title="Permanent link">&para;</a></h2>
+<p><code>std.registry</code> is not a copy of another language's annotation, plugin, or source-generation facility. The following systems establish useful constraints on the design:</p>
+<ul>
+<li><strong>Dart metadata</strong> permits annotations only as compile-time constants and lets an annotation type declare the source targets on which it is valid. Incan should likewise validate a structural descriptor expression without executing user code, and a registry must explicitly constrain the subject kinds that it accepts. Unlike Dart, descriptor values must be allowed to be ordinary rich Incan structural values rather than only a fixed annotation-argument vocabulary. <a href="https://dart.dev/language/metadata">Dart metadata</a></li>
+<li><strong>Kotlin annotations and KSP</strong> distinguish declaration facts from reflection and let annotation definitions specify targets, retention, repeatability, and documentation participation. Incan should make the checked and runtime projections separate and explicit, make supported subjects and multiplicity part of the contract, and let tools consume compiler-owned facts. It must not require libraries to install a separate source processor to reconstruct the canonical catalog. <a href="https://kotlinlang.org/docs/annotations.html">Kotlin annotations</a>, <a href="https://kotlinlang.org/docs/ksp-overview.html">Kotlin Symbol Processing</a></li>
+<li><strong>C# attributes and Roslyn</strong> demonstrate that an IDE, diagnostics, code generation, and project tooling can share a compiler semantic model rather than scrape source independently. Incan's checked registry projection must be a first-class compiler fact consumed by inspection, documentation, LSP, source graph, and agent tooling. C#'s restricted attribute-argument types are not a fit for domain-owned descriptors such as <code>FunctionSpec</code>; Incan should keep the descriptor as a typed structural value. <a href="https://learn.microsoft.com/en-us/dotnet/csharp/advanced-topics/reflection-and-attributes/attribute-tutorial">C# attributes</a>, <a href="https://learn.microsoft.com/en-us/dotnet/csharp/roslyn-sdk/compiler-api-model">Roslyn compiler model</a></li>
+<li><strong>Rust <code>inventory</code></strong> shows the value of registrations distributed across linked dependencies without a central hand-maintained list. It also establishes the boundary: a linked-program collection is not a complete source-package catalog. Incan's runtime API must therefore say that it returns loaded entries, while complete discovery belongs to the checked projection. <a href="https://docs.rs/inventory/latest/inventory/macro.submit.html">Rust <code>inventory</code></a></li>
+<li><strong>Java <code>ServiceLoader</code></strong> shows that a provider can be inspected before it is instantiated, but its provider configuration is still string-addressed and discovery remains runtime and classpath-dependent. Incan must retain the inspect-before-use benefit while rejecting sidecar string configuration, lazy discovery as an authority, and runtime state as a substitute for a checked catalog. <a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/ServiceLoader.html">Java <code>ServiceLoader</code></a></li>
+</ul>
+<p>These lessons produce three syntax rules:</p>
+<ol>
+<li><code>@describe</code> takes a registry and one domain-owned descriptor value. It does not grow a registry-specific list of named fields such as <code>name=</code>, <code>summary=</code>, or <code>since=</code>; those fields belong to the descriptor type and remain type-checked by ordinary Incan rules.</li>
+<li>A registry declaration states the subject kinds it accepts. This makes a misuse such as attaching a function-only function catalog to a model a compiler diagnostic, rather than a convention that a documentation tool discovers later.</li>
+<li>Runtime enumeration uses an explicit loaded-state spelling such as <code>loaded_entries()</code>. It cannot be confused with the complete checked package projection exposed by <code>incan inspect registry</code>.</li>
+<li>Target constraints and repeatability do not establish domain identity. The registry must eventually receive a typed descriptor-key or domain-validator contract; it must not accept a stringly field selector such as <code>key="canonical_name"</code> or infer keys by inspecting arbitrary descriptor fields.</li>
+</ol>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<p>Process execution is foundational for automation and data workflows: invoking tools, streaming output, composing pipelines, and enforcing exit-code contracts. Without a standard process module, users depend on shell string helpers or backend interop that weakens safety and consistency.</p>
-<p>The standard contract should match the runtime reality: explicit child-process control with predictable behavior across normal CLI orchestration cases.</p>
+<p>Incan libraries already need registries. A query-oriented library can describe public functions with typed lifecycle, policy, and lowering information; a command library can describe commands and their input surface; a package can publish capabilities, adapters, or policies; and the standard library needs a reliable inventory of public capabilities. These descriptions belong beside the declaration or module that owns the behavior, rather than in a central hand-maintained table or a comment format that the compiler does not understand.</p>
+<p>Ordinary runtime registries solve one half of the problem. They provide ergonomic lookup and dispatch after modules have loaded. They do not, by themselves, provide a complete package catalog: a documentation generator, registry browser, editor, policy tool, or compiler-backed agent cannot infer absent entries from process-local initialization order. Asking each such consumer to scrape source or recreate a library's decorator convention duplicates semantics and makes completeness accidental.</p>
+<p>The desired end-state is one authoring gesture that serves both needs. A library author writes a typed descriptor adjacent to the declaration it describes. Runtime code can enumerate loaded descriptions through the registry. Compiler-backed tooling can inspect all checked descriptions across a package without running user code. Both projections retain stable origin and descriptor identity, so a reexport, generated document, registry artifact, diagnostic, or agent answer can point back to the declaration that owns the fact.</p>
+<p>This is deliberately not a proposal for a generic metadata namespace. RFC 048 owns checked contract facts, RFC 096 owns declaration-local field metadata, RFC 104 owns authority capabilities and receipts, RFC 079 owns ecosystem artifact relationships, and RFC 082 owns documentation generation. <code>std.registry</code> supplies a common declaration-catalog mechanism that those domains may opt into when they need runtime and static discovery of the same typed descriptor.</p>
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Provide a first-class process API in <code>std.process</code>.</li>
-<li>Make argument-vector invocation the default model.</li>
-<li>Keep shell execution explicit and opt-in.</li>
-<li>Provide an explicit shell DSL lane (<code>sh { ... }</code>) for shell-native workflows.</li>
-<li>Support capture, streaming, pipelines, exit-status handling, and timeout/termination controls.</li>
-<li>Keep environment, working directory, and stdio behavior explicit.</li>
+<li>Provide a public <code>std.registry</code> surface for typed declaration catalogs.</li>
+<li>Define <code>Registry[T]</code>, registry entries, registry subjects, and descriptor identity without hardcoding domain fields such as lifecycle, permissions, documentation links, or backend mappings.</li>
+<li>Define <code>@describe(...)</code> as a readable declaration-side registration form without introducing a global <code>feature</code> keyword or a comment-based mini-language.</li>
+<li>Support descriptions for declarations, modules, and packages without fake functions or sentinel declarations that exist only to carry prose.</li>
+<li>Define a compile-time descriptor-value contract that can represent typed structural values without executing user code.</li>
+<li>Preserve a runtime registry projection for loaded modules while making its incompleteness explicit.</li>
+<li>Define a complete checked projection for <code>incan inspect</code>, checked API metadata, documentation generators, package artifacts, LSP clients, policy tools, and other compiler consumers.</li>
+<li>Preserve canonical source ownership across imports and reexports.</li>
+<li>Make duplicate, malformed, incompatible, inaccessible, and unsupported descriptions fail with source-anchored diagnostics.</li>
+<li>Define deterministic ordering and identity so generated outputs, package artifacts, and diagnostics do not depend on source traversal or module initialization order.</li>
 </ul>
 <h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Replacing workflow orchestrators or job schedulers.</li>
-<li>Making PTY/terminal emulation part of this RFC.</li>
-<li>Standardizing remote execution APIs.</li>
-<li>Hiding command semantics behind implicit shell parsing.</li>
-<li>Making shell DSL syntax globally active without explicit vocab activation.</li>
+<li>Replacing ordinary application collections, maps, dependency injection, plugin loading, or event dispatch.</li>
+<li>Defining a general macro system or allowing arbitrary decorators to publish compiler facts implicitly.</li>
+<li>Defining contract metadata, evidence attachments, artifact cards, runtime authority grants, receipts, or documentation schemas.</li>
+<li>Executing user code, importing modules, or observing mutable runtime state to discover registry entries.</li>
+<li>Requiring every descriptor to be public, every library to use registries, or every runtime registry to be complete.</li>
+<li>Defining a remote package registry, marketplace, discovery ranking, or package installation protocol.</li>
+<li>Defining an effect system, capability-grant semantics, or policy decision model.</li>
+<li>Replacing RFC 096 field metadata blocks or extending them to arbitrary declarations by implication.</li>
+<li>Promising that a runtime registry can instantiate unavailable optional dependencies or load every package module automatically.</li>
 </ul>
 <h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.process</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Command</span>
+<h3 id="describe-a-declaration-once">Describe a declaration once<a class="headerlink" href="#describe-a-declaration-once" title="Permanent link">&para;</a></h3>
+<p>A registry owner defines the domain descriptor. A function-oriented library can keep its function rules typed and adjacent to the functions they describe. The <code>Descriptor</code> derive spelling in this example is illustrative; the required structural descriptor contract is specified below and its final opt-in spelling remains open:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.registry</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Registry</span><span class="p">,</span> <span class="n">describe</span>
 
-<span class="kt">result</span> <span class="o">=</span> <span class="nc">Command</span><span class="p">(</span><span class="s2">&quot;git&quot;</span><span class="p">)</span>
-    <span class="o">.</span><span class="n">arg</span><span class="p">(</span><span class="s2">&quot;status&quot;</span><span class="p">)</span>
-    <span class="o">.</span><span class="n">capture_output</span><span class="p">()</span>
-    <span class="o">.</span><span class="n">run_checked</span><span class="p">()</span><span class="o">?</span>
+<span class="nd">@derive</span><span class="p">(</span><span class="nc">Descriptor</span><span class="p">)</span>
+<span class="k">pub</span> <span class="k">model</span> <span class="nc">FunctionSpec</span><span class="p">:</span>
+    <span class="n">canonical_name</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">lifecycle</span><span class="p">:</span> <span class="nc">Lifecycle</span>
+    <span class="n">policy</span><span class="p">:</span> <span class="nc">FunctionPolicy</span>
 
-<span class="nb">println</span><span class="p">(</span><span class="kt">result</span><span class="o">.</span><span class="n">status</span><span class="o">.</span><span class="n">code</span><span class="p">)</span>
-<span class="nb">println</span><span class="p">(</span><span class="kt">result</span><span class="o">.</span><span class="n">stdout_text</span><span class="p">()</span><span class="o">?</span><span class="p">)</span>
+
+<span class="k">pub</span> <span class="n">static</span> <span class="n">functions</span><span class="p">:</span> <span class="nc">Registry</span><span class="p">[</span><span class="nc">FunctionSpec</span><span class="p">]</span> <span class="o">=</span> <span class="nc">Registry</span><span class="o">.</span><span class="n">define</span><span class="p">(</span>
+    <span class="n">subjects</span><span class="o">=</span><span class="p">[</span><span class="nc">SubjectKind</span><span class="o">.</span><span class="nc">Function</span><span class="p">,</span> <span class="nc">SubjectKind</span><span class="o">.</span><span class="nc">Method</span><span class="p">],</span>
+<span class="p">)</span>
+
+
+<span class="nd">@describe</span><span class="p">(</span><span class="n">functions</span><span class="p">,</span> <span class="nc">FunctionSpec</span><span class="p">(</span>
+    <span class="n">canonical_name</span><span class="o">=</span><span class="s2">&quot;normalize&quot;</span><span class="p">,</span>
+    <span class="n">lifecycle</span><span class="o">=</span><span class="nc">Lifecycle</span><span class="o">.</span><span class="n">since</span><span class="p">(</span><span class="nc">Release</span><span class="o">.</span><span class="n">v0_5</span><span class="p">),</span>
+    <span class="n">policy</span><span class="o">=</span><span class="nc">FunctionPolicy</span><span class="o">.</span><span class="nc">Portable</span><span class="p">,</span>
+<span class="p">))</span>
+<span class="k">pub</span> <span class="k">def</span><span class="w"> </span><span class="nf">normalize</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">value</span><span class="o">.</span><span class="nb">strip</span><span class="p">()</span><span class="o">.</span><span class="nb">lower</span><span class="p">()</span>
 </code></pre></div>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.process</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Command</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">std.fs</span><span class="w"> </span><span class="kn">import</span> <span class="kt">Path</span>
-
-<span class="nb">input</span> <span class="o">=</span> <span class="kt">Path</span><span class="p">(</span><span class="s2">&quot;data.ndjson&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">&quot;rb&quot;</span><span class="p">)</span><span class="o">?</span>
-<span class="n">output</span> <span class="o">=</span> <span class="kt">Path</span><span class="p">(</span><span class="s2">&quot;data.sorted.ndjson&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">&quot;wb&quot;</span><span class="p">)</span><span class="o">?</span>
-
-<span class="nc">Command</span><span class="p">(</span><span class="s2">&quot;sort&quot;</span><span class="p">)</span>
-    <span class="o">.</span><span class="n">stdin</span><span class="p">(</span><span class="nb">input</span><span class="p">)</span>
-    <span class="o">.</span><span class="n">stdout</span><span class="p">(</span><span class="n">output</span><span class="p">)</span>
-    <span class="o">.</span><span class="n">run_checked</span><span class="p">()</span><span class="o">?</span>
+<p>The declaration remains the source of the callable signature and implementation. <code>FunctionSpec</code> remains the source of function-specific facts. <code>functions</code> owns the association between that declaration and that descriptor.</p>
+<p>When the module has loaded, ordinary runtime code can inspect the loaded entries:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">for</span> <span class="n">entry</span> <span class="ow">in</span> <span class="n">functions</span><span class="o">.</span><span class="n">loaded_entries</span><span class="p">():</span>
+    <span class="nb">println</span><span class="p">(</span><span class="n">entry</span><span class="o">.</span><span class="n">subject</span><span class="o">.</span><span class="n">qualified_name</span><span class="p">)</span>
+    <span class="nb">println</span><span class="p">(</span><span class="n">entry</span><span class="o">.</span><span class="n">descriptor</span><span class="o">.</span><span class="n">canonical_name</span><span class="p">)</span>
 </code></pre></div>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.process</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Pipeline</span><span class="p">,</span> <span class="nc">Command</span>
-
-<span class="kt">result</span> <span class="o">=</span> <span class="nc">Pipeline</span><span class="p">([</span>
-    <span class="nc">Command</span><span class="p">(</span><span class="s2">&quot;cat&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">arg</span><span class="p">(</span><span class="s2">&quot;data.txt&quot;</span><span class="p">),</span>
-    <span class="nc">Command</span><span class="p">(</span><span class="s2">&quot;grep&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">arg</span><span class="p">(</span><span class="s2">&quot;ERROR&quot;</span><span class="p">),</span>
-    <span class="nc">Command</span><span class="p">(</span><span class="s2">&quot;sort&quot;</span><span class="p">),</span>
-<span class="p">])</span><span class="o">.</span><span class="n">capture_output</span><span class="p">()</span><span class="o">.</span><span class="n">run_checked</span><span class="p">()</span><span class="o">?</span>
+<p>That result is useful for dispatch, execution, and local diagnostics, but it is intentionally process-local. It contains only entries whose defining modules participated in the process.</p>
+<h3 id="inspect-a-complete-catalog-without-loading-it">Inspect a complete catalog without loading it<a class="headerlink" href="#inspect-a-complete-catalog-without-loading-it" title="Permanent link">&para;</a></h3>
+<p>Compiler tooling reads the checked projection instead:</p>
+<div class="language-text highlight"><pre><span></span><code>incan inspect registry example.functions --format json
 </code></pre></div>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.process</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Command</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">std.datetime</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Duration</span>
+<p>The result includes every valid description targeting the public registry in the inspected package closure, including source anchor, defining module, descriptor value, canonical subject identity, and reexport projections. It does not run module initialization and does not depend on whether a runtime registry happened to load a helper module.</p>
+<p>Documentation, editor, policy, and package tools consume this checked projection. They must not reconstruct it from decorator text, comments, generated Rust, or a running process.</p>
+<h3 id="describe-a-compilation-unit-or-package-without-a-fake-function">Describe a compilation unit or package without a fake function<a class="headerlink" href="#describe-a-compilation-unit-or-package-without-a-fake-function" title="Permanent link">&para;</a></h3>
+<p>Some facts belong to an implicit compilation unit or package rather than to one function. A logging source unit, adapter package, or command bundle should be able to publish a descriptor without attaching it dishonestly to an arbitrary helper. This is deliberately distinct from a future named <code>module name:</code> declaration: <code>module</code> is the source form for a real submodule with a name and body, not a bare marker for the file currently being compiled.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.registry</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Registry</span><span class="p">,</span> <span class="nc">RegistrySubject</span>
 
-<span class="nc">Command</span><span class="p">(</span><span class="s2">&quot;long_task&quot;</span><span class="p">)</span>
-    <span class="o">.</span><span class="n">run_checked</span><span class="p">(</span><span class="nb">timeout</span><span class="o">=</span><span class="nc">Duration</span><span class="o">.</span><span class="n">minutes</span><span class="p">(</span><span class="mi">5</span><span class="p">))</span><span class="o">?</span>
-</code></pre></div>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">std.process</span>
+<span class="k">pub</span> <span class="n">static</span> <span class="n">capabilities</span><span class="p">:</span> <span class="nc">Registry</span><span class="p">[</span><span class="nc">CapabilityDescriptor</span><span class="p">]</span> <span class="o">=</span> <span class="nc">Registry</span><span class="o">.</span><span class="n">define</span><span class="p">(</span>
+    <span class="n">subjects</span><span class="o">=</span><span class="p">[</span><span class="nc">SubjectKind</span><span class="o">.</span><span class="nc">CompilationUnit</span><span class="p">,</span> <span class="nc">SubjectKind</span><span class="o">.</span><span class="nc">Package</span><span class="p">],</span>
+<span class="p">)</span>
 
-<span class="n">sh</span> <span class="p">{</span>
-  <span class="n">kubectl</span> <span class="nb">get</span> <span class="n">pods</span> <span class="o">-</span><span class="n">n</span> <span class="n">prod</span> <span class="o">|</span> <span class="n">grep</span> <span class="nc">CrashLoopBackOff</span>
-<span class="p">}</span><span class="o">.</span><span class="n">run_checked</span><span class="p">(</span><span class="nb">timeout</span><span class="o">=</span><span class="nc">Duration</span><span class="o">.</span><span class="n">minutes</span><span class="p">(</span><span class="mi">2</span><span class="p">))</span><span class="o">?</span>
+
+<span class="k">pub</span> <span class="n">static</span> <span class="n">logging_capability</span><span class="p">:</span> <span class="nc">RegistryEntry</span><span class="p">[</span><span class="nc">CapabilityDescriptor</span><span class="p">]</span> <span class="o">=</span> <span class="n">capabilities</span><span class="o">.</span><span class="n">entry</span><span class="p">(</span>
+    <span class="n">subject</span><span class="o">=</span><span class="nc">RegistrySubject</span><span class="o">.</span><span class="n">current_unit</span><span class="p">(),</span>
+    <span class="n">descriptor</span><span class="o">=</span><span class="nc">CapabilityDescriptor</span><span class="p">(</span>
+        <span class="nb">id</span><span class="o">=</span><span class="nc">CapabilityId</span><span class="p">(</span><span class="s2">&quot;std.logging&quot;</span><span class="p">),</span>
+        <span class="n">title</span><span class="o">=</span><span class="s2">&quot;Structured logging&quot;</span><span class="p">,</span>
+        <span class="n">stability</span><span class="o">=</span><span class="nc">Stability</span><span class="o">.</span><span class="nc">Stable</span><span class="p">,</span>
+    <span class="p">),</span>
+<span class="p">)</span>
 </code></pre></div>
+<p><code>logging_capability</code> is a real registry entry value, not a sentinel declaration. It can be inspected or passed to runtime code, and its subject is the defining compilation unit. A corresponding <code>RegistrySubject.package()</code> form supports package-wide facts. The exact final spelling of explicit non-declaration subjects remains an unresolved question, but the registry contract must not require a fake callable, a bare <code>module</code> marker, or a comment block.</p>
+<h3 id="use-domains-without-creating-a-metadata-monoculture">Use domains without creating a metadata monoculture<a class="headerlink" href="#use-domains-without-creating-a-metadata-monoculture" title="Permanent link">&para;</a></h3>
+<p>The same mechanism supports different domains without merging their meanings:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.registry</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Registry</span><span class="p">,</span> <span class="n">describe</span>
+
+<span class="k">pub</span> <span class="n">static</span> <span class="n">commands</span><span class="p">:</span> <span class="nc">Registry</span><span class="p">[</span><span class="nc">CommandSpec</span><span class="p">]</span> <span class="o">=</span> <span class="nc">Registry</span><span class="o">.</span><span class="n">define</span><span class="p">(</span>
+    <span class="n">subjects</span><span class="o">=</span><span class="p">[</span><span class="nc">SubjectKind</span><span class="o">.</span><span class="nc">Function</span><span class="p">],</span>
+<span class="p">)</span>
+<span class="k">pub</span> <span class="n">static</span> <span class="n">adapters</span><span class="p">:</span> <span class="nc">Registry</span><span class="p">[</span><span class="nc">AdapterSpec</span><span class="p">]</span> <span class="o">=</span> <span class="nc">Registry</span><span class="o">.</span><span class="n">define</span><span class="p">(</span>
+    <span class="n">subjects</span><span class="o">=</span><span class="p">[</span><span class="nc">SubjectKind</span><span class="o">.</span><span class="nc">Function</span><span class="p">],</span>
+<span class="p">)</span>
+
+
+<span class="nd">@describe</span><span class="p">(</span><span class="n">commands</span><span class="p">,</span> <span class="nc">CommandSpec</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;check&quot;</span><span class="p">,</span> <span class="n">summary</span><span class="o">=</span><span class="s2">&quot;Validate the project&quot;</span><span class="p">))</span>
+<span class="k">pub</span> <span class="k">def</span><span class="w"> </span><span class="nf">check_project</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="kt">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">CheckReport</span><span class="p">,</span> <span class="nc">CheckError</span><span class="p">]:</span>
+    <span class="o">...</span>
+
+
+<span class="nd">@describe</span><span class="p">(</span><span class="n">adapters</span><span class="p">,</span> <span class="nc">AdapterSpec</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;json&quot;</span><span class="p">,</span> <span class="n">media_type</span><span class="o">=</span><span class="s2">&quot;application/json&quot;</span><span class="p">))</span>
+<span class="k">pub</span> <span class="k">def</span><span class="w"> </span><span class="nf">render_json</span><span class="p">(</span><span class="n">report</span><span class="p">:</span> <span class="nc">CheckReport</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bytes</span><span class="p">:</span>
+    <span class="o">...</span>
+</code></pre></div>
+<p>The registry does not decide what a command, adapter, capability, policy, or function means. It only provides the checked declaration-to-descriptor relationship that lets each domain expose a coherent catalog.</p>
 <h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
-<h3 id="module-scope">Module scope<a class="headerlink" href="#module-scope" title="Permanent link">&para;</a></h3>
-<p><code>std.process</code> should provide:</p>
+<h3 id="registry-types-and-identities">Registry types and identities<a class="headerlink" href="#registry-types-and-identities" title="Permanent link">&para;</a></h3>
+<p><code>std.registry</code> must provide a generic <code>Registry[T]</code> type for a descriptor type <code>T</code> that satisfies the descriptor-value contract defined by this RFC. A registry must have a canonical identity derived from its defining package, module, and public binding. A registry may be private, but only a public registry is discoverable outside its defining package by default.</p>
+<p>The initial registry-definition form is <code>pub static name: Registry[T] = Registry.define(subjects=[...])</code>. <code>Registry.define</code> is a compiler-known declarative constructor, not a general mutable-container constructor. The binding supplies the registry identity, and the <code>subjects</code> argument declares the kinds of source subject that may be described through it. A description whose target is not in this set is a type-checking error at the description site. The exact subject-kind names and whether a registry may extend them across a compatibility version remain part of the public API design.</p>
+<p>A registry entry must contain at least:</p>
 <ul>
-<li><code>Command</code> for process construction and execution;</li>
-<li><code>Pipeline</code> for first-class pipe composition;</li>
-<li><code>sh { ... }</code> as an import-activated vocab DSL surface for explicit shell-mode execution;</li>
-<li><code>ProcessResult</code> for completed outcomes;</li>
-<li><code>ChildProcess</code> for spawned long-running process control;</li>
-<li>process error types for spawn, exit, timeout, and I/O failures.</li>
+<li>canonical registry identity;</li>
+<li>canonical subject identity;</li>
+<li>subject kind: declaration, compilation unit, named submodule, or package;</li>
+<li>typed descriptor value;</li>
+<li>source anchor for the registration and source anchor for the subject when distinct;</li>
+<li>defining package and module identity;</li>
+<li>declared visibility and reexport projections where applicable;</li>
+<li>origin classification: checked declaration, runtime observation, imported artifact, or derived projection.</li>
 </ul>
-<h3 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h3>
-<ul>
-<li>command invocation is argument-vector-first;</li>
-<li>arguments are passed literally to the program;</li>
-<li>shell interpretation is explicit opt-in;</li>
-<li>shell DSL exists as a separate explicit lane and compiles to shell-mode process execution;</li>
-<li>pipelines are explicit and typed, not shell-string tricks.</li>
-</ul>
-<h3 id="core-api-direction">Core API direction<a class="headerlink" href="#core-api-direction" title="Permanent link">&para;</a></h3>
-<p><code>Command</code> should expose:</p>
-<ul>
-<li>program + args (<code>arg</code>, <code>args</code>);</li>
-<li>cwd (<code>cwd</code>);</li>
-<li>env controls (<code>env</code>, <code>env_remove</code>, <code>env_clear</code>);</li>
-<li>stdio controls (<code>stdin</code>, <code>stdout</code>, <code>stderr</code>, <code>inherit_*</code>, <code>capture_output</code>, <code>pipe_*</code>);</li>
-<li>execution (<code>run</code>, <code>run_checked</code>, <code>spawn</code>);</li>
-<li>timeout-aware execution (<code>run(..., timeout=Duration)</code> and <code>run_checked(..., timeout=Duration)</code>).</li>
-</ul>
-<p><code>Pipeline</code> should expose:</p>
-<ul>
-<li>ordered command stages;</li>
-<li>pipeline stdio controls at pipeline boundaries;</li>
-<li><code>run</code> / <code>run_checked</code> with consistent semantics.</li>
-</ul>
-<p><code>sh</code> vocab DSL should expose:</p>
-<ul>
-<li>shell-native command authoring in <code>sh { ... }</code> blocks;</li>
-<li>explicit execution controls (<code>run</code>, <code>run_checked</code>, timeout, capture/inherit behavior);</li>
-<li>explicit interpolation rules with safe escaping by default.</li>
-<li>a POSIX shell contract (<code>/bin/sh</code> baseline) in this RFC.</li>
-</ul>
+<p>The compiler must use the canonical defining declaration as the subject identity. A public reexport may expose an additional import path, but it must not create a second semantic entry or change the entry's origin.</p>
+<p>The registry must guarantee deterministic checked output ordering. Ordering must not depend on filesystem traversal, hash-map order, or runtime module initialization. The canonical sort key must include registry identity, subject identity, and a deterministic per-subject description ordinal when a declaration has multiple descriptions in the same registry.</p>
+<h3 id="descriptor-values">Descriptor values<a class="headerlink" href="#descriptor-values" title="Permanent link">&para;</a></h3>
+<p>The descriptor type is owned by the registry's domain. A descriptor type must opt into structural description through the standard <code>Descriptor</code> contract. The contract must reject descriptor shapes that cannot be checked and serialized without executing user code.</p>
+<p>A descriptor value may contain safe primitive values, <code>None</code>, enum variants, type references, checked constant references, descriptor collections, descriptor maps with stable keys, and constructions of descriptor types whose fields recursively satisfy the descriptor-value contract. A descriptor value must not depend on host state, mutable statics, I/O, reflection over a running program, an arbitrary function call, a secret reveal, or any expression whose value requires user-code execution.</p>
+<p>The compiler must type-check a descriptor expression and preserve its typed structural form. It must not claim to have evaluated an unsupported expression. A diagnostic for an unsupported descriptor value must identify the expression and explain that descriptions are compile-time structural facts rather than runtime observations.</p>
+<p>Descriptor values are snapshots at the description site. A runtime consumer must not be able to mutate a loaded descriptor in a way that changes the registry's checked projection or causes the registry to misrepresent the declared descriptor. The exact immutability and derive spelling is an unresolved question, but the final contract must make this divergence impossible or explicit.</p>
+<h3 id="declaration-descriptions">Declaration descriptions<a class="headerlink" href="#declaration-descriptions" title="Permanent link">&para;</a></h3>
+<p><code>@describe(registry, descriptor)</code> must be a compiler-known declarative decorator supplied by <code>std.registry</code>. It must be valid on the declaration kinds accepted by the active language version. The decorator must preserve the declaration's ordinary runtime type and callable behavior; it must not wrap a declaration with unrelated behavior merely to record a description.</p>
+<p><code>@describe</code> deliberately has no domain-specific named arguments. The registry argument identifies a typed catalog and the descriptor argument is one ordinary typed structural value of that catalog's descriptor type. Syntax such as <code>@describe(functions, FunctionSpec(...))</code> keeps lifecycle, policy, documentation, and domain keys inside the domain-owned <code>FunctionSpec</code> instead of creating a second, string-shaped annotation schema.</p>
+<p>The compiler must resolve <code>describe</code> by canonical symbol identity, including supported aliases and reexports of the standard decorator. It must not recognize a user-defined function only because it is named <code>describe</code>.</p>
+<p>The registry argument must resolve to a <code>Registry[T]</code>, and the descriptor argument must type-check as <code>T</code>. Both must be valid in the defining package's visibility and initialization context. The compiler must reject a description that targets a registry whose descriptor type does not match, whose identity cannot be resolved, or whose registration would introduce an invalid duplicate identity.</p>
+<p>A declaration may carry descriptions from multiple registries. A declaration may carry multiple descriptions in one registry only when their deterministic ordinals and domain-level identities are unambiguous. The compiler must preserve source order for those descriptions and report duplicate domain identities at the later source location when the registry or descriptor type declares such an identity rule.</p>
+<p>Ordinary decorators and <code>@describe</code> may be stacked. The checked description describes the source declaration's canonical public contract, not an accidental wrapper shape. The final decorator-order rule must be explicit and preserve the source declaration's callable signature, aliases, and source anchor.</p>
+<h3 id="compilation-unit-named-submodule-and-package-descriptions">Compilation-unit, named-submodule, and package descriptions<a class="headerlink" href="#compilation-unit-named-submodule-and-package-descriptions" title="Permanent link">&para;</a></h3>
+<p>The registry surface must support descriptions whose subject is the defining compilation unit, a future named submodule, or the defining package. These descriptions must be represented as real registry entries and must be available to both runtime and checked projections.</p>
+<p>A compilation-unit, named-submodule, or package description must carry the corresponding canonical identity as its subject. It must not be modeled by attaching a descriptor to an unrelated function, by parsing a comment block, or by relying on a magic constant name.</p>
+<p>The initial surface may use an explicit entry-producing form such as <code>registry.entry(subject=RegistrySubject.current_unit(), descriptor=...)</code> and <code>registry.entry(subject=RegistrySubject.package(), descriptor=...)</code>. Such a form must have ordinary typed source semantics, return a registry entry value or equivalent typed handle, and be accepted only in a declaration context with deterministic initialization behavior. A future <code>module name:</code> declaration may use ordinary <code>@describe</code> decorators once it has real name, body, visibility, import, and nesting semantics; this RFC must not introduce a bare <code>module</code> marker merely to create a registry subject.</p>
+<h3 id="runtime-projection">Runtime projection<a class="headerlink" href="#runtime-projection" title="Permanent link">&para;</a></h3>
+<p>Loading a module that contains valid registry descriptions must make its entries available to the target registry's runtime projection. Runtime registration must preserve typed descriptors and canonical subject identity. Repeated loading or equivalent reexport paths must not duplicate an entry.</p>
+<p>Runtime registry enumeration must distinguish loaded entries from a complete checked catalog. <code>loaded_entries()</code> and similar runtime APIs must not claim package completeness unless the registry has explicitly performed a documented complete-loading operation. A runtime registry may expose its loaded-state or completeness classification so diagnostics do not confuse a missing unloaded module with a missing declaration.</p>
+<p>Dynamic runtime additions may be supported by registry APIs, but they must be marked runtime-observed and must not appear in checked package metadata or generated documentation as if they were authored declarations. A package may choose to reject dynamic additions for a particular registry.</p>
+<h3 id="checked-projection-and-artifacts">Checked projection and artifacts<a class="headerlink" href="#checked-projection-and-artifacts" title="Permanent link">&para;</a></h3>
+<p>The compiler must make checked registry entries available through a stable inspection and metadata contract. The projection must include typed descriptor structure, canonical identities, visibility, provenance, source anchors, import/reexport paths, and explicit unsupported or degraded states where available.</p>
+<p>The projection must be available for a source package after checking and for a built package artifact that carries the required checked data. A consumer that only has a runtime registry must report that complete checked discovery is unavailable rather than synthesizing facts from loaded entries.</p>
+<p><code>incan inspect registry</code> must support selecting a registry by canonical identity and emitting a deterministic machine-readable representation. The final command spelling and package-closure selection are unresolved, but the output must be suitable for documentation generation, package tooling, LSP features, policy tooling, and compiler-backed agents.</p>
+<p>Generated documentation and artifact tooling must consume the checked registry projection when they need completeness. They may use runtime registry APIs for execution behavior, but must not scrape source, parse comments, or inspect generated Rust as an alternate authority.</p>
+<h3 id="domain-validation-and-duplicate-rules">Domain validation and duplicate rules<a class="headerlink" href="#domain-validation-and-duplicate-rules" title="Permanent link">&para;</a></h3>
+<p><code>std.registry</code> must validate generic registry invariants: registry identity, subject identity, descriptor type compatibility, structural descriptor validity, declaration visibility, deterministic ordering, and duplicate registration of the same subject identity.</p>
+<p>Domain-specific invariants remain owned by descriptor types or domain registry constructors. A function catalog may require unique canonical function names; a command catalog may require unique command paths; a capability catalog may require globally stable capability IDs. The domain must be able to declare these rules in a typed, inspectable form so the compiler and runtime can report the same duplicate or compatibility error.</p>
+<p>The generic registry must not infer domain uniqueness by searching arbitrary string fields. A descriptor's meaningful key must be explicit in its descriptor contract or domain registry configuration.</p>
+<h3 id="visibility-imports-and-package-boundaries">Visibility, imports, and package boundaries<a class="headerlink" href="#visibility-imports-and-package-boundaries" title="Permanent link">&para;</a></h3>
+<p>Private descriptions remain available to local compiler tooling but are not exported as part of a package's public registry projection unless the registry explicitly declares an internal-artifact contract. Public registry entries must preserve the defining package and module as source authority.</p>
+<p>Importing or reexporting a described declaration must preserve its source identity and descriptor facts. A facade may add a projection path used by a consumer, but must not silently edit, suppress, or duplicate the source-owned description. A consumer package must be able to inspect registry entries from a dependency artifact without requiring that dependency's source tree.</p>
+<p>Package-level inspection must report unresolved, incompatible, or missing descriptor artifacts as explicit diagnostics or degraded facts. It must not silently omit them and present a partial catalog as complete.</p>
+<h3 id="diagnostics-and-tooling">Diagnostics and tooling<a class="headerlink" href="#diagnostics-and-tooling" title="Permanent link">&para;</a></h3>
+<p>Diagnostics must point at the description site, descriptor expression, registry binding, or conflicting entry as appropriate. They should name the registry and source declaration in user-facing terms rather than exposing backend-generated names.</p>
+<p>The formatter must preserve <code>@describe</code> placement and format descriptor expressions using ordinary Incan expression rules. The LSP should expose registry membership in hover and navigation, offer completion for available registries and descriptor fields where type information permits, and show diagnostics for invalid descriptions without needing to run the program.</p>
+<p>The compiler-backed source graph should expose registry, entry, subject, descriptor, and reexport-projection facts with checked provenance. Runtime observations may be linked to the same identities, but must remain distinguishable from declarations.</p>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
-<h3 id="shell-boundary">Shell boundary<a class="headerlink" href="#shell-boundary" title="Permanent link">&para;</a></h3>
-<p>Shell execution exists in core API but is explicitly marked and not the default path. Argument-vector execution remains the standard path for safety and predictability.</p>
-<p>A shell mode helper should be explicit, for example:</p>
-<ul>
-<li><code>Command.shell("...")</code></li>
-</ul>
-<p>The RFC should document shell-mode quoting and injection risks explicitly.</p>
-<p>This RFC defines shell behavior as Unix/Linux-focused. The <code>sh</code> lane targets a POSIX shell baseline (<code>/bin/sh</code> semantics). Cross-platform Windows shell parity is explicitly out of scope for this RFC and may be handled in a follow-on proposal.</p>
-<h3 id="vocab-dsl-integration">Vocab DSL integration<a class="headerlink" href="#vocab-dsl-integration" title="Permanent link">&para;</a></h3>
-<p><code>sh { ... }</code> must be modeled as a vocab DSL surface, not as an ad hoc parser exception. Activation should follow RFC 027 style import-activated vocabulary behavior.</p>
-<p>That means:</p>
-<ul>
-<li>shell DSL syntax is only active when <code>std.process</code> vocab is activated in the current file/module;</li>
-<li>shell DSL remains an explicit lane and does not redefine ordinary process APIs;</li>
-<li>DSL surface use (for example <code>|</code>) is scoped inside the <code>sh</code> block surface, consistent with RFC 040-style scoped DSL semantics.</li>
-</ul>
-<h3 id="interpolation-policy-for-shell-dsl">Interpolation policy for shell DSL<a class="headerlink" href="#interpolation-policy-for-shell-dsl" title="Permanent link">&para;</a></h3>
-<p>Shell DSL should define interpolation semantics explicitly:</p>
-<ul>
-<li>safe interpolation is the default (shell-escaped);</li>
-<li>raw interpolation is explicit opt-in;</li>
-<li>docs must call out injection risk when raw interpolation is used.</li>
-</ul>
-<h3 id="run_checked-contract"><code>run_checked()</code> contract<a class="headerlink" href="#run_checked-contract" title="Permanent link">&para;</a></h3>
-<p><code>run_checked()</code> guarantees:</p>
-<ul>
-<li>successful spawn;</li>
-<li>successful completion within timeout if provided;</li>
-<li>zero exit status.</li>
-</ul>
-<p>On failure it returns a typed error carrying:</p>
-<ul>
-<li>exit status (for non-zero exits);</li>
-<li>captured stdout/stderr when available;</li>
-<li>timeout metadata when timeout-triggered.</li>
-</ul>
-<h3 id="pipelines-as-first-class">Pipelines as first-class<a class="headerlink" href="#pipelines-as-first-class" title="Permanent link">&para;</a></h3>
-<p>Pipelines are in scope for this RFC as first-class API (<code>Pipeline</code>), not only as shell convenience. This keeps cross-platform semantics explicit and avoids fragile shell-dependent pipeline behavior for common data workloads.</p>
-<h3 id="timeout-and-termination">Timeout and termination<a class="headerlink" href="#timeout-and-termination" title="Permanent link">&para;</a></h3>
-<p>Timeouts are first-class via <code>Duration</code>.</p>
-<p><code>ChildProcess</code> should support explicit lifecycle control:</p>
-<ul>
-<li><code>wait()</code></li>
-<li><code>try_wait()</code></li>
-<li><code>terminate()</code></li>
-<li><code>kill()</code></li>
-</ul>
-<p>Contract should state:</p>
-<ul>
-<li><code>terminate()</code> is graceful where supported;</li>
-<li><code>kill()</code> is forceful;</li>
-<li>platform differences are documented but API intent is stable.</li>
-</ul>
-<h3 id="stdio-and-composition-with-stdlib">Stdio and composition with stdlib<a class="headerlink" href="#stdio-and-composition-with-stdlib" title="Permanent link">&para;</a></h3>
-<p><code>std.fs.File</code> and <code>std.io.BytesIO</code> compose directly with process stdio binding. This avoids requiring additional abstractions just to wire common file and in-memory process flows.</p>
-<h3 id="error-model">Error model<a class="headerlink" href="#error-model" title="Permanent link">&para;</a></h3>
-<p>Process errors should be distinct at the type level:</p>
-<ul>
-<li>spawn failure;</li>
-<li>non-zero exit failure;</li>
-<li>timeout failure;</li>
-<li>stdio I/O failure;</li>
-<li>pipeline stage failure with stage index/identity metadata.</li>
-</ul>
+<h3 id="relationship-to-rfc-096">Relationship to RFC 096<a class="headerlink" href="#relationship-to-rfc-096" title="Permanent link">&para;</a></h3>
+<p>RFC 096 owns declaration-local metadata blocks for fields and constrained primitive options. Its safe, non-executable value discipline and provenance rules are useful precedent for descriptor values. It does not own registry membership, declaration decorators, module/package subjects, runtime registration, or package-wide catalog inspection.</p>
+<p>The two RFCs must remain separate. Field metadata may later be represented inside a descriptor when a domain needs a catalog of fields, but a registry entry must not change field semantics or create a second spelling for field metadata.</p>
+<h3 id="relationship-to-rfc-048-and-rfc-082">Relationship to RFC 048 and RFC 082<a class="headerlink" href="#relationship-to-rfc-048-and-rfc-082" title="Permanent link">&para;</a></h3>
+<p>RFC 048 owns compiler-checked metadata extraction. This RFC extends the checked fact surface with registry entries; it does not create a parallel source scraper or permit unchecked descriptor strings to become authoritative.</p>
+<p>RFC 082 owns generation and validation of public documentation. It may render registry descriptors when a domain chooses to publish them, but it does not define the descriptor schema or registry completeness semantics.</p>
+<h3 id="relationship-to-rfc-104">Relationship to RFC 104<a class="headerlink" href="#relationship-to-rfc-104" title="Permanent link">&para;</a></h3>
+<p>RFC 104 owns the meaning of runtime capabilities, authority grants, and receipts. A capability library may publish <code>CapabilityDescriptor</code> entries through <code>std.registry</code>, but registry membership does not grant authority, emit a receipt, or change governed-runtime behavior. Runtime receipt observations may reference a capability registry entry by stable identity.</p>
+<h3 id="relationship-to-rfc-079">Relationship to RFC 079<a class="headerlink" href="#relationship-to-rfc-079" title="Permanent link">&para;</a></h3>
+<p>RFC 079 owns artifact graph relationships and remote or private discovery. A package artifact may carry checked registry projections, and an artifact graph may index them, but <code>std.registry</code> works for local source and built packages without any remote registry service.</p>
+<h3 id="compatibility-and-migration">Compatibility and migration<a class="headerlink" href="#compatibility-and-migration" title="Permanent link">&para;</a></h3>
+<p>This RFC is additive. Existing runtime registries and user-defined decorators continue to work. They do not gain checked completeness merely because they have a familiar name or shape.</p>
+<p>Libraries may migrate an existing declaration-side runtime registry by replacing its local registration decorator with <code>@describe</code> and opting its descriptor type into the descriptor-value contract. Migration must preserve runtime behavior, static inspection, public facade imports, generated artifacts, and package-consumer behavior. A library that requires dynamic-only registration may retain its existing runtime registry and must document that it has no complete static catalog.</p>
+<p>The existing generated capability inventory may migrate only after a <code>CapabilityDescriptor</code> registry is available and its checked projection preserves public output, validation, and documentation behavior. Comment-based feature blocks are not an acceptable compatibility endpoint.</p>
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
-<ol>
-<li><strong>Single shell-string helper only</strong></li>
-<li>
-<p>Too implicit and too fragile by default.</p>
-</li>
-<li>
-<p><strong>Rust interop only</strong></p>
-</li>
-<li>
-<p>Too low-level for common Incan automation and pipeline tasks.</p>
-</li>
-<li>
-<p><strong>No first-class pipelines</strong></p>
-</li>
-<li>Too weak for data and CLI composition workloads.</li>
-</ol>
+<h3 id="introduce-a-feature-keyword">Introduce a <code>feature</code> keyword<a class="headerlink" href="#introduce-a-feature-keyword" title="Permanent link">&para;</a></h3>
+<p>Rejected because feature inventory is only one registry domain. A keyword would embed a documentation concern in the language, would not naturally serve function catalogs or adapters, and would encourage future one-off declaration keywords instead of a coherent catalog model.</p>
+<h3 id="keep-comment-based-source-scanners">Keep comment-based source scanners<a class="headerlink" href="#keep-comment-based-source-scanners" title="Permanent link">&para;</a></h3>
+<p>Rejected because comments cannot participate in type checking, symbol resolution, rename, source navigation, descriptor validation, or compiler-backed inspection. A scanner would duplicate parsing and schema rules outside the language while remaining unable to prove that its facts describe a valid Incan declaration.</p>
+<h3 id="use-only-runtime-registration">Use only runtime registration<a class="headerlink" href="#use-only-runtime-registration" title="Permanent link">&para;</a></h3>
+<p>Rejected because runtime registration is process-local and initialization-dependent. It is valuable for execution behavior, but it cannot prove a package catalog is complete for documentation, package artifacts, policy tooling, or editor inspection.</p>
+<h3 id="use-only-checked-metadata-and-remove-runtime-registries">Use only checked metadata and remove runtime registries<a class="headerlink" href="#use-only-checked-metadata-and-remove-runtime-registries" title="Permanent link">&para;</a></h3>
+<p>Rejected because loaded programs legitimately need runtime lookup, dispatch, and domain-specific behavior. Static inspection should complement runtime registries, not force every library to reconstruct a catalog from a compiler artifact at runtime.</p>
+<h3 id="make-every-decorator-compiler-visible">Make every decorator compiler-visible<a class="headerlink" href="#make-every-decorator-compiler-visible" title="Permanent link">&para;</a></h3>
+<p>Rejected because arbitrary decorators may execute behavior, transform values, depend on runtime state, or have application-specific semantics. Only the canonical <code>std.registry</code> declaration forms receive the static descriptor contract.</p>
+<h3 id="expand-rfc-096-into-a-general-declaration-metadata-system">Expand RFC 096 into a general declaration metadata system<a class="headerlink" href="#expand-rfc-096-into-a-general-declaration-metadata-system" title="Permanent link">&para;</a></h3>
+<p>Rejected because RFC 096 intentionally solves field-local schema and type-option readability. Registry identity, runtime lifecycle, module/package subjects, package artifacts, and complete inspection are a separate system with different users and failure modes.</p>
+<h3 id="put-this-surface-under-stdmetadata">Put this surface under <code>std.metadata</code><a class="headerlink" href="#put-this-surface-under-stdmetadata" title="Permanent link">&para;</a></h3>
+<p>Rejected because metadata already names stronger contract, evidence, lifecycle, and provenance concepts. Calling a declaration-catalog mechanism metadata would blur its boundary with existing model and evidence work.</p>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Cross-platform command and termination behavior requires careful documentation.</li>
-<li>First-class pipelines add extra API surface compared to single-command-only execution.</li>
-<li>Timeout + streaming + capture interactions require precise contract wording.</li>
+<li>The design introduces a new standard-library and compiler contract that must remain stable for library authors and tools.</li>
+<li>Descriptor-value checking adds a constrained compile-time data model that needs careful diagnostics and evolution rules.</li>
+<li>Dual runtime and checked projections create two intentionally different completeness states that documentation and diagnostics must explain well.</li>
+<li>Registry identities and domain-level key rules add authoring discipline compared with ad hoc lists or decorators.</li>
+<li>Module and package subjects require a first-class source representation that the current declaration surface does not yet provide uniformly.</li>
+<li>A broad registry abstraction could become overused if it is presented as a general application-state container rather than a declaration catalog.</li>
 </ul>
+<h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
+<p><em>(Non-normative.)</em> The implementation should share one normalized registry-entry model between type checking, runtime registration lowering, checked metadata extraction, package artifacts, inspection, documentation consumers, and source-graph export. Runtime registration and checked projection should be generated from the same validated declaration facts, while remaining explicit about their different completeness guarantees. The first delivery should prove the model with one standard-library capability catalog and one existing function-oriented library registry before broadening the supported subject or descriptor forms.</p>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Stdlib / runtime</strong>: command spawn, stdio wiring, pipeline execution, and timeout or termination semantics.</li>
-<li><strong>Language surface</strong>: the module types and methods must be available as specified.</li>
-<li><strong>Execution handoff</strong>: implementations must preserve process behavior without backend leakage.</li>
-<li><strong>Docs / examples</strong>: explicit shell boundary, checked execution, and pipeline usage.</li>
+<li><strong>Parser / AST:</strong> needs declaration registration forms and typed explicit compilation-unit/package subjects with source anchors, without introducing a global <code>feature</code> keyword or a registry-only bare <code>module</code> marker. A later general <code>module name:</code> declaration belongs to the module-system surface rather than being invented by this RFC.</li>
+<li><strong>Typechecker / symbol resolution:</strong> must resolve <code>std.registry</code> identities, validate registry and descriptor types, enforce structural descriptor values, preserve declaration subjects, and report duplicate or inaccessible registrations.</li>
+<li><strong>Runtime / lowering / emission:</strong> must preserve ordinary typed runtime registry behavior for loaded modules without changing described declarations' callable or nominal semantics.</li>
+<li><strong>Stdlib / Runtime (<code>incan_stdlib</code>):</strong> must provide <code>Registry[T]</code>, registry-entry handles, <code>@describe</code>, explicit compilation-unit/package subject forms, and descriptor-value support appropriate for ordinary Incan authors.</li>
+<li><strong>Checked metadata and package artifacts:</strong> must carry complete checked registry entries, identities, descriptor structure, visibility, provenance, and degraded states.</li>
+<li><strong>CLI / inspection tooling:</strong> must provide deterministic registry inspection and actionable diagnostics without invoking user module initialization.</li>
+<li><strong>Formatter:</strong> must format description decorators and descriptor expressions deterministically.</li>
+<li><strong>LSP / editor tooling:</strong> must provide completion, hover, go-to-definition, registry-membership navigation, and source diagnostics from checked facts.</li>
+<li><strong>Documentation and artifact tooling:</strong> must consume checked registry projections for capability inventories and other catalog views rather than source scanners.</li>
+<li><strong>Source graph / agent tooling:</strong> must expose registry facts and distinguish checked declarations from runtime observations.</li>
 </ul>
-<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
+<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>std.process</code> is argument-vector-first by default.</li>
-<li>Shell execution is available but explicit opt-in.</li>
-<li><code>sh { ... }</code> is in scope as an explicit shell DSL lane.</li>
-<li><code>sh { ... }</code> is import-activated vocab DSL syntax, not globally active parser syntax.</li>
-<li><code>sh { ... }</code> is POSIX-focused (<code>/bin/sh</code> baseline) in this RFC; Windows shell parity is out of scope.</li>
-<li><code>run_checked()</code> enforces zero exit status and returns typed failures otherwise.</li>
-<li>First-class <code>Pipeline</code> support is in scope in this RFC.</li>
-<li>Timeout-aware execution is in scope and uses <code>Duration</code>.</li>
-<li><code>ChildProcess</code> lifecycle controls include <code>wait</code>, <code>try_wait</code>, <code>terminate</code>, and <code>kill</code>.</li>
-<li><code>std.fs.File</code> and <code>std.io.BytesIO</code> are directly supported for stdio binding.</li>
+<li>What is the final spelling and lifecycle of explicit compilation-unit and package subject handles? The current illustrative <code>RegistrySubject.current_unit()</code> and <code>RegistrySubject.package()</code> forms keep those identities typed without pretending that the source file has a bare <code>module</code> declaration.</li>
+<li>What is the general submodule declaration design? <code>module</code> must retain the meaning of a named, scoped submodule declaration—consistent with the existing <code>module tests:</code> shape—and must gain real name, body, visibility, import, and nesting semantics before it can carry ordinary <code>@describe</code> decorators. This is a module-system decision, not a registry-specific syntax escape hatch.</li>
+<li>What exact opt-in spelling establishes a descriptor type and its immutable structural serialization contract?</li>
+<li>Which declaration kinds are supported by <code>@describe</code> in the first release, and how should descriptor decorators compose with existing user-defined decorators?</li>
+<li>How does a domain declare a typed uniqueness key without requiring the generic registry to inspect arbitrary string fields or execute a user method?</li>
+<li>Should dynamic runtime registration be part of the first <code>std.registry</code> surface, and if so, what API makes its non-static status unmistakable?</li>
+<li>How are package-closure selection, private registry access, and optional dependency entries represented by <code>incan inspect registry</code>?</li>
+<li>Should registry entries have a versioned standalone artifact encoding in the first implementation, or should package checked-metadata embedding be the only initial artifact form?</li>
 </ul>
+<!-- Rename this section to "Design Decisions" once all questions have been resolved.
+     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 
