@@ -6550,6 +6550,135 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#implementation-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      Implementation Plan
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Implementation Plan">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-public-source-contract-and-structural-values" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 1: Public source contract and structural values
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-2-compiler-facts-and-runtime-projection" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 2: Compiler facts and runtime projection
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-3-inspection-and-package-interchange" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 3: Inspection and package interchange
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-4-capability-inventory-migration-and-consumer-proof" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 4: Capability-inventory migration and consumer proof
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-5-documentation-and-release-readiness" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 5: Documentation and release readiness
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#progress-checklist" class="md-nav__link">
+    <span class="md-ellipsis">
+      Progress Checklist
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Progress Checklist">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#specification-and-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      Specification and lifecycle
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#source-surface-and-typechecking" class="md-nav__link">
+    <span class="md-ellipsis">
+      Source surface and typechecking
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#semantic-facts-runtime-and-emission" class="md-nav__link">
+    <span class="md-ellipsis">
+      Semantic facts, runtime, and emission
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#inspection-package-metadata-and-tooling" class="md-nav__link">
+    <span class="md-ellipsis">
+      Inspection, package metadata, and tooling
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#capability-inventory-and-consumer-acceptance" class="md-nav__link">
+    <span class="md-ellipsis">
+      Capability inventory and consumer acceptance
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#documentation-and-release" class="md-nav__link">
+    <span class="md-ellipsis">
+      Documentation and release
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#design-decisions" class="md-nav__link">
     <span class="md-ellipsis">
       Design Decisions
@@ -6578,7 +6707,7 @@
 
 <h1 id="rfc-113-stdregistry-and-declaration-descriptors">RFC 113: <code>std.registry</code> and declaration descriptors<a class="headerlink" href="#rfc-113-stdregistry-and-declaration-descriptors" title="Permanent link">&para;</a></h1>
 <ul>
-<li><strong>Status:</strong> Planned</li>
+<li><strong>Status:</strong> In Progress</li>
 <li><strong>Created:</strong> 2026-07-13</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong><ul>
@@ -6843,6 +6972,73 @@
 <li><strong>LSP / editor tooling:</strong> must provide completion, hover, go-to-definition, registry-membership navigation, and source diagnostics from checked facts.</li>
 <li><strong>Documentation and artifact tooling:</strong> must consume checked registry projections for capability inventories and other catalog views rather than source scanners.</li>
 <li><strong>Source graph / agent tooling:</strong> must expose registry facts and distinguish checked declarations from runtime observations.</li>
+</ul>
+<h2 id="implementation-plan">Implementation Plan<a class="headerlink" href="#implementation-plan" title="Permanent link">&para;</a></h2>
+<h3 id="phase-1-public-source-contract-and-structural-values">Phase 1: Public source contract and structural values<a class="headerlink" href="#phase-1-public-source-contract-and-structural-values" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Add the <code>std.registry</code> public surface: typed registries and entries, subject handles, descriptor derivation, and non-wrapping declaration descriptions.</li>
+<li>Validate structural keys and descriptor values without evaluating user code, and provide source-anchored diagnostics for unsupported values and incompatible registrations.</li>
+<li>Keep the initial declaration matrix bounded to functions, methods, compilation units, and packages.</li>
+</ul>
+<h3 id="phase-2-compiler-facts-and-runtime-projection">Phase 2: Compiler facts and runtime projection<a class="headerlink" href="#phase-2-compiler-facts-and-runtime-projection" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Record one canonical checked registry fact for every valid description, including its key, descriptor snapshot, subject, provenance, visibility, and reexport paths.</li>
+<li>Carry those facts through the semantic snapshot and package compilation session rather than recreating them in lowering, documentation, or tooling.</li>
+<li>Emit loaded-module runtime entries from the same checked facts while preserving declaration behavior and eliminating duplicate entries from imports or reexports.</li>
+</ul>
+<h3 id="phase-3-inspection-and-package-interchange">Phase 3: Inspection and package interchange<a class="headerlink" href="#phase-3-inspection-and-package-interchange" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Embed checked registry facts in package metadata and expose deterministic JSON inspection for source packages and dependencies.</li>
+<li>Project the same facts into formatter, LSP, source-graph, documentation, and agent-tooling consumers where their existing surfaces can expose them.</li>
+<li>Report unavailable or incompatible dependency metadata explicitly rather than silently presenting an incomplete catalog.</li>
+</ul>
+<h3 id="phase-4-capability-inventory-migration-and-consumer-proof">Phase 4: Capability-inventory migration and consumer proof<a class="headerlink" href="#phase-4-capability-inventory-migration-and-consumer-proof" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Define the standard-library capability descriptor and move the generated capability inventory to checked registry facts.</li>
+<li>Remove the comment-block scanner and prove output, validation, and generated-reference parity from the new projection.</li>
+<li>Exercise a representative external consumer as a compiler acceptance lane without making its runtime registry the authority for static discovery.</li>
+</ul>
+<h3 id="phase-5-documentation-and-release-readiness">Phase 5: Documentation and release readiness<a class="headerlink" href="#phase-5-documentation-and-release-readiness" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Document authoring, loaded-versus-checked completeness, migration, diagnostics, and inspection behavior in the user-facing reference.</li>
+<li>Update generated references, release notes, rustdocs, and the RFC checklist; verify package, facade, and consumer behavior before presenting the implementation for review.</li>
+</ul>
+<h2 id="progress-checklist">Progress Checklist<a class="headerlink" href="#progress-checklist" title="Permanent link">&para;</a></h2>
+<h3 id="specification-and-lifecycle">Specification and lifecycle<a class="headerlink" href="#specification-and-lifecycle" title="Permanent link">&para;</a></h3>
+<ul class="task-list">
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Settle subjects, typed registry keys, descriptor derivation, decorator behavior, artifact boundary, and module-system cutoff.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Record the active implementation and complete all delivery phases in this RFC.</li>
+</ul>
+<h3 id="source-surface-and-typechecking">Source surface and typechecking<a class="headerlink" href="#source-surface-and-typechecking" title="Permanent link">&para;</a></h3>
+<ul class="task-list">
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Add <code>std.registry</code> names, <code>Registry[K, T]</code>, <code>RegistryEntry[K, T]</code>, subject handles, and descriptor derivation.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Recognize canonical <code>@describe(registry, key, descriptor)</code> independently of ordinary callable decorators.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Validate structural keys and descriptors, supported subjects, visibility, duplicate keys, and decorator composition.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Add source-anchored diagnostics and formatter coverage for valid and invalid registrations.</li>
+</ul>
+<h3 id="semantic-facts-runtime-and-emission">Semantic facts, runtime, and emission<a class="headerlink" href="#semantic-facts-runtime-and-emission" title="Permanent link">&para;</a></h3>
+<ul class="task-list">
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Add structured registry facts with canonical identities, typed snapshots, source anchors, provenance, visibility, and reexport projections.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Carry registry facts through semantic snapshots and compilation sessions.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Emit typed loaded-entry runtime behavior from checked facts without changing described declaration semantics.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Prove direct, imported, facade, package-consumer, and test-batch behavior including generated Rust compilation.</li>
+</ul>
+<h3 id="inspection-package-metadata-and-tooling">Inspection, package metadata, and tooling<a class="headerlink" href="#inspection-package-metadata-and-tooling" title="Permanent link">&para;</a></h3>
+<ul class="task-list">
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Embed checked registry facts in package metadata and report degraded dependency metadata explicitly.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Implement deterministic <code>incan inspect registry &lt;canonical-identity&gt; --format json</code>.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Expose checked registry facts to LSP and source-graph projections with declaration/runtime provenance separation.</li>
+</ul>
+<h3 id="capability-inventory-and-consumer-acceptance">Capability inventory and consumer acceptance<a class="headerlink" href="#capability-inventory-and-consumer-acceptance" title="Permanent link">&para;</a></h3>
+<ul class="task-list">
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Add a standard-library capability registry and migrate generated capability inventory input from comment blocks to checked facts.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Remove the comment-based scanner and prove generated output and validation parity.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Verify a representative external function-registry consumer against the completed compiler surface without treating its runtime list as static authority.</li>
+</ul>
+<h3 id="documentation-and-release">Documentation and release<a class="headerlink" href="#documentation-and-release" title="Permanent link">&para;</a></h3>
+<ul class="task-list">
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Add authored reference documentation, diagnostics guidance, migration guidance, rustdocs, generated-reference output, and release-note coverage.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Bump the active development version, complete the full verification gate, and move this RFC to Implemented only when all checklist items are complete.</li>
 </ul>
 <h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
 <ul>
