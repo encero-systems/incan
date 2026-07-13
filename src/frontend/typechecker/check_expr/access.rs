@@ -2130,6 +2130,29 @@ impl TypeChecker {
         }
     }
 
+    /// Substitute call-site `Self` references inside a backend trait-dispatch target.
+    ///
+    /// The selected trait instantiation is carried separately from the method signature. Both must receive the same
+    /// receiver substitution so a source target such as `Index[list[str], Self]` emits `Index<Vec<String>, Box>` at
+    /// the call site rather than an illegal bare Rust `Self`.
+    fn method_dispatch_substituting_call_site_self(
+        &self,
+        dispatch: crate::frontend::typechecker::ResolvedMethodDispatch,
+        receiver: &ResolvedType,
+    ) -> crate::frontend::typechecker::ResolvedMethodDispatch {
+        match dispatch {
+            crate::frontend::typechecker::ResolvedMethodDispatch::Trait { trait_path, type_args } => {
+                crate::frontend::typechecker::ResolvedMethodDispatch::Trait {
+                    trait_path,
+                    type_args: type_args
+                        .into_iter()
+                        .map(|ty| self.substitute_self_in_resolved_type(ty, receiver))
+                        .collect(),
+                }
+            }
+        }
+    }
+
     /// Build formal parameter types and return type for a method call, replacing [`ResolvedType::SelfType`] with the
     /// instantiated receiver.
     ///
@@ -2299,6 +2322,7 @@ impl TypeChecker {
         if viable.is_empty() {
             return candidates.first().map(|candidate| {
                 if let Some(dispatch) = candidate.dispatch.clone() {
+                    let dispatch = self.method_dispatch_substituting_call_site_self(dispatch, receiver_ty);
                     self.type_info
                         .record_resolved_method_call(call_site_span, method, dispatch);
                     let (params, _) = self.method_types_substituting_call_site_self(&candidate.info, receiver_ty);
@@ -2328,6 +2352,7 @@ impl TypeChecker {
         if best.len() == 1 {
             let candidate = best.remove(0);
             if let Some(dispatch) = candidate.dispatch.clone() {
+                let dispatch = self.method_dispatch_substituting_call_site_self(dispatch, receiver_ty);
                 self.type_info
                     .record_resolved_method_call(call_site_span, method, dispatch);
                 let (params, _) = self.method_types_substituting_call_site_self(&candidate.info, receiver_ty);
@@ -2814,7 +2839,16 @@ impl TypeChecker {
                     }
                     ResolvedType::Unknown
                 }
-                _ => ResolvedType::Unknown,
+                _ => {
+                    let receiver_ty = ResolvedType::Generic(name, args);
+                    if let Some(ret) = self.resolve_index_dunder(&receiver_ty, index, &index_ty, span) {
+                        ret
+                    } else {
+                        self.errors
+                            .push(errors::missing_method(&receiver_ty.to_string(), "__getitem__", span));
+                        ResolvedType::Unknown
+                    }
+                }
             },
             ty if matches!(ty, ResolvedType::Str) || is_frozen_str(&ty) => {
                 if !is_intlike_for_index(&index_ty) {

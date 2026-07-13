@@ -182,6 +182,7 @@ impl<'a> Parser<'a> {
         let spec_placement = spec.placement.clone();
         let spec_valid_decorators = spec.valid_decorators.clone();
         let spec_clause_body_kind = spec.clause_body_kind;
+        let spec_is_declaration_owned_clause = spec.is_declaration_owned_clause;
         let spec_expression_item_modifiers = spec.expression_item_modifiers.clone();
 
         // Avoid committing to vocab-block parsing unless a top-level header-delimiting `:` is visible ahead. This
@@ -265,6 +266,7 @@ impl<'a> Parser<'a> {
         Ok(Some(Statement::VocabBlock(VocabBlockStmt {
             keyword: keyword_name,
             keyword_binding: VocabKeywordBinding {
+                is_declaration_owned_clause: spec_is_declaration_owned_clause,
                 dependency_key: spec_dependency_key,
                 activation_namespace: spec_activation_namespace,
                 surface_kind: spec_surface_kind,

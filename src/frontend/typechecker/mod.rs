@@ -663,6 +663,9 @@ impl TypeChecker {
             let prev = rendered.chars().next_back();
             if prev.is_some_and(|ch| ch == '_' || ch.is_ascii_alphanumeric()) {
                 rendered.push_str("crate::");
+            } else if after["crate::".len()..].starts_with('[') {
+                // rust-analyzer can render a slice nested in a generic callback bound as `crate::[T]`. A slice is
+                // not a crate item, so preserve its Rust spelling instead of producing the invalid `dep::[T]`.
             } else {
                 rendered.push_str(replacement.as_str());
             }
@@ -974,7 +977,7 @@ impl TypeChecker {
     }
 
     /// Return the body of a Rust callable bound display such as `impl FnMut(A) -> B`.
-    fn rust_callable_bound_body(display: &str) -> Option<&str> {
+    pub(in crate::frontend::typechecker) fn rust_callable_bound_body(display: &str) -> Option<&str> {
         let trimmed = Self::trim_top_level_rust_bound_suffix(display.trim());
         for prefix in ["impl ", "dyn "] {
             if let Some(rest) = trimmed.strip_prefix(prefix)
@@ -998,7 +1001,7 @@ impl TypeChecker {
     }
 
     /// Return the byte index of the matching close paren for an opening paren at the start of `text`.
-    fn rust_callable_args_end(text: &str) -> Option<usize> {
+    pub(in crate::frontend::typechecker) fn rust_callable_args_end(text: &str) -> Option<usize> {
         let mut depth = 0usize;
         for (idx, ch) in text.char_indices() {
             match ch {

@@ -30,6 +30,7 @@ struct ActiveImportedKeywordSpec {
     surface_kind: incan_vocab::KeywordSurfaceKind,
     placement: incan_vocab::KeywordPlacement,
     desugar_target: incan_vocab::DesugarTarget,
+    is_declaration_owned_clause: bool,
     clause_body_kind: Option<incan_vocab::ClauseBodyKind>,
     expression_item_modifiers: Vec<incan_vocab::ExpressionItemModifierSurface>,
 }
@@ -358,8 +359,9 @@ impl<'a> Parser<'a> {
                 let desugar_target = declaration_surface
                     .map(|declaration| declaration.desugars_to)
                     .unwrap_or(incan_vocab::DesugarTarget::Statements);
-                let (clause_body_kind, expression_item_modifiers) = self
-                    .active_clause_surface_for_keyword(library, keyword)
+                let clause_surface = self.active_clause_surface_for_keyword(library, keyword);
+                let is_declaration_owned_clause = clause_surface.is_some();
+                let (clause_body_kind, expression_item_modifiers) = clause_surface
                     .map(|clause| (Some(clause.body_kind), clause.expression_item_modifiers.clone()))
                     .unwrap_or((None, Vec::new()));
                 let specs = self
@@ -378,6 +380,7 @@ impl<'a> Parser<'a> {
                     surface_kind: keyword.surface_kind,
                     placement: keyword.placement.clone(),
                     desugar_target,
+                    is_declaration_owned_clause,
                     clause_body_kind,
                     expression_item_modifiers,
                 });

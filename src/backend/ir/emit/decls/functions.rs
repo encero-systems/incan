@@ -363,6 +363,14 @@ impl<'a> IrEmitter<'a> {
         if !self.needs_borrowed_function_adapter(&func.name, indices) {
             return Ok(None);
         }
+        if indices.iter().all(|index| {
+            func.params.get(*index).is_some_and(|param| {
+                matches!(param.ty, IrType::Ref(_) | IrType::RefMut(_))
+                    || matches!(&param.ty, IrType::RustDisplay(display) if display.trim_start().starts_with('&'))
+            })
+        }) {
+            return Ok(None);
+        }
         let helper_name = Self::borrowed_function_adapter_name(&func.name, indices);
         let Some(helper) = Self::borrowed_function_clone(func, helper_name, indices) else {
             return Ok(None);

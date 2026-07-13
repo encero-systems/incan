@@ -357,6 +357,13 @@ impl AstLowering {
     ) -> Result<IrFunction, LoweringError> {
         self.push_scope();
 
+        let rust_callback_param_displays = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.rust.function_param_type_displays.get(&f.name))
+            .filter(|displays| displays.len() == f.params.len())
+            .cloned();
+
         let type_param_names: std::collections::HashSet<&str> =
             f.type_params.iter().map(|tp| tp.name.as_str()).collect();
         let mut hidden_type_params = Vec::new();
@@ -365,7 +372,8 @@ impl AstLowering {
         let mut params: Vec<FunctionParam> = f
             .params
             .iter()
-            .map(|p| {
+            .enumerate()
+            .map(|(index, p)| {
                 let base_ty = self.lower_callable_param_type(
                     &p.node.ty.node,
                     Some(&type_param_names),
@@ -386,7 +394,12 @@ impl AstLowering {
                 }
                 Ok(FunctionParam {
                     name: p.node.name.clone(),
-                    ty: param_ty, // Store the emitted parameter type (emit will add &mut for mutable params)
+                    ty: rust_callback_param_displays
+                        .as_ref()
+                        .and_then(|displays| displays.get(index))
+                        .map(|display| IrType::RustDisplay(display.clone()))
+                        .unwrap_or(param_ty), /* Store the emitted parameter type (emit will add &mut for mutable
+                                               * params) */
                     mutability: if p.node.is_mut {
                         Mutability::Mutable
                     } else {

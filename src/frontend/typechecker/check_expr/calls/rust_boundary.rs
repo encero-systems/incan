@@ -27,6 +27,98 @@ struct RustCallArgBinding<'a> {
 }
 
 impl TypeChecker {
+    /// Remove an invalid namespace prefix from a Rust slice display.
+    ///
+    /// Some rust-analyzer callback-bound displays report `crate::[T]` (or its already-expanded
+    /// `dependency::[T]` form). Rust slices are never namespaced; retaining that prefix makes generated Rust invalid.
+    fn strip_invalid_rust_slice_namespace(display: &str) -> String {
+        let mut normalized = String::with_capacity(display.len());
+        let mut remaining = display;
+        while let Some(index) = remaining.find("::[") {
+            let before = &remaining[..index];
+            let prefix_start = before
+                .rfind(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == ':'))
+                .map_or(0, |index| index + 1);
+            normalized.push_str(&before[..prefix_start]);
+            normalized.push('[');
+            remaining = &remaining[index + "::[".len()..];
+        }
+        normalized.push_str(remaining);
+        normalized
+    }
+
+    /// Return the exact Rust input displays carried by a callable bound.
+    ///
+    /// The resolved Incan function type preserves ownership semantics for checking, but it cannot distinguish a
+    /// borrowed slice from a borrowed `Vec`. Emission needs the original Rust spelling for callback parameters.
+    fn rust_callable_param_displays_from_bound(&self, rust_ty: &str) -> Option<Vec<String>> {
+        let body = Self::rust_callable_bound_body(rust_ty)?;
+        let body = body
+            .strip_prefix("std::ops::")
+            .or_else(|| body.strip_prefix("core::ops::"))
+            .unwrap_or(body);
+        let after_name = ["FnOnce", "FnMut", "Fn"]
+            .into_iter()
+            .find_map(|name| body.strip_prefix(name))?
+            .trim_start();
+        let args_end = Self::rust_callable_args_end(after_name)?;
+        if !after_name.starts_with('(') {
+            return None;
+        }
+        Some(
+            Self::split_top_level_generic_args(&after_name[1..args_end])
+                .into_iter()
+                // Keep the token boundary after `mut`: `&mut[f32]` is not valid Rust even though it is useful for
+                // type-display comparisons. These strings are emitted as Rust parameter types.
+                .map(|display| {
+                    let display = Self::rust_display_without_lifetimes(display);
+                    Self::strip_invalid_rust_slice_namespace(display.trim())
+                })
+                .collect(),
+        )
+    }
+
+    /// Preserve exact callable parameter displays for an inline closure or a direct named source function.
+    fn record_rust_callable_parameter_displays(
+        &mut self,
+        rust_type_display: &str,
+        owner_path: &str,
+        arg_expr: &Spanned<Expr>,
+        arg_ty: &ResolvedType,
+    ) {
+        let display = self.rust_display_for_owner_path(rust_type_display, owner_path);
+        let Some(param_displays) = self.rust_callable_param_displays_from_bound(display.as_str()) else {
+            return;
+        };
+        let ResolvedType::Function(params, _) = arg_ty else {
+            return;
+        };
+        if params.len() != param_displays.len()
+            || !params.iter().zip(&param_displays).all(|(param, display)| {
+                self.types_compatible(&param.ty, &self.resolved_param_type_from_rust_display(display))
+            })
+        {
+            return;
+        }
+
+        match &arg_expr.node {
+            Expr::Closure(_, _) => {
+                self.type_info
+                    .rust
+                    .closure_param_type_displays
+                    .insert((arg_expr.span.start, arg_expr.span.end), param_displays);
+            }
+            Expr::Ident(name) => {
+                self.type_info
+                    .rust
+                    .function_param_type_displays
+                    .entry(name.clone())
+                    .or_insert(param_displays);
+            }
+            _ => {}
+        }
+    }
+
     /// Reuse already-prepared metadata for Rust path types returned by inspected Rust calls.
     ///
     /// Chained registry APIs often return helper types that users never import directly. When metadata for those types
@@ -420,6 +512,7 @@ impl TypeChecker {
         arg_ty: &ResolvedType,
         record_exact_builtin_coercion: bool,
     ) {
+        self.record_rust_callable_parameter_displays(rust_type_display, owner_path, arg_expr, arg_ty);
         let param_display = self.rust_display_for_owner_path(rust_type_display, owner_path);
         let normalized = param_display.replace(' ', "");
         let target_ty =
