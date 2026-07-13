@@ -90,33 +90,44 @@ This function knows nothing about files. Keeping the domain transformation pure 
 
 ## Step 4: Connect the file boundary
 
-In `src/main.incn`, read the source through `std.fs.Path`, parse it through the model, and write the derived report:
+In `src/main.incn`, read the source through `std.fs.Path`, parse it through the model, and write the derived report. Each `map_err` converts a boundary-specific error into a useful message, while `?` propagates it without nested `match` blocks:
 
 ```incan
-from domain import OrderBatch
+from domain import OrderBatch, OrderReport
 from transform import build_report
 from std.fs import Path
 from std.serde.json import Deserialize, Serialize
 
-def main() -> None:
-    input_path = Path("orders.json")
-    output_path = Path("order-report.json")
 
-    match input_path.read_text("utf-8", "strict"):
-        case Err(error):
-            println(f"Could not read input: {error.message()}")
-        case Ok(source):
-            match OrderBatch.from_json(source):
-                case Err(error):
-                    println(f"Invalid order data: {error}")
-                case Ok(batch):
-                    report = build_report(batch)
-                    match output_path.write_text(report.to_json(), "utf-8", "strict", None):
-                        case Err(error): println(f"Could not write report: {error.message()}")
-                        case Ok(_): println(f"Wrote {len(report.accepted)} accepted orders")
+def create_report() -> Result[OrderReport, str]:
+    input_path = Path("orders.json")
+    output_dir = Path("target/tutorial-output")
+    output_path = output_dir / "order-report.json"
+
+    source = input_path
+        .read_text("utf-8", "strict")
+        .map_err((error) => f"Could not read orders.json: {error.message()}")?
+    batch = OrderBatch.from_json(source).map_err((error) => f"Invalid order data: {error}")?
+    report = build_report(batch)
+
+    output_dir
+        .mkdir(parents=true, exist_ok=true)
+        .map_err((error) => f"Could not prepare output directory: {error.message()}")?
+    output_path
+        .write_text(report.to_json(), "utf-8", "strict", None)
+        .map_err((error) => f"Could not write report: {error.message()}")?
+    return Ok(report)
+
+
+def main() -> None:
+    match create_report():
+        Err(error) => println(error)
+        Ok(report) =>
+            println(f"Wrote {len(report.accepted)} accepted orders to order-report.json")
+            println(f"Rejected {report.rejected_count} invalid order(s)")
 ```
 
-There are two failure domains, so they remain explicit: filesystem operations return `IoError`, while typed JSON parsing returns a JSON error.
+The boundaries remain explicit—filesystem operations return `IoError`, while typed JSON parsing returns a JSON error—but RFC 070's `map_err` combinator gives the sequential workflow one error type. The final `match` is reserved for the point where the program actually handles success or failure.
 
 ## Step 5: Test the transformation
 
@@ -160,3 +171,4 @@ You built a multi-module program whose filesystem boundary is fallible, whose JS
 - [Dynamic JSON](../how-to/dynamic_json.md)
 - [Serialization derives](../reference/derives/serialization.md)
 - [Fallible and infallible paths](fallible_and_infallible_paths.md)
+- [RFC 070: Result combinators](../../RFCs/closed/implemented/070_result_combinators_for_result_types.md)
