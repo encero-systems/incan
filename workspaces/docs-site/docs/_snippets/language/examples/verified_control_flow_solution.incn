@@ -1,0 +1,56 @@
+def classify(n: int) -> str:
+    if n < 0:
+        return "negative"
+    elif n == 0:
+        return "zero"
+    else:
+        return "positive"
+
+
+def validate_port(port: int) -> Result[int, str]:
+    if port < 1 or port > 65535:
+        return Err("port must be between 1 and 65535")
+    return Ok(port)
+
+
+def next_value(values: list[Option[int]], idx: int) -> Option[int]:
+    if idx < len(values):
+        return values[idx]
+    return None
+
+
+def main() -> None:
+    println(classify(-1))  # negative
+    println(classify(0))   # zero
+    println(classify(2))   # positive
+
+    # 2) if let on Option
+    maybe_name = Some("Danny")
+    if let Some(name) = maybe_name:
+        println(name)
+
+    # 3) match on Result
+    match validate_port(8080):
+        Ok(port) => println(f"port={port}")
+        Err(error) => println(f"error={error}")
+
+    # 4) while let on a sequence of optional values
+    values = [Some(1), Some(2), None]
+    mut idx = 0
+    while let Some(value) = next_value(values, idx):
+        println(value)
+        idx += 1
+
+    # 5) loop over a list and stop early with break
+    items = ["Alice", "Bob", "Cara"]
+    for name in items:
+        if name == "Bob":
+            break
+        println(name)
+
+    # 6) loop expression with break value
+    value = loop:
+        if len(items) > 0:
+            break 42
+        break 0
+    println(value)

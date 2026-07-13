@@ -209,16 +209,15 @@ def normalize_name(name: str) -> str:
     return name.strip().lower()
 ```
 
-## Multiple returns (with `Result`)
+## Fallible returns (with `Result`)
 
 Many “can fail” functions return `Result[T, E]` instead of throwing exceptions:
 
 ```incan
-def parse_port(s: str) -> Result[int, str]:
-    if len(s.strip()) == 0:
-        return Err("port must not be empty")
-    return Ok(int(s))
+--8<-- "_snippets/language/examples/verified_functions_fallible_result.incn"
 ```
+
+This example validates an already-typed integer. The builtin `int(text)` conversion is intentionally infallible at the type level and raises a runtime conversion error for malformed text; it is not a substitute for a `Result`-returning parser.
 
 You’ll learn the `Result` pattern in Chapter 6.
 

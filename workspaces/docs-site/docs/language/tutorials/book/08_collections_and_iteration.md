@@ -178,26 +178,10 @@ def numbers() -> Generator[int]:
 ??? example "One possible solution"
 
     ```incan
-    def main() -> None:
-        names = ["Alice", "Alice", "Bob", "Bob", "Cara"]
-
-        # 1) Normalize + print
-        normalized = [name.strip().lower() for name in names]
-        for name in normalized:
-            println(name)
-
-        # 2) Count occurrences
-        name_counts: Dict[str, int] = {}
-        for name in normalized:
-            current_count = name_counts.get(name).unwrap_or(0)
-            name_counts[name] = current_count + 1
-
-        # 3) Deduplicate + print counts (set iteration order is not guaranteed)
-        unique = set(normalized)
-        for name in unique:
-            count = name_counts.get(name).unwrap_or(0)
-            println(f"{name}: {count}")
+    --8<-- "_snippets/language/examples/verified_collections_solution.incn"
     ```
+
+`dict.get(...)` returns a borrowed value. Calling `.copied()` turns `Option[&int]` into `Option[int]` before `unwrap_or(0)` supplies the owned fallback.
 
 ## Where to learn more
 

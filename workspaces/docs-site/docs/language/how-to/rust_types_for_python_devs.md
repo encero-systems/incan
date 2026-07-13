@@ -36,7 +36,7 @@ counts: HashMap[str, int] = HashMap.new()
 | ------------------------- | ---------------------------------- | ------------------ |
 | `dict.get(key)`           | `map.get(&key)`                    | Returns `Option`   |
 | `dict[key]`               | `map[&key]`                        | Panics if missing  |
-| `dict.get(key, default)`  | `map.get(&key).unwrap_or(default)` | Default if missing |
+| `dict.get(key, default)`  | `map.get(&key).copied().unwrap_or(default)` | Copy a scalar value or use the default |
 | `str(x)`                  | `x.to_string()`                    | Convert to string  |
 | `len(x)`                  | `x.len()`                          | Length             |
 
@@ -47,7 +47,7 @@ Rust APIs often return `Option`/`Result` instead of raising exceptions.
 `unwrap()` is a “this must exist” assertion (it panics if missing), so prefer `unwrap_or(...)` or `match` when the value can be absent.
 
 ```incan
-value = my_dict.get("key").unwrap_or(0)
+value = my_dict.get("key").copied().unwrap_or(0)
 
 match my_dict.get("key"):
     case Some(v): println(v)

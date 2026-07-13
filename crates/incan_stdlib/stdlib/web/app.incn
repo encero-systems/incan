@@ -10,8 +10,6 @@ an Axum Router at startup.
 Example:
     from std.web import App, route, Response
 
-    app = App()
-
     @route("/")
     async def index() -> Response:
         return Response.html("<h1>Hello!</h1>")

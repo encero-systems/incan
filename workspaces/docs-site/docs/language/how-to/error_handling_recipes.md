@@ -73,8 +73,12 @@ This is usually clearer than spelling the same idea as a full `match` with an em
 Use defaults only when there is a genuinely safe fallback.
 
 ```incan
-timeout = settings.get("timeout_secs").unwrap_or("2.0")
+timeout = match settings.get("timeout_secs"):
+    Some(value) => str(value)
+    None => "2.0"
 ```
+
+`dict.get(...)` borrows the stored value. `str(value)` materializes an owned string before it leaves the match arm.
 
 If computing the default is expensive, prefer `unwrap_or_else(...)` when available.
 

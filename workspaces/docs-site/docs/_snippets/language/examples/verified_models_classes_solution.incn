@@ -1,0 +1,21 @@
+model Product:
+    name: str
+    price: float
+
+
+class Cart:
+    items: list[Product]
+
+    def total(self) -> float:
+        mut total = 0.0
+        for item in self.items:
+            total += item.price
+        return total
+
+
+def main() -> None:
+    cart = Cart(items=[
+        Product(name="Book", price=10.0),
+        Product(name="Pen", price=2.5),
+    ])
+    println(f"total={cart.total()}")

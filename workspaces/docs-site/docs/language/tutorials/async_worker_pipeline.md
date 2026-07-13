@@ -29,14 +29,17 @@ Calling `process_job(...)` creates async work. `await` drives it directly; `spaw
 
 ```incan
 async def main() -> None:
-    first = spawn(process_job("orders", 0.20))
+    first = spawn(process_job("orders", 0.20))  # (1)
     second = spawn(process_job("customers", 0.10))
     third = spawn(process_job("inventory", 0.15))
 
-    show_result("orders", await first)
+    show_result("orders", await first)  # (2)
     show_result("customers", await second)
     show_result("inventory", await third)
 ```
+
+1. `spawn(...)` starts each future immediately and returns a typed `JoinHandle`; the three jobs can therefore overlap.
+2. Awaiting a handle returns the task boundary's `Result`, which is passed to one explicit handler rather than discarded.
 
 The jobs begin before the first handle is awaited, so their delays overlap. Awaiting a `JoinHandle[T]` returns `Result[T, TaskJoinError]`: task execution itself can fail independently of the value `T`.
 
@@ -46,10 +49,12 @@ The jobs begin before the first handle is awaited, so their delays overlap. Awai
 from std.async.task import TaskJoinError
 
 def show_result(name: str, result: Result[str, TaskJoinError]) -> None:
-    match result:
+    match result:  # (1)
         case Ok(value): println(value)
         case Err(error): println(f"{name} failed: {error.message()}")
 ```
+
+1. This `match` is intentional terminal handling: both outcomes produce a visible side effect, so a combinator chain would hide rather than simplify the decision.
 
 Do not discard join failures in production paths. A spawned task is a separate failure boundary even when the worker's ordinary return value is infallible.
 
@@ -59,10 +64,12 @@ Use `timeout(...)` when the underlying operation should be cancelled after the d
 
 ```incan
 async def bounded_job() -> None:
-    match await timeout(0.05, process_job("slow", 0.50)):
+    match await timeout(0.05, process_job("slow", 0.50)):  # (1)
         case Ok(value): println(value)
         case Err(error): println(f"deadline reached: {error.message()}")
 ```
+
+1. `timeout(...)` owns the cancellation policy. The final `match` reports the outcome at the program boundary; it is not sequential plumbing that should be replaced with `map` or `and_then`.
 
 Use `timeout_join(...)` instead when already-spawned work must remain live after the caller's deadline. Its timeout outcome returns the live handle rather than silently cancelling durable work.
 

@@ -94,34 +94,15 @@ def normalize(name: str) -> Result[str, NameError]:
 
 1. Write `def safe_div(a: float, b: float) -> Result[float, str]`.
 2. Write `def first(items: List[str]) -> Option[str]` and handle `None` vs `Some(...)` with `match`.
-3. Write `def parse_and_divide(n: float, s: str) -> Result[float, str]` that uses `?` to parse `s` into a `float`, then calls `safe_div`.
+3. Write `def greeting_for(name: str) -> Result[str, str]` that uses `?` to propagate a validation error from a `normalize_name` helper.
 
 ??? example "One possible solution"
 
     ```incan
-    def safe_div(a: float, b: float) -> Result[float, str]:
-        if b == 0.0:
-            return Err("division by zero")
-        return Ok(a / b)
-
-    def first(items: List[str]) -> Option[str]:
-        if len(items) == 0:
-            return None
-        return Some(items[0])
-
-    def parse_and_divide(n: float, s: str) -> Result[float, str]:
-        denom = float(s)?
-        return safe_div(n, denom)
-
-    def main() -> None:
-        match first(["a", "b"]):
-            case Some(x): println(f"first={x}")
-            case None: println("empty")
-
-        match parse_and_divide(10.0, "2.0"):
-            case Ok(x): println(f"10 / 2 = {x}")
-            case Err(e): println(f"error: {e}")
+    --8<-- "_snippets/language/examples/verified_errors_solution.incn"
     ```
+
+The builtin `float(text)` conversion raises a runtime conversion error for malformed text; it does not return `Result`. The exercise therefore uses an explicitly fallible helper so the `?` example matches the type system.
 
 ## What to learn next
 

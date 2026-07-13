@@ -8,17 +8,16 @@ At Rust compile time, ``@route(...)`` is emitted as ``#[incan_web_macros::route(
 which expands to Axum handler registration via the ``inventory`` crate.
 
 Example:
-    from std.web.routing import route, Json, GET, POST, DELETE
+    from std.web.routing import route, GET, POST
+    from std.web import Response
 
     @route("/users/{id}", methods=[GET])
-    async def get_user(id: int) -> Json[User]:
-        user = find_user(id)?
-        return Json(user)
+    async def get_user(id: int) -> Response:
+        return Response.ok()
 
-    @route("/users", methods=[POST])
-    async def create_user(body: Json[CreateUser]) -> Json[User]:
-        user = User(id=1, name=body.value.name)
-        return Json(user)
+    @route("/users/reindex", methods=[POST])
+    async def reindex_users() -> Response:
+        return Response.status(202, "reindex queued")
 """
 rust.module("incan_web_macros")
 

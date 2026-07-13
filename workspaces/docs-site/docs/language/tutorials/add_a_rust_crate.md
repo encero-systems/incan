@@ -7,8 +7,10 @@ This tutorial uses Rust's `regex` crate from ordinary Incan code. The goal is no
 Create `main.incn`:
 
 ```incan
-from rust::regex @ "1" import Regex
+from rust::regex @ "1" import Regex  # (1)
 ```
+
+1. `rust::` selects Rust interop; `@ "1"` pins the compatible crate major version for this single-file program.
 
 The `rust::` prefix identifies a Rust dependency. The inline version annotation is convenient for a single-file program.
 
@@ -18,9 +20,11 @@ The `rust::` prefix identifies a Rust dependency. The inline version annotation 
 from rust::regex @ "1" import Regex
 
 def contains_number(input: str) -> bool:
-    pattern = Regex.new("\\d+").unwrap()
+    pattern = Regex.new("\\d+").unwrap()  # (1)
     return pattern.is_match(input)
 ```
+
+1. The constructor is fallible. `unwrap()` is acceptable here only because `"\\d+"` is a fixed, reviewed source literal; the warning below describes the input-driven case.
 
 Only this helper needs to know the Rust crate's constructor and methods. Callers get an ordinary Incan function.
 
@@ -59,9 +63,12 @@ from rust::regex import Regex
 ```
 
 ```bash
-incan lock
-incan run --locked
+incan lock          # (1)
+incan run --locked  # (2)
 ```
+
+1. `incan lock` resolves the manifest dependency and writes the reproducible lockfile.
+2. `--locked` rejects dependency drift instead of silently refreshing the lockfile during the run.
 
 The manifest is the single source of truth for a project dependency, so do not retain the inline `@ "1"` annotation after adding the manifest entry. Commit `incan.lock` so CI and collaborators resolve the same dependency graph.
 

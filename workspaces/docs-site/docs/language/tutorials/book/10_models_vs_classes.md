@@ -106,25 +106,7 @@ def main() -> None:
 ??? example "One possible solution"
 
     ```incan
-    model Product:
-        name: str
-        price: float
-
-    class Cart:
-        items: list[Product]
-
-        def total(self) -> float:
-            total = 0.0
-            for item in self.items:
-                total = total + item.price
-            return total
-
-    def main() -> None:
-        cart = Cart(items=[
-            Product(name="Book", price=10.0),
-            Product(name="Pen", price=2.5),
-        ])
-        println(f"total={cart.total()}")
+    --8<-- "_snippets/language/examples/verified_models_classes_solution.incn"
     ```
 
 ## Where to learn more
