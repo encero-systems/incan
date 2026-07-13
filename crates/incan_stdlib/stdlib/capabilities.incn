@@ -1,13 +1,11 @@
 """
 Typed standard-library capability catalogue.
 
-This module is the source authority for the generated feature inventory. Its
-runtime registry contains the entries from this module when loaded; tools use
-the compiler-checked projection for complete package discovery.
+This module is the source authority for the generated feature inventory. Its runtime registry contains the entries
+from this module when loaded; tools use the compiler-checked projection for complete package discovery.
 
-The catalogue is deliberately module-private: it documents Incan's public
-surface without creating a second public runtime API that applications would
-need to support or keep in sync.
+The catalogue is deliberately module-private: it documents Incan's public surface without creating a second runtime API
+that applications would need to support or keep in sync.
 """
 
 from std.registry import Registry, RegistryEntry, RegistrySubject, SubjectKind
