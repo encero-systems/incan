@@ -50,7 +50,7 @@
     
       <link rel="stylesheet" href="../../../stylesheets/pygments.css">
     
-      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260714-incus-clearance-1">
+      <link rel="stylesheet" href="/shared/incapunk/incapunk.css">
     
     <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -63,6 +63,8 @@
   
   
     
+    
+      
     
     
     
@@ -123,7 +125,19 @@
     </div>
     
       
+        <form class="md-header__option" data-md-component="palette">
+  
     
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="amber"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
     
     
     
@@ -876,10 +890,6 @@
       
         
       
-        
-      
-        
-      
     
     
       
@@ -1300,74 +1310,11 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tutorials/typed_data_processor/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Build a typed data processor
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../tutorials/build_your_first_api/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
     Build your first API
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../tutorials/async_worker_pipeline/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Build an asynchronous worker pipeline
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../tutorials/add_a_rust_crate/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Add a Rust crate
   </span>
   
 
@@ -1398,6 +1345,27 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/web_framework/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Web framework
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1416,8 +1384,6 @@
   
     
     
-      
-        
       
         
       
@@ -1501,27 +1467,6 @@
             How-to
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../tutorials/web_framework/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Web framework guide
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
             
               
                 
@@ -4355,8 +4300,6 @@
       
         
       
-        
-      
     
     
       
@@ -4421,27 +4364,6 @@
   
   <span class="md-ellipsis">
     Your first project
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../tooling/tutorials/build_and_consume_library/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Build and consume a library
   </span>
   
 
@@ -6161,8 +6083,6 @@
       
         
       
-        
-      
     
     
       
@@ -6319,27 +6239,6 @@
   
   <span class="md-ellipsis">
     Stability policy
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../project/incus/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Meet Incus
   </span>
   
 
@@ -6534,8 +6433,8 @@
 </tr>
 <tr>
 <td><code>dict.get(key, default)</code></td>
-<td><code>map.get(&amp;key).copied().unwrap_or(default)</code></td>
-<td>Copy a scalar value or use the default</td>
+<td><code>map.get(&amp;key).unwrap_or(default)</code></td>
+<td>Default if missing</td>
 </tr>
 <tr>
 <td><code>str(x)</code></td>
@@ -6552,7 +6451,7 @@
 <h2 id="option-and-result-unwrap-like-patterns">Option and Result: unwrap-like patterns<a class="headerlink" href="#option-and-result-unwrap-like-patterns" title="Permanent link">&para;</a></h2>
 <p>Rust APIs often return <code>Option</code>/<code>Result</code> instead of raising exceptions.</p>
 <p><code>unwrap()</code> is a “this must exist” assertion (it panics if missing), so prefer <code>unwrap_or(...)</code> or <code>match</code> when the value can be absent.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">value</span> <span class="o">=</span> <span class="n">my_dict</span><span class="o">.</span><span class="nb">get</span><span class="p">(</span><span class="s2">&quot;key&quot;</span><span class="p">)</span><span class="o">.</span><span class="nb">copied</span><span class="p">()</span><span class="o">.</span><span class="nb">unwrap_or</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">value</span> <span class="o">=</span> <span class="n">my_dict</span><span class="o">.</span><span class="nb">get</span><span class="p">(</span><span class="s2">&quot;key&quot;</span><span class="p">)</span><span class="o">.</span><span class="nb">unwrap_or</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
 
 <span class="k">match</span> <span class="n">my_dict</span><span class="o">.</span><span class="nb">get</span><span class="p">(</span><span class="s2">&quot;key&quot;</span><span class="p">):</span>
     <span class="k">case</span> <span class="nb">Some</span><span class="p">(</span><span class="n">v</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="n">v</span><span class="p">)</span>
@@ -6617,14 +6516,6 @@
       <script src="../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
         <script src="../../../_snippets/javascripts/mathjax.js"></script>
-      
-        <script src="../../../_snippets/javascripts/incan_home_motion.js"></script>
-      
-        <script src="../../../shared/incapunk/incus-library/manifest.js"></script>
-      
-        <script src="../../../_snippets/javascripts/incan_docs_components.js"></script>
-      
-        <script src="../../../_snippets/javascripts/incan_mermaid.js"></script>
       
         <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
       

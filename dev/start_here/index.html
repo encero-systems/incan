@@ -50,7 +50,7 @@
     
       <link rel="stylesheet" href="../stylesheets/pygments.css">
     
-      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260714-incus-clearance-1">
+      <link rel="stylesheet" href="/shared/incapunk/incapunk.css">
     
     <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -63,6 +63,8 @@
   
   
     
+    
+      
     
     
     
@@ -123,7 +125,19 @@
     </div>
     
       
+        <form class="md-header__option" data-md-component="palette">
+  
     
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="amber"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
     
     
     
@@ -876,10 +890,6 @@
       
         
       
-        
-      
-        
-      
     
     
       
@@ -1300,74 +1310,11 @@
   
   
     <li class="md-nav__item">
-      <a href="../language/tutorials/typed_data_processor/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Build a typed data processor
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../language/tutorials/build_your_first_api/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
     Build your first API
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../language/tutorials/async_worker_pipeline/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Build an asynchronous worker pipeline
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../language/tutorials/add_a_rust_crate/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Add a Rust crate
   </span>
   
 
@@ -1398,6 +1345,27 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../language/tutorials/web_framework/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Web framework
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1414,8 +1382,6 @@
   
     
     
-      
-        
       
         
       
@@ -1499,27 +1465,6 @@
             How-to
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../language/tutorials/web_framework/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Web framework guide
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
             
               
                 
@@ -4268,8 +4213,6 @@
       
         
       
-        
-      
     
     
       
@@ -4334,27 +4277,6 @@
   
   <span class="md-ellipsis">
     Your first project
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../tooling/tutorials/build_and_consume_library/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Build and consume a library
   </span>
   
 
@@ -6074,8 +5996,6 @@
       
         
       
-        
-      
     
     
       
@@ -6241,27 +6161,6 @@
 
               
             
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../project/incus/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Meet Incus
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
           </ul>
         </nav>
       
@@ -6305,9 +6204,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#more-paths" class="md-nav__link">
+  <a href="#choose-a-path" class="md-nav__link">
     <span class="md-ellipsis">
-      More paths
+      Choose a path
     </span>
   </a>
   
@@ -6351,23 +6250,30 @@
 </div>
 <h2 id="not-sure-where-you-fit">Not sure where you fit?<a class="headerlink" href="#not-sure-where-you-fit" title="Permanent link">&para;</a></h2>
 <p>Choose by goal:</p>
-<div class="inc-route-grid">
-  <a class="inc-route-card" href="what_incan_is_for/"><span class="inc-eyebrow">Evaluate</span><strong>Understand the fit</strong><span>What Incan is for, where it is already useful, and where another language is still the better choice.</span></a>
-  <a class="inc-route-card" href="../tooling/tutorials/getting_started/"><span class="inc-eyebrow">Shortest path</span><strong>Try it now</strong><span>Install the toolchain, create a starter project, run it, test it, and produce a release build.</span></a>
-  <a class="inc-route-card" href="../language/tutorials/book/"><span class="inc-eyebrow">Learn</span><strong>Read the Incan Book</strong><span>A linear, runnable introduction to values, functions, control flow, errors, models, traits, and tests.</span></a>
-  <a class="inc-route-card" href="../language/reference/language/"><span class="inc-eyebrow">Reference</span><strong>Look something up</strong><span>Use the generated language reference for syntax, types, built-ins, and standard-library modules.</span></a>
-  <a class="inc-route-card" href="coming_from_python/"><span class="inc-eyebrow">Bridge</span><strong>Coming from Python?</strong><span>Translate familiar application, model, error, async, and tooling concepts into Incan.</span></a>
-  <a class="inc-route-card" href="coming_from_rust/"><span class="inc-eyebrow">Bridge</span><strong>Coming from Rust?</strong><span>See which Rust-shaped semantics remain and where Incan trades ceremony for application ergonomics.</span></a>
-  <a class="inc-route-card" href="encero_stack/"><span class="inc-eyebrow">Context</span><strong>See the Encero stack</strong><span>Understand how Incan fits with InQL, Pallay, Omerus, Hees.ai, and Hees.io.</span></a>
-  <a class="inc-route-card" href="../contributing/"><span class="inc-eyebrow">Build with us</span><strong>Contribute</strong><span>Explore the compiler architecture, contributor book, RFC process, and repository workflows.</span></a>
-</div>
-
-<p>If the first-contact loop fails, go directly to <a href="../tooling/how-to/troubleshooting/">Troubleshooting</a>. To evaluate the longer-term direction, read the <a href="domain_native_demo/">1.0 domain-native demo target</a> and <a href="public_contracts/">1.0 public contracts</a>.</p>
-<h2 id="more-paths">More paths<a class="headerlink" href="#more-paths" title="Permanent link">&para;</a></h2>
 <ul>
+<li><strong>Understand the fit</strong>: <a href="what_incan_is_for/">What Incan is for</a></li>
+<li><strong>Try it now</strong>: <a href="../tooling/tutorials/getting_started/">Getting Started</a> (toolchain install, starter project, run, test, release build)<ul>
+<li>If anything fails: <a href="../tooling/how-to/troubleshooting/">Troubleshooting</a></li>
+</ul>
+</li>
+<li><strong>Learn the basics</strong>: <a href="../language/tutorials/book/">The Incan Book (Basics)</a></li>
+<li><strong>Look something up</strong>: <a href="../language/reference/language/">Language reference (generated)</a> + <a href="../tooling/reference/cli_reference/">CLI reference</a></li>
+<li><strong>Set up tooling</strong>: <a href="../tooling/">Tooling start here</a></li>
+<li><strong>Evaluate the 1.0 direction</strong>: <a href="domain_native_demo/">1.0 domain-native demo target</a> + <a href="public_contracts/">1.0 public contracts</a></li>
+<li><strong>Understand the product context</strong>: <a href="encero_stack/">Encero stack</a></li>
+<li><strong>Contribute</strong>: <a href="../contributing/">Contributing start here</a></li>
+</ul>
+<h2 id="choose-a-path">Choose a path<a class="headerlink" href="#choose-a-path" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="what_incan_is_for/">What Incan is for</a></li>
+<li><a href="coming_from_python/">Coming from Python (apps)</a></li>
+<li><a href="coming_from_rust/">Coming from Rust (evaluator)</a></li>
 <li><a href="coming_from_typescript_javascript/">Coming from TypeScript or JavaScript</a></li>
 <li><a href="pipelines_and_automation/">Pipelines &amp; automation</a></li>
-<li><a href="beginner/">Beginner route</a></li>
+<li><a href="encero_stack/">Encero stack</a></li>
+<li><a href="domain_native_demo/">1.0 domain-native demo target</a></li>
+<li><a href="public_contracts/">1.0 public contracts</a></li>
+<li><a href="beginner/">Beginner</a></li>
 </ul>
 <p>Note: these “Start here” pages are routing + framing only; canonical content lives in Language/Tooling/Contributing.</p>
 
@@ -6424,14 +6330,6 @@
       <script src="../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
         <script src="../_snippets/javascripts/mathjax.js"></script>
-      
-        <script src="../_snippets/javascripts/incan_home_motion.js"></script>
-      
-        <script src="../shared/incapunk/incus-library/manifest.js"></script>
-      
-        <script src="../_snippets/javascripts/incan_docs_components.js"></script>
-      
-        <script src="../_snippets/javascripts/incan_mermaid.js"></script>
       
         <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
       

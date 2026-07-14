@@ -50,7 +50,7 @@
     
       <link rel="stylesheet" href="../../../../stylesheets/pygments.css">
     
-      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260714-incus-clearance-1">
+      <link rel="stylesheet" href="/shared/incapunk/incapunk.css">
     
     <script>__md_scope=new URL("../../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -63,6 +63,8 @@
   
   
     
+    
+      
     
     
     
@@ -123,7 +125,19 @@
     </div>
     
       
+        <form class="md-header__option" data-md-component="palette">
+  
     
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="amber"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
     
     
     
@@ -878,10 +892,6 @@
       
         
       
-        
-      
-        
-      
     
     
       
@@ -1099,6 +1109,15 @@
   <a href="#try-it" class="md-nav__link">
     <span class="md-ellipsis">
       Try it
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#next" class="md-nav__link">
+    <span class="md-ellipsis">
+      Next
     </span>
   </a>
   
@@ -1380,74 +1399,11 @@
   
   
     <li class="md-nav__item">
-      <a href="../../typed_data_processor/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Build a typed data processor
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../build_your_first_api/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
     Build your first API
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../async_worker_pipeline/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Build an asynchronous worker pipeline
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../add_a_rust_crate/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Add a Rust crate
   </span>
   
 
@@ -1478,6 +1434,27 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../web_framework/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Web framework
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1494,8 +1471,6 @@
   
     
     
-      
-        
       
         
       
@@ -1579,27 +1554,6 @@
             How-to
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../web_framework/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Web framework guide
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
             
               
                 
@@ -4348,8 +4302,6 @@
       
         
       
-        
-      
     
     
       
@@ -4414,27 +4366,6 @@
   
   <span class="md-ellipsis">
     Your first project
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../../tooling/tutorials/build_and_consume_library/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Build and consume a library
   </span>
   
 
@@ -6154,8 +6085,6 @@
       
         
       
-        
-      
     
     
       
@@ -6321,27 +6250,6 @@
 
               
             
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../../project/incus/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Meet Incus
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
           </ul>
         </nav>
       
@@ -6411,6 +6319,15 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#next" class="md-nav__link">
+    <span class="md-ellipsis">
+      Next
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -6430,8 +6347,6 @@
 
 
 <h1 id="2-values-variables-and-types">2. Values, variables, and types<a class="headerlink" href="#2-values-variables-and-types" title="Permanent link">&para;</a></h1>
-<div class="inc-book-progress" aria-label="Chapter 2 of 13"><div class="inc-book-progress__meta"><strong>Chapter 2 of 13</strong><span>Values, variables, and types</span></div><div class="inc-book-progress__bar" aria-hidden="true"><span style="--inc-progress: 15.4%"></span></div></div>
-
 <p>This chapter introduces basic values and types.</p>
 <p>If you get stuck on terminology, see: <a href="../../../reference/glossary/">Glossary</a>.</p>
 <h2 id="basic-values">Basic values<a class="headerlink" href="#basic-values" title="Permanent link">&para;</a></h2>
@@ -6485,7 +6400,9 @@
     <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;add=</span><span class="si">{</span><span class="n">add</span><span class="p">(</span><span class="mi">10</span><span class="p">,</span><span class="w"> </span><span class="mi">32</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </code></pre></div>
 </details>
-<nav class="inc-prev-next" aria-label="Book chapter navigation"><a href="../01_hello_world/"><small>Previous chapter</small><strong>← 1. Hello world</strong></a><a href="../03_functions/"><small>Next chapter</small><strong>3. Functions →</strong></a></nav>
+<h2 id="next">Next<a class="headerlink" href="#next" title="Permanent link">&para;</a></h2>
+<p>Back: <a href="../01_hello_world/">1. Hello world</a></p>
+<p>Next: <a href="../03_functions/">3. Functions</a></p>
 
 
 
@@ -6540,14 +6457,6 @@
       <script src="../../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
         <script src="../../../../_snippets/javascripts/mathjax.js"></script>
-      
-        <script src="../../../../_snippets/javascripts/incan_home_motion.js"></script>
-      
-        <script src="../../../../shared/incapunk/incus-library/manifest.js"></script>
-      
-        <script src="../../../../_snippets/javascripts/incan_docs_components.js"></script>
-      
-        <script src="../../../../_snippets/javascripts/incan_mermaid.js"></script>
       
         <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
       

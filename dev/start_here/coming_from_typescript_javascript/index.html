@@ -50,7 +50,7 @@
     
       <link rel="stylesheet" href="../../stylesheets/pygments.css">
     
-      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260714-incus-clearance-1">
+      <link rel="stylesheet" href="/shared/incapunk/incapunk.css">
     
     <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -63,6 +63,8 @@
   
   
     
+    
+      
     
     
     
@@ -123,7 +125,19 @@
     </div>
     
       
+        <form class="md-header__option" data-md-component="palette">
+  
     
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="amber"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
     
     
     
@@ -952,10 +966,6 @@
       
         
       
-        
-      
-        
-      
     
     
       
@@ -1376,74 +1386,11 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/typed_data_processor/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Build a typed data processor
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../language/tutorials/build_your_first_api/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
     Build your first API
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../language/tutorials/async_worker_pipeline/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Build an asynchronous worker pipeline
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../language/tutorials/add_a_rust_crate/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Add a Rust crate
   </span>
   
 
@@ -1474,6 +1421,27 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/web_framework/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Web framework
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1490,8 +1458,6 @@
   
     
     
-      
-        
       
         
       
@@ -1575,27 +1541,6 @@
             How-to
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../language/tutorials/web_framework/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Web framework guide
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
             
               
                 
@@ -4344,8 +4289,6 @@
       
         
       
-        
-      
     
     
       
@@ -4410,27 +4353,6 @@
   
   <span class="md-ellipsis">
     Your first project
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../tooling/tutorials/build_and_consume_library/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Build and consume a library
   </span>
   
 
@@ -6150,8 +6072,6 @@
       
         
       
-        
-      
     
     
       
@@ -6317,27 +6237,6 @@
 
               
             
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../project/incus/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Meet Incus
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
           </ul>
         </nav>
       
@@ -6427,11 +6326,6 @@
 
 <h1 id="coming-from-typescript-or-javascript">Coming from TypeScript or JavaScript<a class="headerlink" href="#coming-from-typescript-or-javascript" title="Permanent link">&para;</a></h1>
 <p>This page is a routing guide for TypeScript and JavaScript developers evaluating Incan for application code, command-line tools, services, and typed domain packages.</p>
-<aside class="inc-bridge-note inc-incus-slot" data-incus-category="javascript" aria-label="TypeScript and JavaScript to Incan mental model">
-  <span class="inc-eyebrow">TypeScript / JavaScript → Incan</span>
-  <strong>Keep explicit application structure. Move runtime-only assumptions into types, results, and compiler-owned project facts.</strong>
-</aside>
-
 <h2 id="install-first">Install first<a class="headerlink" href="#install-first" title="Permanent link">&para;</a></h2>
 <p>If you already use Node-based tooling, install the npm adapter. It installs command shims plus a host-specific optional platform package for the same prebuilt Incan toolchain payloads used by the release installers, without running an npm lifecycle script:</p>
 <div class="language-bash highlight"><pre><span></span><code>npm<span class="w"> </span>install<span class="w"> </span>-g<span class="w"> </span>@incan/toolchain
@@ -6530,14 +6424,6 @@ incan<span class="w"> </span>build<span class="w"> </span>--release
       <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
         <script src="../../_snippets/javascripts/mathjax.js"></script>
-      
-        <script src="../../_snippets/javascripts/incan_home_motion.js"></script>
-      
-        <script src="../../shared/incapunk/incus-library/manifest.js"></script>
-      
-        <script src="../../_snippets/javascripts/incan_docs_components.js"></script>
-      
-        <script src="../../_snippets/javascripts/incan_mermaid.js"></script>
       
         <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
       

@@ -50,7 +50,7 @@
     
       <link rel="stylesheet" href="../../../stylesheets/pygments.css">
     
-      <link rel="stylesheet" href="/shared/incapunk/incapunk.css?v=20260714-incus-clearance-1">
+      <link rel="stylesheet" href="/shared/incapunk/incapunk.css">
     
     <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -63,6 +63,8 @@
   
   
     
+    
+      
     
     
     
@@ -123,7 +125,19 @@
     </div>
     
       
+        <form class="md-header__option" data-md-component="palette">
+  
     
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="amber"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
     
     
     
@@ -876,10 +890,6 @@
       
         
       
-        
-      
-        
-      
     
     
       
@@ -1300,74 +1310,11 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tutorials/typed_data_processor/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Build a typed data processor
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../tutorials/build_your_first_api/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
     Build your first API
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../tutorials/async_worker_pipeline/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Build an asynchronous worker pipeline
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../tutorials/add_a_rust_crate/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Add a Rust crate
   </span>
   
 
@@ -1398,6 +1345,27 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/web_framework/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Web framework
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1416,8 +1384,6 @@
   
     
     
-      
-        
       
         
       
@@ -1501,27 +1467,6 @@
             How-to
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../tutorials/web_framework/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Web framework guide
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
             
               
                 
@@ -1729,6 +1674,63 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#channels" class="md-nav__link">
+    <span class="md-ellipsis">
+      Channels
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Channels">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#mpsc-channel-multi-producer-single-consumer" class="md-nav__link">
+    <span class="md-ellipsis">
+      MPSC Channel (Multi-Producer, Single-Consumer)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="MPSC Channel (Multi-Producer, Single-Consumer)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#when-to-use-mpsc" class="md-nav__link">
+    <span class="md-ellipsis">
+      When to use MPSC
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unbounded-channel" class="md-nav__link">
+    <span class="md-ellipsis">
+      Unbounded Channel
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#one-shot-channel" class="md-nav__link">
+    <span class="md-ellipsis">
+      One-Shot Channel
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#synchronization-primitives" class="md-nav__link">
     <span class="md-ellipsis">
       Synchronization Primitives
@@ -1874,9 +1876,18 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#3-handle-cancellation-explicitly" class="md-nav__link">
+  <a href="#3-use-bounded-channels" class="md-nav__link">
     <span class="md-ellipsis">
-      3. Handle Cancellation Explicitly
+      3. Use Bounded Channels
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-handle-cancellation-explicitly" class="md-nav__link">
+    <span class="md-ellipsis">
+      4. Handle Cancellation Explicitly
     </span>
   </a>
   
@@ -1901,6 +1912,15 @@
   <a href="#timeout-errors" class="md-nav__link">
     <span class="md-ellipsis">
       Timeout Errors
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#channel-closed" class="md-nav__link">
+    <span class="md-ellipsis">
+      Channel Closed
     </span>
   </a>
   
@@ -4655,8 +4675,6 @@
       
         
       
-        
-      
     
     
       
@@ -4721,27 +4739,6 @@
   
   <span class="md-ellipsis">
     Your first project
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../tooling/tutorials/build_and_consume_library/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Build and consume a library
   </span>
   
 
@@ -6461,8 +6458,6 @@
       
         
       
-        
-      
     
     
       
@@ -6619,27 +6614,6 @@
   
   <span class="md-ellipsis">
     Stability policy
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../project/incus/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Meet Incus
   </span>
   
 
@@ -6836,6 +6810,63 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#channels" class="md-nav__link">
+    <span class="md-ellipsis">
+      Channels
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Channels">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#mpsc-channel-multi-producer-single-consumer" class="md-nav__link">
+    <span class="md-ellipsis">
+      MPSC Channel (Multi-Producer, Single-Consumer)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="MPSC Channel (Multi-Producer, Single-Consumer)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#when-to-use-mpsc" class="md-nav__link">
+    <span class="md-ellipsis">
+      When to use MPSC
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unbounded-channel" class="md-nav__link">
+    <span class="md-ellipsis">
+      Unbounded Channel
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#one-shot-channel" class="md-nav__link">
+    <span class="md-ellipsis">
+      One-Shot Channel
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#synchronization-primitives" class="md-nav__link">
     <span class="md-ellipsis">
       Synchronization Primitives
@@ -6981,9 +7012,18 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#3-handle-cancellation-explicitly" class="md-nav__link">
+  <a href="#3-use-bounded-channels" class="md-nav__link">
     <span class="md-ellipsis">
-      3. Handle Cancellation Explicitly
+      3. Use Bounded Channels
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-handle-cancellation-explicitly" class="md-nav__link">
+    <span class="md-ellipsis">
+      4. Handle Cancellation Explicitly
     </span>
   </a>
   
@@ -7008,6 +7048,15 @@
   <a href="#timeout-errors" class="md-nav__link">
     <span class="md-ellipsis">
       Timeout Errors
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#channel-closed" class="md-nav__link">
+    <span class="md-ellipsis">
+      Channel Closed
     </span>
   </a>
   
@@ -7056,17 +7105,6 @@
 <p>Incan keeps the familiar <code>async def</code> and <code>await</code> authoring shape, but it is not an <code>asyncio</code> compatibility layer. Task spawning, timeouts, cancellation, and runtime behavior follow Incan's <code>std.async</code> contracts and the current Tokio-backed runtime path.</p>
 <p>The key difference is under the hood: the current beta builds through Rust and uses Tokio, giving you familiar Python-shaped syntax with a native async runtime.</p>
 </div>
-<pre class="inc-diagram"><code>sequenceDiagram
-  participant Caller
-  participant Future
-  participant Runtime as Tokio-backed runtime
-  Caller-&gt;&gt;Future: call async function
-  Caller-&gt;&gt;Runtime: await or spawn
-  Runtime-&gt;&gt;Future: poll until ready
-  Future--&gt;&gt;Runtime: value or join error
-  Runtime--&gt;&gt;Caller: resume with typed result</code></pre>
-<p class="inc-diagram-caption">Calling creates async work; <code>await</code> or task APIs let the runtime drive it to a typed result.</p>
-
 <h2 id="quick-start">Quick Start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h2>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.time</span><span class="w"> </span><span class="kn">import</span> <span class="n">sleep</span>
 
@@ -7246,6 +7284,232 @@
         <span class="k">if</span> <span class="n">i</span> <span class="o">%</span> <span class="mi">100</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
             <span class="k">await</span> <span class="nb">yield_now</span><span class="p">()</span>  <span class="c1"># Let other tasks run</span>
 </code></pre></div>
+<h2 id="channels">Channels<a class="headerlink" href="#channels" title="Permanent link">&para;</a></h2>
+<p>Channels enable safe message passing between concurrent tasks. They're the primary way to communicate between async tasks without shared mutable state.</p>
+<h3 id="mpsc-channel-multi-producer-single-consumer">MPSC Channel (Multi-Producer, Single-Consumer)<a class="headerlink" href="#mpsc-channel-multi-producer-single-consumer" title="Permanent link">&para;</a></h3>
+<p><strong>MPSC</strong> stands for <strong>M</strong>ulti-<strong>P</strong>roducer, <strong>S</strong>ingle-<strong>C</strong>onsumer:</p>
+<ul>
+<li><strong>Multiple senders</strong> can send messages (clone the sender to share it)</li>
+<li><strong>One receiver</strong> processes all messages</li>
+<li>Messages arrive in order (FIFO)</li>
+</ul>
+<h4 id="when-to-use-mpsc">When to use MPSC<a class="headerlink" href="#when-to-use-mpsc" title="Permanent link">&para;</a></h4>
+<table>
+<thead>
+<tr>
+<th>Use Case</th>
+<th>Why MPSC</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Worker pool → result collector</td>
+<td>Many workers, one aggregator</td>
+</tr>
+<tr>
+<td>Event bus</td>
+<td>Multiple event sources, one handler</td>
+</tr>
+<tr>
+<td>Logging</td>
+<td>Multiple tasks → single log writer</td>
+</tr>
+<tr>
+<td>Request queue</td>
+<td>Multiple clients → one server</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Bounded channel</strong> (recommended):</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.channel</span><span class="w"> </span><span class="kn">import</span> <span class="nb">channel</span>
+
+<span class="c1"># Create channel with buffer size 32</span>
+<span class="n">tx</span><span class="p">,</span> <span class="n">rx</span> <span class="o">=</span> <span class="nb">channel</span><span class="p">[</span><span class="nb">str</span><span class="p">](</span><span class="mi">32</span><span class="p">)</span>
+
+<span class="c1"># Sender - blocks if buffer is full (backpressure)</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">producer</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">await</span> <span class="n">tx</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="s2">&quot;hello&quot;</span><span class="p">)</span>  <span class="c1"># Waits if buffer full</span>
+    <span class="k">await</span> <span class="n">tx</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="s2">&quot;world&quot;</span><span class="p">)</span>
+
+<span class="c1"># Receiver - blocks until message available</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">consumer</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">while</span> <span class="k">let</span> <span class="nb">Some</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span> <span class="o">=</span> <span class="k">await</span> <span class="n">rx</span><span class="o">.</span><span class="n">recv</span><span class="p">():</span>
+        <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Got: </span><span class="si">{</span><span class="n">msg</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Cancellation contracts:</p>
+<ul>
+<li><code>tx.send(value)</code> is cancel-safe-but-lossy. If it is cancelled while waiting for bounded-channel capacity, the value is not sent and is dropped.</li>
+<li><code>tx.reserve()</code> waits for capacity before a value is committed. Use it for critical sends where cancellation must not drop the message value.</li>
+<li><code>permit.send(value)</code> is synchronous and either delivers the value or returns it in <code>SendError[T]</code>.</li>
+<li><code>rx.recv()</code> is cancel-safe. If it is cancelled while waiting, no message is removed from the channel.</li>
+<li><code>try_send()</code> and <code>try_recv()</code> return immediately, so there is no pending wait to cancel.</li>
+</ul>
+<p>Reserve capacity before building or moving a critical message:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">match</span> <span class="k">await</span> <span class="n">tx</span><span class="o">.</span><span class="nb">reserve</span><span class="p">():</span>
+    <span class="nb">Ok</span><span class="p">(</span><span class="n">permit</span><span class="p">)</span> <span class="o">=&gt;</span>
+        <span class="k">match</span> <span class="n">permit</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="s2">&quot;audit-event&quot;</span><span class="p">):</span>
+            <span class="nb">Ok</span><span class="p">(</span><span class="n">_</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;sent&quot;</span><span class="p">)</span>
+            <span class="nb">Err</span><span class="p">(</span><span class="n">err</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;send failed: </span><span class="si">{</span><span class="n">err</span><span class="o">.</span><span class="n">value</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">Err</span><span class="p">(</span><span class="n">err</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="n">err</span><span class="o">.</span><span class="n">message</span><span class="p">())</span>
+</code></pre></div>
+<p><strong>Multiple producers</strong> (clone the sender):</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.channel</span><span class="w"> </span><span class="kn">import</span> <span class="nb">channel</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.async.task</span><span class="w"> </span><span class="kn">import</span> <span class="nb">spawn</span>
+
+<span class="n">tx</span><span class="p">,</span> <span class="n">rx</span> <span class="o">=</span> <span class="nb">channel</span><span class="p">[</span><span class="nb">int</span><span class="p">](</span><span class="mi">100</span><span class="p">)</span>
+
+<span class="c1"># Clone sender for each producer</span>
+<span class="n">tx1</span> <span class="o">=</span> <span class="n">tx</span><span class="o">.</span><span class="nb">clone</span><span class="p">()</span>
+<span class="n">tx2</span> <span class="o">=</span> <span class="n">tx</span><span class="o">.</span><span class="nb">clone</span><span class="p">()</span>
+
+<span class="nb">spawn</span><span class="p">(</span><span class="k">async</span> <span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">await</span> <span class="n">tx1</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="k">await</span> <span class="n">tx1</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+<span class="p">)</span>
+
+<span class="nb">spawn</span><span class="p">(</span><span class="k">async</span> <span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">await</span> <span class="n">tx2</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="mi">100</span><span class="p">)</span>
+    <span class="k">await</span> <span class="n">tx2</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="mi">200</span><span class="p">)</span>
+<span class="p">)</span>
+
+<span class="c1"># Single consumer receives from all producers</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">consume</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">while</span> <span class="k">let</span> <span class="nb">Some</span><span class="p">(</span><span class="n">n</span><span class="p">)</span> <span class="o">=</span> <span class="k">await</span> <span class="n">rx</span><span class="o">.</span><span class="n">recv</span><span class="p">():</span>
+        <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Received: </span><span class="si">{</span><span class="n">n</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<div class="admonition note">
+<p class="admonition-title">Coming from Python?</p>
+<p>Incan channels are inspired by Rust's <code>tokio::sync::mpsc</code>, not Python's <code>asyncio.Queue</code>. Key differences:</p>
+<ul>
+<li><strong>Sender/Receiver split</strong>: You get a <code>(tx, rx)</code> pair — clone <code>tx</code> for multiple producers</li>
+<li><strong>Ownership semantics</strong>: When all senders are dropped, the channel closes and <code>recv()</code> returns <code>None</code></li>
+<li><strong>No shared queue</strong>: Unlike <code>asyncio.Queue</code>, you can't just pass the queue around — you pass senders or the receiver</li>
+</ul>
+<p>The Python equivalent would use <code>asyncio.Queue</code> with <code>put()</code>/<code>get()</code>, but lacks the automatic "channel closed" signal when producers finish.</p>
+</div>
+<p><strong>Bounded vs Unbounded:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>Backpressure</th>
+<th>Memory Safety</th>
+<th>Use When</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>channel[T](n)</code></td>
+<td>Yes - send blocks when full</td>
+<td>Bounded memory</td>
+<td>Production code</td>
+</tr>
+<tr>
+<td><code>unbounded_channel[T]()</code></td>
+<td>No - send never blocks</td>
+<td>Can grow forever</td>
+<td>Prototyping, low-volume</td>
+</tr>
+</tbody>
+</table>
+<h3 id="unbounded-channel">Unbounded Channel<a class="headerlink" href="#unbounded-channel" title="Permanent link">&para;</a></h3>
+<p><code>send</code> never blocks, but use with caution — if producers outpace consumers, memory grows without limit:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.channel</span><span class="w"> </span><span class="kn">import</span> <span class="nb">unbounded_channel</span>
+
+<span class="c1"># No capacity limit - send always succeeds immediately</span>
+<span class="n">tx</span><span class="p">,</span> <span class="n">rx</span> <span class="o">=</span> <span class="nb">unbounded_channel</span><span class="p">[</span><span class="nb">int</span><span class="p">]()</span>
+
+<span class="c1"># These never block</span>
+<span class="n">tx</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+<span class="n">tx</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+<span class="n">tx</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+
+<span class="c1"># Consumer still blocks waiting for messages</span>
+<span class="k">match</span> <span class="k">await</span> <span class="n">rx</span><span class="o">.</span><span class="n">recv</span><span class="p">():</span>
+    <span class="k">case</span> <span class="nb">Some</span><span class="p">(</span><span class="n">n</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Got: </span><span class="si">{</span><span class="n">n</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">case</span> <span class="kc">None</span><span class="p">:</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;Channel closed&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>When unbounded is OK:</strong></p>
+<ul>
+<li>Low message volume</li>
+<li>Consumers always faster than producers</li>
+<li>Prototyping (switch to bounded before production)</li>
+</ul>
+<h3 id="one-shot-channel">One-Shot Channel<a class="headerlink" href="#one-shot-channel" title="Permanent link">&para;</a></h3>
+<p>A <strong>oneshot channel</strong> sends exactly one value. After sending, the sender is consumed and can't be used again. This is perfect for "request-response" patterns where you spawn a task and wait for its result.</p>
+<p><strong>When to use oneshot vs regular channel:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Use Case</th>
+<th>Channel Type</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Stream of messages</td>
+<td><code>channel[T]</code></td>
+</tr>
+<tr>
+<td>Single result from spawned task</td>
+<td><code>oneshot[T]</code></td>
+</tr>
+<tr>
+<td>Producer-consumer queue</td>
+<td><code>channel[T]</code></td>
+</tr>
+<tr>
+<td>Async function return value</td>
+<td><code>oneshot[T]</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Basic usage:</strong></p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.channel</span><span class="w"> </span><span class="kn">import</span> <span class="nb">oneshot</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.async.task</span><span class="w"> </span><span class="kn">import</span> <span class="nb">spawn</span>
+
+<span class="n">tx</span><span class="p">,</span> <span class="n">rx</span> <span class="o">=</span> <span class="nb">oneshot</span><span class="p">[</span><span class="nb">int</span><span class="p">]()</span>
+
+<span class="nb">spawn</span><span class="p">(</span><span class="k">async</span> <span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="kt">result</span> <span class="o">=</span> <span class="n">expensive_computation</span><span class="p">()</span>
+    <span class="n">tx</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="kt">result</span><span class="p">)</span>  <span class="c1"># Consumes sender - can only send once</span>
+<span class="p">)</span>
+
+<span class="c1"># Wait for the result</span>
+<span class="k">match</span> <span class="k">await</span> <span class="n">rx</span><span class="o">.</span><span class="n">recv</span><span class="p">():</span>
+    <span class="k">case</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">value</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Got result: </span><span class="si">{</span><span class="n">value</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">case</span> <span class="nb">Err</span><span class="p">(</span><span class="n">e</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;Sender dropped without sending&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>The one-shot receiver is cancel-safe: cancelling <code>rx.recv()</code> does not consume the value. <code>tx.send(value)</code> is synchronous, so it either delivers the value or returns it immediately if the receiver is gone.</p>
+<p><strong>Common pattern - returning results from spawned tasks:</strong></p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.channel</span><span class="w"> </span><span class="kn">import</span> <span class="nb">oneshot</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.async.task</span><span class="w"> </span><span class="kn">import</span> <span class="nb">spawn</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">compute_in_background</span><span class="p">(</span><span class="nb">input</span><span class="p">:</span> <span class="nc">Data</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Output</span><span class="p">,</span> <span class="nc">ComputeError</span><span class="p">]:</span>
+    <span class="c1"># Create oneshot for the result</span>
+    <span class="n">tx</span><span class="p">,</span> <span class="n">rx</span> <span class="o">=</span> <span class="nb">oneshot</span><span class="p">[</span><span class="kt">Result</span><span class="p">[</span><span class="nc">Output</span><span class="p">,</span> <span class="nc">ComputeError</span><span class="p">]]()</span>
+
+    <span class="c1"># Spawn the computation</span>
+    <span class="nb">spawn</span><span class="p">(</span><span class="k">async</span> <span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="kt">result</span> <span class="o">=</span> <span class="n">heavy_computation</span><span class="p">(</span><span class="nb">input</span><span class="p">)</span>
+        <span class="n">tx</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="kt">result</span><span class="p">)</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Do other work while computation runs...</span>
+    <span class="n">do_other_stuff</span><span class="p">()</span>
+
+    <span class="c1"># Wait for result</span>
+    <span class="k">match</span> <span class="k">await</span> <span class="n">rx</span><span class="o">.</span><span class="n">recv</span><span class="p">():</span>
+        <span class="k">case</span> <span class="nb">Ok</span><span class="p">(</span><span class="kt">result</span><span class="p">):</span> <span class="k">return</span> <span class="kt">result</span>
+        <span class="k">case</span><span class="w"> </span><span class="nb">Err</span><span class="p">(</span><span class="k">_</span><span class="p">):</span> <span class="k">return</span> <span class="nb">Err</span><span class="p">(</span><span class="nc">ComputeError</span><span class="o">.</span><span class="nc">TaskFailed</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>Key differences from regular channels:</strong></p>
+<ul>
+<li><code>send()</code> consumes the sender (can only call once)</li>
+<li>No buffering - it's either empty or has exactly one value</li>
+<li>Lighter weight than MPSC channels</li>
+<li><code>recv()</code> returns <code>Err</code> if sender was dropped without sending</li>
+</ul>
 <h2 id="synchronization-primitives">Synchronization Primitives<a class="headerlink" href="#synchronization-primitives" title="Permanent link">&para;</a></h2>
 <p>Incan provides low-level synchronization primitives inspired by Rust's tokio runtime. These give you fine-grained control over shared state and task coordination.</p>
 <div class="admonition note">
@@ -7460,7 +7724,17 @@
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">good</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
     <span class="k">return</span> <span class="k">await</span> <span class="nb">spawn_blocking</span><span class="p">(</span><span class="n">heavy_computation</span><span class="p">)</span>
 </code></pre></div>
-<h3 id="3-handle-cancellation-explicitly">3. Handle Cancellation Explicitly<a class="headerlink" href="#3-handle-cancellation-explicitly" title="Permanent link">&para;</a></h3>
+<h3 id="3-use-bounded-channels">3. Use Bounded Channels<a class="headerlink" href="#3-use-bounded-channels" title="Permanent link">&para;</a></h3>
+<p>Prefer bounded channels to prevent memory issues:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.channel</span><span class="w"> </span><span class="kn">import</span> <span class="nb">channel</span><span class="p">,</span> <span class="nb">unbounded_channel</span>
+
+<span class="c1"># Prefer this:</span>
+<span class="n">tx</span><span class="p">,</span> <span class="n">rx</span> <span class="o">=</span> <span class="nb">channel</span><span class="p">[</span><span class="nc">Data</span><span class="p">](</span><span class="mi">100</span><span class="p">)</span>
+
+<span class="c1"># Over this (unbounded can grow forever):</span>
+<span class="n">tx</span><span class="p">,</span> <span class="n">rx</span> <span class="o">=</span> <span class="nb">unbounded_channel</span><span class="p">[</span><span class="nc">Data</span><span class="p">]()</span>
+</code></pre></div>
+<h3 id="4-handle-cancellation-explicitly">4. Handle Cancellation Explicitly<a class="headerlink" href="#4-handle-cancellation-explicitly" title="Permanent link">&para;</a></h3>
 <p>Dropping a task handle detaches the task and loses its result. It does not cancel the task:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.task</span><span class="w"> </span><span class="kn">import</span> <span class="nb">spawn</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">std.async.time</span><span class="w"> </span><span class="kn">import</span> <span class="n">sleep</span>
@@ -7483,12 +7757,28 @@
     <span class="k">case</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">value</span><span class="p">):</span> <span class="n">process</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
     <span class="k">case</span> <span class="nb">Err</span><span class="p">(</span><span class="n">e</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Timed out: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </code></pre></div>
+<h3 id="channel-closed">Channel Closed<a class="headerlink" href="#channel-closed" title="Permanent link">&para;</a></h3>
+<p>When sending fails because the receiver was dropped, <code>SendError[T]</code> contains the value that couldn't be sent in its <code>.value</code> field:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.channel</span><span class="w"> </span><span class="kn">import</span> <span class="kt">Sender</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">sender</span><span class="p">(</span><span class="n">tx</span><span class="p">:</span> <span class="kt">Sender</span><span class="p">[</span><span class="nc">Message</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">msg</span> <span class="o">=</span> <span class="nc">Message</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">content</span><span class="o">=</span><span class="s2">&quot;important data&quot;</span><span class="p">)</span>
+
+    <span class="k">match</span> <span class="k">await</span> <span class="n">tx</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="n">msg</span><span class="p">):</span>
+        <span class="k">case</span><span class="w"> </span><span class="nb">Ok</span><span class="p">(</span><span class="k">_</span><span class="p">):</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;Sent successfully&quot;</span><span class="p">)</span>
+        <span class="k">case</span> <span class="nb">Err</span><span class="p">(</span><span class="n">e</span><span class="p">):</span>
+            <span class="c1"># Recover the unsent value - it&#39;s not lost!</span>
+            <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Channel closed, saving for retry: </span><span class="si">{</span><span class="n">e</span><span class="o">.</span><span class="n">value</span><span class="si">:</span><span class="s2">?</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="n">save_for_later</span><span class="p">(</span><span class="n">e</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
+</code></pre></div>
+<p>This pattern is important for reliability. If a channel closes unexpectedly, you can recover and handle the data that failed to send.</p>
 <h2 id="see-also">See Also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../../explanation/error_handling/">Error handling</a> - Concepts: <code>Result</code>, <code>Option</code>, <code>?</code>, <code>match</code></li>
 <li><a href="../error_handling_recipes/">Error handling recipes</a> - Patterns and best practices</li>
 <li><a href="../../reference/stdlib_traits/error/">Error trait</a> - Stdlib trait reference</li>
 <li><a href="https://github.com/encero-systems/incan/blob/main/examples/advanced/async_tasks.incn">Examples: Async Tasks</a></li>
+<li><a href="https://github.com/encero-systems/incan/blob/main/examples/advanced/async_channels.incn">Examples: Channels</a></li>
 <li><a href="https://github.com/encero-systems/incan/blob/main/examples/advanced/async_sync.incn">Examples: Synchronization</a></li>
 </ul>
 
@@ -7545,14 +7835,6 @@
       <script src="../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
         <script src="../../../_snippets/javascripts/mathjax.js"></script>
-      
-        <script src="../../../_snippets/javascripts/incan_home_motion.js"></script>
-      
-        <script src="../../../shared/incapunk/incus-library/manifest.js"></script>
-      
-        <script src="../../../_snippets/javascripts/incan_docs_components.js"></script>
-      
-        <script src="../../../_snippets/javascripts/incan_mermaid.js"></script>
       
         <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
       
