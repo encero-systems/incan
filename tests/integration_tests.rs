@@ -9698,11 +9698,11 @@ from registry import registered
 pub model ColumnExpr:
     pub name: str
 
-@registered[(str) -> ColumnExpr]("inql.functions.col")
+@registered[(str) -> ColumnExpr]("incql.functions.col")
 pub def col(name: str) -> ColumnExpr:
     return ColumnExpr(name=name)
 
-@registered("inql.functions.literal")
+@registered("incql.functions.literal")
 pub def literal() -> ColumnExpr:
     return ColumnExpr(name="literal")
 "#,
@@ -13180,7 +13180,7 @@ pub def display[T](data: DataSet[T]) -> None:
             manifest_name,
             "pub fn filter(value: i64) -> i64 {\n    value\n}\n",
         )?;
-        let desugarer_path = artifact_root.join("desugarers").join("inql_desugarer.wasm");
+        let desugarer_path = artifact_root.join("desugarers").join("incql_desugarer.wasm");
         std::fs::write(&desugarer_path, desugarer_bytes)?;
 
         let mut manifest = LibraryManifest::new(manifest_name, "0.1.0");
@@ -13231,7 +13231,7 @@ pub def display[T](data: DataSet[T]) -> None:
             desugarer_artifact: Some(incan::library_manifest::VocabDesugarerArtifact {
                 artifact_kind: incan_vocab::DesugarerArtifactKind::WasmModule,
                 abi_version: incan_vocab::WASM_DESUGAR_ABI_VERSION,
-                relative_path: "desugarers/inql_desugarer.wasm".to_string(),
+                relative_path: "desugarers/incql_desugarer.wasm".to_string(),
                 target: "wasm32-wasip1".to_string(),
                 profile: "release".to_string(),
                 entrypoint: "desugar_block".to_string(),

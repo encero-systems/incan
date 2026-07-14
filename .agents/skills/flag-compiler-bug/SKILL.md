@@ -94,7 +94,7 @@ If a likely duplicate exists:
 
 Use `create-github-issue` with the bug template in the correct repository.
 
-For compiler/tooling defects in this workspace, that is usually the `incan/` repository even if the bug surfaced while working in `InQL/`.
+For compiler/tooling defects in this workspace, that is usually the `incan/` repository even if the bug surfaced while working in `IncQL/`.
 
 Include:
 

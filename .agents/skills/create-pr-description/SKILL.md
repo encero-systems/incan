@@ -7,7 +7,7 @@ description: Generate a PR description following the repository's pull request t
 
 ## Workflow
 
-1. **Identify the repository and branch** - Determine which repository and branch the PR is for. If not specified, ask the user. The workspace may contain multiple repositories (e.g., `incan/`, `InQL/`).
+1. **Identify the repository and branch** - Determine which repository and branch the PR is for. If not specified, ask the user. The workspace may contain multiple repositories (e.g., `incan/`, `IncQL/`).
 2. **Locate the PR template** - Find `.github/pull_request_template.md` in the repository root. If not found, use the standard template from the repository's `.github/` folder.
 3. **Gather context** - Run `git diff main...HEAD` (or the appropriate base branch) to see all changes. Also check `git log main..HEAD --oneline` for commit messages.
 4. **Check for associated issue** - Extract issue number from branch name (e.g., `bugfix/184-...` → issue #184) or check commit messages for `Fixes #NNN`, `Closes #NNN`, etc.
@@ -215,15 +215,15 @@ This PR implements RFC 035: First-class named function references in Incan. Name
 - [ ] I added/updated tests where it materially reduces regressions
 Closes #2```
 
-### Example 3: PR in InQL repo
+### Example 3: PR in IncQL repo
 
-**User prompt:** "Create a PR description for feature/new-dataset-api in the InQL repo"
+**User prompt:** "Create a PR description for feature/new-dataset-api in the IncQL repo"
 
 **Output:**
 ```markdown
 ## Summary
 
-This PR adds a new dataset API for InQL that provides a unified interface for both bounded and unbounded data streams. The API is built around the `DataSet[T]` trait hierarchy with `BoundedDataSet[T]` and `UnboundedDataSet[T]` intermediate traits.
+This PR adds a new dataset API for IncQL that provides a unified interface for both bounded and unbounded data streams. The API is built around the `DataSet[T]` trait hierarchy with `BoundedDataSet[T]` and `UnboundedDataSet[T]` intermediate traits.
 
 ## Type of change
 
@@ -246,7 +246,7 @@ This PR adds a new dataset API for InQL that provides a unified interface for bo
 ## Key details
 
 - **User-facing behavior**: Authors can now write pipelines that work with both batch and streaming data using the same API. The type system enforces streaming constraints at compile time.
-- **Internals**: Added `DataSet[T]`, `BoundedDataSet[T]`, `UnboundedDataSet[T]` traits and `DataFrame[T]`, `LazyFrame[T]`, `DataStream[T]` concrete types to the InQL library package.
+- **Internals**: Added `DataSet[T]`, `BoundedDataSet[T]`, `UnboundedDataSet[T]` traits and `DataFrame[T]`, `LazyFrame[T]`, `DataStream[T]` concrete types to the IncQL library package.
 - **Risks**: This is a new API; existing code is not affected. The trait hierarchy may need adjustment based on user feedback.
 
 ## Testing / verification
@@ -270,7 +270,7 @@ This PR adds a new dataset API for InQL that provides a unified interface for bo
 **Docs updated:**
 - `docs/language/reference/dataset_types.md` - Reference documentation
 - `docs/language/explanation/dataset_types.md` - Explanatory documentation
-- `docs/rfcs/001_inql_dataset.md` - RFC 001
+- `docs/rfcs/001_incql_dataset.md` - RFC 001
 
 ## Checklist
 

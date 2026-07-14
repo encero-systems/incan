@@ -73,7 +73,7 @@ These belong outside Incan 0.5 unless separately approved:
 - Product UI polish for Hees.ai.
 - Domain-specific policy copy.
 - Product analytics dashboards.
-- Broad InQL/Pallay SDK validation beyond the constrained Hees.ai proof path.
+- Broad IncQL/Pallay SDK validation beyond the constrained Hees.ai proof path.
 - New language features whose only evidence is a product-specific convenience.
 
 ## Next inventory actions

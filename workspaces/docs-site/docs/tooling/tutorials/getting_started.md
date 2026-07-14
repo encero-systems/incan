@@ -77,4 +77,4 @@ incan build --release
 - [CLI reference](../reference/cli_reference.md): commands, flags, and machine-readable outputs.
 - [Incan vs Python](../../comparisons/python.md): where Incan tries to win and where Python is still the better choice.
 - [Incan vs Rust](../../comparisons/rust.md): why Incan compiles through Rust but does not replace Rust.
-- [Encero stack](../../start_here/encero_stack.md): where Incan sits relative to InQL, Pallay, Omerus, Hees.ai, and Hees.io.
+- [Encero stack](../../start_here/encero_stack.md): where Incan sits relative to IncQL, Pallay, Omerus, Hees.ai, and Hees.io.

@@ -86,7 +86,7 @@ The following were kept as design constraints and future lanes, not 0.4 implemen
 - Source-local feature metadata beyond maintaining the generated feature inventory for public 0.4 capabilities.
 - Rust caller, Rust-hosted consumption, ABI, and backend-replacement architecture.
 - RFC 106 follow-up graph layers tracked by [#573](https://github.com/encero-systems/incan/issues/573), [#770](https://github.com/encero-systems/incan/issues/770), [#771](https://github.com/encero-systems/incan/issues/771), [#772](https://github.com/encero-systems/incan/issues/772), [#773](https://github.com/encero-systems/incan/issues/773), [#774](https://github.com/encero-systems/incan/issues/774), [#775](https://github.com/encero-systems/incan/issues/775), [#776](https://github.com/encero-systems/incan/issues/776), and [#777](https://github.com/encero-systems/incan/issues/777), including resolved targets, Rust graph records, MCP serving, task context packing, process-risk signals, external importers, and Architect findings.
-- Hees.ai, InQL, and Pallay product work beyond proof lanes that validate frozen 0.4 commands.
+- Hees.ai, IncQL, and Pallay product work beyond proof lanes that validate frozen 0.4 commands.
 - Broad language/runtime features that are not required by the installer, starter, diagnostics, inspection, build-report, or codegraph path.
 
 ### 0.5 Release: backend foundation and Hees.ai proof lane
@@ -156,7 +156,7 @@ The 0.7 milestone is the broader feature reopening lane after the backend replac
 Examples of deferred lanes:
 
 - incan.pub and package registry/product identity.
-- InQL and Pallay toolchain dogfood.
+- IncQL and Pallay toolchain dogfood.
 - source-local feature metadata.
 - Python interop research.
 - checked API docs generation.

@@ -27,7 +27,7 @@ Use more than one lane when a behavior can cross boundaries.
 | Generated-project runs          | Integration tests, stdlib runtime tests, smoke tests.                         | Rust compile/runtime behavior, generated Cargo/project layout, runtime helper availability. |
 | Package/import boundaries       | Package consumer fixtures, facade/reexport tests, checked API metadata tests. | Public identity, imports, aliases, defaults, and dependency-owned type behavior.            |
 | Vocab/test-batch lanes          | Vocab desugarer tests, formatter/test-runner activation paths.                | File-scoped activation and generated helper behavior outside ordinary direct builds.        |
-| Downstream proof lanes          | InQL or Hees.ai acceptance runs when the surface is exercised there.          | Cross-repo behavior and installed-SDK assumptions that synthetic fixtures may miss.         |
+| Downstream proof lanes          | IncQL or Hees.ai acceptance runs when the surface is exercised there.          | Cross-repo behavior and installed-SDK assumptions that synthetic fixtures may miss.         |
 
 ## Representative repo anchors
 

@@ -287,7 +287,7 @@ Issue #640 was accepted as an implementation amendment to this RFC because it na
 pub def registered[F](function_ref: str) -> ((F) -> F):
     return (func) => func
 
-@registered("inql.functions.col")
+@registered("incql.functions.col")
 pub def col(name: str) -> ColumnExpr:
     return ColumnExpr(name=name)
 ```
@@ -295,7 +295,7 @@ pub def col(name: str) -> ColumnExpr:
 The compiler infers `F` from the decorated function when applying the produced decorator. If inference needs an explicit call-site type, the decorator factory call accepts the same bracketed type-argument syntax as ordinary generic calls:
 
 ```incan
-@registered[(str) -> ColumnExpr]("inql.functions.col")
+@registered[(str) -> ColumnExpr]("incql.functions.col")
 pub def col(name: str) -> ColumnExpr:
     return ColumnExpr(name=name)
 ```

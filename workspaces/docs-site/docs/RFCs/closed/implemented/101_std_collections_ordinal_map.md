@@ -27,7 +27,7 @@ This RFC proposes `std.collections.OrdinalMap`, an immutable map from determinis
 
 `OrdinalMap` is not a convenience wrapper around `dict[str, int]`. The desired end-state is a stdlib collection whose output is deterministic enough for persisted metadata and dataset indexes, and whose performance profile is credible against specialized immutable-map libraries.
 
-The target use case is large, static, query-many lookup: schemas with hundreds of columns, catalogs with stable IDs, dictionary-encoded segment values, and planning-time name resolution for systems such as InQL. A planner should be able to resolve stable keys to ordinals once, cache or ship that representation, and then execute against compact integer positions instead of repeatedly comparing source keys.
+The target use case is large, static, query-many lookup: schemas with hundreds of columns, catalogs with stable IDs, dictionary-encoded segment values, and planning-time name resolution for systems such as IncQL. A planner should be able to resolve stable keys to ordinals once, cache or ship that representation, and then execute against compact integer positions instead of repeatedly comparing source keys.
 
 ## Core model
 

@@ -82,7 +82,7 @@ On every resume, stop-hook continuation, compaction, or long-running restart:
 
 Out-of-scope or historical slices may be cited as background evidence, but they must not be advanced, committed, pushed, or turned into PRs from the current loop. If the user wants to pick them up, start or resume a separate Ralph loop with its own loop identity.
 
-Consumer repositories such as InQL may be used to reproduce, verify, or acceptance-test an Incan compiler/runtime change only when listed as a verification lane. Adding product features, docs CI, repo automation, or cleanup in that consumer repo is a separate implementation loop unless the user explicitly asks for it.
+Consumer repositories such as IncQL may be used to reproduce, verify, or acceptance-test an Incan compiler/runtime change only when listed as a verification lane. Adding product features, docs CI, repo automation, or cleanup in that consumer repo is a separate implementation loop unless the user explicitly asks for it.
 
 ## When not to use this skill
 
@@ -208,7 +208,7 @@ For milestone, RFC-wide, or compiler-boundary work, also write an `## Acceptance
 
 - the local/direct behavior that must work,
 - import, reexport/facade, package-consumer, test-batch, dependency, vocab, or generated-Rust boundaries that can observe the behavior,
-- downstream acceptance lanes such as InQL when the surface is exercised there,
+- downstream acceptance lanes such as IncQL when the surface is exercised there,
 - performance or progress-output expectations when the change touches prewarm, test runner, metadata, or CI paths,
 - docs, rustdocs, generated-reference, release-note, or RFC lifecycle gates,
 - explicit non-applicable boundaries, with a short reason.

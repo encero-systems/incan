@@ -1318,7 +1318,7 @@ async def create() -> None:
     #[test]
     fn test_parse_decorator_factory_with_explicit_type_args() -> Result<(), Vec<CompileError>> {
         let source = r#"
-@registered[(str) -> ColumnExpr]("inql.functions.col")
+@registered[(str) -> ColumnExpr]("incql.functions.col")
 def col(name: str) -> ColumnExpr:
   pass
 "#;

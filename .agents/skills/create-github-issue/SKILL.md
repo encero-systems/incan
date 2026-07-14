@@ -7,7 +7,7 @@ description: Drafts a GitHub issue title and body using the target repository's 
 
 ## Workflow
 
-1. **Identify the repository root** — Use the path the user gives, or infer from context (e.g. `incan/`, `InQL/`). If unclear, ask which repo the issue is for.
+1. **Identify the repository root** — Use the path the user gives, or infer from context (e.g. `incan/`, `IncQL/`). If unclear, ask which repo the issue is for.
 
 2. **Discover templates** — List `.github/ISSUE_TEMPLATE/*.yml` in that repository. **Ignore `config.yml`** (it only configures the template picker, not form fields).
 
@@ -19,7 +19,7 @@ description: Drafts a GitHub issue title and body using the target repository's 
    - RFC / large language or tooling change → `rfc_proposal.yml`  
    If multiple fit or none fit, list the available `name` values and ask the user to pick.
 
-4. **Read the selected YAML** — Parse the form from disk. Do not assume field names or area dropdowns match another repository; **InQL, Incan, and other repos differ** (e.g. "Area" options).
+4. **Read the selected YAML** — Parse the form from disk. Do not assume field names or area dropdowns match another repository; **IncQL, Incan, and other repos differ** (e.g. "Area" options).
 
 5. **Gather facts from the user or codebase** — Reproduction steps, expected vs actual, versions, logs, links to files/RFCs, acceptance criteria. If the user is reporting work discovered while coding, use file paths, commands run, and error text from context.
 
@@ -101,9 +101,9 @@ Actual: Compiler panics with ...
 
 ### Example: Feature (conceptual)
 
-**User:** "Feature request for InQL: add substrait export helper."
+**User:** "Feature request for IncQL: add substrait export helper."
 
-**Steps:** Use `InQL/.github/ISSUE_TEMPLATE/feature_request.yml` (or the repo’s equivalent). Fill Problem statement, Proposed solution, Alternatives, Scope — using InQL-specific areas from that file’s dropdown.
+**Steps:** Use `IncQL/.github/ISSUE_TEMPLATE/feature_request.yml` (or the repo’s equivalent). Fill Problem statement, Proposed solution, Alternatives, Scope — using IncQL-specific areas from that file’s dropdown.
 
 ## Quality checklist
 
