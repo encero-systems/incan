@@ -80,7 +80,7 @@ extra:
 
 extra_css:
   - stylesheets/pygments.css
-  - /shared/incapunk/incapunk.css?v=20260712-nav-title-1
+  - /shared/incapunk/incapunk.css?v=20260714-incus-clearance-1
 
 extra_javascript:
   - _snippets/javascripts/mathjax.js
