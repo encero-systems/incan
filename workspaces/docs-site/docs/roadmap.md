@@ -103,7 +103,7 @@ The 0.5 milestone begins deprecating the Rust-source backend as the semantic pat
 
 Stdlib RFC/work is allowed in this lane. Hees.ai is also allowed, but only as a constrained commercial and dogfood proof path that validates compiler, stdlib, runtime, and tooling direction. Hees.ai work should consume general Incan surfaces, not quietly become broad product scope inside the language milestone.
 
-RFC 077 workspace foundations are a targeted tooling dependency in 0.5 rather than a general lifecycle reopening. The InQL and InQL-DB monorepo direction needs explicit root/member topology, shared dependency and lock semantics, deterministic member selection, machine-readable inspection, and lifecycle command fan-out. Pulling that foundation forward lets the monorepo begin with stable package boundaries; registry publication, nested workspaces, remote execution, and broad workspace product surfaces remain outside this exception.
+RFC 077 workspace foundations are a targeted tooling dependency in 0.5 rather than a general lifecycle reopening. The IncQL and IncQL-DB monorepo direction needs explicit root/member topology, shared dependency and lock semantics, deterministic member selection, machine-readable inspection, and lifecycle command fan-out. Pulling that foundation forward lets the monorepo begin with stable package boundaries; registry publication, nested workspaces, remote execution, and broad workspace product surfaces remain outside this exception.
 
 Core tracking issues:
 
