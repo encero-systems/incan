@@ -201,6 +201,16 @@ Discovery output should be machine-readable and should expose why a result match
 
 The graph should represent advisories and yanking as relationships rather than opaque package flags. A yanked capability descriptor, revoked model, or vulnerable template source can then be connected to affected packages, templates, actions, and projects through local provenance.
 
+### Integrity and event log model
+
+The artifact graph should be built from immutable artifact versions and signed registry events rather than from a mutable ad-hoc catalog. Package archives, template bundles, model weights, docs bundles, datasets, eval suites, generated artifacts, and similar versioned payloads should have content-addressed identities. A stable asset name or channel such as `latest`, `stable`, or `recommended` is a registry pointer, not the artifact version itself.
+
+Registry state changes should be represented as signed events. Event kinds include publish, yank, unyank, supersede, ownership transfer, advisory attach, advisory resolve, revocation, compatibility assertion, and metadata/card update. The queryable artifact graph is then a projection over the accepted event stream plus the immutable artifact payloads it references.
+
+This keeps the useful properties usually sought from blockchain-style designs: tamper evidence, provenance, auditable state transitions, and independently verifiable artifact identity. It avoids making consensus, token economics, or irreversible public-chain writes part of the core `incan.pub` contract. Moderation, malware response, accidental secret publication, legal takedowns, private catalogs, and key rotation all require registry-controlled state transitions that remain auditable without pretending every piece of state should be globally immutable.
+
+The event log should be append-only from the registry's perspective, with corrections represented by later events rather than in-place rewrites. Implementations may publish Merkle checkpoints or anchor event-log roots in an external transparency system later, but that is an optional hardening layer. It must not be required for the first useful artifact graph.
+
 ## Design details
 
 ### Relationship to RFC 034
@@ -235,6 +245,10 @@ Rejected because not every artifact has package semantics. A prompt template, ev
 
 Rejected because receiver-side mutation must remain local, reviewable, and policy-controlled.
 
+### Use a blockchain as the core registry ledger
+
+Rejected for the core `incan.pub` design. Blockchain infrastructure adds operational, cost, latency, governance, and user-experience complexity without matching the registry's primary trust boundary. `incan.pub` needs signed publishers, content-addressed artifacts, auditable registry events, moderation, yanking, recovery, private-catalog compatibility, and predictable EU-hosted operations. A signed append-only event log with optional external checkpoints provides the relevant integrity properties without binding the registry to a token, chain, or external consensus layer.
+
 ## Drawbacks
 
 - A graph model is more complex than a package index.
@@ -261,7 +275,7 @@ This RFC is intentionally a registry graph direction, not a blocker for the loca
 
 - Which artifact kinds should be included in the first graph implementation?
 - Should cards live inside package archives, registry-side metadata, or both?
-- How should graph relationships be signed or verified?
+- Which graph event kinds require publisher signatures, registry signatures, or both?
 - What discovery fields are required for v1 search?
 - Should advisories be separate artifacts or metadata attached to packages and descriptors?
 - How should private catalogs share graph semantics with public `incan.pub`?
