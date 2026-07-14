@@ -1755,8 +1755,7 @@ body::after {
 .inc-release-summary p { margin: 0.35rem 0 0; color: var(--inc-muted); font-size: 0.65rem; line-height: 1.42; }
 
 .inc-incus-slot { position: relative; overflow: visible; }
-.md-typeset .admonition.inc-incus-slot--active,
-.md-typeset details.inc-incus-slot--active {
+.md-typeset .inc-incus-slot--active {
   --incus-slot-width: clamp(6.8rem, 14vw, 8.8rem);
   --incus-slot-gap: 0.5rem;
   padding-right: calc(var(--incus-slot-width) + var(--incus-slot-gap));
@@ -1922,8 +1921,7 @@ body::after {
     border-bottom: 1px solid rgba(255, 193, 90, 0.12);
   }
 
-  .md-typeset .admonition.inc-incus-slot--active,
-  .md-typeset details.inc-incus-slot--active {
+  .md-typeset .inc-incus-slot--active {
     --incus-slot-width: 5.7rem;
     --incus-slot-gap: 0.25rem;
   }
