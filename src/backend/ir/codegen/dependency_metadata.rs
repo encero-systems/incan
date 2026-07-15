@@ -567,12 +567,10 @@ fn collect_trait_bound_signature_references(bound: &ast::TraitBound, names: &mut
 
 /// Collect same-module declarations required to emit one trait's public surface.
 ///
-/// Most dependencies come directly from source signatures. `Iterator.sum()` is
-/// the one temporary exception: its source body is ordinary Incan, but the
-/// backend currently supplies its per-method `T: Sum[T]` Rust bound because
-/// Incan has no syntax for a bound on an existing trait type parameter. Keep
-/// `Sum` alongside the retained `Iterator` declaration until that source-level
-/// bound can be represented and lowered without this bridge.
+/// Most dependencies come directly from source signatures. `Iterator.sum()` is the one temporary exception: its source
+/// body is ordinary Incan, but the backend currently supplies its per-method `T: Sum[T]` Rust bound because Incan has
+/// no syntax for a bound on an existing trait type parameter. Keep `Sum` alongside the retained `Iterator` declaration
+/// until that source-level bound can be represented and lowered without this bridge.
 fn trait_emission_references(trait_decl: &ast::TraitDecl) -> HashSet<String> {
     let mut names = HashSet::new();
     for type_param in &trait_decl.type_params {
