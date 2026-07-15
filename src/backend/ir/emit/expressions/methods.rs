@@ -468,6 +468,16 @@ impl<'a> IrEmitter<'a> {
                             quote! { &#emitted }
                         }
                         MetadataFreeMethodArgBorrowPolicy::Mutable => quote! { &mut #emitted },
+                        MetadataFreeMethodArgBorrowPolicy::StringAsStr
+                            if !matches!(
+                                arg.kind,
+                                IrExprKind::String(_)
+                                    | IrExprKind::Literal(super::super::super::expr::Literal::StaticStr(_))
+                            ) =>
+                        {
+                            quote! { (#emitted).as_str() }
+                        }
+                        MetadataFreeMethodArgBorrowPolicy::StringAsStr => emitted,
                         MetadataFreeMethodArgBorrowPolicy::Shared => emitted,
                     };
                 }
@@ -525,6 +535,9 @@ impl<'a> IrEmitter<'a> {
             MetadataFreeReceiverClass::IoValue => Self::receiver_allows_io_method_fallback(receiver),
             MetadataFreeReceiverClass::EncodingInstance => {
                 Self::receiver_type_matches_any(receiver, &["Encoding", "encoding_rs::Encoding"])
+            }
+            MetadataFreeReceiverClass::TokenizerInstance => {
+                Self::receiver_type_matches_any(receiver, &["Tokenizer", "tokenizers::Tokenizer"])
             }
             MetadataFreeReceiverClass::ExternalAssociated => Self::is_external_associated_receiver(receiver),
         }
