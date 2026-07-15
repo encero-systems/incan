@@ -2,7 +2,7 @@
 
 This is an Incan-authored external-consumer experiment for RFC 106. It consumes the stable JSONL stream from `incan inspect codegraph`; it does not parse `.incn`, resolve names, infer targets, or become a semantic authority.
 
-The importer validates the schema-v1 envelope, requires one header record, counts the currently known fact kinds, preserves unknown future kinds as opaque records, and prints a deterministic JSON summary. A production indexer can persist the original records alongside that summary or use the same boundary checks before mapping facts into another store.
+The importer uses `std.json.parse_jsonl` for the wire boundary, validates the schema-v1 envelope, requires one header record, counts the currently known fact kinds, preserves unknown future kinds as opaque records, and prints a deterministic JSON summary. A production indexer can persist the original records alongside that summary or use the same boundary checks before mapping facts into another store.
 
 ## Try it
 

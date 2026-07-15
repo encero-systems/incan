@@ -1,4 +1,5 @@
 from importer import import_jsonl
+from std.json import parse_jsonl
 from std.testing import fail
 
 
@@ -34,3 +35,16 @@ def test_rejects_missing_or_repeated_headers() -> None:
             assert false
         Err(error) =>
             assert error.kind_name() == "type"
+
+
+def test_jsonl_parser_skips_blank_lines_and_reports_source_line() -> None:
+    match parse_jsonl("\n{\"record\":\"file\"}\n\n"):
+        Err(error) => fail(error.message())
+        Ok(records) =>
+            assert len(records) == 1
+
+    match parse_jsonl("{\"record\":\"file\"}\nnot-json"):
+        Ok(_) =>
+            assert false
+        Err(error) =>
+            assert error.detail().contains("JSONL line 2")

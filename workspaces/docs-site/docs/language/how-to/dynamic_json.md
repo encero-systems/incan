@@ -2,6 +2,16 @@
 
 Use `std.json.JsonValue` when a payload is only partly known, mixed-shape, or intentionally open. Use typed `@derive(json)` models when the schema is stable.
 
+For newline-delimited JSON, use `parse_jsonl` so line splitting, blank-line handling, and parse-error context stay in the stdlib boundary:
+
+```incan
+from std.json import parse_jsonl
+
+records = parse_jsonl(source)?
+for record in records:
+    print(record)
+```
+
 ## Extract A Required Nested Value
 
 For required nested fields, prefer JSON Pointer plus `?` over hand-written lookup ladders:
