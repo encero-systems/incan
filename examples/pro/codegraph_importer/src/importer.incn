@@ -1,15 +1,16 @@
 """
 Minimal external-consumer experiment for `incan inspect codegraph` JSONL.
 
-This project deliberately consumes compiler-owned records without resolving names,
-following imports, or inferring extra semantics. It validates the stable envelope,
-keeps unknown future record kinds opaque, and produces a deterministic summary that
-an external indexer can persist or compare.
+This project deliberately consumes compiler-owned records without resolving names, following imports, or inferring extra
+semantics. It validates the stable envelope, keeps unknown future record kinds opaque, and produces a deterministic
+summary that an external indexer can persist or compare.
 """
 
 from std.json import JsonError, JsonErrorKind, JsonValue
+from std.serde.json import Serialize
 
 
+@derive(Serialize)
 pub model GraphSummary:
     """Deterministic, storage-agnostic summary of one codegraph JSONL snapshot."""
 
@@ -29,27 +30,6 @@ pub model GraphSummary:
     pub diagnostic_count: int
     pub degraded_fact_count: int
     pub unknown_record_count: int
-
-    def to_json(self) -> Result[str, JsonError]:
-        """Return the deterministic JSON summary emitted by this importer experiment."""
-
-        return JsonValue
-            .object(
-                {"call_count": JsonValue.int(self.call_count), "containment_count": JsonValue.int(self.containment_count), "declaration_count": JsonValue.int(
-                    self.declaration_count,
-                ), "degraded": JsonValue.bool(self.degraded), "degraded_fact_count": JsonValue.int(
-                    self.degraded_fact_count,
-                ), "diagnostic_count": JsonValue.int(self.diagnostic_count), "export_count": JsonValue.int(
-                    self.export_count,
-                ), "fact_count": JsonValue.int(self.fact_count), "file_count": JsonValue.int(self.file_count), "header_count": JsonValue.int(
-                    self.header_count,
-                ), "import_count": JsonValue.int(self.import_count), "mode": JsonValue.string(self.mode), "module_count": JsonValue.int(
-                    self.module_count,
-                ), "reference_count": JsonValue.int(self.reference_count), "schema_version": JsonValue.int(
-                    self.schema_version,
-                ), "unknown_record_count": JsonValue.int(self.unknown_record_count)},
-            )
-            .to_json()
 
 
 pub def import_jsonl(source: str) -> Result[GraphSummary, JsonError]:

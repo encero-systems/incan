@@ -9,7 +9,4 @@ def main() -> None:
         Ok(source) =>
             match import_jsonl(source):
                 Err(error) => println(error.message())
-                Ok(summary) =>
-                    match summary.to_json():
-                        Err(error) => println(error.message())
-                        Ok(output) => println(output)
+                Ok(summary) => println(json_stringify(summary))
