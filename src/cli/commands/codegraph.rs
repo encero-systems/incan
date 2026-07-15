@@ -13,9 +13,9 @@ use std::path::{Path, PathBuf};
 use clap::ValueEnum;
 use incan_codegraph::{
     CODEGRAPH_SCHEMA_VERSION, CodegraphCallRecord, CodegraphContainmentRecord, CodegraphDeclarationRecord,
-    CodegraphDiagnosticRecord, CodegraphExportRecord, CodegraphFileRecord, CodegraphHeaderRecord,
-    CodegraphImportRecord, CodegraphLanguage, CodegraphMode, CodegraphModuleRecord, CodegraphPackage,
-    CodegraphProvenance, CodegraphRecord, CodegraphReferenceRecord, CodegraphSourceSpan, to_jsonl,
+    CodegraphDiagnosticRecord, CodegraphDiagnosticRelatedSpan, CodegraphExportRecord, CodegraphFileRecord,
+    CodegraphHeaderRecord, CodegraphImportRecord, CodegraphLanguage, CodegraphMode, CodegraphModuleRecord,
+    CodegraphPackage, CodegraphProvenance, CodegraphRecord, CodegraphReferenceRecord, CodegraphSourceSpan, to_jsonl,
 };
 
 use crate::cli::prelude::ParsedModule;
@@ -1500,6 +1500,7 @@ fn diagnostic_record(index: usize, diagnostic: &StableDiagnostic) -> CodegraphDi
         code: diagnostic.code.to_string(),
         severity: diagnostic.severity.to_string(),
         phase: diagnostic.phase.as_str().to_string(),
+        origin: diagnostic.origin.as_str().to_string(),
         message: diagnostic.message.clone(),
         primary_span: CodegraphSourceSpan {
             file: diagnostic.primary_span.file.clone(),
@@ -1512,6 +1513,24 @@ fn diagnostic_record(index: usize, diagnostic: &StableDiagnostic) -> CodegraphDi
         },
         notes: diagnostic.notes.clone(),
         hints: diagnostic.hints.clone(),
+        expected: diagnostic.expected.clone(),
+        actual: diagnostic.actual.clone(),
+        related_spans: diagnostic
+            .related_spans
+            .iter()
+            .map(|related| CodegraphDiagnosticRelatedSpan {
+                span: CodegraphSourceSpan {
+                    file: related.span.file.clone(),
+                    start: related.span.start.offset,
+                    end: related.span.end.offset,
+                    start_line: related.span.start.line,
+                    start_column: related.span.start.column,
+                    end_line: related.span.end.line,
+                    end_column: related.span.end.column,
+                },
+                label: related.label.clone(),
+            })
+            .collect(),
         explain: diagnostic.explain.clone(),
         provenance: CodegraphProvenance::Diagnostic,
         degraded: true,

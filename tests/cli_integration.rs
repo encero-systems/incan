@@ -1083,6 +1083,119 @@ fn check_json_reports_typechecker_diagnostics() -> Result<(), Box<dyn std::error
     Ok(())
 }
 
+#[test]
+fn diagnostic_facts_keep_related_spans_and_type_payloads_across_cli_and_codegraph()
+-> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let source_path = tmp.path().join("main.incn");
+    fs::write(
+        &source_path,
+        r#"model Wire:
+    id [alias="wire"]: int
+    label [alias="wire"]: str
+
+def accept(value: int) -> None:
+    pass
+
+def main() -> None:
+    accept(value=1, value=2)
+    accept("text")
+"#,
+    )?;
+    let source_arg = source_path.to_str().ok_or("source path was not valid UTF-8")?;
+
+    let check = run_incan(tmp.path(), &["check", source_arg, "--format", "json"])?;
+    assert_failure(&check, "incan check should emit diagnostic facts");
+    let check_json = parse_json_stdout(&check)?;
+    let cli_diagnostics = check_json["diagnostics"]
+        .as_array()
+        .ok_or("expected CLI diagnostics array")?;
+    let cli_alias = cli_diagnostics
+        .iter()
+        .find(|diagnostic| {
+            diagnostic["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("Duplicate alias"))
+        })
+        .ok_or("expected duplicate alias diagnostic")?;
+    let cli_duplicate_arg = cli_diagnostics
+        .iter()
+        .find(|diagnostic| {
+            diagnostic["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("Duplicate argument"))
+        })
+        .ok_or("expected duplicate argument diagnostic")?;
+    let cli_mismatch = cli_diagnostics
+        .iter()
+        .find(|diagnostic| {
+            diagnostic["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("Argument 'value' of 'accept'"))
+        })
+        .ok_or("expected call argument type mismatch diagnostic")?;
+
+    assert_eq!(cli_alias["origin"], serde_json::json!("typechecker"));
+    assert_eq!(
+        cli_alias["related_spans"][0]["label"],
+        serde_json::json!("First field alias 'wire'")
+    );
+    assert_eq!(
+        cli_duplicate_arg["related_spans"][0]["label"],
+        serde_json::json!("First argument named 'value'")
+    );
+    assert_eq!(cli_mismatch["expected"], serde_json::json!("int"));
+    assert_eq!(cli_mismatch["actual"], serde_json::json!("str"));
+
+    let codegraph = run_incan(
+        tmp.path(),
+        &[
+            "inspect",
+            "codegraph",
+            source_arg,
+            "--format",
+            "jsonl",
+            "--allow-errors",
+        ],
+    )?;
+    assert_success(&codegraph, "tolerant codegraph should project diagnostic facts");
+    let records = parse_jsonl_stdout(&codegraph)?;
+    let graph_alias = records
+        .iter()
+        .find(|record| record["record"] == serde_json::json!("diagnostic") && record["message"] == cli_alias["message"])
+        .ok_or("expected duplicate alias codegraph diagnostic")?;
+    let graph_duplicate_arg = records
+        .iter()
+        .find(|record| {
+            record["record"] == serde_json::json!("diagnostic") && record["message"] == cli_duplicate_arg["message"]
+        })
+        .ok_or("expected duplicate argument codegraph diagnostic")?;
+    let graph_mismatch = records
+        .iter()
+        .find(|record| {
+            record["record"] == serde_json::json!("diagnostic") && record["message"] == cli_mismatch["message"]
+        })
+        .ok_or("expected type mismatch codegraph diagnostic")?;
+
+    assert_eq!(graph_alias["origin"], cli_alias["origin"]);
+    assert_eq!(
+        graph_alias["related_spans"][0]["label"],
+        cli_alias["related_spans"][0]["label"]
+    );
+    assert_eq!(
+        graph_alias["related_spans"][0]["span"]["start"],
+        cli_alias["related_spans"][0]["span"]["start"]["offset"]
+    );
+    assert_eq!(
+        graph_duplicate_arg["related_spans"][0]["label"],
+        cli_duplicate_arg["related_spans"][0]["label"]
+    );
+    assert_eq!(graph_mismatch["expected"], cli_mismatch["expected"]);
+    assert_eq!(graph_mismatch["actual"], cli_mismatch["actual"]);
+
+    Ok(())
+}
+
 #[cfg(feature = "rust_inspect")]
 #[test]
 fn rust_std_result_interop_supports_try_operator_issue801() -> Result<(), Box<dyn std::error::Error>> {
