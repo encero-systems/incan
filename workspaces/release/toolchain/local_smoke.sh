@@ -121,6 +121,19 @@ smoke_direct() {
     --incan-home "${dist_dir}/install-home" \
     --bin-dir "${dist_dir}/install-bin"
   "${dist_dir}/install-bin/incan" --version
+  local installed_seed_store
+  installed_seed_store="${dist_dir}/install-home/toolchains/$(toolchain_version)/crates/incan_stdlib/stdlib/target/incan_builtin_stdlib"
+  [ -d "$installed_seed_store" ] || fail "installed toolchain is missing its compiled stdlib seed store"
+  [ -f "$installed_seed_store/.incan-release-seed-identity" ] \
+    || fail "installed toolchain is missing its compiled stdlib release-seed marker"
+  local seed_identities_before
+  seed_identities_before="$(find "$installed_seed_store" -mindepth 1 -maxdepth 1 -type d -print | sort)"
+  [ "$(printf '%s\n' "$seed_identities_before" | sed '/^$/d' | wc -l | tr -d ' ')" = "1" ] \
+    || fail "installed toolchain must contain exactly one compiled stdlib seed identity"
+  [ "$(tr -d '\r\n' < "$installed_seed_store/.incan-release-seed-identity")" = "$(basename "$seed_identities_before")" ] \
+    || fail "installed compiled stdlib release-seed marker does not match its only identity"
+  [ ! -d "$installed_seed_store/.cargo-target" ] \
+    || fail "installed toolchain must not contain the stdlib producer Cargo target"
   # Exercise the user-facing symlink path, not the real toolchain binary path. Some hosts report the symlink path from
   # current_exe(), so stdlib/support-crate lookup must resolve the canonical target before walking toolchain ancestors.
   rm -rf "${dist_dir}/starter-smoke"
@@ -133,12 +146,43 @@ smoke_direct() {
     "${dist_dir}/install-bin/incan" test
     "${dist_dir}/install-bin/incan" build --release
   )
+  local seed_identities_after
+  seed_identities_after="$(find "$installed_seed_store" -mindepth 1 -maxdepth 1 -type d -print | sort)"
+  [ "$seed_identities_after" = "$seed_identities_before" ] \
+    || fail "installed compiler regenerated the shipped compiled stdlib seed"
+  [ ! -d "$installed_seed_store/.cargo-target" ] \
+    || fail "installed compiler created a redundant stdlib producer Cargo target"
+}
+
+# npm and Homebrew render metadata for every supported target, while a local smoke build produces only the current
+# host binary. Reuse that host archive as a packaging-only fixture for missing foreign targets; the smoke never runs
+# those foreign-labelled copies.
+ensure_platform_archive_fixtures() {
+  require_archive
+  local release archive checksum target target_archive target_checksum
+  release="$(toolchain_release)"
+  archive="$(archive_path)"
+  checksum="${archive}.sha256"
+  for target in x86_64-unknown-linux-gnu x86_64-apple-darwin aarch64-apple-darwin; do
+    if [ "$target" = "$host_target" ]; then
+      continue
+    fi
+    target_archive="${dist_dir}/incan-${release}-${target}.tar.gz"
+    target_checksum="${target_archive}.sha256"
+    if [ -f "$target_archive" ] || [ -f "$target_checksum" ]; then
+      [ -f "$target_archive" ] || fail "missing target archive while checksum exists: ${target_archive}"
+      [ -f "$target_checksum" ] || fail "missing target archive checksum: ${target_checksum}"
+      continue
+    fi
+    cp "$archive" "$target_archive"
+    cp "$checksum" "$target_checksum"
+  done
 }
 
 smoke_npm() {
   require_command node
   require_command npm
-  require_archive
+  ensure_platform_archive_fixtures
   npm_config_cache="${dist_dir}/npm-cache" \
     npm_config_logs_dir="${dist_dir}/npm-logs" \
     node "${root}/workspaces/release/npm/prepare_package.js" "$dist_dir"
@@ -204,27 +248,8 @@ smoke_pip() {
 
 smoke_homebrew() {
   require_command ruby
-  require_archive
   require_incan_run_bin
-  local release archive checksum target
-  release="$(toolchain_release)"
-  archive="$(archive_path)"
-  checksum="${archive}.sha256"
-  for target in x86_64-unknown-linux-gnu x86_64-apple-darwin aarch64-apple-darwin; do
-    if [ "$target" = "$host_target" ]; then
-      continue
-    fi
-    local target_archive target_checksum
-    target_archive="${dist_dir}/incan-${release}-${target}.tar.gz"
-    target_checksum="${target_archive}.sha256"
-    if [ -f "$target_archive" ] || [ -f "$target_checksum" ]; then
-      [ -f "$target_archive" ] || fail "missing target archive while checksum exists: ${target_archive}"
-      [ -f "$target_checksum" ] || fail "missing target archive checksum: ${target_checksum}"
-      continue
-    fi
-    cp "$archive" "$target_archive"
-    cp "$checksum" "$target_checksum"
-  done
+  ensure_platform_archive_fixtures
   INCAN_REPO_ROOT="$root" \
     INCAN_TOOLCHAIN_DIST_DIR="$dist_dir" \
     INCAN_TOOLCHAIN_GENERATED_AT="$generated_at" \

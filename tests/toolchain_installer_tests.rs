@@ -184,6 +184,23 @@ fn write_fixture_toolchain_commands(root: &Path) -> Result<(PathBuf, PathBuf), B
     Ok((incan, incan_lsp))
 }
 
+fn write_fixture_builtin_stdlib_seed(root: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let seed = root.join("fixture-builtin-stdlib-seed");
+    fs::create_dir_all(seed.join("src"))?;
+    fs::write(seed.join(".incan-artifact-identity"), "fixture-builtin-stdlib-seed\n")?;
+    fs::write(
+        seed.join("incan_builtin_stdlib.incnlib"),
+        "{\"name\":\"incan_builtin_stdlib\",\"manifest_format\":2}\n",
+    )?;
+    fs::write(
+        seed.join("Cargo.toml"),
+        "[package]\nname = \"incan_builtin_stdlib\"\nversion = \"0.5.0\"\n[lib]\npath = \"src/lib.rs\"\n",
+    )?;
+    fs::write(seed.join("Cargo.lock"), "version = 4\n")?;
+    fs::write(seed.join("src/lib.rs"), "pub fn fixture() {}\n")?;
+    Ok(seed)
+}
+
 const NPM_PLATFORM_TARGETS: [(&str, &str, &str, &str); 3] = [
     ("x86_64-unknown-linux-gnu", "@incan/toolchain-linux-x64", "linux", "x64"),
     ("x86_64-apple-darwin", "@incan/toolchain-darwin-x64", "darwin", "x64"),
@@ -229,12 +246,14 @@ fn package_fixture_archive(
     incan: &Path,
     incan_lsp: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let seed = write_fixture_builtin_stdlib_seed(root)?;
     let output = Command::new("bash")
         .arg(toolchain_package_archive_script())
         .arg(target)
         .args(["--out-dir", root.to_str().ok_or("output path is not UTF-8")?])
         .env("INCAN_BIN", incan)
         .env("INCAN_LSP_BIN", incan_lsp)
+        .env("INCAN_BUILTIN_STDLIB_SEED_DIR", seed)
         .current_dir(repo_root())
         .output()?;
 
@@ -367,10 +386,36 @@ fn toolchain_archive_packager_writes_archive_checksum_and_release_metadata() -> 
     assert!(listing.contains("stdlib/testing.incn"));
     assert!(listing.contains("stdlib/prelude.incn"));
     assert!(
-        !listing.lines().any(|path| path.contains("stdlib/target/")),
-        "toolchain archive must not publish the local compiled-stdlib cache:\n{listing}"
+        !listing.lines().any(|path| path.contains(".cargo-target")),
+        "toolchain archive must not publish Cargo build intermediates:\n{listing}"
+    );
+    assert!(
+        !listing.lines().any(|path| path.contains("/target/incan_lock/")),
+        "toolchain archive must not publish compiler inspection scratch state:\n{listing}"
+    );
+    assert!(listing.contains(
+        "crates/incan_stdlib/stdlib/target/incan_builtin_stdlib/fixture-builtin-stdlib-seed/incan_builtin_stdlib.incnlib"
+    ));
+    assert!(listing.contains("crates/incan_stdlib/stdlib/target/incan_builtin_stdlib/.incan-release-seed-identity"));
+    assert!(
+        listing
+            .contains("crates/incan_stdlib/stdlib/target/incan_builtin_stdlib/fixture-builtin-stdlib-seed/src/lib.rs")
+    );
+    let seed_identities = listing
+        .lines()
+        .filter_map(|path| {
+            path.strip_prefix("./crates/incan_stdlib/stdlib/target/incan_builtin_stdlib/")
+                .and_then(|rest| rest.split('/').next())
+        })
+        .filter(|identity| !identity.is_empty() && !identity.starts_with('.'))
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        seed_identities,
+        std::collections::BTreeSet::from(["fixture-builtin-stdlib-seed"]),
+        "toolchain archive must contain exactly one compiled stdlib seed identity"
     );
     assert!(listing.contains("crates/Cargo.toml"));
+    assert!(listing.contains("crates/Cargo.lock"));
     assert!(listing.contains("crates/incan_core/Cargo.toml"));
     assert!(listing.contains("crates/incan_derive/Cargo.toml"));
     assert!(listing.contains("crates/incan_stdlib/Cargo.toml"));

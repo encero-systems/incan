@@ -56,6 +56,12 @@ static PREPARED_LIBRARY_DEPENDENCIES: LazyLock<Mutex<HashSet<PathBuf>>> = LazyLo
 pub(crate) const INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV: &str = "INCAN_INTERNAL_LIBRARY_ARTIFACT_ONLY";
 /// Internal marker selecting canonical local module paths while compiling the built-in stdlib artifact itself.
 pub(crate) const INTERNAL_BUILTIN_STDLIB_ARTIFACT_BUILD_ENV: &str = "INCAN_INTERNAL_BUILTIN_STDLIB_ARTIFACT_BUILD";
+/// Internal release-packaging marker selecting the path-independent built-in stdlib artifact identity.
+const INTERNAL_BUILTIN_STDLIB_RELEASE_SEED_ENV: &str = "INCAN_INTERNAL_BUILTIN_STDLIB_RELEASE_SEED";
+/// Internal file through which release packaging receives the exact immutable artifact selected by the compiler.
+const INTERNAL_BUILTIN_STDLIB_ARTIFACT_PATH_FILE_ENV: &str = "INCAN_INTERNAL_BUILTIN_STDLIB_ARTIFACT_PATH_FILE";
+/// Internal artifact-store override used by isolated compiler and packaging tests.
+const INTERNAL_BUILTIN_STDLIB_ARTIFACT_STORE_ENV: &str = "INCAN_INTERNAL_BUILTIN_STDLIB_ARTIFACT_STORE";
 /// Internal path override for the Cargo.lock payload used while producing a compiler-owned artifact.
 pub(crate) const INTERNAL_CARGO_LOCK_PAYLOAD_PATH_ENV: &str = "INCAN_INTERNAL_CARGO_LOCK_PAYLOAD_PATH";
 
@@ -261,17 +267,21 @@ fn seed_builtin_stdlib_artifact_workspace_lock(workspace_lock: Option<&Path>, ar
     Ok(())
 }
 
-/// Publish the fully resolved built-in stdlib closure after its library build succeeds.
+/// Publish the fully resolved built-in stdlib closure after artifact generation succeeds.
 ///
-/// The enclosing workspace lock is only a bootstrap input: it can omit optional stdlib dependencies such as `regex`.
-/// The artifact build's generated lock workspace contains the actual selected feature closure that downstream offline
-/// consumers must inherit.
+/// A warmed source checkout may expose a separately resolved lock workspace. Artifact-only release preparation does
+/// not create that Cargo workspace; in that path the generated artifact's own Cargo.lock is already the compiler's
+/// selected lock payload and remains authoritative.
 fn publish_builtin_stdlib_artifact_resolved_lock(stdlib_root: &Path, artifact_root: &Path) -> CliResult<()> {
     let resolved_lock = stdlib_root.join("target").join("incan_lock").join("Cargo.lock");
     if !resolved_lock.is_file() {
+        let artifact_lock = artifact_root.join("Cargo.lock");
+        if artifact_lock.is_file() {
+            return Ok(());
+        }
         return Err(CliError::failure(format!(
-            "compiled built-in stdlib build did not produce a resolved Cargo.lock at {}",
-            resolved_lock.display()
+            "compiled built-in stdlib artifact did not produce Cargo.lock at {}",
+            artifact_lock.display()
         )));
     }
     fs::copy(&resolved_lock, artifact_root.join("Cargo.lock")).map_err(|error| {
@@ -285,6 +295,7 @@ fn publish_builtin_stdlib_artifact_resolved_lock(stdlib_root: &Path, artifact_ro
 
 const BUILTIN_STDLIB_ARTIFACT_STORE: &str = "incan_builtin_stdlib";
 const BUILTIN_STDLIB_ARTIFACT_IDENTITY_FILE: &str = ".incan-artifact-identity";
+const BUILTIN_STDLIB_RELEASE_SEED_IDENTITY_FILE: &str = ".incan-release-seed-identity";
 
 /// Keep the bootstrap artifact lock alive for the whole preparation/publish transaction.
 ///
@@ -401,10 +412,20 @@ fn builtin_stdlib_artifact_identity(
     stdlib_root: &Path,
     executable: &Path,
     workspace_lock: Option<&Path>,
+    release_compatible: bool,
 ) -> CliResult<String> {
     let mut hasher = Sha256::new();
-    hasher.update(b"incan-builtin-stdlib-artifact-v2\0");
+    hasher.update(b"incan-builtin-stdlib-artifact-v3\0");
     hash_builtin_stdlib_artifact_source_tree(stdlib_root, stdlib_root, &mut hasher)?;
+    hasher.update(b"compiler-version\0");
+    hasher.update(crate::version::INCAN_VERSION.as_bytes());
+
+    if release_compatible {
+        // Installed SDKs relocate the compiler binary and omit the source workspace lock. Their shipped seed must
+        // therefore be keyed by the versioned compiler/source contract rather than producer-local filesystem facts.
+        hasher.update(b"release-compatible\0");
+        return Ok(hex::encode(hasher.finalize()));
+    }
 
     hasher.update(b"compiler-executable\0");
     let executable = fs::canonicalize(executable).unwrap_or_else(|_| executable.to_path_buf());
@@ -439,6 +460,16 @@ fn builtin_stdlib_artifact_identity(
         })?);
     }
     Ok(hex::encode(hasher.finalize()))
+}
+
+/// Return whether the artifact store explicitly identifies the current release-compatible seed.
+///
+/// Development artifacts remain keyed by compiler-binary and workspace-lock inputs. A packaged SDK writes this
+/// store-level marker so its seed can survive relocation, but a stale marker cannot select an artifact generated from
+/// different stdlib sources or a different compiler version.
+fn builtin_stdlib_artifact_store_selects_release_seed(store_root: &Path, release_identity: &str) -> bool {
+    fs::read_to_string(store_root.join(BUILTIN_STDLIB_RELEASE_SEED_IDENTITY_FILE))
+        .is_ok_and(|recorded| recorded.trim() == release_identity)
 }
 
 /// Return whether an artifact has every published file and the exact requested identity marker.
@@ -537,7 +568,10 @@ fn configure_builtin_stdlib_artifact_builder(command: &mut Command, workspace_lo
         .env_remove("CARGO_NET_OFFLINE")
         .env_remove(INTERNAL_MANIFEST_OVERRIDE_ENV)
         .env_remove(INTERNAL_PROJECT_ROOT_OVERRIDE_ENV)
-        .env(INTERNAL_BUILTIN_STDLIB_ARTIFACT_BUILD_ENV, "1");
+        .env(INTERNAL_BUILTIN_STDLIB_ARTIFACT_BUILD_ENV, "1")
+        // The consumer Cargo build compiles this generated crate in its own shared target. Running a separate Cargo
+        // build here would compile the same closure twice and retain a second hundreds-of-megabytes target directory.
+        .env(INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, "1");
     if let Some(workspace_lock) = workspace_lock {
         command.env(INTERNAL_CARGO_LOCK_PAYLOAD_PATH_ENV, workspace_lock);
     }
@@ -565,12 +599,24 @@ fn prepare_builtin_stdlib_artifact() -> CliResult<LibraryArtifactMetadata> {
         .map(PathBuf::from);
     let executable = builtin_stdlib_artifact_builder_executable(cargo_test_binary, current_exe);
     let workspace_lock = builtin_stdlib_artifact_workspace_lock(&stdlib_root);
-    let identity = builtin_stdlib_artifact_identity(&stdlib_root, &executable, workspace_lock.as_deref())?;
-    let store_root = stdlib_root.join("target").join(BUILTIN_STDLIB_ARTIFACT_STORE);
+    let store_root = env::var_os(INTERNAL_BUILTIN_STDLIB_ARTIFACT_STORE_ENV)
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| stdlib_root.join("target").join(BUILTIN_STDLIB_ARTIFACT_STORE));
+    let release_identity =
+        builtin_stdlib_artifact_identity(&stdlib_root, &executable, workspace_lock.as_deref(), true)?;
+    let release_compatible = env::var_os(INTERNAL_BUILTIN_STDLIB_RELEASE_SEED_ENV).is_some()
+        || builtin_stdlib_artifact_store_selects_release_seed(&store_root, &release_identity);
+    let identity = if release_compatible {
+        release_identity
+    } else {
+        builtin_stdlib_artifact_identity(&stdlib_root, &executable, workspace_lock.as_deref(), false)?
+    };
     let _lock = acquire_builtin_stdlib_artifact_lock(&store_root)?;
     let artifact_root = store_root.join(&identity);
     let metadata = builtin_stdlib_artifact_metadata(artifact_root.clone());
     if builtin_stdlib_artifact_is_complete(&metadata, &identity) {
+        record_builtin_stdlib_artifact_path(&artifact_root)?;
         return Ok(metadata);
     }
     if artifact_root.exists() {
@@ -664,7 +710,23 @@ fn prepare_builtin_stdlib_artifact() -> CliResult<LibraryArtifactMetadata> {
             metadata.crate_root.display()
         )));
     }
+    record_builtin_stdlib_artifact_path(&artifact_root)?;
     Ok(metadata)
+}
+
+/// Record the exact immutable artifact path requested by release packaging.
+fn record_builtin_stdlib_artifact_path(artifact_root: &Path) -> CliResult<()> {
+    let Some(path_file) = env::var_os(INTERNAL_BUILTIN_STDLIB_ARTIFACT_PATH_FILE_ENV).filter(|path| !path.is_empty())
+    else {
+        return Ok(());
+    };
+    let path_file = PathBuf::from(path_file);
+    fs::write(&path_file, format!("{}\n", artifact_root.display())).map_err(|error| {
+        CliError::failure(format!(
+            "failed to record compiled built-in stdlib artifact path in {}: {error}",
+            path_file.display()
+        ))
+    })
 }
 
 /// Return the Cargo dependency for the verified locally compiled built-in stdlib artifact.
@@ -1169,7 +1231,7 @@ pub(crate) fn collect_project_requirements(
         stdlib_features: stdlib_features.into_iter().collect(),
         dependencies: Vec::new(),
     };
-    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = stdlib_extra_crate_workspace_root();
     for namespace_name in &stdlib_namespaces {
         let Some(namespace) = stdlib::find_namespace(namespace_name) else {
             continue;
@@ -1231,8 +1293,28 @@ fn dependency_spec_from_stdlib_extra_crate(crate_name: &str) -> CliResult<Depend
             "stdlib dependency metadata for `{crate_name}` is missing from the registry"
         ))
     })?;
-    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = stdlib_extra_crate_workspace_root();
     Ok(dependency_spec_from_stdlib_dep(dep, &workspace_root))
+}
+
+/// Resolve the workspace root that owns bundled stdlib support crates.
+///
+/// A release host compiler can generate an artifact inside a staged target archive, and an installed compiler runs
+/// beside that archive's `crates/` directory. Both must resolve path-backed stdlib requirements against the target
+/// toolchain rather than the checkout that originally compiled the host executable.
+fn stdlib_extra_crate_workspace_root() -> PathBuf {
+    if let Some(crates_dir) = env::var_os("INCAN_TOOLCHAIN_CRATES_DIR").filter(|path| !path.is_empty()) {
+        let crates_dir = PathBuf::from(crates_dir);
+        if let Some(root) = crates_dir.parent() {
+            return root.to_path_buf();
+        }
+    }
+    for base in crate::toolchain_layout::current_executable_search_bases() {
+        if base.join("crates/incan_web_macros/Cargo.toml").is_file() {
+            return base;
+        }
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
 /// Build a dependency specification from a stdlib dependency requirement.
@@ -2971,6 +3053,12 @@ mod tests {
             "the artifact bootstrap must retain its internal build marker"
         );
         assert!(
+            command.get_envs().any(|(key, value)| {
+                key == INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV && value.is_some_and(|value| value == "1")
+            }),
+            "the artifact bootstrap must generate the reusable crate without retaining a second Cargo build target"
+        );
+        assert!(
             command
                 .get_args()
                 .any(|argument| argument == std::ffi::OsStr::new("/tmp/staged-stdlib-artifact")),
@@ -3018,6 +3106,24 @@ mod tests {
     }
 
     #[test]
+    fn builtin_stdlib_artifact_keeps_its_generated_lock_without_a_warmed_lock_workspace()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = tempfile::tempdir()?;
+        let stdlib_root = temp_dir.path().join("stdlib");
+        let artifact_root = stdlib_root.join("target/lib");
+        fs::create_dir_all(&artifact_root)?;
+        fs::write(artifact_root.join("Cargo.lock"), "generated artifact closure")?;
+
+        publish_builtin_stdlib_artifact_resolved_lock(&stdlib_root, &artifact_root)?;
+
+        assert_eq!(
+            fs::read_to_string(artifact_root.join("Cargo.lock"))?,
+            "generated artifact closure"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn builtin_stdlib_artifact_identity_tracks_source_and_lock_inputs() -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = tempfile::tempdir()?;
         let stdlib_root = temp_dir.path().join("stdlib");
@@ -3031,23 +3137,64 @@ mod tests {
         fs::write(&workspace_lock, "first lock closure")?;
         let executable = std::env::current_exe()?;
 
-        let initial = builtin_stdlib_artifact_identity(&stdlib_root, &executable, Some(&workspace_lock))?;
+        let initial = builtin_stdlib_artifact_identity(&stdlib_root, &executable, Some(&workspace_lock), false)?;
         fs::write(
             stdlib_root.join("nested").join("module.incn"),
             "pub def value() -> int:\n  return 2\n",
         )?;
-        let source_changed = builtin_stdlib_artifact_identity(&stdlib_root, &executable, Some(&workspace_lock))?;
+        let source_changed = builtin_stdlib_artifact_identity(&stdlib_root, &executable, Some(&workspace_lock), false)?;
         assert_ne!(
             initial, source_changed,
             "changing a stdlib source must invalidate its artifact identity"
         );
 
         fs::write(&workspace_lock, "second lock closure")?;
-        let lock_changed = builtin_stdlib_artifact_identity(&stdlib_root, &executable, Some(&workspace_lock))?;
+        let lock_changed = builtin_stdlib_artifact_identity(&stdlib_root, &executable, Some(&workspace_lock), false)?;
         assert_ne!(
             source_changed, lock_changed,
             "changing the resolved Cargo closure must invalidate its artifact identity"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn release_seed_identity_is_independent_of_producer_paths_and_workspace_lock()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = tempfile::tempdir()?;
+        let stdlib_root = temp_dir.path().join("stdlib");
+        fs::create_dir_all(&stdlib_root)?;
+        fs::write(stdlib_root.join("incan.toml"), "[project]\nname = \"stdlib\"\n")?;
+        fs::write(stdlib_root.join("module.incn"), "pub def value() -> int:\n  return 1\n")?;
+        let first_executable = temp_dir.path().join("first-incan");
+        let second_executable = temp_dir.path().join("second-incan");
+        fs::write(&first_executable, "first compiler binary")?;
+        fs::write(&second_executable, "different compiler binary")?;
+        let first_lock = temp_dir.path().join("first.lock");
+        let second_lock = temp_dir.path().join("second.lock");
+        fs::write(&first_lock, "first closure")?;
+        fs::write(&second_lock, "second closure")?;
+
+        let first = builtin_stdlib_artifact_identity(&stdlib_root, &first_executable, Some(&first_lock), true)?;
+        let second = builtin_stdlib_artifact_identity(&stdlib_root, &second_executable, Some(&second_lock), true)?;
+
+        assert_eq!(
+            first, second,
+            "a shipped seed must survive compiler relocation and the absence of the producer workspace lock"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn artifact_store_selects_only_its_matching_release_seed_identity() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = tempfile::tempdir()?;
+        let store = temp_dir.path().join("incan_builtin_stdlib");
+        fs::create_dir_all(&store)?;
+
+        assert!(!builtin_stdlib_artifact_store_selects_release_seed(&store, "current"));
+        fs::write(store.join(BUILTIN_STDLIB_RELEASE_SEED_IDENTITY_FILE), "stale\n")?;
+        assert!(!builtin_stdlib_artifact_store_selects_release_seed(&store, "current"));
+        fs::write(store.join(BUILTIN_STDLIB_RELEASE_SEED_IDENTITY_FILE), "current\n")?;
+        assert!(builtin_stdlib_artifact_store_selects_release_seed(&store, "current"));
         Ok(())
     }
 

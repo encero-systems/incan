@@ -51,7 +51,7 @@ fn transform_stdlib_path(path: &[String]) -> Vec<String> {
 /// The generated artifact exposes source modules directly (`crate::fs`, `crate::traits`, …), while existing compiler
 /// bridges address those same modules through `crate::__incan_std`. Keep that compatibility namespace confined to the
 /// artifact build so ordinary user libraries do not acquire a synthetic module.
-fn is_builtin_stdlib_artifact_build() -> bool {
+pub(super) fn is_builtin_stdlib_artifact_build() -> bool {
     std::env::var_os("INCAN_INTERNAL_BUILTIN_STDLIB_ARTIFACT_BUILD").is_some()
 }
 
