@@ -4771,6 +4771,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#external-importer-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      External importer example
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#jsonl-records" class="md-nav__link">
     <span class="md-ellipsis">
       JSONL records
@@ -6246,6 +6255,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#external-importer-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      External importer example
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#jsonl-records" class="md-nav__link">
     <span class="md-ellipsis">
       JSONL records
@@ -6279,14 +6297,21 @@
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>inspect<span class="w"> </span>codegraph<span class="w"> </span>src/main.incn<span class="w"> </span>--format<span class="w"> </span>jsonl
 incan<span class="w"> </span>inspect<span class="w"> </span>codegraph<span class="w"> </span>src<span class="w"> </span>--format<span class="w"> </span>jsonl<span class="w"> </span>--allow-errors
 </code></pre></div>
-<p>The first record is always a <code>header</code> record. It includes the schema version, compiler version, strict or tolerant mode, requested root path, languages represented by the export, optional package identity from <code>incan.toml</code>, and whether the export is degraded. Subsequent records describe source files, modules, declarations, imports, exports, body references, body calls, containment relationships, and diagnostics. Every non-header record carries <code>language</code>, <code>provenance</code>, and <code>degraded</code> fields. Body facts with a compiler-proven <code>target_id</code> use <code>provenance: "checked"</code>; syntax-only body facts keep <code>provenance: "syntax"</code>. In 0.4, <code>target_id</code> points only at declaration records emitted in the same JSONL export. Public-package manifest identity is still checked during typechecking and remains available in library manifests, but external package declarations are not emitted as codegraph declaration records until the schema grows a first-class external-target shape. Consumers should treat unknown future record kinds as opaque records rather than failing closed.</p>
-<p>Strict mode is the default. If parsing, import resolution, or type checking produces diagnostics for a checked entrypoint, the command fails instead of emitting a partial graph. <code>--allow-errors</code> changes that contract: parseable files still produce facts, diagnostics become graph records, and the header marks the export as degraded. That mode is meant for WIP packages and agent context, not for release gates that require a fully checked graph.</p>
+<p>JSONL itself has no header. The CodeGraph protocol uses the first JSON object as snapshot metadata, identified in schema v1 by <code>"record": "header"</code>. It includes the schema version, compiler version, strict or tolerant mode, requested root path, languages represented by the export, optional package identity from <code>incan.toml</code>, and whether the export is degraded. Subsequent records describe source files, modules, declarations, imports, exports, body references, body calls, containment relationships, and diagnostics. Every fact record carries <code>language</code>, <code>provenance</code>, and <code>degraded</code> fields. Body facts with a compiler-proven <code>target_id</code> use <code>provenance: "checked"</code>; syntax-only body facts keep <code>provenance: "syntax"</code>. In 0.4, <code>target_id</code> points only at declaration records emitted in the same JSONL export. Public-package manifest identity is still checked during typechecking and remains available in library manifests, but external package declarations are not emitted as codegraph declaration records until the schema grows a first-class external-target shape. Consumers should treat unknown future record kinds as opaque records rather than failing closed.</p>
+<p>Strict mode is the default. If parsing, import resolution, or type checking produces diagnostics for a checked entrypoint, the command fails instead of emitting a partial graph. <code>--allow-errors</code> changes that contract: parseable files still produce facts, diagnostics become graph records, and the snapshot metadata marks the export as degraded. That mode is meant for WIP packages and agent context, not for release gates that require a fully checked graph.</p>
 <p><code>std.graph</code> and <code>incan inspect codegraph</code> solve different problems. <code>std.graph</code> is a runtime library for graph values inside Incan programs. <code>incan inspect codegraph</code> is tooling output about Incan source and project structure. Sharing the word "graph" does not make the tooling export part of the runtime standard library, and runtime graph APIs should not depend on this command.</p>
 <p>The 0.4 exporter emits <code>language: "incan"</code> facts only. First-class Rust graph records, MCP tools, task-ranked context packing, process-risk signals, and architecture findings are RFC 106 follow-up work. Generated Rust remains inspectable through <code>incan inspect rust</code>, but that command is not a substitute for Rust codegraph facts.</p>
+<h2 id="external-importer-example">External importer example<a class="headerlink" href="#external-importer-example" title="Permanent link">&para;</a></h2>
+<p><code>examples/pro/codegraph_importer</code> is a runnable Incan-authored consumer of this JSONL contract. It takes an exported <code>codegraph.jsonl</code> file, validates the schema-v1 snapshot metadata and fact envelope, counts the current record kinds, preserves unknown future kinds as opaque, and prints a deterministic JSON summary.</p>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>inspect<span class="w"> </span>codegraph<span class="w"> </span>src/main.incn<span class="w"> </span>--format<span class="w"> </span>jsonl<span class="w"> </span>&gt;<span class="w"> </span>codegraph.jsonl
+<span class="nb">cd</span><span class="w"> </span>examples/pro/codegraph_importer
+incan<span class="w"> </span>run<span class="w"> </span>src/main.incn
+</code></pre></div>
+<p>The example does not parse <code>.incn</code>, resolve names, infer missing edges, or store graph data. It demonstrates the intended boundary: an importer may validate, persist, compare, or visualize compiler-owned facts, but must not become their semantic authority. Schema version 1 is explicit; adapters for later versions must be deliberate rather than silently accepting a changed contract.</p>
 <h2 id="jsonl-records">JSONL records<a class="headerlink" href="#jsonl-records" title="Permanent link">&para;</a></h2>
 <p>Every line is a standalone JSON object with a <code>record</code> discriminator. Current record kinds are:</p>
 <ul>
-<li><code>header</code>: export schema, compiler version, mode, root, languages, package identity, and degraded flag.</li>
+<li><code>header</code> (snapshot metadata): export schema, compiler version, mode, root, languages, package identity, and degraded flag.</li>
 <li><code>file</code>: source language, source file path, byte size, provenance, and degraded flag.</li>
 <li><code>module</code>: source language, module path, parent file id, source span, provenance, and degraded flag.</li>
 <li><code>declaration</code>: source language, top-level declaration kind, name, visibility, type parameters, optional signature, source span, provenance, and degraded flag.</li>

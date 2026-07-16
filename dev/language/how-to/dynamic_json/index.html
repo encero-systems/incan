@@ -6346,6 +6346,13 @@
 
 <h1 id="work-with-dynamic-json">Work With Dynamic JSON<a class="headerlink" href="#work-with-dynamic-json" title="Permanent link">&para;</a></h1>
 <p>Use <code>std.json.JsonValue</code> when a payload is only partly known, mixed-shape, or intentionally open. Use typed <code>@derive(json)</code> models when the schema is stable.</p>
+<p>For newline-delimited JSON, use <code>parse_jsonl</code> so line splitting, blank-line handling, and parse-error context stay in the stdlib boundary:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.json</span><span class="w"> </span><span class="kn">import</span> <span class="n">parse_jsonl</span>
+
+<span class="n">records</span> <span class="o">=</span> <span class="n">parse_jsonl</span><span class="p">(</span><span class="n">source</span><span class="p">)</span><span class="o">?</span>
+<span class="k">for</span> <span class="n">record</span> <span class="ow">in</span> <span class="n">records</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">record</span><span class="p">)</span>
+</code></pre></div>
 <h2 id="extract-a-required-nested-value">Extract A Required Nested Value<a class="headerlink" href="#extract-a-required-nested-value" title="Permanent link">&para;</a></h2>
 <p>For required nested fields, prefer JSON Pointer plus <code>?</code> over hand-written lookup ladders:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.json</span><span class="w"> </span><span class="kn">import</span> <span class="nc">JsonError</span><span class="p">,</span> <span class="nc">JsonValue</span>
