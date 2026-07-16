@@ -2,7 +2,7 @@
 
 This runnable Incan example consumes the schema-v1 JSONL stream from `incan inspect codegraph`. It is an external consumer: it does not parse `.incn`, resolve names, infer targets, or become a semantic authority.
 
-The importer uses `std.json.parse_jsonl` for the wire boundary, validates the schema-v1 envelope, requires one header record, counts the currently known fact kinds, preserves unknown future kinds as opaque records, and prints a deterministic JSON summary. A production indexer can persist the original records alongside that summary or use the same boundary checks before mapping facts into another store.
+The importer uses `std.json.parse_jsonl` for the wire boundary and validates the schema-v1 envelope. JSONL itself has no header; the CodeGraph protocol uses its first JSON object as snapshot metadata, identified in schema v1 by `"record": "header"`. The importer counts the currently known fact kinds, preserves unknown future kinds as opaque records, and prints a deterministic JSON summary. A production indexer can persist the original records alongside that summary or use the same boundary checks before mapping facts into another store.
 
 ## Try it
 

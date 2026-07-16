@@ -31,7 +31,7 @@ pub model GraphSummary:
     pub schema_version: int
     pub mode: str
     pub degraded: bool
-    pub header_count: int
+    pub metadata_record_count: int
     pub fact_count: int
     pub file_count: int
     pub module_count: int
@@ -47,12 +47,12 @@ pub model GraphSummary:
 
     @staticmethod
     def empty() -> Self:
-        """Create an empty summary before the snapshot header and facts are visited."""
+        """Create an empty summary before the snapshot metadata and facts are visited."""
         return GraphSummary(
             schema_version=0,
             mode="",
             degraded=false,
-            header_count=0,
+            metadata_record_count=0,
             fact_count=0,
             file_count=0,
             module_count=0,
@@ -68,7 +68,7 @@ pub model GraphSummary:
         )
 
     def add_fact(mut self, record: str, degraded: bool) -> None:
-        """Count one non-header record while preserving unknown future kinds as opaque facts."""
+        """Count one fact record while preserving unknown future kinds as opaque facts."""
         self.fact_count += 1
         if degraded:
             self.degraded_fact_count += 1
@@ -102,24 +102,24 @@ pub def import_jsonl(source: str) -> Result[GraphSummary, JsonError]:
     records = parse_jsonl(source)?
     mut summary = GraphSummary.empty()
     if len(records) == 0:
-        return Err(_invalid_snapshot("the first JSONL record must be a header"))
+        return Err(_invalid_snapshot("codegraph JSONL input is empty"))
 
-    header = records[0]
-    mut record = header.require("record")?.expect_str()?
-    if record != "header":
-        return Err(_invalid_snapshot("the first JSONL record must be a header"))
-    summary.schema_version = header.require("schema_version")?.expect_int()?
+    metadata = records[0]
+    mut record_kind = metadata.require("record")?.expect_str()?
+    if record_kind != "header":
+        return Err(_invalid_snapshot("first codegraph record must be snapshot metadata (`record` = `header`)"))
+    summary.schema_version = metadata.require("schema_version")?.expect_int()?
     if summary.schema_version != 1:
         return Err(_invalid_snapshot("unsupported codegraph schema version"))
-    summary.mode = header.require("mode")?.expect_str()?
-    summary.degraded = header.require("degraded")?.expect_bool()?
-    summary.header_count = 1
+    summary.mode = metadata.require("mode")?.expect_str()?
+    summary.degraded = metadata.require("degraded")?.expect_bool()?
+    summary.metadata_record_count = 1
 
     for value in records[1:]:
-        record = value.require("record")?.expect_str()?
-        if record == "header":
-            return Err(_invalid_snapshot("a codegraph snapshot must contain exactly one header"))
-        summary.add_fact(record, value.require("degraded")?.expect_bool()?)
+        record_kind = value.require("record")?.expect_str()?
+        if record_kind == "header":
+            return Err(_invalid_snapshot("snapshot metadata (`record` = `header`) must appear exactly once and first"))
+        summary.add_fact(record_kind, value.require("degraded")?.expect_bool()?)
 
     return Ok(summary)
 

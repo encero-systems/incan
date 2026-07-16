@@ -720,13 +720,13 @@ def main() -> None:
 }
 
 fn assert_codegraph_v04_record_contract(records: &[serde_json::Value]) {
-    assert!(!records.is_empty(), "codegraph export should include a header record");
+    assert!(!records.is_empty(), "codegraph export should include snapshot metadata");
     assert_eq!(records[0]["record"], serde_json::json!("header"));
     assert_eq!(records[0]["schema_version"], serde_json::json!(1));
     assert_eq!(records[0]["languages"], serde_json::json!(["incan"]));
     assert!(
         records[0]["degraded"].is_boolean(),
-        "codegraph header should carry degraded state: {}",
+        "codegraph snapshot metadata should carry degraded state: {}",
         records[0]
     );
 
@@ -1657,7 +1657,7 @@ def main() -> None:
     let summary = parse_json_stdout(&first)?;
     assert_eq!(summary["schema_version"], serde_json::json!(1));
     assert_eq!(summary["mode"], serde_json::json!("strict"));
-    assert_eq!(summary["header_count"], serde_json::json!(1));
+    assert_eq!(summary["metadata_record_count"], serde_json::json!(1));
     assert!(
         summary["fact_count"].as_i64().is_some_and(|count| count > 0),
         "importer must observe compiler-owned graph facts: {summary}"
