@@ -366,6 +366,10 @@ fn toolchain_archive_packager_writes_archive_checksum_and_release_metadata() -> 
     assert!(listing.contains("bin/incan-lsp"));
     assert!(listing.contains("stdlib/testing.incn"));
     assert!(listing.contains("stdlib/prelude.incn"));
+    assert!(
+        !listing.lines().any(|path| path.contains("stdlib/target/")),
+        "toolchain archive must not publish the local compiled-stdlib cache:\n{listing}"
+    );
     assert!(listing.contains("crates/Cargo.toml"));
     assert!(listing.contains("crates/incan_core/Cargo.toml"));
     assert!(listing.contains("crates/incan_derive/Cargo.toml"));

@@ -87,12 +87,17 @@ package_dir="$out_dir/dist/incan-${release}-${target}"
 archive="$out_dir/incan-${release}-${target}.tar.gz"
 
 rm -rf "$package_dir"
-mkdir -p "$package_dir/bin" "$package_dir/crates"
+mkdir -p "$package_dir/bin" "$package_dir/crates" "$package_dir/stdlib"
 cp "$incan_bin" "$package_dir/bin/incan"
 cp "$incan_lsp_bin" "$package_dir/bin/incan-lsp"
-cp -R "$stdlib_dir" "$package_dir/stdlib"
+# The built-in stdlib artifact store is a local, content-addressed cache. It is rebuilt by the installed compiler and
+# can be mutated by concurrent builds, so release archives must contain only the source tree that defines it.
+tar -C "$stdlib_dir" --exclude='./target' -cf - . | tar -C "$package_dir/stdlib" -xf -
 for support_crate in incan_core incan_derive incan_stdlib incan_web_macros; do
-  cp -R "crates/${support_crate}" "$package_dir/crates/${support_crate}"
+  support_destination="$package_dir/crates/${support_crate}"
+  mkdir -p "$support_destination"
+  tar -C "crates/${support_crate}" --exclude='./target' --exclude='./stdlib/target' -cf - . \
+    | tar -C "$support_destination" -xf -
 done
 cat > "$package_dir/crates/Cargo.toml" <<WORKSPACE
 [workspace]
