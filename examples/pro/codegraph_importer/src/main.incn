@@ -1,0 +1,17 @@
+"""Import `codegraph.jsonl` in the current directory and print a deterministic summary."""
+
+from importer import GraphSummary, import_jsonl
+from std.fs import Path
+
+
+def load_summary(path: Path) -> Result[GraphSummary, str]:
+    """Read and import one codegraph snapshot, normalizing boundary errors for CLI presentation."""
+
+    source = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+    return import_jsonl(source).map_err((error) => error.message())
+
+
+def main() -> None:
+    load_summary(Path("codegraph.jsonl"))
+        .inspect((summary) => println(json_stringify(summary)))
+        .inspect_err((error) => println(error))

@@ -75,6 +75,15 @@ pub struct CodegraphSourceSpan {
     pub end_column: usize,
 }
 
+/// Labeled secondary source location attached to a diagnostic fact.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodegraphDiagnosticRelatedSpan {
+    /// Secondary source span.
+    pub span: CodegraphSourceSpan,
+    /// Compiler-owned explanation for this relationship.
+    pub label: String,
+}
+
 /// Header record emitted first in every JSONL export.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodegraphHeaderRecord {
@@ -297,6 +306,9 @@ pub struct CodegraphDiagnosticRecord {
     pub severity: String,
     /// Compiler phase that produced the diagnostic.
     pub phase: String,
+    /// Compiler subsystem that produced the diagnostic fact.
+    #[serde(default = "unknown_diagnostic_origin")]
+    pub origin: String,
     /// User-facing diagnostic message.
     pub message: String,
     /// Primary source span.
@@ -305,12 +317,26 @@ pub struct CodegraphDiagnosticRecord {
     pub notes: Vec<String>,
     /// Suggested fixes or hints.
     pub hints: Vec<String>,
+    /// Structured expected value or type when available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected: Option<String>,
+    /// Structured actual value or type when available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actual: Option<String>,
+    /// Secondary compiler-owned source locations.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub related_spans: Vec<CodegraphDiagnosticRelatedSpan>,
     /// Explain command for the diagnostic code.
     pub explain: String,
     /// Fact provenance.
     pub provenance: CodegraphProvenance,
     /// Diagnostic records always indicate degraded graph state.
     pub degraded: bool,
+}
+
+/// Supply the safe legacy value when a schema-v1 diagnostic has no origin field.
+fn unknown_diagnostic_origin() -> String {
+    "unknown".to_string()
 }
 
 /// One newline-delimited codegraph record.
@@ -352,8 +378,8 @@ pub fn to_jsonl(records: &[CodegraphRecord]) -> Result<String, serde_json::Error
 #[cfg(test)]
 mod tests {
     use super::{
-        CODEGRAPH_SCHEMA_VERSION, CodegraphFileRecord, CodegraphHeaderRecord, CodegraphLanguage, CodegraphMode,
-        CodegraphProvenance, CodegraphRecord, to_jsonl,
+        CODEGRAPH_SCHEMA_VERSION, CodegraphDiagnosticRecord, CodegraphFileRecord, CodegraphHeaderRecord,
+        CodegraphLanguage, CodegraphMode, CodegraphProvenance, CodegraphRecord, CodegraphSourceSpan, to_jsonl,
     };
 
     #[test]
@@ -385,6 +411,45 @@ mod tests {
         assert!(lines[0].contains("\"record\":\"header\""));
         assert!(lines[0].contains("\"schema_version\":1"));
         assert!(lines[1].contains("\"record\":\"file\""));
+        Ok(())
+    }
+
+    #[test]
+    fn diagnostic_records_without_origin_remain_readable() -> Result<(), Box<dyn std::error::Error>> {
+        let record = CodegraphRecord::Diagnostic(CodegraphDiagnosticRecord {
+            id: "diagnostic:0".to_string(),
+            language: CodegraphLanguage::Incan,
+            code: "INCAN-T0001".to_string(),
+            severity: "error".to_string(),
+            phase: "typecheck".to_string(),
+            origin: "typechecker".to_string(),
+            message: "type mismatch".to_string(),
+            primary_span: CodegraphSourceSpan {
+                file: "main.incn".to_string(),
+                start: 0,
+                end: 1,
+                start_line: 1,
+                start_column: 1,
+                end_line: 1,
+                end_column: 2,
+            },
+            notes: Vec::new(),
+            hints: Vec::new(),
+            expected: None,
+            actual: None,
+            related_spans: Vec::new(),
+            explain: "incan explain INCAN-T0001".to_string(),
+            provenance: CodegraphProvenance::Diagnostic,
+            degraded: true,
+        });
+        let mut legacy = serde_json::to_value(record)?;
+        legacy.as_object_mut().ok_or("expected record object")?.remove("origin");
+
+        let parsed: CodegraphRecord = serde_json::from_value(legacy)?;
+        let CodegraphRecord::Diagnostic(diagnostic) = parsed else {
+            return Err("expected diagnostic record".into());
+        };
+        assert_eq!(diagnostic.origin, "unknown");
         Ok(())
     }
 }

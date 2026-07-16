@@ -6668,6 +6668,52 @@ async def main() -> None:
     }
 
     #[test]
+    fn test_run_rfc088_source_owned_iterator_sum() {
+        let Ok(output) = incan_command()
+            .args(["run", "tests/codegen_snapshots/rfc088_iterator_adapters.incn"])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()
+        else {
+            panic!("failed to run incan");
+        };
+
+        assert!(
+            output.status.success(),
+            "incan run rfc088_iterator_adapters failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "2\n3\n15\n15\n15\n3\n3\n",
+            "source-owned Iterator.sum() must preserve adapter, primitive, and checked-newtype behavior"
+        );
+    }
+
+    #[test]
+    fn test_run_rfc088_iterator_sum_float_and_newtype_matrix() {
+        let Ok(output) = incan_command()
+            .args(["run", "tests/fixtures/rfc088_iterator_sum_runtime.incn"])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()
+        else {
+            panic!("failed to run incan");
+        };
+
+        assert!(
+            output.status.success(),
+            "incan run rfc088_iterator_sum_runtime failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "6\n3.75\n3.75\n3\n",
+            "source-owned Iterator.sum() must support int, float, and checked/unchecked newtypes"
+        );
+    }
+
+    #[test]
     fn test_run_rfc064_std_encoding_behavior() {
         let Ok(output) = incan_command()
             .args(["run", "tests/fixtures/rfc064_std_encoding_behavior.incn"])
@@ -10878,6 +10924,75 @@ mod rfc031_pub_import_integration_tests {
             ])
             .env("CARGO_NET_OFFLINE", "true")
             .output()?)
+    }
+
+    #[test]
+    fn consumer_build_infers_rust_generic_return_from_unwrap_context_issue852() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let tmp = tempfile::tempdir()?;
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"generic_json_return_repro\"\n\n[rust-dependencies.serde_json]\nversion = \"1.0\"\n",
+            r#"from rust::serde_json import Value
+from rust::serde_json import from_str as json_parse
+
+
+def parse_value() -> Value:
+    return json_parse("{}").unwrap()
+
+
+def accept_value(value: Value) -> None:
+    pass
+
+
+def main() -> None:
+    value: Value = parse_value()
+    accept_value(json_parse("{}").unwrap())
+"#,
+        )?;
+
+        let check_output = run_check(&main_path)?;
+        assert!(
+            check_output.status.success(),
+            "expected generic Rust JSON parser result to infer through unwrap context.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&check_output.stdout),
+            String::from_utf8_lossy(&check_output.stderr)
+        );
+
+        let out_dir = tmp.path().join("out");
+        let build_output = run_build(&main_path, &out_dir)?;
+        assert!(
+            build_output.status.success(),
+            "expected generated Rust to compile for the inferred generic JSON result.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&build_output.stdout),
+            String::from_utf8_lossy(&build_output.stderr)
+        );
+
+        let tests_dir = tmp.path().join("tests");
+        std::fs::create_dir_all(&tests_dir)?;
+        std::fs::write(
+            tests_dir.join("test_generic_json_return.incn"),
+            r#"from rust::serde_json import Value
+from rust::serde_json import from_str as json_parse
+
+
+def accept_value(value: Value) -> None:
+    pass
+
+
+def test_generic_json_result_infers_from_parameter_context() -> None:
+    accept_value(json_parse("{}").unwrap())
+    assert true
+"#,
+        )?;
+        let test_output = run_test(&tests_dir)?;
+        assert!(
+            test_output.status.success(),
+            "expected the package test batch to compile and run the inferred generic JSON result.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&test_output.stdout),
+            String::from_utf8_lossy(&test_output.stderr)
+        );
+        Ok(())
     }
 
     fn run_run(main_path: &Path) -> Result<std::process::Output, Box<dyn std::error::Error>> {

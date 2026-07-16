@@ -229,6 +229,55 @@ impl TypeChecker {
         }
     }
 
+    /// Substitute inspected Rust generic placeholders from a compatible expected result shape.
+    ///
+    /// Rust metadata names unbound function generics T, U, and similar. These are not Incan type variables, but an
+    /// expected result such as Result[Value, _] supplies an unambiguous binding for the matching return position.
+    fn refine_unbound_rust_return_type_with_expected(actual: &ResolvedType, expected: &ResolvedType) -> ResolvedType {
+        match actual {
+            ResolvedType::RustPath(path) if Self::rust_display_type_var_name(path.trim()).is_some() => expected.clone(),
+            ResolvedType::Ref(inner) => match expected {
+                ResolvedType::Ref(expected_inner) => ResolvedType::Ref(Box::new(
+                    Self::refine_unbound_rust_return_type_with_expected(inner, expected_inner),
+                )),
+                _ => actual.clone(),
+            },
+            ResolvedType::RefMut(inner) => match expected {
+                ResolvedType::RefMut(expected_inner) => ResolvedType::RefMut(Box::new(
+                    Self::refine_unbound_rust_return_type_with_expected(inner, expected_inner),
+                )),
+                _ => actual.clone(),
+            },
+            ResolvedType::Generic(name, args) => match expected {
+                ResolvedType::Generic(expected_name, expected_args)
+                    if name == expected_name && args.len() == expected_args.len() =>
+                {
+                    ResolvedType::Generic(
+                        name.clone(),
+                        args.iter()
+                            .zip(expected_args)
+                            .map(|(actual, expected)| {
+                                Self::refine_unbound_rust_return_type_with_expected(actual, expected)
+                            })
+                            .collect(),
+                    )
+                }
+                _ => actual.clone(),
+            },
+            ResolvedType::Tuple(items) => match expected {
+                ResolvedType::Tuple(expected_items) if items.len() == expected_items.len() => ResolvedType::Tuple(
+                    items
+                        .iter()
+                        .zip(expected_items)
+                        .map(|(actual, expected)| Self::refine_unbound_rust_return_type_with_expected(actual, expected))
+                        .collect(),
+                ),
+                _ => actual.clone(),
+            },
+            _ => actual.clone(),
+        }
+    }
+
     /// Record an ownership conversion for borrowed Rust scalar-like returns that Incan exposes as owned values.
     pub(in crate::frontend::typechecker) fn record_rust_return_coercion_from_display(
         &mut self,
@@ -308,6 +357,14 @@ impl TypeChecker {
             normalized.as_str(),
             "Box" | "HashMap" | "HashSet" | "Option" | "Result" | "Self" | "String" | "Vec"
         )
+    }
+
+    /// Return whether a borrowed Rust parameter is a dynamically-dispatched trait object.
+    ///
+    /// Trait-object compatibility is established from rust-inspect metadata, but Rust still requires the reference
+    /// syntax at the call site. Recording it here keeps typechecking and generated-Rust ownership in agreement.
+    fn rust_display_is_trait_object(rust_ty: &str) -> bool {
+        rust_ty.trim_start().starts_with("dyn ")
     }
 
     /// Render an Incan type into the canonical boundary vocabulary used by interop coercion policy lookup.
@@ -434,6 +491,16 @@ impl TypeChecker {
     fn rust_arg_boundary_match(&self, arg_ty: &ResolvedType, rust_param_ty: &str) -> RustArgBoundaryMatch {
         let display = Self::rust_display_without_lifetimes(rust_param_ty);
         let normalized = display.replace(' ', "");
+        if let Some((is_mut, inner)) = Self::rust_display_borrow_kind(display.as_str())
+            && Self::rust_display_is_trait_object(inner)
+        {
+            let target_inner_ty = self.resolved_type_from_rust_display(inner);
+            return if self.types_compatible(arg_ty, &target_inner_ty) {
+                RustArgBoundaryMatch::Coercion(RustArgCoercionKind::TraitObjectBorrow { mutable: is_mut })
+            } else {
+                RustArgBoundaryMatch::NoMatch
+            };
+        }
         if let Some(target_ty) = self.resolved_function_type_from_rust_callable_bound_display(display.as_str()) {
             return if self.types_compatible(arg_ty, &target_ty) {
                 RustArgBoundaryMatch::Exact
@@ -537,6 +604,14 @@ impl TypeChecker {
                 }
             }
             RustArgBoundaryMatch::Coercion(kind) => {
+                if matches!(kind, RustArgCoercionKind::TraitObjectBorrow { mutable: true })
+                    && let Expr::Ident(name) = &arg_expr.node
+                    && !self.mutable_bindings.contains(name)
+                {
+                    self.errors
+                        .push(errors::mutable_rust_borrow_requires_mut(name, arg_expr.span));
+                    return;
+                }
                 self.type_info.rust.arg_coercions.insert(
                     (arg_expr.span.start, arg_expr.span.end),
                     RustArgCoercionInfo {
@@ -666,8 +741,12 @@ impl TypeChecker {
                     let param = &params[positional_index];
                     if let Some(bound_span) = bound_spans[positional_index] {
                         let name = param.name.as_deref().unwrap_or("<positional>");
-                        self.errors
-                            .push(errors::duplicate_call_argument(callable_display, name, bound_span));
+                        self.errors.push(errors::duplicate_call_argument(
+                            callable_display,
+                            name,
+                            bound_span,
+                            arg_span,
+                        ));
                     } else {
                         bound_spans[positional_index] = Some(arg_span);
                         bindings.push(RustCallArgBinding { arg, arg_ty, param });
@@ -676,17 +755,25 @@ impl TypeChecker {
                 }
                 CallArg::Named(name, _) => {
                     if let Some(first_span) = named_seen.insert(name.as_str(), arg_span) {
-                        self.errors
-                            .push(errors::duplicate_call_argument(callable_display, name, first_span));
+                        self.errors.push(errors::duplicate_call_argument(
+                            callable_display,
+                            name,
+                            first_span,
+                            arg_span,
+                        ));
                     }
                     let Some(param_index) = params_by_name.get(name.as_str()).copied() else {
                         self.errors
                             .push(errors::unknown_keyword_argument(callable_display, name, arg_span));
                         continue;
                     };
-                    if bound_spans[param_index].is_some() {
-                        self.errors
-                            .push(errors::duplicate_call_argument(callable_display, name, arg_span));
+                    if let Some(first_span) = bound_spans[param_index] {
+                        self.errors.push(errors::duplicate_call_argument(
+                            callable_display,
+                            name,
+                            first_span,
+                            arg_span,
+                        ));
                         continue;
                     }
                     let param = &params[param_index];
@@ -839,12 +926,25 @@ impl TypeChecker {
     }
 
     /// Validate a direct Rust function call (`rust::path::item(...)`) and record boundary coercions.
+    #[cfg(test)]
     pub(in crate::frontend::typechecker::check_expr) fn validate_rust_function_call(
         &mut self,
         path: &str,
         sig: &RustFunctionSig,
         args: &[CallArg],
         span: Span,
+    ) -> ResolvedType {
+        self.validate_rust_function_call_with_expected(path, sig, args, span, None)
+    }
+
+    /// Validate a direct Rust function call while using an expected result type to bind return-only generics.
+    pub(in crate::frontend::typechecker::check_expr) fn validate_rust_function_call_with_expected(
+        &mut self,
+        path: &str,
+        sig: &RustFunctionSig,
+        args: &[CallArg],
+        span: Span,
+        expected_return_ty: Option<&ResolvedType>,
     ) -> ResolvedType {
         if sig.is_async {
             self.type_info
@@ -875,6 +975,9 @@ impl TypeChecker {
         }
 
         let ret = self.resolved_rust_call_type_from_sig(sig, path, span);
+        let ret = expected_return_ty
+            .map(|expected| Self::refine_unbound_rust_return_type_with_expected(&ret, expected))
+            .unwrap_or(ret);
         self.record_rust_return_coercion_from_display(sig.return_type.as_str(), &ret, span);
         ret
     }
@@ -882,11 +985,12 @@ impl TypeChecker {
 
 #[cfg(test)]
 mod validate_rust_function_call_tests {
-    use super::TypeChecker;
+    use super::{RustArgBoundaryMatch, TypeChecker};
     use crate::frontend::ast::{CallArg, Expr, IntLiteral, Literal, Span, Spanned};
     use crate::frontend::symbols::{
         CallableParam, NewtypeInfo, ResolvedType, ScopeKind, Symbol, SymbolKind, TypeInfo, VariableInfo,
     };
+    use crate::frontend::typechecker::RustArgCoercionKind;
     use incan_core::interop::{RustFunctionSig, RustParam};
     use incan_core::lang::types::numerics::NumericTypeId;
     use std::collections::HashMap;
@@ -927,6 +1031,46 @@ mod validate_rust_function_call_tests {
         assert!(
             TypeChecker::rust_identity_metadata_base_should_probe("datafusion_expr::expr::WindowFunction"),
             "nominal dependency item displays should still reuse cache-only identity metadata"
+        );
+    }
+
+    #[test]
+    fn rust_trait_object_parameters_record_the_required_borrow_shape() {
+        let checker = TypeChecker::new();
+        let adapter = checker.resolved_type_from_rust_display("dyn demo::Adapter");
+        let adapter_mut = checker.resolved_type_from_rust_display("dyn demo::AdapterMut");
+
+        assert_eq!(
+            checker.rust_arg_boundary_match(&adapter, "&dyn demo::Adapter"),
+            RustArgBoundaryMatch::Coercion(RustArgCoercionKind::TraitObjectBorrow { mutable: false })
+        );
+        assert_eq!(
+            checker.rust_arg_boundary_match(&adapter_mut, "&mut dyn demo::AdapterMut"),
+            RustArgBoundaryMatch::Coercion(RustArgCoercionKind::TraitObjectBorrow { mutable: true })
+        );
+    }
+
+    #[test]
+    fn mutable_rust_trait_object_borrow_rejects_immutable_binding() {
+        let mut checker = TypeChecker::new();
+        let span = Span::new(10, 16);
+        let arg = Spanned::new(Expr::Ident("output".to_string()), span);
+        let adapter_mut = checker.resolved_type_from_rust_display("dyn demo::AdapterMut");
+
+        checker.validate_rust_boundary_value(
+            "demo::Processor",
+            "&mut dyn demo::AdapterMut",
+            &arg,
+            &adapter_mut,
+            false,
+        );
+
+        assert!(
+            checker.errors.iter().any(|error| error
+                .message
+                .contains("Rust parameter requires a mutable borrow of 'output'")),
+            "expected a mutable trait-object borrow diagnostic, got {:?}",
+            checker.errors
         );
     }
 

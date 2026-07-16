@@ -81,7 +81,7 @@ Options:
 
 - `--format text|json`: Output human diagnostics or a stable machine-readable JSON report (default: `text`).
 
-JSON output uses `schema_version: 1` and prints a deterministic report with `ok` and `diagnostics`. Each diagnostic includes a stable `code`, `severity`, compiler `phase`, primary source span, message, notes, hints, related spans, and an `incan explain <CODE>` hook. Human output remains the default and continues to use source-highlighted compiler diagnostics.
+JSON output uses `schema_version: 1` and prints a deterministic report with `ok` and `diagnostics`. Each diagnostic includes a stable `code`, `severity`, compiler `phase` and `origin`, primary source span, message, notes, hints, labeled related spans, and an `incan explain <CODE>` hook. Diagnostics that compare two compiler-known values also include optional `expected` and `actual` fields, so consumers do not need to parse the message. The LSP and `incan inspect codegraph --allow-errors` project these same compiler-owned facts; codegraph uses byte offsets for source spans while the diagnostic JSON and LSP retain line and column positions. Human output remains the default and continues to use source-highlighted compiler diagnostics.
 
 Examples:
 

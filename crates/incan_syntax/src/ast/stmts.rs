@@ -2,7 +2,7 @@
 
 use incan_semantics_core::SurfaceFeatureKey;
 
-use super::{Decorator, Expr, Ident, Pattern, Span, Spanned, Type};
+use super::{BinaryOp, Decorator, Expr, Ident, Pattern, Span, Spanned, Type};
 
 // ============================================================================
 // Statements
@@ -66,6 +66,8 @@ pub struct FieldAssignmentStmt {
     pub target_span: Span,
     pub object: Spanned<Expr>,
     pub field: Ident,
+    /// Surface compound operator when the parser desugared `obj.field <op>= value`.
+    pub compound_op: Option<CompoundOp>,
     pub value: Spanned<Expr>,
 }
 
@@ -73,6 +75,8 @@ pub struct FieldAssignmentStmt {
 pub struct IndexAssignmentStmt {
     pub object: Spanned<Expr>,
     pub index: Spanned<Expr>,
+    /// Surface compound operator when the parser desugared `obj[index] <op>= value`.
+    pub compound_op: Option<CompoundOp>,
     pub value: Spanned<Expr>,
 }
 
@@ -133,6 +137,46 @@ pub enum CompoundOp {
     BitXor,   // ^=
     Shl,      // <<=
     Shr,      // >>=
+}
+
+impl CompoundOp {
+    /// Return this operator's source-level augmented-assignment spelling.
+    #[must_use]
+    pub const fn source_spelling(self) -> &'static str {
+        match self {
+            Self::Add => "+=",
+            Self::Sub => "-=",
+            Self::Mul => "*=",
+            Self::Div => "/=",
+            Self::FloorDiv => "//=",
+            Self::Mod => "%=",
+            Self::MatMul => "@=",
+            Self::BitAnd => "&=",
+            Self::BitOr => "|=",
+            Self::BitXor => "^=",
+            Self::Shl => "<<=",
+            Self::Shr => ">>=",
+        }
+    }
+
+    /// Return the ordinary binary operator used when this assignment is desugared.
+    #[must_use]
+    pub const fn binary_op(self) -> BinaryOp {
+        match self {
+            Self::Add => BinaryOp::Add,
+            Self::Sub => BinaryOp::Sub,
+            Self::Mul => BinaryOp::Mul,
+            Self::Div => BinaryOp::Div,
+            Self::FloorDiv => BinaryOp::FloorDiv,
+            Self::Mod => BinaryOp::Mod,
+            Self::MatMul => BinaryOp::MatMul,
+            Self::BitAnd => BinaryOp::BitAnd,
+            Self::BitOr => BinaryOp::BitOr,
+            Self::BitXor => BinaryOp::BitXor,
+            Self::Shl => BinaryOp::Shl,
+            Self::Shr => BinaryOp::Shr,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

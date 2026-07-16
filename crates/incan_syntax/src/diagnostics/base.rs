@@ -6,6 +6,28 @@
 
 use crate::ast::Span;
 
+/// A secondary source location that explains one compiler diagnostic.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelatedSpan {
+    /// Source range associated with the diagnostic.
+    pub span: Span,
+    /// Compiler-owned explanation of why this location is related.
+    pub label: String,
+}
+
+/// Optional structured detail carried only by diagnostics that have extra tooling facts.
+///
+/// Keeping this payload out of the common [`CompileError`] layout matters because parser
+/// APIs return `Result<_, CompileError>` pervasively. The indirection preserves a compact
+/// error variant for ordinary syntax and type errors while still retaining rich facts when
+/// a producer supplies them.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct StructuredDiagnosticDetails {
+    related_spans: Vec<RelatedSpan>,
+    expected: Option<String>,
+    actual: Option<String>,
+}
+
 /// A compile-time error with location information.
 ///
 /// Every diagnostic produced by the Incan compiler is represented as a
@@ -24,6 +46,8 @@ pub struct CompileError {
     pub notes: Vec<String>,
     /// Actionable suggestions ("= hint: …") rendered after the notes.
     pub hints: Vec<String>,
+    /// Compiler-owned detail retained for structured tooling projections when present.
+    details: Option<Box<StructuredDiagnosticDetails>>,
 }
 
 impl CompileError {
@@ -35,6 +59,7 @@ impl CompileError {
             kind: ErrorKind::Error,
             notes: Vec::new(),
             hints: Vec::new(),
+            details: None,
         }
     }
 
@@ -46,6 +71,7 @@ impl CompileError {
             kind: ErrorKind::Syntax,
             notes: Vec::new(),
             hints: Vec::new(),
+            details: None,
         }
     }
 
@@ -57,6 +83,7 @@ impl CompileError {
             kind: ErrorKind::Type,
             notes: Vec::new(),
             hints: Vec::new(),
+            details: None,
         }
     }
 
@@ -71,6 +98,19 @@ impl CompileError {
             kind: ErrorKind::Warning,
             notes: Vec::new(),
             hints: Vec::new(),
+            details: None,
+        }
+    }
+
+    /// Create a non-fatal lint advisory.
+    pub fn lint(message: String, span: Span) -> Self {
+        Self {
+            message,
+            span,
+            kind: ErrorKind::Lint,
+            notes: Vec::new(),
+            hints: Vec::new(),
+            details: None,
         }
     }
 
@@ -84,6 +124,46 @@ impl CompileError {
     pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
         self.hints.push(hint.into());
         self
+    }
+
+    /// Attach a second compiler-owned source location to this diagnostic.
+    pub fn with_related_span(mut self, span: Span, label: impl Into<String>) -> Self {
+        self.structured_details_mut().related_spans.push(RelatedSpan {
+            span,
+            label: label.into(),
+        });
+        self
+    }
+
+    /// Attach structured expected and actual values without requiring tooling to parse prose.
+    pub fn with_expected_actual(mut self, expected: impl Into<String>, actual: impl Into<String>) -> Self {
+        let details = self.structured_details_mut();
+        details.expected = Some(expected.into());
+        details.actual = Some(actual.into());
+        self
+    }
+
+    /// Return compiler-owned secondary locations for structured tooling projections.
+    pub fn related_spans(&self) -> &[RelatedSpan] {
+        self.details
+            .as_deref()
+            .map_or(&[], |details| details.related_spans.as_slice())
+    }
+
+    /// Return the structured expected value or type, when the diagnostic provides one.
+    pub fn expected(&self) -> Option<&str> {
+        self.details.as_deref().and_then(|details| details.expected.as_deref())
+    }
+
+    /// Return the structured actual value or type, when the diagnostic provides one.
+    pub fn actual(&self) -> Option<&str> {
+        self.details.as_deref().and_then(|details| details.actual.as_deref())
+    }
+
+    /// Return the optional structured payload, allocating it only for a rich diagnostic.
+    fn structured_details_mut(&mut self) -> &mut StructuredDiagnosticDetails {
+        self.details
+            .get_or_insert_with(|| Box::new(StructuredDiagnosticDetails::default()))
     }
 }
 
@@ -229,6 +309,21 @@ fn get_line_info(source: &str, offset: usize) -> (usize, usize, &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn structured_details_stay_out_of_the_common_error_layout() {
+        let error = CompileError::type_error("type mismatch".to_string(), Span::new(8, 11))
+            .with_expected_actual("int", "str")
+            .with_related_span(Span::new(0, 3), "value declared here");
+
+        assert_eq!(error.expected(), Some("int"));
+        assert_eq!(error.actual(), Some("str"));
+        assert_eq!(error.related_spans().len(), 1);
+        assert!(
+            std::mem::size_of::<CompileError>() <= 128,
+            "CompileError must remain small enough for pervasive Result<_, CompileError> parser APIs"
+        );
+    }
 
     #[test]
     fn test_get_line_info() {

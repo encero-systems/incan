@@ -155,6 +155,108 @@ def main() -> Result[None, str]:
     Ok(())
 }
 
+#[test]
+fn rust_trait_object_method_arguments_borrow_by_metadata_issue832() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(
+        tmp.path(),
+        "rust_trait_object_borrow_arguments",
+        r#"
+
+[rust-dependencies]
+duck_adapter = { path = "rust/duck_adapter" }
+"#,
+    )?;
+    fs::write(
+        &main_path,
+        r#"from rust::duck_adapter import InterleavedOwned, Processor
+
+def main() -> None:
+  mut processor = Processor.new()
+  input_frames: usize = 3
+  empty_frames: usize = 0
+  input = InterleavedOwned.new(input_frames)
+  mut output = InterleavedOwned.new(empty_frames)
+  println(processor.process_into_buffer(input, output))
+"#,
+    )?;
+
+    let helper_src = tmp.path().join("rust").join("duck_adapter").join("src");
+    fs::create_dir_all(&helper_src)?;
+    fs::write(
+        helper_src
+            .parent()
+            .ok_or("duck adapter source directory had no parent")?
+            .join("Cargo.toml"),
+        r#"[package]
+name = "duck_adapter"
+version = "0.1.0"
+edition = "2021"
+"#,
+    )?;
+    fs::write(
+        helper_src.join("lib.rs"),
+        r#"pub trait Adapter {
+    fn frames(&self) -> usize;
+}
+
+pub trait AdapterMut: Adapter {
+    fn set_frames(&mut self, frames: usize);
+}
+
+pub struct InterleavedOwned {
+    frames: usize,
+}
+
+impl InterleavedOwned {
+    pub fn new(frames: usize) -> Self {
+        Self { frames }
+    }
+}
+
+impl Adapter for InterleavedOwned {
+    fn frames(&self) -> usize {
+        self.frames
+    }
+}
+
+impl AdapterMut for InterleavedOwned {
+    fn set_frames(&mut self, frames: usize) {
+        self.frames = frames;
+    }
+}
+
+pub struct Processor;
+
+impl Processor {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn process_into_buffer(&mut self, input: &dyn Adapter, output: &mut dyn AdapterMut) -> usize {
+        output.set_frames(input.frames());
+        output.frames()
+    }
+}
+"#,
+    )?;
+
+    let output = run_incan(tmp.path(), &["run"])?;
+    assert_success(&output, "Rust trait-object method argument borrowing");
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "3");
+
+    let generated = fs::read_to_string(
+        tmp.path()
+            .join("target/incan/rust_trait_object_borrow_arguments/src/main.rs"),
+    )?;
+    let compact_generated: String = generated.chars().filter(|ch| !ch.is_whitespace()).collect();
+    assert!(
+        compact_generated.contains("process_into_buffer(&input,&mutoutput)"),
+        "trait-object argument borrows must survive generated Rust:\n{generated}"
+    );
+    Ok(())
+}
+
 fn parse_json_stdout(output: &Output) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     Ok(serde_json::from_slice(&output.stdout)?)
 }
@@ -859,13 +961,13 @@ def main() -> None:
 }
 
 fn assert_codegraph_v04_record_contract(records: &[serde_json::Value]) {
-    assert!(!records.is_empty(), "codegraph export should include a header record");
+    assert!(!records.is_empty(), "codegraph export should include snapshot metadata");
     assert_eq!(records[0]["record"], serde_json::json!("header"));
     assert_eq!(records[0]["schema_version"], serde_json::json!(1));
     assert_eq!(records[0]["languages"], serde_json::json!(["incan"]));
     assert!(
         records[0]["degraded"].is_boolean(),
-        "codegraph header should carry degraded state: {}",
+        "codegraph snapshot metadata should carry degraded state: {}",
         records[0]
     );
 
@@ -1116,6 +1218,119 @@ fn check_json_reports_typechecker_diagnostics() -> Result<(), Box<dyn std::error
     assert_failure(&legacy_output, "incan --check --format json typechecker diagnostic");
     let legacy_json = parse_json_stdout(&legacy_output)?;
     assert_eq!(legacy_json["diagnostics"][0]["code"], serde_json::json!("INCAN-T0001"));
+
+    Ok(())
+}
+
+#[test]
+fn diagnostic_facts_keep_related_spans_and_type_payloads_across_cli_and_codegraph()
+-> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let source_path = tmp.path().join("main.incn");
+    fs::write(
+        &source_path,
+        r#"model Wire:
+    id [alias="wire"]: int
+    label [alias="wire"]: str
+
+def accept(value: int) -> None:
+    pass
+
+def main() -> None:
+    accept(value=1, value=2)
+    accept("text")
+"#,
+    )?;
+    let source_arg = source_path.to_str().ok_or("source path was not valid UTF-8")?;
+
+    let check = run_incan(tmp.path(), &["check", source_arg, "--format", "json"])?;
+    assert_failure(&check, "incan check should emit diagnostic facts");
+    let check_json = parse_json_stdout(&check)?;
+    let cli_diagnostics = check_json["diagnostics"]
+        .as_array()
+        .ok_or("expected CLI diagnostics array")?;
+    let cli_alias = cli_diagnostics
+        .iter()
+        .find(|diagnostic| {
+            diagnostic["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("Duplicate alias"))
+        })
+        .ok_or("expected duplicate alias diagnostic")?;
+    let cli_duplicate_arg = cli_diagnostics
+        .iter()
+        .find(|diagnostic| {
+            diagnostic["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("Duplicate argument"))
+        })
+        .ok_or("expected duplicate argument diagnostic")?;
+    let cli_mismatch = cli_diagnostics
+        .iter()
+        .find(|diagnostic| {
+            diagnostic["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("Argument 'value' of 'accept'"))
+        })
+        .ok_or("expected call argument type mismatch diagnostic")?;
+
+    assert_eq!(cli_alias["origin"], serde_json::json!("typechecker"));
+    assert_eq!(
+        cli_alias["related_spans"][0]["label"],
+        serde_json::json!("First field alias 'wire'")
+    );
+    assert_eq!(
+        cli_duplicate_arg["related_spans"][0]["label"],
+        serde_json::json!("First argument named 'value'")
+    );
+    assert_eq!(cli_mismatch["expected"], serde_json::json!("int"));
+    assert_eq!(cli_mismatch["actual"], serde_json::json!("str"));
+
+    let codegraph = run_incan(
+        tmp.path(),
+        &[
+            "inspect",
+            "codegraph",
+            source_arg,
+            "--format",
+            "jsonl",
+            "--allow-errors",
+        ],
+    )?;
+    assert_success(&codegraph, "tolerant codegraph should project diagnostic facts");
+    let records = parse_jsonl_stdout(&codegraph)?;
+    let graph_alias = records
+        .iter()
+        .find(|record| record["record"] == serde_json::json!("diagnostic") && record["message"] == cli_alias["message"])
+        .ok_or("expected duplicate alias codegraph diagnostic")?;
+    let graph_duplicate_arg = records
+        .iter()
+        .find(|record| {
+            record["record"] == serde_json::json!("diagnostic") && record["message"] == cli_duplicate_arg["message"]
+        })
+        .ok_or("expected duplicate argument codegraph diagnostic")?;
+    let graph_mismatch = records
+        .iter()
+        .find(|record| {
+            record["record"] == serde_json::json!("diagnostic") && record["message"] == cli_mismatch["message"]
+        })
+        .ok_or("expected type mismatch codegraph diagnostic")?;
+
+    assert_eq!(graph_alias["origin"], cli_alias["origin"]);
+    assert_eq!(
+        graph_alias["related_spans"][0]["label"],
+        cli_alias["related_spans"][0]["label"]
+    );
+    assert_eq!(
+        graph_alias["related_spans"][0]["span"]["start"],
+        cli_alias["related_spans"][0]["span"]["start"]["offset"]
+    );
+    assert_eq!(
+        graph_duplicate_arg["related_spans"][0]["label"],
+        cli_duplicate_arg["related_spans"][0]["label"]
+    );
+    assert_eq!(graph_mismatch["expected"], cli_mismatch["expected"]);
+    assert_eq!(graph_mismatch["actual"], cli_mismatch["actual"]);
 
     Ok(())
 }
@@ -1729,6 +1944,82 @@ pub def entrypoint() -> int:
             })
             && record["provenance"] == serde_json::json!("checked")
     }));
+
+    Ok(())
+}
+
+#[test]
+fn codegraph_importer_example_consumes_compiler_jsonl_issue776() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let source_dir = tmp.path().join("source");
+    fs::create_dir_all(&source_dir)?;
+    fs::write(
+        source_dir.join("incan.toml"),
+        r#"[project]
+name = "codegraph_importer_source"
+version = "0.1.0"
+"#,
+    )?;
+    let source_main = source_dir.join("main.incn");
+    fs::write(
+        &source_main,
+        r#"pub def greet(name: str) -> str:
+    return f"hello {name}"
+
+def main() -> None:
+    println(greet("Incan"))
+"#,
+    )?;
+
+    let graph = run_incan(
+        &source_dir,
+        &[
+            "inspect",
+            "codegraph",
+            source_main.to_str().ok_or("source path was not valid UTF-8")?,
+            "--format",
+            "jsonl",
+        ],
+    )?;
+    assert_success(&graph, "compiler codegraph export for importer example");
+    let graph_records = parse_jsonl_stdout(&graph)?;
+    assert_codegraph_v04_record_contract(&graph_records);
+
+    let importer_dir = tmp.path().join("importer");
+    let importer_src = importer_dir.join("src");
+    fs::create_dir_all(&importer_src)?;
+    fs::write(
+        importer_dir.join("incan.toml"),
+        include_str!("../examples/pro/codegraph_importer/incan.toml"),
+    )?;
+    fs::write(
+        importer_src.join("importer.incn"),
+        include_str!("../examples/pro/codegraph_importer/src/importer.incn"),
+    )?;
+    fs::write(
+        importer_src.join("main.incn"),
+        include_str!("../examples/pro/codegraph_importer/src/main.incn"),
+    )?;
+    fs::write(importer_dir.join("codegraph.jsonl"), &graph.stdout)?;
+
+    let first = run_incan(&importer_dir, &["run", "src/main.incn"])?;
+    assert_success(&first, "Incan-authored codegraph importer example");
+    let second = run_incan(&importer_dir, &["run", "src/main.incn"])?;
+    assert_success(&second, "second Incan-authored codegraph importer example");
+    assert_eq!(first.stdout, second.stdout, "importer summary must be deterministic");
+
+    let summary = parse_json_stdout(&first)?;
+    assert_eq!(summary["schema_version"], serde_json::json!(1));
+    assert_eq!(summary["mode"], serde_json::json!("strict"));
+    assert_eq!(summary["metadata_record_count"], serde_json::json!(1));
+    assert!(
+        summary["fact_count"].as_i64().is_some_and(|count| count > 0),
+        "importer must observe compiler-owned graph facts: {summary}"
+    );
+    assert!(
+        summary["declaration_count"].as_i64().is_some_and(|count| count > 0),
+        "importer must preserve declaration records without parsing source itself: {summary}"
+    );
 
     Ok(())
 }
@@ -3603,6 +3894,85 @@ where
         String::from_utf8_lossy(&output.stdout).trim(),
         "callbacks-built",
         "unexpected borrowed-slice callback output"
+    );
+    Ok(())
+}
+
+#[test]
+fn rust_method_into_bound_keeps_string_argument_inferable_issue804() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(
+        tmp.path(),
+        "cli_rust_method_into_bound",
+        r#"
+
+[rust-dependencies.into_method_helper]
+path = "rust/into_method_helper"
+"#,
+    )?;
+    fs::write(
+        &main_path,
+        r#"from rust::into_method_helper import Tokenizer
+
+def main() -> None:
+  tokenizer = Tokenizer.new()
+  println(tokenizer.encode("hello world", false))
+"#,
+    )?;
+
+    let helper_src = tmp.path().join("rust").join("into_method_helper").join("src");
+    fs::create_dir_all(&helper_src)?;
+    fs::write(
+        helper_src
+            .parent()
+            .ok_or("into_method_helper src has no parent")?
+            .join("Cargo.toml"),
+        r#"[package]
+name = "into_method_helper"
+version = "0.1.0"
+edition = "2021"
+"#,
+    )?;
+    fs::write(
+        helper_src.join("lib.rs"),
+        r#"pub struct Tokenizer;
+
+impl Tokenizer {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn encode<E: Into<String>>(&self, input: E, uppercase: bool) -> String {
+        let text = input.into();
+        if uppercase {
+            text.to_uppercase()
+        } else {
+            text
+        }
+    }
+}
+"#,
+    )?;
+
+    let output = run_incan(
+        tmp.path(),
+        &["run", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(&output, "incan run with a Rust Into-bound method argument");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "hello world",
+        "Rust Into-bound method should receive the original string type"
+    );
+
+    let generated = fs::read_to_string(tmp.path().join("target/incan/cli_rust_method_into_bound/src/main.rs"))?;
+    assert!(
+        generated.contains("tokenizer.encode(\"hello world\", false)"),
+        "unresolved Rust method generic should preserve the string literal shape, got:\n{generated}"
+    );
+    assert!(
+        !generated.contains("tokenizer.encode(\"hello world\".into(), false)"),
+        "unresolved Rust method generic must not emit an ambiguous `.into()`, got:\n{generated}"
     );
     Ok(())
 }
@@ -7212,6 +7582,85 @@ def test_generic_callable_name_ignores_unrelated_signatures() -> None:
     assert_success(
         &test_output,
         "incan test for scoped generic callable-name planning issue701",
+    );
+    Ok(())
+}
+
+#[test]
+fn build_metadata_free_into_bound_tokenizer_encode_issue804() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let helper_dir = tmp.path().join("rust").join("tokenizers");
+    fs::create_dir_all(helper_dir.join("src"))?;
+    fs::write(
+        helper_dir.join("Cargo.toml"),
+        "[package]\nname = \"tokenizers\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    fs::write(
+        helper_dir.join("src").join("lib.rs"),
+        r#"pub struct Tokenizer;
+
+pub struct EncodeInput<'a>(&'a str);
+
+impl<'a> From<&'a str> for EncodeInput<'a> {
+    fn from(value: &'a str) -> Self {
+        Self(value)
+    }
+}
+
+impl Tokenizer {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn encode<'a, E>(&self, value: E, _add_special_tokens: bool) -> Result<(), ()>
+    where
+        E: Into<EncodeInput<'a>>,
+    {
+        let _ = value.into();
+        Ok(())
+    }
+}
+"#,
+    )?;
+    let main_path = write_minimal_project(
+        tmp.path(),
+        "metadata_free_into_bound_tokenizer_encode_issue804",
+        r#"
+[rust-dependencies]
+tokenizers = { path = "rust/tokenizers" }
+"#,
+    )?;
+    fs::write(
+        &main_path,
+        r#"from rust::tokenizers import Tokenizer
+
+def main() -> None:
+    tokenizer = Tokenizer.new()
+    literal = tokenizer.encode("literal", False)
+    text = "variable"
+    variable = tokenizer.encode(text, False)
+"#,
+    )?;
+
+    let build_output = run_incan(
+        tmp.path(),
+        &["build", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(
+        &build_output,
+        "incan build for metadata-free Into-bound tokenizer encode issue804",
+    );
+    let generated = fs::read_to_string(
+        tmp.path()
+            .join("target/incan/metadata_free_into_bound_tokenizer_encode_issue804/src/main.rs"),
+    )?;
+    assert!(
+        generated.contains("tokenizer.encode(\"literal\", false)"),
+        "literal must preserve its direct &str shape, got:\n{generated}"
+    );
+    assert!(
+        generated.contains("tokenizer.encode((text).as_str(), false)"),
+        "owned Incan strings must become &str for the Into-bound method, got:\n{generated}"
     );
     Ok(())
 }

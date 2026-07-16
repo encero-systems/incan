@@ -982,6 +982,7 @@ impl<'a> Parser<'a> {
                         target_span: expr.span,
                         object: *object,
                         field,
+                        compound_op: None,
                         value,
                     }));
                 }
@@ -990,6 +991,7 @@ impl<'a> Parser<'a> {
                     return Ok(Statement::IndexAssignment(IndexAssignmentStmt {
                         object: *object,
                         index: *index,
+                        compound_op: None,
                         value,
                     }));
                 }
@@ -1008,23 +1010,25 @@ impl<'a> Parser<'a> {
                 Expr::Field(object, field) => {
                     // Convert field += rhs to field = field + rhs
                     let field_expr = Spanned::new(Expr::Field(object.clone(), field.clone()), expr.span);
-                    let bin_op = Self::binary_op_from_compound(op);
+                    let bin_op = op.binary_op();
                     let new_value = Spanned::new(Expr::Binary(Box::new(field_expr), bin_op, Box::new(rhs)), expr.span);
                     return Ok(Statement::FieldAssignment(FieldAssignmentStmt {
                         target_span: expr.span,
                         object: *object,
                         field,
+                        compound_op: Some(op),
                         value: new_value,
                     }));
                 }
                 Expr::Index(object, index) => {
                     // Convert arr[i] += rhs to arr[i] = arr[i] + rhs
                     let index_expr = Spanned::new(Expr::Index(object.clone(), index.clone()), expr.span);
-                    let bin_op = Self::binary_op_from_compound(op);
+                    let bin_op = op.binary_op();
                     let new_value = Spanned::new(Expr::Binary(Box::new(index_expr), bin_op, Box::new(rhs)), expr.span);
                     return Ok(Statement::IndexAssignment(IndexAssignmentStmt {
                         object: *object,
                         index: *index,
+                        compound_op: Some(op),
                         value: new_value,
                     }));
                 }
@@ -1144,24 +1148,6 @@ impl<'a> Parser<'a> {
             TokenKind::Operator(OperatorId::ShlEq) => Some(CompoundOp::Shl),
             TokenKind::Operator(OperatorId::ShrEq) => Some(CompoundOp::Shr),
             _ => None,
-        }
-    }
-
-    /// Return the ordinary binary operator used by a compound-assignment fallback.
-    fn binary_op_from_compound(op: CompoundOp) -> BinaryOp {
-        match op {
-            CompoundOp::Add => BinaryOp::Add,
-            CompoundOp::Sub => BinaryOp::Sub,
-            CompoundOp::Mul => BinaryOp::Mul,
-            CompoundOp::Div => BinaryOp::Div,
-            CompoundOp::FloorDiv => BinaryOp::FloorDiv,
-            CompoundOp::Mod => BinaryOp::Mod,
-            CompoundOp::MatMul => BinaryOp::MatMul,
-            CompoundOp::BitAnd => BinaryOp::BitAnd,
-            CompoundOp::BitOr => BinaryOp::BitOr,
-            CompoundOp::BitXor => BinaryOp::BitXor,
-            CompoundOp::Shl => BinaryOp::Shl,
-            CompoundOp::Shr => BinaryOp::Shr,
         }
     }
 

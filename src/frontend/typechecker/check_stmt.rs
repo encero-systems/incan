@@ -143,20 +143,7 @@ impl TypeChecker {
                     let value_ty = self.check_expr(&compound.value);
 
                     // Treat `x <op>= y` as `x = x <op> y` using numeric policy.
-                    let binop = match compound.op {
-                        CompoundOp::Add => BinaryOp::Add,
-                        CompoundOp::Sub => BinaryOp::Sub,
-                        CompoundOp::Mul => BinaryOp::Mul,
-                        CompoundOp::Div => BinaryOp::Div,
-                        CompoundOp::FloorDiv => BinaryOp::FloorDiv,
-                        CompoundOp::Mod => BinaryOp::Mod,
-                        CompoundOp::MatMul => BinaryOp::MatMul,
-                        CompoundOp::BitAnd => BinaryOp::BitAnd,
-                        CompoundOp::BitOr => BinaryOp::BitOr,
-                        CompoundOp::BitXor => BinaryOp::BitXor,
-                        CompoundOp::Shl => BinaryOp::Shl,
-                        CompoundOp::Shr => BinaryOp::Shr,
-                    };
+                    let binop = compound.op.binary_op();
 
                     let lhs_num = numeric_ty_from_resolved(&var_ty);
                     let rhs_num = numeric_ty_from_resolved(&value_ty);
