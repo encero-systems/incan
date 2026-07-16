@@ -3,7 +3,8 @@ Dynamic JSON values for payloads whose full shape is not known at compile time.
 
 `JsonValue` preserves the difference between JSON null and Incan `None`: object and array lookup helpers return
 `Option[JsonValue]` so missing data is `None`, while present JSON null is `Some(JsonValue.null())`. Direct indexing uses
-the same checked optional contract for string object keys and integer array indices.
+the same checked optional contract for string object keys and integer array indices. `parse_jsonl` adds the matching
+newline-delimited JSON boundary for tools and event-oriented consumers.
 
 Typed models with stable schemas should continue to use `std.serde.json`; this module is for exploratory, partially
 known, or mixed-shape JSON.
@@ -506,6 +507,23 @@ pub def parse(source: str) -> Result[JsonValue, JsonError]:
 pub def loads(source: str) -> Result[JsonValue, JsonError]:
     """Parse JSON text using the Python-compatible `loads` spelling."""
     return JsonValue.loads(source)
+
+
+@rust.allow("dead_code")
+pub def parse_jsonl(source: str) -> Result[list[JsonValue], JsonError]:
+    """Parse newline-delimited JSON, skipping blank lines and reporting the source line on failure."""
+    mut values: list[JsonValue] = []
+    for line_number, raw_line in enumerate(source.split("\n")):
+        line = raw_line.strip()
+        if line == "":
+            continue
+        match JsonValue.parse(line):
+            Ok(value) => values.append(value)
+            Err(error) =>
+                return Err(
+                    JsonError(kind_value=error.kind(), detail_value=f"JSONL line {line_number + 1}: {error.detail()}"),
+                )
+    return Ok(values)
 
 
 @rust.allow("dead_code")

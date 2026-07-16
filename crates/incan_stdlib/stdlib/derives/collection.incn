@@ -371,7 +371,7 @@ pub trait Iterator[T]:
                 Some(item) => f(item)
                 None => return
 
-    def sum(self) -> T:
+    def sum(mut self) -> T:
         """
         Consume the iterator and return the sum of all remaining items.
 
@@ -380,7 +380,7 @@ pub trait Iterator[T]:
         newtypes may still fail at runtime if that zero cannot construct a valid
         value.
         """
-        ...
+        return T.sum(self)
 
 
 pub trait Sum[T]:

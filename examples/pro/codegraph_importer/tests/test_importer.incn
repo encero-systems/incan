@@ -1,0 +1,51 @@
+from importer import import_jsonl
+from std.json import parse_jsonl
+from std.testing import fail
+
+
+def test_imports_known_and_future_records_without_reinterpreting_them() -> None:
+    source = "{\"record\":\"header\",\"schema_version\":1,\"mode\":\"strict\",\"degraded\":false}\n{\"record\":\"file\",\"degraded\":false}\n{\"record\":\"declaration\",\"degraded\":false}\n{\"record\":\"call\",\"degraded\":true}\n{\"record\":\"future_record\",\"degraded\":false}\n"
+
+    match import_jsonl(source):
+        Err(error) => fail(error.message())
+        Ok(summary) =>
+            assert summary.schema_version == 1
+            assert summary.mode == "strict"
+            assert summary.metadata_record_count == 1
+            assert summary.fact_count == 4
+            assert summary.file_count == 1
+            assert summary.declaration_count == 1
+            assert summary.call_count == 1
+            assert summary.degraded_fact_count == 1
+            assert summary.unknown_record_count == 1
+
+
+def assert_invalid_snapshot(source: str, detail: str) -> None:
+    match import_jsonl(source):
+        Ok(_) =>
+            assert false
+        Err(error) =>
+            assert error.kind_name() == "type"
+            assert error.detail() == detail
+
+
+def test_rejects_missing_or_repeated_snapshot_metadata() -> None:
+    missing = "{\"record\":\"file\",\"degraded\":false}"
+    repeated = "{\"record\":\"header\",\"schema_version\":1,\"mode\":\"strict\",\"degraded\":false}\n{\"record\":\"header\",\"schema_version\":1,\"mode\":\"strict\",\"degraded\":false}\n"
+
+    assert_invalid_snapshot("", "codegraph JSONL input is empty")
+    assert_invalid_snapshot(missing, "first codegraph record must be snapshot metadata (`record` = `header`)")
+    assert_invalid_snapshot(repeated, "snapshot metadata (`record` = `header`) must appear exactly once and first")
+
+
+def test_jsonl_parser_skips_blank_lines_and_reports_source_line() -> None:
+    match parse_jsonl("\n{\"record\":\"file\"}\n\n"):
+        Err(error) => fail(error.message())
+        Ok(records) =>
+            assert len(records) == 1
+
+    match parse_jsonl("{\"record\":\"file\"}\nnot-json"):
+        Ok(_) =>
+            assert false
+        Err(error) =>
+            assert error.detail().contains("JSONL line 2")

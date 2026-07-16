@@ -15,8 +15,8 @@
     {
       "path": "crates/incan_core/src/interop/metadata.rs",
       "category": "registry-backed Rust collection metadata policy and shared Rust type-shape parsing, including borrowed impl-trait interop bounds",
-      "expected_count": 24,
-      "expected_fingerprint": "0x486c17db5edb246e"
+      "expected_count": 25,
+      "expected_fingerprint": "0x14563632957da1e4"
     },
     {
       "path": "crates/rust_inspect/src/cache.rs",
@@ -62,9 +62,9 @@
     },
     {
       "path": "src/backend/ir/codegen/dependency_metadata.rs",
-      "category": "dependency metadata compatibility and web route preservation",
-      "expected_count": 2,
-      "expected_fingerprint": "0x9d1944407ac71f29"
+      "category": "dependency metadata compatibility, web route preservation, and registry-backed iterator trait reachability",
+      "expected_count": 3,
+      "expected_fingerprint": "0xee7f98cf89bfc22b"
     },
     {
       "path": "src/backend/ir/codegen/serde_activation.rs",
@@ -80,9 +80,9 @@
     },
     {
       "path": "src/backend/ir/emit/decls/functions.rs",
-      "category": "callable and Rust macro emission compatibility",
-      "expected_count": 2,
-      "expected_fingerprint": "0x99dc282326807784"
+      "category": "callable and Rust macro emission compatibility with registry-backed iterator trait emission",
+      "expected_count": 3,
+      "expected_fingerprint": "0xcfacf5792303196e"
     },
     {
       "path": "src/backend/ir/emit/decls/impls.rs",
@@ -123,8 +123,8 @@
     {
       "path": "src/backend/ir/emit/expressions/methods.rs",
       "category": "quarantined metadata-free method compatibility",
-      "expected_count": 6,
-      "expected_fingerprint": "0x8e7a10a90b5bbd3f"
+      "expected_count": 9,
+      "expected_fingerprint": "0xa79a69b55f1cffdf"
     },
     {
       "path": "src/backend/ir/emit/expressions/methods/fast_paths.rs",
@@ -189,8 +189,8 @@
     {
       "path": "src/backend/ir/lower/decl/traits.rs",
       "category": "iterator trait method lowering compatibility",
-      "expected_count": 1,
-      "expected_fingerprint": "0x38db8c81d2ab19aa"
+      "expected_count": 2,
+      "expected_fingerprint": "0x5aba6acff170507f"
     },
     {
       "path": "src/backend/ir/lower/expr/calls.rs",

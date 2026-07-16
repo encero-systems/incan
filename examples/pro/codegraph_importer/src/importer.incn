@@ -1,0 +1,130 @@
+"""
+Consume `incan inspect codegraph` JSONL through the supported external boundary.
+
+This project deliberately consumes compiler-owned records without resolving names, following imports, or inferring extra
+semantics. It validates the stable envelope, keeps unknown future record kinds opaque, and produces a deterministic
+summary that an external indexer can persist or compare.
+"""
+
+from std.json import JsonError, JsonErrorKind, parse_jsonl
+from std.serde.json import Serialize
+
+
+pub enum GraphRecordKind(str):
+    """Known codegraph fact kinds counted by this intentionally lossy importer."""
+
+    File = "file"
+    Module = "module"
+    Declaration = "declaration"
+    Import = "import"
+    Export = "export"
+    Reference = "reference"
+    Call = "call"
+    Containment = "containment"
+    Diagnostic = "diagnostic"
+
+
+@derive(Serialize)
+pub model GraphSummary:
+    """Deterministic, storage-agnostic summary of one codegraph JSONL snapshot."""
+
+    pub schema_version: int
+    pub mode: str
+    pub degraded: bool
+    pub metadata_record_count: int
+    pub fact_count: int
+    pub file_count: int
+    pub module_count: int
+    pub declaration_count: int
+    pub import_count: int
+    pub export_count: int
+    pub reference_count: int
+    pub call_count: int
+    pub containment_count: int
+    pub diagnostic_count: int
+    pub degraded_fact_count: int
+    pub unknown_record_count: int
+
+    @staticmethod
+    def empty() -> Self:
+        """Create an empty summary before the snapshot metadata and facts are visited."""
+        return GraphSummary(
+            schema_version=0,
+            mode="",
+            degraded=false,
+            metadata_record_count=0,
+            fact_count=0,
+            file_count=0,
+            module_count=0,
+            declaration_count=0,
+            import_count=0,
+            export_count=0,
+            reference_count=0,
+            call_count=0,
+            containment_count=0,
+            diagnostic_count=0,
+            degraded_fact_count=0,
+            unknown_record_count=0,
+        )
+
+    def add_fact(mut self, record: str, degraded: bool) -> None:
+        """Count one fact record while preserving unknown future kinds as opaque facts."""
+        self.fact_count += 1
+        if degraded:
+            self.degraded_fact_count += 1
+
+        match GraphRecordKind.from_value(record):
+            Some(GraphRecordKind.File) =>
+                self.file_count += 1
+            Some(GraphRecordKind.Module) =>
+                self.module_count += 1
+            Some(GraphRecordKind.Declaration) =>
+                self.declaration_count += 1
+            Some(GraphRecordKind.Import) =>
+                self.import_count += 1
+            Some(GraphRecordKind.Export) =>
+                self.export_count += 1
+            Some(GraphRecordKind.Reference) =>
+                self.reference_count += 1
+            Some(GraphRecordKind.Call) =>
+                self.call_count += 1
+            Some(GraphRecordKind.Containment) =>
+                self.containment_count += 1
+            Some(GraphRecordKind.Diagnostic) =>
+                self.diagnostic_count += 1
+            None =>
+                self.unknown_record_count += 1
+
+
+pub def import_jsonl(source: str) -> Result[GraphSummary, JsonError]:
+    """Import one JSONL snapshot without assigning any semantic authority to it."""
+
+    records = parse_jsonl(source)?
+    mut summary = GraphSummary.empty()
+    if len(records) == 0:
+        return Err(_invalid_snapshot("codegraph JSONL input is empty"))
+
+    metadata = records[0]
+    mut record_kind = metadata.require("record")?.expect_str()?
+    if record_kind != "header":
+        return Err(_invalid_snapshot("first codegraph record must be snapshot metadata (`record` = `header`)"))
+    summary.schema_version = metadata.require("schema_version")?.expect_int()?
+    if summary.schema_version != 1:
+        return Err(_invalid_snapshot("unsupported codegraph schema version"))
+    summary.mode = metadata.require("mode")?.expect_str()?
+    summary.degraded = metadata.require("degraded")?.expect_bool()?
+    summary.metadata_record_count = 1
+
+    for value in records[1:]:
+        record_kind = value.require("record")?.expect_str()?
+        if record_kind == "header":
+            return Err(_invalid_snapshot("snapshot metadata (`record` = `header`) must appear exactly once and first"))
+        summary.add_fact(record_kind, value.require("degraded")?.expect_bool()?)
+
+    return Ok(summary)
+
+
+def _invalid_snapshot(detail: str) -> JsonError:
+    """Create the stable JSON type error used for invalid codegraph snapshot envelopes."""
+
+    return JsonError(kind_value=JsonErrorKind.Type, detail_value=detail)

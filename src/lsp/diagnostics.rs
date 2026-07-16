@@ -13,7 +13,7 @@ use tower_lsp::lsp_types::{
     Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, Location, NumberOrString, Position, Range, Url,
 };
 
-use crate::frontend::diagnostics::{CompileError, DiagnosticPhase, ErrorKind, code_for_error};
+use crate::frontend::diagnostics::{CompileError, DiagnosticPhase, ErrorKind, stable_diagnostic};
 
 // ============================================================================
 // Position/Offset Conversion Utilities
@@ -108,20 +108,21 @@ pub fn compile_error_to_diagnostic_with_phase(
     uri: &Url,
     phase: DiagnosticPhase,
 ) -> Diagnostic {
-    let range = span_to_range(source, error.span.start, error.span.end);
+    let stable = stable_diagnostic(uri.as_str(), source, error, phase);
+    let range = span_to_range(source, stable.primary_span.start.offset, stable.primary_span.end.offset);
     let severity = error_kind_to_severity(error.kind);
 
     // Build the message with notes and hints
-    let mut message = error.message.clone();
+    let mut message = stable.message.clone();
 
     // Add notes
-    for note in &error.notes {
+    for note in &stable.notes {
         message.push_str("\n\nnote: ");
         message.push_str(note);
     }
 
     // Add hints
-    for hint in &error.hints {
+    for hint in &stable.hints {
         message.push_str("\n\nhint: ");
         message.push_str(hint);
     }
@@ -129,7 +130,7 @@ pub fn compile_error_to_diagnostic_with_phase(
     // Create related information for notes/hints (shows in Problems panel)
     let mut related_information = Vec::new();
 
-    for note in &error.notes {
+    for note in &stable.notes {
         related_information.push(DiagnosticRelatedInformation {
             location: Location {
                 uri: uri.clone(),
@@ -139,7 +140,7 @@ pub fn compile_error_to_diagnostic_with_phase(
         });
     }
 
-    for hint in &error.hints {
+    for hint in &stable.hints {
         related_information.push(DiagnosticRelatedInformation {
             location: Location {
                 uri: uri.clone(),
@@ -149,10 +150,20 @@ pub fn compile_error_to_diagnostic_with_phase(
         });
     }
 
+    for related in &stable.related_spans {
+        related_information.push(DiagnosticRelatedInformation {
+            location: Location {
+                uri: uri.clone(),
+                range: span_to_range(source, related.span.start.offset, related.span.end.offset),
+            },
+            message: related.label.clone(),
+        });
+    }
+
     Diagnostic {
         range,
         severity: Some(severity),
-        code: Some(NumberOrString::String(code_for_error(error, phase).to_string())),
+        code: Some(NumberOrString::String(stable.code.to_string())),
         code_description: None,
         source: Some("incan".to_string()),
         message,
@@ -162,7 +173,7 @@ pub fn compile_error_to_diagnostic_with_phase(
             Some(related_information)
         },
         tags: None,
-        data: None,
+        data: serde_json::to_value(&stable).ok(),
     }
 }
 
@@ -218,5 +229,30 @@ mod tests {
             let back = position_to_offset(source, pos);
             assert_eq!(back, Some(offset), "roundtrip failed for offset {}", offset);
         }
+    }
+
+    #[test]
+    fn lsp_diagnostic_projects_the_shared_compiler_fact() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "first\nsecond\n";
+        let uri = Url::parse("file:///workspace/main.incn")?;
+        let error = CompileError::type_error("duplicate argument".to_string(), crate::frontend::ast::Span::new(6, 12))
+            .with_expected_actual("int", "str")
+            .with_related_span(crate::frontend::ast::Span::new(0, 5), "First argument named 'value'");
+
+        let diagnostic = compile_error_to_diagnostic_with_phase(&error, source, &uri, DiagnosticPhase::Typecheck);
+        let related = diagnostic
+            .related_information
+            .as_ref()
+            .ok_or("expected related information")?;
+        assert!(
+            related
+                .iter()
+                .any(|item| item.message == "First argument named 'value'")
+        );
+        let data = diagnostic.data.ok_or("expected compiler fact data")?;
+        assert_eq!(data["origin"], serde_json::json!("typechecker"));
+        assert_eq!(data["expected"], serde_json::json!("int"));
+        assert_eq!(data["actual"], serde_json::json!("str"));
+        Ok(())
     }
 }

@@ -27,6 +27,7 @@ Projects aimed at library and tooling authors: companion crates, vocab/desugarin
 Notable pro Rust interop example:
 
 - `pro/rust_interop_pro.incn` - RFC 041 authoring surface (`rusttype`, `interop`, `std.rust` bounds, async wrappers). Includes a "new to Rust" mental model that explains `rusttype`, `...` method declarations, and `interop:` edges.
+- `pro/codegraph_importer` - runnable RFC 106 example that consumes compiler-exported codegraph JSONL without becoming a semantic authority.
 - `pro/vocab_querykit` - runnable RFC 040 vocab companion example for query blocks, leading-dot fields, and leading-dot fields in registered method arguments.
 - `pro/vocab_routekit` - runnable RFC 040 vocab companion example for block headers, nested block-context clauses, and scoped operator-like glyphs.
 - `pro/vocab_studiokit` - runnable RFC 040 vocab companion example for workflow-shaped blocks and scoped fallback glyphs.

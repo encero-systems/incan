@@ -18,6 +18,7 @@ use incan_core::interop::{
 };
 use incan_core::lang::magic_methods;
 use incan_core::lang::surface::collection_helpers::{self, BuiltinCollectionHelperId};
+use incan_core::lang::surface::result_methods::ResultMethodId;
 use incan_core::lang::surface::types as surface_types;
 use incan_core::lang::surface::types::{SEMAPHORE_ACQUIRE_ERROR_TYPE_NAME, SEMAPHORE_PERMIT_TYPE_NAME, SurfaceTypeId};
 use incan_core::lang::surface::{
@@ -500,8 +501,8 @@ impl TypeChecker {
     ) -> (Option<&'a Spanned<Expr>>, Option<&'a Spanned<Expr>>, bool) {
         let helper = BuiltinCollectionHelperId::ListRepeat;
         let callee = collection_helpers::full_name(helper);
-        let mut value = None;
-        let mut count = None;
+        let mut value: Option<&Spanned<Expr>> = None;
+        let mut count: Option<&Spanned<Expr>> = None;
         let mut valid = true;
         let mut positional_index = 0usize;
 
@@ -515,9 +516,13 @@ impl TypeChecker {
                     };
                     positional_index += 1;
                     if let Some((slot, name)) = target {
-                        if slot.is_some() {
-                            self.errors
-                                .push(errors::duplicate_call_argument(callee, name, expr.span));
+                        if let Some(first_expr) = *slot {
+                            self.errors.push(errors::duplicate_call_argument(
+                                callee,
+                                name,
+                                first_expr.span,
+                                expr.span,
+                            ));
                             self.check_expr(expr);
                             valid = false;
                         } else {
@@ -535,9 +540,13 @@ impl TypeChecker {
                         _ => None,
                     };
                     if let Some(slot) = slot {
-                        if slot.is_some() {
-                            self.errors
-                                .push(errors::duplicate_call_argument(callee, name, expr.span));
+                        if let Some(first_expr) = *slot {
+                            self.errors.push(errors::duplicate_call_argument(
+                                callee,
+                                name,
+                                first_expr.span,
+                                expr.span,
+                            ));
                             self.check_expr(expr);
                             valid = false;
                         } else {
@@ -738,9 +747,12 @@ impl TypeChecker {
         iterator_methods::from_str(method).is_some_and(iterator_methods::is_terminal)
     }
 
-    /// Validate `.sum()` item types against the backend-supported summable item surface.
+    /// Validate `.sum()` item types against the source-owned `Sum[T]` capability surface.
     fn iterator_sum_output_type(&mut self, elem: &ResolvedType, span: Span) -> ResolvedType {
-        if self.iterator_sum_underlying_type(elem).is_some() {
+        if self
+            .temporary_trait_capability_supports_type(incan_core::lang::trait_capabilities::iterator_sum(), elem)
+            .is_some_and(|supported| supported)
+        {
             return elem.clone();
         }
         self.errors.push(CompileError::type_error(
@@ -751,33 +763,6 @@ impl TypeChecker {
             span,
         ));
         ResolvedType::Unknown
-    }
-
-    /// Return the primitive summation carrier for an iterator item type.
-    ///
-    /// Primitive numeric types carry themselves. Newtypes recursively carry their underlying summable type, which lets
-    /// `.sum()` accept transparent domain wrappers while still rejecting non-summable shapes.
-    fn iterator_sum_underlying_type(&self, elem: &ResolvedType) -> Option<ResolvedType> {
-        match elem {
-            ResolvedType::Int | ResolvedType::Float | ResolvedType::Unknown => Some(elem.clone()),
-            ResolvedType::Named(name) => self.newtype_sum_underlying_type(name, &[]),
-            ResolvedType::Generic(name, args) => self.newtype_sum_underlying_type(name, args),
-            _ => None,
-        }
-    }
-
-    /// Resolve the summation carrier for a newtype, applying generic type arguments before checking the underlying.
-    fn newtype_sum_underlying_type(&self, name: &str, args: &[ResolvedType]) -> Option<ResolvedType> {
-        let Some(TypeInfo::Newtype(newtype)) = self.lookup_type_info(name) else {
-            return None;
-        };
-        let underlying = if args.is_empty() {
-            newtype.underlying.clone()
-        } else {
-            let subst = type_param_subst_map(&newtype.type_params, args);
-            substitute_resolved_type(&newtype.underlying, &subst)
-        };
-        self.iterator_sum_underlying_type(&underlying)
     }
 
     /// Track the narrow same-binding case after a terminal iterator method consumes a direct local binding.
@@ -3286,7 +3271,26 @@ impl TypeChecker {
             return self.check_builtin_list_repeat_call(args, span);
         }
 
-        let base_ty = self.check_type_receiver_expr(base);
+        let mut base_ty = self.check_type_receiver_expr(base);
+        if let Some(expected) = expected_return_ty
+            && matches!(
+                result_methods::from_str(method),
+                Some(ResultMethodId::Unwrap | ResultMethodId::UnwrapOr)
+            )
+            && matches!(&base.node, Expr::Call(_, _, _))
+            && matches!(
+                &base_ty,
+                ResolvedType::Generic(name, args)
+                    if collection_type_id(name.as_str()) == Some(CollectionTypeId::Result)
+                        && args.first().is_some_and(Self::contains_unbound_rust_type_var)
+            )
+        {
+            let expected_result = ResolvedType::Generic(
+                collection_name(CollectionTypeId::Result).to_string(),
+                vec![expected.clone(), ResolvedType::Unknown],
+            );
+            base_ty = self.check_expr_with_expected(base, Some(&expected_result));
+        }
 
         // If the receiver type is Unknown, be permissive and do not error on methods.
         if matches!(base_ty, ResolvedType::Unknown) {

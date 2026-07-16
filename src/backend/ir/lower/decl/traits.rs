@@ -56,6 +56,11 @@ impl AstLowering {
         let mut methods: Vec<IrFunction> = trait_methods
             .iter()
             .map(|m| {
+                if t.name == core_traits::as_str(TraitId::Iterator) && m.node.name == "sum" && m.node.body.is_some() {
+                    let mut method = self.lower_method_with_type_params(&m.node, Some(&type_param_names))?;
+                    method.visibility = Visibility::Private;
+                    return Ok(method);
+                }
                 self.push_scope();
                 let method_type_param_names: HashSet<&str> =
                     m.node.type_params.iter().map(|tp| tp.name.as_str()).collect();
@@ -142,7 +147,7 @@ impl AstLowering {
             })
             .collect::<Result<Vec<_>, LoweringError>>()?;
         if t.name == core_traits::as_str(TraitId::Iterator) {
-            methods.retain(|method| method.name == "__next__");
+            methods.retain(|method| matches!(method.name.as_str(), "__next__" | "sum"));
         }
 
         for property in &t.properties {

@@ -119,6 +119,8 @@ impl RustItemMetadata {
 pub enum MetadataFreeMethodArgBorrowPolicy {
     Shared,
     Mutable,
+    /// Preserve string literals as `&str` and adapt owned Incan strings with `.as_str()`.
+    StringAsStr,
 }
 
 /// Receiver class used by metadata-free external method compatibility policy.
@@ -126,6 +128,7 @@ pub enum MetadataFreeMethodArgBorrowPolicy {
 pub enum MetadataFreeReceiverClass {
     IoValue,
     EncodingInstance,
+    TokenizerInstance,
     ExternalAssociated,
 }
 
@@ -212,6 +215,12 @@ pub const METADATA_FREE_METHOD_BORROW_RULES: &[MetadataFreeMethodBorrowRule] = &
         receiver: MetadataFreeReceiverClass::EncodingInstance,
         arg: MetadataFreeArgClass::Any,
         policy: MetadataFreeMethodArgBorrowPolicy::Shared,
+    },
+    MetadataFreeMethodBorrowRule {
+        methods: &["encode"],
+        receiver: MetadataFreeReceiverClass::TokenizerInstance,
+        arg: MetadataFreeArgClass::StringBuffer,
+        policy: MetadataFreeMethodArgBorrowPolicy::StringAsStr,
     },
     MetadataFreeMethodBorrowRule {
         methods: &["decode"],

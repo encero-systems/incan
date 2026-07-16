@@ -667,18 +667,32 @@ impl TypeChecker {
                     TraitCapabilityType::ValueEnum,
                 ))
             }
-            ResolvedType::Named(type_name) if capability.id == TraitCapabilityId::StringTryFrom => Some(
-                self.nominal_type_explicitly_adopts_temporary_capability(type_name, &[], capability)
-                    || self
-                        .newtype_satisfies_string_try_from(type_name, &[], capability, seen_newtypes)
-                        .unwrap_or(false),
-            ),
-            ResolvedType::Generic(type_name, type_args) if capability.id == TraitCapabilityId::StringTryFrom => Some(
-                self.nominal_type_explicitly_adopts_temporary_capability(type_name, type_args, capability)
-                    || self
-                        .newtype_satisfies_string_try_from(type_name, type_args, capability, seen_newtypes)
-                        .unwrap_or(false),
-            ),
+            ResolvedType::Named(type_name)
+                if matches!(
+                    capability.id,
+                    TraitCapabilityId::StringTryFrom | TraitCapabilityId::IteratorSum
+                ) =>
+            {
+                Some(
+                    self.nominal_type_explicitly_adopts_temporary_capability(type_name, &[], capability)
+                        || self
+                            .newtype_satisfies_string_try_from(type_name, &[], capability, seen_newtypes)
+                            .unwrap_or(false),
+                )
+            }
+            ResolvedType::Generic(type_name, type_args)
+                if matches!(
+                    capability.id,
+                    TraitCapabilityId::StringTryFrom | TraitCapabilityId::IteratorSum
+                ) =>
+            {
+                Some(
+                    self.nominal_type_explicitly_adopts_temporary_capability(type_name, type_args, capability)
+                        || self
+                            .newtype_satisfies_string_try_from(type_name, type_args, capability, seen_newtypes)
+                            .unwrap_or(false),
+                )
+            }
             ResolvedType::FrozenStr
             | ResolvedType::FrozenBytes
             | ResolvedType::Unit

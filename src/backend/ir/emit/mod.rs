@@ -381,6 +381,8 @@ pub struct IrEmitter<'a> {
     ///
     /// Used to avoid recursively forcing the module-wide static init helper while generating static initializer code.
     in_static_initializer: RefCell<bool>,
+    /// Whether this program emits an RFC 088 `.sum()` call that needs local newtype `Sum` implementations.
+    iterator_sum_used: RefCell<bool>,
     /// Whether canonical calls to internal modules should be emitted with explicit `crate::...` paths.
     ///
     /// Normal imported calls use ordinary local bindings and imports. Default argument expressions are different: they
@@ -470,6 +472,7 @@ impl<'a> IrEmitter<'a> {
             imported_static_init_bindings: RefCell::new(HashSet::new()),
             imported_static_module_init_bindings: RefCell::new(Vec::new()),
             in_static_initializer: RefCell::new(false),
+            iterator_sum_used: RefCell::new(false),
             qualify_internal_canonical_paths: RefCell::new(false),
             qualify_union_types_from_crate: false,
             generated_union_types: HashMap::new(),

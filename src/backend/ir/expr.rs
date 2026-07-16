@@ -438,6 +438,11 @@ pub enum IrInteropCoercionKind {
     },
     /// Rusttype wrapper unwrap (`.0`) when lowering a wrapper-backed edge.
     RustTypeUnwrap,
+    /// Borrow a value for a Rust trait-object parameter (`&dyn Trait` or `&mut dyn Trait`).
+    TraitObjectBorrow {
+        /// Whether Rust requires an exclusive mutable borrow.
+        mutable: bool,
+    },
 }
 
 /// Literal values for generated code

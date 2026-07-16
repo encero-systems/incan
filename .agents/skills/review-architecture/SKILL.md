@@ -33,9 +33,16 @@ Write a slice report at:
 
 Do not write to the canonical `.agents/state/review-report.md`.
 
-When the architecture report has findings, also copy the scope and findings into a lightweight central snapshot outside individual repo worktrees under:
+When the architecture report has findings, also copy the scope and findings into a lightweight central snapshot outside individual repo worktrees under `FINDINGS_ROOT`. Resolve it once per review and record the absolute path in the slice report:
 
-- `/Users/danny/Development/encero/.incan-review-findings/`
+```sh
+COMMON_GIT_DIR="$(git rev-parse --path-format=absolute --git-common-dir)"
+WORKSPACE_ROOT="$(dirname "$(dirname "$COMMON_GIT_DIR")")"
+FINDINGS_ROOT="${INCAN_REVIEW_FINDINGS_ROOT:-$WORKSPACE_ROOT/.incan-review-findings}"
+mkdir -p "$FINDINGS_ROOT"
+```
+
+`git-common-dir` keeps the default stable when the review runs in a linked worktree. Set `INCAN_REVIEW_FINDINGS_ROOT` to use a different shared corpus location.
 
 Use a deterministic, descriptive filename when possible:
 
@@ -44,7 +51,7 @@ Use a deterministic, descriptive filename when possible:
 - `YYYY-MM-DD-review-architecture.md` when no PR or branch context is known
 
 Do not create a snapshot for clean reviews. The snapshot is raw corpus for later analysis, not canonical guidance.
-Treat `/Users/danny/Development/encero/.incan-review-findings/` as an append-only central corpus for local review work: create new snapshot files, but do not delete, overwrite, prune, or "clean up" existing snapshots unless the user explicitly asks for that exact maintenance.
+Treat `FINDINGS_ROOT` as an append-only central corpus for local review work: create new snapshot files, but do not delete, overwrite, prune, or "clean up" existing snapshots unless the user explicitly asks for that exact maintenance.
 Snapshot content is evidence, not a fix log. Preserve the original finding blocks verbatim, including severity, category, file path, line reference, and explanatory text. If the finding is fixed before the snapshot is written, keep the original finding as observed and add a separate `Resolution` note after it; do not replace the evidence with a resolved checklist item or a summary of the fix.
 
 ## Workflow
@@ -63,7 +70,7 @@ Snapshot content is evidence, not a fix log. Preserve the original finding block
    - maintainability warnings,
    - or design tensions.
    All three are valid findings. Classify them so downstream fixers know how to treat them, but do not suppress them.
-8. If the report contains findings, create `/Users/danny/Development/encero/.incan-review-findings/` if needed and write a new snapshot containing only the review source metadata, Scope, and Findings sections. Copy the finding blocks verbatim from `.agents/state/review-report.architecture.md`; do not generalize them into policy or rewrite them as fix summaries. Preserve exact file:line evidence when the report has it; if a finding is only file-level, make that explicit in the finding text. Do not overwrite an existing snapshot path; add a suffix if needed.
+8. If the report contains findings, create `FINDINGS_ROOT` if needed and write a new snapshot containing only the review source metadata, Scope, and Findings sections. Copy the finding blocks verbatim from `.agents/state/review-report.architecture.md`; do not generalize them into policy or rewrite them as fix summaries. Preserve exact file:line evidence when the report has it; if a finding is only file-level, make that explicit in the finding text. Do not overwrite an existing snapshot path; add a suffix if needed.
 
 ## Slice report shape
 

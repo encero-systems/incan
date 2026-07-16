@@ -1352,12 +1352,20 @@ impl<'a> IrEmitter<'a> {
             return false;
         };
         let canonical_module = capability.module_path.join(".");
+        let relative_module = capability
+            .module_path
+            .strip_prefix(&["std"])
+            .map(|tail| tail.join("."))
+            .unwrap_or_else(|| canonical_module.clone());
         let generated_module = capability
             .module_path
             .strip_prefix(&["std"])
             .map(|tail| format!("{}.{}", core_stdlib::INCAN_STD_NAMESPACE, tail.join(".")))
             .unwrap_or_else(|| canonical_module.clone());
-        if source_module_name != canonical_module && source_module_name != generated_module {
+        if source_module_name != canonical_module
+            && source_module_name != relative_module
+            && source_module_name != generated_module
+        {
             return false;
         }
         emitted_declarations.iter().any(|decl| {
@@ -1549,6 +1557,100 @@ impl<'a> IrEmitter<'a> {
             __incan_ordinal_key_int_impl!(u64, incan_stdlib::collections::__private::ordinal_key_encoding_uint(64u16), 8usize);
             __incan_ordinal_key_int_impl!(u128, incan_stdlib::collections::__private::ordinal_key_encoding_uint(128u16), 16usize);
         }
+    }
+
+    /// Emit the temporary primitive implementations behind the source-owned `Sum[T]` contract.
+    ///
+    /// RFC 088 keeps the public iteration and summation protocol in Incan. These implementations are a deliberately
+    /// narrow compiler bridge until ordinary primitive operation declarations can express the same loops in source.
+    fn emit_builtin_iterator_sum_impls(&self, emitted_declarations: &[&IrDecl], program: &IrProgram) -> TokenStream {
+        let defines_sum_trait = Self::emitted_declarations_define_capability_trait(
+            program,
+            emitted_declarations,
+            trait_capabilities::iterator_sum(),
+        );
+        if !defines_sum_trait {
+            return quote! {};
+        }
+        quote! {
+            impl Sum<i64> for i64 {
+                fn sum<I: Iterator<i64>>(mut items: I) -> Self {
+                    let mut total = 0i64;
+                    loop {
+                        match <I as Iterator<i64>>::__next__(&mut items) {
+                            Some(item) => total += item,
+                            None => break total,
+                        }
+                    }
+                }
+            }
+
+            impl Sum<f64> for f64 {
+                fn sum<I: Iterator<f64>>(mut items: I) -> Self {
+                    let mut total = 0.0f64;
+                    loop {
+                        match <I as Iterator<f64>>::__next__(&mut items) {
+                            Some(item) => total += item,
+                            None => break total,
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Emit local newtype `Sum` implementations when the source imports the iterator contract.
+    ///
+    /// The primitive arithmetic loop remains a temporary backend bridge, but the public capability is the source-owned
+    /// `Sum[T]` trait. Checked newtypes reconstruct through their canonical validator exactly as the former special
+    /// iterator lowering did.
+    fn emit_local_newtype_iterator_sum_impls(&self, imports_iterator_contract: bool) -> TokenStream {
+        if !imports_iterator_contract {
+            return quote! {};
+        }
+        let sum_trait = quote! { crate::__incan_std::derives::collection::Sum };
+        let iterator_trait = quote! { crate::__incan_std::derives::collection::Iterator };
+        let mut plans = self.newtype_construction.iter().collect::<Vec<_>>();
+        plans.sort_by_key(|(name, _)| (*name).clone());
+        let mut impls = Vec::new();
+        for (source_name, plan) in plans {
+            if !plan.type_params.is_empty() || !matches!(plan.underlying, IrType::Int | IrType::Float) {
+                continue;
+            }
+            let name = Self::rust_ident(source_name);
+            let underlying = self.emit_type(&plan.underlying);
+            let zero = if matches!(plan.underlying, IrType::Float) {
+                quote! { 0.0f64 }
+            } else {
+                quote! { 0i64 }
+            };
+            let construction = if let Some(constructor) = &plan.checked_constructor {
+                let constructor = Self::rust_ident(constructor);
+                let message = format!("validated newtype construction failed: {source_name}::{constructor}");
+                quote! {
+                    match #name::#constructor(total) {
+                        Ok(value) => value,
+                        Err(_) => panic!(#message),
+                    }
+                }
+            } else {
+                quote! { #name(total) }
+            };
+            impls.push(quote! {
+                impl #sum_trait<#name> for #name {
+                    fn sum<I: #iterator_trait<#name>>(mut items: I) -> Self {
+                        let mut total: #underlying = #zero;
+                        loop {
+                            match <I as #iterator_trait<#name>>::__next__(&mut items) {
+                                Some(item) => total += item.0,
+                                None => break #construction,
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        quote! { #(#impls)* }
     }
 
     /// Emit compiler-provided `TryFrom[str]` implementations for RFC 089 primitive targets.
@@ -2963,6 +3065,7 @@ impl<'a> IrEmitter<'a> {
     /// Emit a complete IR program to formatted Rust code.
     #[tracing::instrument(skip_all, fields(decl_count = program.declarations.len()))]
     pub fn emit_program(&mut self, program: &IrProgram) -> Result<String, EmitError> {
+        self.iterator_sum_used.replace(false);
         // RFC 023: propagate rust.module() path from IR to emitter for @rust.extern delegation.
         if self.rust_module_path.is_none() {
             self.rust_module_path = program.rust_module_path.clone();
@@ -3564,6 +3667,8 @@ impl<'a> IrEmitter<'a> {
         if defines_string_try_from_trait {
             items.push(self.emit_builtin_string_try_from_impls());
         }
+        items.push(self.emit_builtin_iterator_sum_impls(&emitted_declarations, program));
+        items.push(self.emit_local_newtype_iterator_sum_impls(*self.iterator_sum_used.borrow()));
         items.push(self.emit_local_newtype_string_try_from_impls(&emitted_declarations));
         if !defines_string_try_from_trait {
             items.push(self.emit_external_string_try_from_impls());
