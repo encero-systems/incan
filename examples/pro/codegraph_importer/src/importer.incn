@@ -69,31 +69,31 @@ pub model GraphSummary:
 
     def add_fact(mut self, record: str, degraded: bool) -> None:
         """Count one non-header record while preserving unknown future kinds as opaque facts."""
-        self.fact_count = self.fact_count + 1
+        self.fact_count += 1
         if degraded:
-            self.degraded_fact_count = self.degraded_fact_count + 1
+            self.degraded_fact_count += 1
 
         match GraphRecordKind.from_value(record):
             Some(GraphRecordKind.File) =>
-                self.file_count = self.file_count + 1
+                self.file_count += 1
             Some(GraphRecordKind.Module) =>
-                self.module_count = self.module_count + 1
+                self.module_count += 1
             Some(GraphRecordKind.Declaration) =>
-                self.declaration_count = self.declaration_count + 1
+                self.declaration_count += 1
             Some(GraphRecordKind.Import) =>
-                self.import_count = self.import_count + 1
+                self.import_count += 1
             Some(GraphRecordKind.Export) =>
-                self.export_count = self.export_count + 1
+                self.export_count += 1
             Some(GraphRecordKind.Reference) =>
-                self.reference_count = self.reference_count + 1
+                self.reference_count += 1
             Some(GraphRecordKind.Call) =>
-                self.call_count = self.call_count + 1
+                self.call_count += 1
             Some(GraphRecordKind.Containment) =>
-                self.containment_count = self.containment_count + 1
+                self.containment_count += 1
             Some(GraphRecordKind.Diagnostic) =>
-                self.diagnostic_count = self.diagnostic_count + 1
+                self.diagnostic_count += 1
             None =>
-                self.unknown_record_count = self.unknown_record_count + 1
+                self.unknown_record_count += 1
 
 
 pub def import_jsonl(source: str) -> Result[GraphSummary, JsonError]:

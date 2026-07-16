@@ -29,35 +29,21 @@ impl Formatter {
                 self.format_expr(&assign.object.node);
                 self.writer.write(".");
                 self.writer.write(&assign.field);
-                self.writer.write(" = ");
-                self.format_expr(&assign.value.node);
+                self.format_assignment_value(&assign.value, assign.compound_op);
                 self.writer.newline();
             }
             Statement::IndexAssignment(assign) => {
                 self.format_expr(&assign.object.node);
                 self.writer.write("[");
                 self.format_expr(&assign.index.node);
-                self.writer.write("] = ");
-                self.format_expr(&assign.value.node);
+                self.writer.write("]");
+                self.format_assignment_value(&assign.value, assign.compound_op);
                 self.writer.newline();
             }
             Statement::CompoundAssignment(assign) => {
                 self.writer.write(&assign.name);
                 self.writer.write(" ");
-                self.writer.write(match assign.op {
-                    CompoundOp::Add => "+=",
-                    CompoundOp::Sub => "-=",
-                    CompoundOp::Mul => "*=",
-                    CompoundOp::Div => "/=",
-                    CompoundOp::FloorDiv => "//=",
-                    CompoundOp::Mod => "%=",
-                    CompoundOp::MatMul => "@=",
-                    CompoundOp::BitAnd => "&=",
-                    CompoundOp::BitOr => "|=",
-                    CompoundOp::BitXor => "^=",
-                    CompoundOp::Shl => "<<=",
-                    CompoundOp::Shr => ">>=",
-                });
+                self.writer.write(assign.op.source_spelling());
                 self.writer.write(" ");
                 self.format_expr(&assign.value.node);
                 self.writer.newline();
@@ -158,6 +144,23 @@ impl Formatter {
                 self.writer.newline();
             }
         }
+    }
+
+    /// Format an ordinary or parser-desugared compound assignment value.
+    fn format_assignment_value(&mut self, value: &Spanned<Expr>, compound_op: Option<CompoundOp>) {
+        if let Some(op) = compound_op
+            && let Expr::Binary(_, binary_op, rhs) = &value.node
+            && *binary_op == op.binary_op()
+        {
+            self.writer.write(" ");
+            self.writer.write(op.source_spelling());
+            self.writer.write(" ");
+            self.format_expr(&rhs.node);
+            return;
+        }
+
+        self.writer.write(" = ");
+        self.format_expr(&value.node);
     }
 
     fn format_assignment(&mut self, assign: &AssignmentStmt) {

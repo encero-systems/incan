@@ -402,6 +402,23 @@ mod tests {
     }
 
     #[test]
+    fn test_format_source_preserves_field_and_index_augmented_assignment() -> Result<(), FormatError> {
+        let source = r#"model Counter:
+    value: int
+
+    def increment(mut self) -> None:
+        self.value += 1
+
+
+def increment_first(mut values: list[int]) -> None:
+    values[0] += 1
+"#;
+
+        assert_eq!(format_source(source)?, source);
+        Ok(())
+    }
+
+    #[test]
     fn test_format_source_rest_params_and_call_unpacking() -> Result<(), FormatError> {
         let source = r#"def collect(prefix: str, *items: int, **labels: str) -> int:
   return collect(prefix,*items,**labels)
