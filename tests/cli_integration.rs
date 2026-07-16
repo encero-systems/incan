@@ -5771,6 +5771,84 @@ def main() -> None:
 }
 
 #[test]
+fn check_combined_rust_and_source_imports_preserve_never_return_issue381() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(
+        tmp.path(),
+        "combined_rust_and_source_imports_preserve_never_return",
+        r#"
+
+[rust-dependencies]
+polyglot_probe = { path = "rust/polyglot_probe" }
+"#,
+    )?;
+    fs::write(
+        &main_path,
+        r#"from rust::polyglot_probe import DialectType
+from prism import PrismCursor
+
+
+def main() -> None:
+    pass
+"#,
+    )?;
+    fs::write(
+        tmp.path().join("src").join("prism.incn"),
+        r#"from rust::incan_stdlib::errors import raise_value_error
+from rust::std::primitive import i32 as RustI32
+
+
+pub model PrismCursor:
+    offset: int
+
+
+def fail_to_lower() -> RustI32:
+    return raise_value_error("cannot lower cursor")
+"#,
+    )?;
+
+    let helper_src = tmp.path().join("rust").join("polyglot_probe").join("src");
+    fs::create_dir_all(&helper_src)?;
+    fs::write(
+        helper_src
+            .parent()
+            .ok_or("polyglot probe source directory had no parent")?
+            .join("Cargo.toml"),
+        r#"[package]
+name = "polyglot_probe"
+version = "0.1.0"
+edition = "2021"
+"#,
+    )?;
+    fs::write(
+        helper_src.join("lib.rs"),
+        r#"pub enum DialectType {
+    PostgreSql,
+}
+"#,
+    )?;
+
+    let check_output = run_incan(
+        tmp.path(),
+        &["--check", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(
+        &check_output,
+        "combined Rust and source imports with a diverging Rust helper",
+    );
+
+    let build_output = run_incan(
+        tmp.path(),
+        &["build", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(
+        &build_output,
+        "generated Rust for combined imports with a diverging Rust helper",
+    );
+    Ok(())
+}
+
+#[test]
 fn build_inline_fstring_rust_string_variant_issue716() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let helper_dir = tmp.path().join("rust").join("tiny_error");

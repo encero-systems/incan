@@ -1510,7 +1510,8 @@ impl TypeChecker {
                 Self::remap_resolved_type_with_import_aliases(key, imported_type_aliases);
                 Self::remap_resolved_type_with_import_aliases(value, imported_type_aliases);
             }
-            ResolvedType::Int
+            ResolvedType::Never
+            | ResolvedType::Int
             | ResolvedType::Float
             | ResolvedType::Numeric(_)
             | ResolvedType::Bool

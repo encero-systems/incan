@@ -646,6 +646,9 @@ impl AstLowering {
     #[allow(clippy::only_used_in_recursion)]
     pub(super) fn lower_resolved_type(&self, ty: &ResolvedType) -> IrType {
         match ty {
+            // Rust `!` is carried only for typechecking diverging interop calls; the call expression itself keeps its
+            // concrete Rust spelling through lowering.
+            ResolvedType::Never => IrType::Unknown,
             ResolvedType::Int => IrType::Int,
             ResolvedType::Float => IrType::Float,
             ResolvedType::Numeric(id) => IrType::Numeric(*id),

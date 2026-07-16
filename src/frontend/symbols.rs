@@ -787,6 +787,11 @@ pub struct TypeBoundInfo {
 /// Resolved type (after type checking)
 #[derive(Debug, Clone, PartialEq)]
 pub enum ResolvedType {
+    /// Internal Rust never type (`!`).
+    ///
+    /// This is not currently source-spellable in Incan. It preserves diverging Rust callable results so the
+    /// typechecker can apply bottom-type compatibility without treating `!` as a nominal Rust path.
+    Never,
     /// Primitive types
     Int,
     Float,
@@ -922,6 +927,7 @@ impl std::fmt::Display for ResolvedType {
     /// Format a resolved type using user-facing Incan type syntax.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            ResolvedType::Never => write!(f, "!"),
             ResolvedType::Int => write!(f, "int"),
             ResolvedType::Float => write!(f, "float"),
             ResolvedType::Numeric(id) => write!(f, "{}", numerics::as_str(*id)),

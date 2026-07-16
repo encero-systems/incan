@@ -99,7 +99,8 @@ impl TypeChecker {
             return self.type_satisfies_nominal_trait_bound(ty, bound);
         }
         match ty {
-            ResolvedType::Unknown
+            ResolvedType::Never
+            | ResolvedType::Unknown
             | ResolvedType::TypeVar(_)
             | ResolvedType::RustPath(_)
             | ResolvedType::CallSiteInfer => true,
@@ -271,7 +272,8 @@ impl TypeChecker {
     /// Check whether `ty` satisfies a nominal trait bound `bound_trait` under RFC 042 semantics.
     fn type_satisfies_nominal_trait_bound(&self, ty: &ResolvedType, bound_trait: &str) -> bool {
         match ty {
-            ResolvedType::Unknown
+            ResolvedType::Never
+            | ResolvedType::Unknown
             | ResolvedType::TypeVar(_)
             | ResolvedType::RustPath(_)
             | ResolvedType::CallSiteInfer => true,
@@ -320,7 +322,8 @@ impl TypeChecker {
         expected_args: &[ResolvedType],
     ) -> bool {
         match ty {
-            ResolvedType::Unknown
+            ResolvedType::Never
+            | ResolvedType::Unknown
             | ResolvedType::TypeVar(_)
             | ResolvedType::RustPath(_)
             | ResolvedType::CallSiteInfer => true,
@@ -625,7 +628,8 @@ impl TypeChecker {
         seen_newtypes: &mut HashSet<String>,
     ) -> Option<bool> {
         match ty {
-            ResolvedType::Unknown
+            ResolvedType::Never
+            | ResolvedType::Unknown
             | ResolvedType::TypeVar(_)
             | ResolvedType::RustPath(_)
             | ResolvedType::CallSiteInfer => Some(true),

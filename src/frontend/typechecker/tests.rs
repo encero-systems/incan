@@ -3228,6 +3228,25 @@ fn test_rust_owner_path_expands_crate_relative_signature_displays() {
 }
 
 #[test]
+fn test_rust_never_return_is_bottom_compatible_issue381() {
+    let checker = TypeChecker::new();
+    let signature = RustFunctionSig {
+        params: Vec::new(),
+        return_type: "!".to_string(),
+        is_async: false,
+        is_unsafe: false,
+    };
+
+    assert_eq!(checker.resolved_type_from_rust_display("!"), ResolvedType::Never);
+    assert_eq!(
+        checker.resolved_function_type_from_rust_sig_for_owner_path(&signature, false, "demo::errors::fail"),
+        ResolvedType::Function(Vec::new(), Box::new(ResolvedType::Never)),
+    );
+    assert!(checker.types_compatible(&ResolvedType::Never, &ResolvedType::Numeric(NumericTypeId::I32)));
+    assert!(!checker.types_compatible(&ResolvedType::Numeric(NumericTypeId::I32), &ResolvedType::Never));
+}
+
+#[test]
 fn test_resolved_param_type_from_structural_borrowed_display_preserves_nested_ref_payload() {
     let checker = TypeChecker::new();
     assert_eq!(
