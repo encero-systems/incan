@@ -1,5 +1,5 @@
 """
-Minimal external-consumer experiment for `incan inspect codegraph` JSONL.
+Consume `incan inspect codegraph` JSONL through the supported external boundary.
 
 This project deliberately consumes compiler-owned records without resolving names, following imports, or inferring extra
 semantics. It validates the stable envelope, keeps unknown future record kinds opaque, and produces a deterministic

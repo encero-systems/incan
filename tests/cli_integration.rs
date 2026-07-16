@@ -1595,7 +1595,7 @@ pub def entrypoint() -> int:
 }
 
 #[test]
-fn codegraph_importer_experiment_consumes_compiler_jsonl_issue776() -> Result<(), Box<dyn std::error::Error>> {
+fn codegraph_importer_example_consumes_compiler_jsonl_issue776() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let source_dir = tmp.path().join("source");
     fs::create_dir_all(&source_dir)?;
@@ -1627,7 +1627,7 @@ def main() -> None:
             "jsonl",
         ],
     )?;
-    assert_success(&graph, "compiler codegraph export for importer experiment");
+    assert_success(&graph, "compiler codegraph export for importer example");
     let graph_records = parse_jsonl_stdout(&graph)?;
     assert_codegraph_v04_record_contract(&graph_records);
 
@@ -1649,9 +1649,9 @@ def main() -> None:
     fs::write(importer_dir.join("codegraph.jsonl"), &graph.stdout)?;
 
     let first = run_incan(&importer_dir, &["run", "src/main.incn"])?;
-    assert_success(&first, "Incan-authored codegraph importer experiment");
+    assert_success(&first, "Incan-authored codegraph importer example");
     let second = run_incan(&importer_dir, &["run", "src/main.incn"])?;
-    assert_success(&second, "second Incan-authored codegraph importer experiment");
+    assert_success(&second, "second Incan-authored codegraph importer example");
     assert_eq!(first.stdout, second.stdout, "importer summary must be deterministic");
 
     let summary = parse_json_stdout(&first)?;
