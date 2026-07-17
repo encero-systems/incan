@@ -6595,6 +6595,84 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#implementation-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      Implementation Plan
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Implementation Plan">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-shared-provider-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 1: Shared provider model
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-2-sdk-inventory-components-and-profiles" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 2: SDK inventory, components, and profiles
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-3-public-package-feature-graph" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 3: Public package-feature graph
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-4-compile-time-source-projection" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 4: Compile-time source projection
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-5-artifact-cache-lock-and-backend-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 5: Artifact, cache, lock, and backend integration
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-6-parity-documentation-and-release-proof" class="md-nav__link">
+    <span class="md-ellipsis">
+      Phase 6: Parity, documentation, and release proof
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#progress-checklist" class="md-nav__link">
+    <span class="md-ellipsis">
+      Progress Checklist
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#inspectability-and-tooling-surface" class="md-nav__link">
     <span class="md-ellipsis">
       Inspectability and tooling surface
@@ -6604,9 +6682,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#unresolved-questions" class="md-nav__link">
+  <a href="#design-decisions" class="md-nav__link">
     <span class="md-ellipsis">
-      Unresolved questions
+      Design Decisions
     </span>
   </a>
   
@@ -6632,7 +6710,7 @@
 
 <h1 id="rfc-114-compiled-providers-sdk-components-and-package-features">RFC 114: Compiled providers, SDK components, and package features<a class="headerlink" href="#rfc-114-compiled-providers-sdk-components-and-package-features" title="Permanent link">&para;</a></h1>
 <ul>
-<li><strong>Status:</strong> Draft</li>
+<li><strong>Status:</strong> In Progress</li>
 <li><strong>Created:</strong> 2026-07-17</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong><ul>
@@ -6649,7 +6727,7 @@
 </ul>
 </li>
 <li><strong>Issue:</strong> #544</li>
-<li><strong>RFC PR:</strong> —</li>
+<li><strong>RFC PR:</strong> <a href="https://github.com/encero-systems/incan/pull/839">#839</a></li>
 <li><strong>Written against:</strong> v0.5</li>
 <li><strong>Shipped in:</strong> —</li>
 </ul>
@@ -6848,6 +6926,14 @@ help: add `features = [&quot;json&quot;]` to dependency `reporting`
                  | &quot;dep:&quot; dependency_name
                  | dependency_name &quot;/&quot; feature_name
 </code></pre></div>
+<p>The compact list remains the preferred form for small feature graphs. A feature may instead use an expanded table when its different edge kinds benefit from explicit structure:</p>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[project.features.server]</span>
+<span class="n">includes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;json&quot;</span><span class="p">]</span>
+<span class="n">optional-dependencies</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;http_server&quot;</span><span class="p">]</span>
+<span class="n">dependency-features</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">http_server</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;tls&quot;</span><span class="p">]</span><span class="w"> </span><span class="p">}</span>
+<span class="n">requires-sdk-components</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;stdlib-web&quot;</span><span class="p">]</span>
+</code></pre></div>
+<p><code>includes</code> names local features, <code>optional-dependencies</code> activates optional Incan dependencies, <code>dependency-features</code> requests features from active Incan dependencies, and <code>requires-sdk-components</code> records checked requirements without enabling or installing those components. Compact and expanded definitions are mutually exclusive for one feature and normalize into the same typed graph before validation.</p>
 <p>Feature and dependency names must satisfy the corresponding manifest identifier rules. References are resolved structurally and validated for unknown packages, unknown features, non-optional dependencies behind <code>dep:</code>, dependency-feature references to inactive optional dependencies, cycles, and malformed spellings. Diagnostics point to the exact array item.</p>
 <p><code>default</code> is the conventional root feature set. It is enabled for a package unless the root command uses <code>--no-default-features</code> or the consumer dependency declaration sets <code>default-features = false</code>. A dependency declaration may request public features with <code>features = [...]</code>. Root commands may add root-package features with <code>--features</code>, select every declared root feature with <code>--all-features</code>, or suppress the root default with <code>--no-default-features</code>.</p>
 <p>Feature resolution is additive. The active set for one package is the union of its default selection, every requesting parent edge, root command selection, and recursively enabled local features. Enabling a feature twice has no additional effect. A feature cycle is rejected even when a fixed-point implementation could compute it, because cycles obscure ownership and make diagnostics and future evolution harder.</p>
@@ -6856,7 +6942,14 @@ help: add `features = [&quot;json&quot;]` to dependency `reporting`
 <h3 id="feature-conditioned-provider-facts">Feature-conditioned provider facts<a class="headerlink" href="#feature-conditioned-provider-facts" title="Permanent link">&para;</a></h3>
 <p>Checked provider facts may carry a positive requirement predicate consisting of one or more public features owned by that provider. A fact participates only when every required feature is active. This applies uniformly to modules, exports, provider dependencies, SDK component requirements, soft-syntax activations, registry entries, documentation entries, and implementation facets.</p>
 <p>The provider artifact must contain enough information to validate and inspect every feature-conditioned public fact without executing provider code. Publishers must verify the supported feature projections before publication. A consumer selects the projection after resolving feature closure and before making provider facts available to parsing, checking, lowering, LSP, or documentation.</p>
-<p>The exact Incan source spelling that authors use to attach a feature requirement remains an unresolved design question. The artifact contract is defined first so conditional-compilation syntax cannot force the compiler back into source scraping or backend cfg interpretation.</p>
+<p>Authors attach feature requirements with a general compile-time <code>when</code> block whose condition uses the compiler-owned <code>feature</code> predicate:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">when</span> <span class="n">feature</span><span class="p">(</span><span class="s2">&quot;json&quot;</span><span class="p">):</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">std.json</span><span class="w"> </span><span class="kn">import</span> <span class="nc">JsonValue</span>
+
+    <span class="k">pub</span> <span class="k">def</span><span class="w"> </span><span class="nf">encode</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nc">Report</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">JsonValue</span><span class="p">:</span>
+        <span class="o">...</span>
+</code></pre></div>
+<p>At compilation-unit scope, the block may contain imports, reexports, declarations, registry entries, or other forms that are otherwise valid at that scope. The condition is evaluated while the active source projection is built; it does not execute user code. <code>when</code> is the general compile-time conditional form and <code>feature(...)</code> is one typed compiler predicate, so the language does not acquire a narrowly scoped <code>feature</code> statement. The initial grammar accepts only positive feature predicates and conjunctions of positive feature predicates. Negation, disjunction, target predicates, values, and runtime expressions remain outside this RFC.</p>
 <h3 id="implementation-facets">Implementation facets<a class="headerlink" href="#implementation-facets" title="Permanent link">&para;</a></h3>
 <p>A provider may declare deterministic mappings from active semantic facts to implementation facets. For example, use of <code>std.web</code> may require one web facet, and that facet may map to a Cargo crate feature and several Rust dependencies for the current backend. The mapping belongs to the provider artifact and is validated when the provider is built.</p>
 <p>Implementation facets are not public Incan features:</p>
@@ -6988,8 +7081,8 @@ help: add `features = [&quot;json&quot;]` to dependency `reporting`
 <p>Profile names are stable concepts, while their expanded membership is release-owned data. Projects that need a permanent exact surface should use explicit exclusions or a minimal profile with explicit additions and commit the lockfile.</p>
 <h3 id="public-feature-facts-and-source-authoring">Public feature facts and source authoring<a class="headerlink" href="#public-feature-facts-and-source-authoring" title="Permanent link">&para;</a></h3>
 <p>The provider artifact model deliberately supports feature requirements on all checked fact kinds rather than only generated Rust items. A source-level feature mechanism that gates emission but leaves an export visible to checking would be invalid. Likewise, a documentation generator or LSP that ignores the active feature projection would be inconsistent with compilation.</p>
-<p>The preferred source design should be general enough to express a positive compile-time condition on a declaration, import, reexport, or compilation unit without introducing a narrowly scoped <code>feature</code> keyword. A future generic compile-time predicate form such as a typed <code>when(...)</code> condition is one candidate; a declaration decorator plus an explicit compilation-unit form is another. Whichever spelling is selected must lower into the same positive feature requirement facts and must not execute user code.</p>
-<p>Until that spelling is accepted, implementations may deliver manifest feature resolution and provider/component plumbing only for unconditional provider facts. They must not invent a private stdlib-only feature annotation or infer feature-conditioned API by scraping import text.</p>
+<p>The source form is a top-level <code>when feature("name"):</code> block. It may gate declarations, imports, reexports, and registry entries together, which keeps related optional API in one readable unit and avoids requiring a named <code>module</code> declaration solely to annotate the current file. Nested <code>when</code> blocks form an additive conjunction. The parser retains the condition as typed syntax; semantic collection attaches the resulting positive feature requirement set to every checked fact produced by the block. Inactive blocks remain available to formatting, source navigation, and feature-aware documentation, but do not enter the active typechecking or emission projection.</p>
+<p>The compiler-owned <code>feature</code> predicate resolves names in the current package only. Dependency features are selected in manifests and appear in that dependency's own source projection; source cannot reach across package ownership with <code>feature("dependency/name")</code>. The predicate is not a normal function, cannot be imported or shadowed, and is rejected outside compile-time <code>when</code> conditions.</p>
 <h3 id="artifact-publication-and-caching">Artifact publication and caching<a class="headerlink" href="#artifact-publication-and-caching" title="Permanent link">&para;</a></h3>
 <p>Provider artifacts are immutable by identity. A cache key includes provider digest, compiler compatibility, public feature projection when physical specialization is required, target/backend inputs, and implementation-facet fingerprint. Content-addressed storage should allow identical artifacts used by several projects or SDK profiles to share one physical copy.</p>
 <p>The SDK inventory must not require a project-local copy of an unchanged provider artifact. Generated consumer projects should reference or stage artifacts from a shared immutable cache using relocation-safe metadata. Packaging may include a compressed seed for offline first use, but extraction must deduplicate by artifact identity and must not reproduce the same generated source tree for every project.</p>
@@ -7019,12 +7112,12 @@ help: add `features = [&quot;json&quot;]` to dependency `reporting`
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <p>This design introduces more named concepts than a monolithic stdlib with Cargo features: providers, components, profiles, public features, implementation facets, and three participation states. The distinctions are necessary for truthful diagnostics and future backends, but documentation and inspection must make them understandable.</p>
 <p>Splitting artifacts creates packaging and test-matrix cost. Every component edge, profile, feature projection, relocation path, and missing-artifact state needs verification. Small components may also increase metadata and archive overhead enough to offset their payload savings, so the initial eight-way split must be measured rather than assumed optimal.</p>
-<p>Feature-conditioned checked artifacts require richer manifests and eventually a source-level conditional-compilation design. Defining the artifact semantics before the source spelling avoids an architectural shortcut, but it means the RFC cannot advance to Planned until the authoring form is settled.</p>
+<p>Feature-conditioned checked artifacts require richer manifests and a new source-level conditional-compilation form. The shared projection prevents backend leakage, but it also expands parser, formatter, semantic, documentation, and editor scope beyond artifact publication alone.</p>
 <p>The compatibility-oriented v0.5 default profile does not immediately reduce the installed size for ordinary users. It creates the ability to ship and select smaller distributions while preserving existing imports; later profile policy and installer work are required to realize the full distribution benefit.</p>
 <h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
 <p>Implementations should introduce a provider-resolution layer above existing library-manifest indexing. It should normalize SDK and project dependencies into provider records, validate namespace authority and feature projection, and publish one immutable plan to compiler stages. Standard-library construction may use toolchain bootstrap knowledge, but consumers should see ordinary validated provider facts with an SDK provenance kind.</p>
 <p>The active SDK should publish component artifacts into a shared content-addressed store using RFC 112 coordination. The SDK inventory references immutable identities, while projects and generated builds reference those identities instead of copying complete source trees. Backend adapters translate provider implementation facets into current Cargo configuration at the final project-generation boundary.</p>
-<p>The initial delivery may keep one physical standard-library bundle while emitting logically separate provider/component descriptors and proving selection, diagnostics, locking, and inspection. Physical splitting should follow once dependency measurements and relocation tests show that the component graph is honest. This migration concession must not preserve a semantic monolith: disabled components must be absent from the active provider plan even if their bytes temporarily share an archive.</p>
+<p>Provider construction may use one staging workspace, but the published artifacts must be independently addressable and physically excludable from an SDK profile package. A component need not have a dedicated top-level release archive: one distribution archive may contain several selected component artifacts. Packaging tests must prove that excluded component payloads and their exclusive dependency closure are absent, that common immutable content is stored only once, and that every installed artifact retains relocation and integrity guarantees. Size and dependency measurements are release evidence rather than a discretionary gate that permits shipping a semantic or physical monolith.</p>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Project and workspace manifests:</strong> must parse, validate, and preserve SDK selection, public feature declarations, dependency feature requests, optional Incan dependencies, and source-anchored configuration diagnostics.</li>
@@ -7040,6 +7133,65 @@ help: add `features = [&quot;json&quot;]` to dependency `reporting`
 <li><strong>Inspection, reports, and codegraph:</strong> must project provider, component, feature, artifact, and provenance facts from the shared plan with deterministic schemas.</li>
 <li><strong>Documentation and release tooling:</strong> must build references against declared profile and feature projections, identify unavailable optional surfaces honestly, and package the selected SDK artifacts without duplicate mutable caches.</li>
 </ul>
+<h2 id="implementation-plan">Implementation Plan<a class="headerlink" href="#implementation-plan" title="Permanent link">&para;</a></h2>
+<h3 id="phase-1-shared-provider-model">Phase 1: Shared provider model<a class="headerlink" href="#phase-1-shared-provider-model" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Introduce backend-neutral provider identities, provenance, namespace claims, checked facts, implementation facets, feature requirements, component requirements, and one immutable session-owned provider plan.</li>
+<li>Extend the existing library manifest index instead of creating a second stdlib-only semantic index, and validate namespace collisions and reserved-root authority before consumer typechecking.</li>
+<li>Route build, run, library, test-batch, LSP, diagnostics, codegraph, documentation, and generated-project construction through the shared plan; retain any migration adapter only with a named removal condition.</li>
+</ul>
+<h3 id="phase-2-sdk-inventory-components-and-profiles">Phase 2: SDK inventory, components, and profiles<a class="headerlink" href="#phase-2-sdk-inventory-components-and-profiles" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Define and validate the relocatable SDK inventory, component catalog, provider artifact locations and digests, component dependencies, mandatory membership, profiles, and reserved namespace grants.</li>
+<li>Discover the active inventory relative to the executable or explicit toolchain root, then resolve project <code>[sdk]</code> profile, additions, exclusions, dependency expansion, availability, and lock state without implicit acquisition.</li>
+<li>Publish the eight initial stdlib component artifacts into the shared immutable cache and prove that minimal-profile packages omit excluded payloads and exclusive dependencies.</li>
+</ul>
+<h3 id="phase-3-public-package-feature-graph">Phase 3: Public package-feature graph<a class="headerlink" href="#phase-3-public-package-feature-graph" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Parse compact and expanded feature declarations, dependency feature requests, optional Incan dependencies, defaults, and root command selections into one typed graph with source-anchored validation.</li>
+<li>Resolve additive feature closure for root and transitive packages, reject cycles and malformed or inactive edges, and record activation reasons in provider plans, locks, reports, and inspection.</li>
+<li>Keep Cargo features and other backend controls private by deriving them only from provider implementation facets after semantic provider resolution.</li>
+</ul>
+<h3 id="phase-4-compile-time-source-projection">Phase 4: Compile-time source projection<a class="headerlink" href="#phase-4-compile-time-source-projection" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Add parser, AST, formatter, and documentation support for compilation-unit <code>when feature("name"):</code> blocks and positive conjunctions.</li>
+<li>Attach positive requirements to every fact collected inside a block, retain inactive syntax for tooling, and project active imports, reexports, declarations, registry entries, documentation facts, and implementation facets consistently.</li>
+<li>Reject unsupported predicates, runtime use, cross-package feature names, and non-additive conditions with targeted diagnostics.</li>
+</ul>
+<h3 id="phase-5-artifact-cache-lock-and-backend-integration">Phase 5: Artifact, cache, lock, and backend integration<a class="headerlink" href="#phase-5-artifact-cache-lock-and-backend-integration" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Extend <code>.incnlib</code> provider records and generated Rust artifacts with feature-conditioned facts, component requirements, implementation facets, integrity, relocation, and provenance.</li>
+<li>Reuse RFC 112 atomic publication and advisory locking for shared content-addressed provider artifacts, compact offline seeds, and canonical lock publication without project-local duplication.</li>
+<li>Remove the stdlib-only built-in manifest side channel after every consumer path resolves official providers through the generic plan.</li>
+</ul>
+<h3 id="phase-6-parity-documentation-and-release-proof">Phase 6: Parity, documentation, and release proof<a class="headerlink" href="#phase-6-parity-documentation-and-release-proof" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Add direct-import, facade/reexport, package-consumer, library, test-batch, generated-Rust, rust-metadata, LSP, diagnostics, codegraph, formatter, documentation, and inspection coverage across component and feature states.</li>
+<li>Verify unknown, disabled, unavailable, corrupt, incompatible, conflicting, feature-gated, locked, offline, relocated, and concurrent-publication behavior on macOS and Linux.</li>
+<li>Update feature inventory, CLI and manifest references, RFC links, rustdocs, v0.5 release notes, development version, installed-SDK smoke coverage, artifact-size evidence, and an InQL consumer lane before the RFC becomes Implemented.</li>
+</ul>
+<h2 id="progress-checklist">Progress Checklist<a class="headerlink" href="#progress-checklist" title="Permanent link">&para;</a></h2>
+<ul class="task-list">
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Shared provider identity, provenance, namespace-claim, checked-fact, implementation-facet, and provider-plan models are implemented.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> <code>LibraryManifestIndex</code> and <code>CompilationSession</code> consume the generic provider plan without a stdlib-only semantic side channel.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Reserved namespace authority and duplicate canonical module claims are validated before typechecking.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Relocatable SDK inventory discovery and integrity validation are implemented.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> <code>[sdk]</code> profile, component additions, exclusions, dependencies, mandatory membership, and availability are resolved and locked.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> The eight stdlib components are independently published and physically excludable from SDK profile packages.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Shared content-addressed cache publication, reuse, locking, relocation, and compact offline seed behavior are verified.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Compact and expanded package-feature declarations normalize into one typed graph.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Optional Incan dependencies, dependency feature requests, defaults, and CLI feature flags resolve additively across the package graph.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Feature cycles, unknown references, inactive dependency edges, and unsupported combinations have source-anchored diagnostics.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Compilation-unit <code>when feature(...)</code> blocks and positive conjunctions parse, format, project, and diagnose correctly.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Feature requirements project imports, reexports, declarations, registry facts, documentation facts, component requirements, and implementation facets consistently.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Cargo and other backend switches are derived privately from provider implementation facets.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> <code>.incnlib</code>, generated Rust, locks, reports, and inspection preserve feature, component, integrity, relocation, and provenance facts.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Build, run, library, package, test-batch, LSP, diagnostics, codegraph, docs, and generated-project routes share provider and feature semantics.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Direct import, facade/reexport, package consumer, generated Rust, rust-metadata, locked, offline, and installed-SDK regressions pass.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Minimal, default, and full profile packaging proves excluded payload and dependency behavior with measured size evidence.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> CLI, manifest, artifact, feature, component, generated-reference, rustdoc, and v0.5 release documentation are complete.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> InQL consumer verification, macOS and Linux release lanes, development-version bump, and full repository gates pass.</li>
+</ul>
 <h2 id="inspectability-and-tooling-surface">Inspectability and tooling surface<a class="headerlink" href="#inspectability-and-tooling-surface" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Artifact or metadata:</strong> the SDK inventory, extended <code>.incnlib</code> provider records, canonical <code>incan.lock</code>, and build report expose component, provider, feature, implementation-facet, integrity, and provenance state.</li>
@@ -7048,15 +7200,14 @@ help: add `features = [&quot;json&quot;]` to dependency `reporting`
 <li><strong>Provenance:</strong> every selection records the SDK inventory entry, project or workspace manifest entry, dependency edge, feature edge, import, reexport, compiler requirement, and provider artifact identity that contributed it.</li>
 <li><strong>Not implicit:</strong> no network acquisition, project mutation, reserved namespace grant, public feature activation, or backend feature leakage may be inferred only from generated Cargo output or ambient source checkout state.</li>
 </ul>
-<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
+<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
 <ol>
-<li>What general Incan source form should attach a positive compile-time condition to declarations, imports, reexports, and the current compilation unit without introducing a narrowly scoped <code>feature</code> keyword or depending on a future named <code>module</code> declaration?</li>
-<li>Should <code>[project.features]</code> retain only the compact parsed-reference list, or also gain an expanded table form that names local features, optional dependencies, dependency features, and SDK requirements in separate typed fields?</li>
-<li>Should an active package feature be allowed to request an SDK component directly in a later extension, or should provider facts continue to declare a requirement that project tooling must satisfy explicitly under <code>[sdk]</code>?</li>
-<li>Should project environments and workspace matrices be allowed to select root package features and SDK profiles directly, or should they invoke commands with explicit selection flags so the canonical project manifest remains the only persistent owner?</li>
-<li>Which component-size and dependency measurements must pass before the v0.5 logical component split becomes eight physical distribution artifacts rather than one shared archive with eight independently selectable provider records?</li>
+<li>Feature-conditioned source uses the general compilation-unit <code>when feature("name"):</code> form. <code>when</code> establishes compile-time selection and <code>feature</code> is one compiler-owned typed predicate, so neither syntax is limited to stdlib metadata or dependent on a future named module declaration.</li>
+<li><code>[project.features]</code> supports both the compact reference list and an expanded typed table. Both normalize into the same feature graph, and a feature cannot mix both representations.</li>
+<li>A feature may declare that its active provider facts require SDK components, but it never enables or installs them. <code>[sdk]</code> remains the explicit owner of component enablement and tooling may offer a reviewable manifest edit when a requirement is unmet.</li>
+<li>Project environments and workspace matrices may pass explicit feature and SDK-profile selections into compilation commands. They do not become a second persistent owner: the project manifest and canonical lock remain authoritative, and reports record every transient override.</li>
+<li>The eight stdlib components must be independently addressable and physically excludable from release-profile packages before implementation is complete. Components do not require one top-level archive each, but packaging must prove that excluded payloads and exclusive dependencies are absent, shared immutable content is not duplicated, and all artifacts remain relocatable and integrity-checked. Size measurements are published as release evidence rather than used to waive those invariants.</li>
 </ol>
-<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 
