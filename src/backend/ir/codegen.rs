@@ -157,8 +157,7 @@ struct IrGenerationOptions<'a> {
     direct_generated_path_support_items: Option<&'a mut HashMap<Vec<String>, HashSet<String>>>,
 }
 
-/// Lowered metadata-only modules whose generated Rust identity belongs to the
-/// compiled built-in stdlib artifact.
+/// Lowered metadata-only modules whose generated Rust identity belongs to the compiled built-in stdlib artifact.
 type CompiledStdlibMetadataPrograms = Vec<(Vec<String>, IrProgram)>;
 
 impl IrGenerationOptions<'_> {
@@ -185,13 +184,11 @@ pub struct IrCodegen<'a> {
     /// Stores both the flat module name (used for build graph identity) and the nested module path
     /// segments (used for correct Rust qualification in codegen).
     dependency_modules: Vec<(&'a str, &'a Program, Option<Vec<String>>)>,
-    /// Source-derived dependency symbols that inform Rust qualification but are
-    /// linked from an external compiled artifact rather than emitted locally.
+    /// Source-derived dependency symbols used for Rust qualification but linked from an external artifact.
     ///
-    /// The compiler still typechecks built-in stdlib imports against their
-    /// source contracts. Once a module is supplied by `incan_builtin_stdlib`,
-    /// codegen must retain those contracts' canonical symbol paths without
-    /// treating the module as a consumer-local Rust source module.
+    /// The compiler still typechecks built-in stdlib imports against their source contracts. Once a module is supplied
+    /// by `incan_builtin_stdlib`, codegen must retain those contracts' canonical symbol paths without treating the
+    /// module as a consumer-local Rust source module.
     dependency_symbol_modules: Vec<(&'a str, &'a Program, Option<Vec<String>>)>,
     /// Whether serde is needed for emitted Rust derives or helpers.
     // Serde still affects emitted Rust imports and derive augmentation in IR emission, so this remains an
@@ -655,8 +652,7 @@ impl<'a> IrCodegen<'a> {
             .push((module_name, module_ast, Some(path_segments)));
     }
 
-    /// Return emitted dependencies plus metadata-only dependencies, deduplicated
-    /// by their canonical source module identity.
+    /// Return emitted and metadata-only dependencies, deduplicated by canonical source module identity.
     fn dependency_modules_for_symbol_metadata(&self) -> Vec<(&'a str, &'a Program, Option<Vec<String>>)> {
         let mut modules = self.dependency_modules.clone();
         for module in &self.dependency_symbol_modules {
@@ -671,13 +667,11 @@ impl<'a> IrCodegen<'a> {
         modules
     }
 
-    /// Lower metadata-only compiled stdlib modules just far enough to discover
-    /// the anonymous union wrappers owned by the artifact crate.
+    /// Lower metadata-only stdlib modules enough to discover anonymous union wrappers owned by the artifact crate.
     ///
-    /// Anonymous unions have stable structural names but no source-level name
-    /// to place in the `.incnlib` contract yet. Until that manifest capability
-    /// exists, this source-derived registry preserves one Rust nominal identity
-    /// without re-emitting the provider modules in every consumer.
+    /// Anonymous unions have stable structural names but no source-level name to place in the `.incnlib` contract yet.
+    /// Until that manifest capability exists, this source-derived registry preserves one Rust nominal identity without
+    /// re-emitting the provider modules in every consumer.
     fn compiled_builtin_stdlib_metadata_programs(
         &mut self,
     ) -> Result<(HashMap<String, String>, CompiledStdlibMetadataPrograms), GenerationError> {

@@ -640,9 +640,8 @@ impl<'a> IrEmitter<'a> {
                 quote! { #pname: #pty }
             })
             .collect();
-        // Proc-macro decorator markers deliberately do not forward their
-        // parameters to a Rust function. Prefix their generated bindings so
-        // artifact consumers remain warning-clean under `-D warnings`.
+        // Proc-macro decorator markers deliberately do not forward their parameters to a Rust function. Prefix their
+        // generated bindings so artifact consumers remain warning-clean under `-D warnings`.
         let unused_params: Vec<TokenStream> = func
             .params
             .iter()

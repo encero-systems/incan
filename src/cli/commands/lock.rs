@@ -1031,9 +1031,8 @@ pub(crate) fn generate_lockfile(
 
 /// Seed a generated consumer lockfile from the compiled built-in stdlib artifact.
 ///
-/// Cargo does not use a path dependency's lockfile while resolving its parent.
-/// Seeding a fresh generated lock workspace from the artifact's verified lock
-/// retains the transitive stdlib closure for offline consumers without exposing
+/// Cargo does not use a path dependency's lockfile while resolving its parent. Seeding a fresh generated lock workspace
+/// from the artifact's verified lock retains the transitive stdlib closure for offline consumers without exposing
 /// implementation crates as Incan source dependencies.
 pub(crate) fn compiled_builtin_stdlib_artifact_lock_payload(
     requirements: &ProjectRequirements,

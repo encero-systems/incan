@@ -251,10 +251,9 @@ fn uses_compiled_builtin_stdlib_artifact(modules: &[ParsedModule]) -> CliResult<
 
 /// Select the Incan CLI executable that prepares the built-in stdlib artifact.
 ///
-/// Cargo integration tests run inside a test executable, so `current_exe()` is
-/// not the `incan` CLI there. Cargo exposes the actual binary through
-/// `CARGO_BIN_EXE_incan`; installed SDKs do not set that variable and correctly
-/// fall back to their current CLI executable.
+/// Cargo integration tests run inside a test executable, so `current_exe()` is not the `incan` CLI there. Cargo exposes
+/// the actual binary through `CARGO_BIN_EXE_incan`; installed SDKs do not set that variable and correctly fall back to
+/// their current CLI executable.
 fn builtin_stdlib_artifact_builder_executable(
     cargo_test_binary: Option<PathBuf>,
     current_executable: PathBuf,
@@ -275,9 +274,8 @@ fn builtin_stdlib_artifact_builder_executable(
 
 /// Find the verified workspace Cargo.lock available to a development built-in stdlib artifact.
 ///
-/// A standalone artifact crate otherwise resolves its own newest compatible
-/// versions, which can differ from the compiler workspace's verified offline
-/// cache. Installed SDK layouts need not contain a workspace lockfile, so they
+/// A standalone artifact crate otherwise resolves its own newest compatible versions, which can differ from the
+/// compiler workspace's verified offline cache. Installed SDK layouts need not contain a workspace lockfile, so they
 /// deliberately retain normal Cargo resolution.
 fn builtin_stdlib_artifact_workspace_lock(stdlib_root: &Path) -> Option<PathBuf> {
     stdlib_root

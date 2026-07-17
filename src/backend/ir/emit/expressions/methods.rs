@@ -247,8 +247,7 @@ impl<'a> IrEmitter<'a> {
 
     /// Return the Result helper module for the current generated crate.
     ///
-    /// Normal consumers link the compiled stdlib artifact, while the artifact
-    /// build itself still uses its crate-local compatibility facade.
+    /// Consumers link the compiled stdlib artifact; artifact builds use the crate-local compatibility facade.
     fn result_stdlib_helper_path() -> TokenStream {
         if std::env::var_os("INCAN_INTERNAL_BUILTIN_STDLIB_ARTIFACT_BUILD").is_some() {
             quote! { crate::__incan_std::result }
@@ -292,9 +291,8 @@ impl<'a> IrEmitter<'a> {
 
     /// Return whether `std::path::Path.new` should preserve its source string shape for a borrowed generic parameter.
     ///
-    /// Rust's `Path::new` takes a generic `S: AsRef<OsStr>`. A direct literal
-    /// or compiler-managed static string provides the necessary inference shape; adding `.into()`
-    /// introduces an unconstrained intermediate target once consumer dependencies
+    /// Rust's `Path::new` takes `S: AsRef<OsStr>`. A literal or compiler-managed static string provides the necessary
+    /// inference shape; adding `.into()` introduces an unconstrained intermediate target once consumer dependencies
     /// provide additional `AsRef<OsStr>` implementations. Owned runtime strings must instead follow the ordinary
     /// external borrow boundary and emit `&value` for Path's `&S` parameter.
     fn std_path_new_preserves_static_string_argument_shape(

@@ -377,8 +377,7 @@ pub struct IrEmitter<'a> {
     /// Multi-file source modules share generated ordinary union wrappers through the crate root so same-shaped unions
     /// remain one Rust nominal type across module boundaries.
     qualify_union_types_from_crate: bool,
-    /// Anonymous union wrappers owned by an external compiled artifact, keyed
-    /// by their stable generated Rust name.
+    /// Anonymous union wrappers owned by an external compiled artifact, keyed by their stable generated Rust name.
     external_union_type_libraries: HashMap<String, String>,
     /// Extra anonymous union shapes that should be emitted in this module in addition to locally referenced shapes.
     generated_union_types: HashMap<String, IrType>,
