@@ -1,0 +1,7123 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Documentation for the Incan programming language">
+      
+      
+      
+      
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
+    
+    
+      
+        <title>RFC 114: Compiled providers, SDK components, and package features - Incan Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/pygments.css">
+    
+      <link rel="stylesheet" href="/shared/incapunk/incapunk.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#rfc-114-compiled-providers-sdk-components-and-package-features" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+      
+  <img src="/shared/incapunk/wordmark_small_001.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Incan Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              RFC 114: Compiled providers, SDK components, and package features
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="amber"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/encero-systems/incan" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    encero-systems/incan
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+    
+      
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../start_here/" class="md-tabs__link">
+          
+  
+    
+  
+  Start here
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../language/" class="md-tabs__link">
+          
+  
+    
+  
+  Language
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../tooling/" class="md-tabs__link">
+          
+  
+    
+  
+  Tooling
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../contributing/" class="md-tabs__link">
+          
+  
+    
+  
+  Contributing
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../release_notes/" class="md-tabs__link">
+          
+  
+    
+  
+  Release notes
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+    
+      
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../whitepapers/" class="md-tabs__link">
+          
+  
+    
+  
+  Project
+
+        </a>
+      </li>
+    
+  
+
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+    
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+      
+  <img src="/shared/incapunk/wordmark_small_001.png" alt="logo">
+
+    </a>
+    Incan Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/encero-systems/incan" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    encero-systems/incan
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../start_here/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Start here
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            Start here
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../start_here/what_incan_is_for/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    What Incan is for
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../start_here/coming_from_python/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Coming from Python (apps)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../start_here/coming_from_rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Coming from Rust (evaluator)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../start_here/coming_from_typescript_javascript/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Coming from TypeScript or JavaScript
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../start_here/pipelines_and_automation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Pipelines & automation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../start_here/encero_stack/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Encero stack
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../start_here/domain_native_demo/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    1.0 domain-native demo target
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../start_here/public_contracts/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    1.0 public contracts
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../start_here/beginner/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Beginner
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_11" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_11" id="__nav_2_11_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Comparisons
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_11">
+            <span class="md-nav__icon md-icon"></span>
+            Comparisons
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../comparisons/python/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Incan vs Python
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../comparisons/javascript_typescript/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Incan vs JS/TS
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../comparisons/rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Incan vs Rust
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../language/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Language
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            Language
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Tutorials
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2">
+            <span class="md-nav__icon md-icon"></span>
+            Tutorials
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2_1" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../language/tutorials/book/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    The Incan Book (Basics)
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_2_1" id="__nav_3_2_1_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_2_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2_1">
+            <span class="md-nav__icon md-icon"></span>
+            The Incan Book (Basics)
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/01_hello_world/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    1. Hello world
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/02_values_variables_and_types/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    2. Values, variables, and types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/03_functions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    3. Functions
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/04_control_flow/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    4. Control flow
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/05_modules_and_imports/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    5. Modules and imports
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/06_errors/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    6. Errors (Result/Option and `?`)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/07_strings_and_formatting/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    7. Strings and formatting
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/08_collections_and_iteration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    8. Collections and iteration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/09_enums/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    9. Enums and better `match`
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/10_models_vs_classes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    10. Models vs classes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/11_traits_and_derives/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    11. Traits and derives
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/12_newtypes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    12. Newtypes (stronger types)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/book/13_unit_tests/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    13. Unit tests
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/dates_and_times/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Dates and times
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/build_your_first_api/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Build your first API
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/fallible_and_infallible_paths/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Fallible and infallible paths
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/tutorials/web_framework/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Web framework
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    How-to
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            How-to
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/async_programming/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Async programming
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/customize_derived_behavior/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Customize derived behavior
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/dates_and_times/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Dates and times
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/error_handling_recipes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error handling recipes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/error_messages/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error messages
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/file_io/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    File I/O
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/binary_text_encoding/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Binary-text encoding
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/compression/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Compression
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/dynamic_json/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Dynamic JSON
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/generators/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Generators
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/imports_and_modules/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Imports and modules
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/module_state/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Module state
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/choosing_collections/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/choosing_numeric_types/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Choosing numeric types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/modeling_with_enums/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Modeling with enums
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/project_lifecycle/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Project lifecycle
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/testing_stdlib/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Testing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/string_processing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/working_with_uuids/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with UUIDs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/performance/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Performance
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/rust_interop/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Rust interop
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/rust_types_for_python_devs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Rust types (coming from Python)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Reference
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4">
+            <span class="md-nav__icon md-icon"></span>
+            Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/language/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Language reference (generated)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/feature_inventory/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Feature inventory (generated)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/code_style/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Code style guide
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/functions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Functions and calls
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/generators/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Generators
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/symbol_aliases/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Symbol aliases
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/callable_presets/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Callable presets
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/glossary/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Glossary
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/file_io/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    File I/O reference (Path/File APIs)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/imports_and_modules/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Imports and modules
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/static_storage/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Static storage
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/numeric_semantics/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Numeric semantics
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/project_lifecycle/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Project lifecycle
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/strings/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Strings and Bytes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/reflection/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Reflection
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/derives_and_traits/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Derives & traits (reference)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_17" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../language/reference/stdlib/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Standard library
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_4_17" id="__nav_3_4_17_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_17_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_17">
+            <span class="md-nav__icon md-icon"></span>
+            Standard library
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/async/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.async
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/collections/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.collections
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/checksum/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.checksum
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/compression/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.compression
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/derives/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.derives.*
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/datetime/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.datetime
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/encoding/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.encoding
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/environ/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.environ
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/fs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.fs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/graph/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.graph
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/hash/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.hash
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/io/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.io
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/json/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.json
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/telemetry/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.telemetry
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/regex/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.regex
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/uuid/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.uuid
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/tempfile/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.tempfile
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/reflection/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.reflection
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/result/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.result
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/traits/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.traits.*
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/testing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.testing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/math/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.math
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_18" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../language/reference/stdlib_traits/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Stdlib traits
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_4_18" id="__nav_3_4_18_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_18_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_18">
+            <span class="md-nav__icon md-icon"></span>
+            Stdlib traits
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib_traits/collection_protocols/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Collection protocols
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Indexing and slicing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib_traits/callable/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Callable objects
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib_traits/awaitable/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Awaitable values
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib_traits/error/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error trait
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib_traits/operators/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Operators
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib_traits/conversions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Conversions
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_19" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_4_19" id="__nav_3_4_19_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Derives
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_19_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_19">
+            <span class="md-nav__icon md-icon"></span>
+            Derives
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/derives/string_representation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    String representation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/derives/comparison/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Comparison
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/derives/copying_default/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Copying/default
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/derives/serialization/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Serialization
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/derives/validation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Validation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/derives/custom_behavior/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Custom behavior
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Explanation
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5">
+            <span class="md-nav__icon md-icon"></span>
+            Explanation
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/why_incan/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Why Incan?
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/why_not_just_rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Why not just Rust?
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/how_incan_works/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    How Incan works
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/compile_time_and_runtime/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Compile time and runtime
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/rust_shaped_confidence/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Rust-shaped confidence
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/control_flow/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Control flow
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/callable_presets/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Callable presets
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/closures/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Closures
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/consts/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Consts
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/generators/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Generators
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/static_storage/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Module static storage
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/numeric_types/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Numeric types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/datetime_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Date and time model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/ordinal_map/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    OrdinalMap
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/derives_and_traits/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Derives & traits (explained)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/call_site_type_arguments/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Why call-site type args exist
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/how_derives_work/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    How derives work
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/enums/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Enums
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/error_handling/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Error handling
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/imports_and_modules/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Imports and modules
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_22" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../language/explanation/models_and_classes/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Models and classes
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_5_22" id="__nav_3_5_22_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5_22">
+            <span class="md-nav__icon md-icon"></span>
+            Models and classes
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/models_and_classes/models/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Models
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/models_and_classes/classes/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Classes
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/traits_as_language_hooks/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Traits as language hooks
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/scopes_and_name_resolution/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Scopes and name resolution
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../tooling/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Tooling
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            Tooling
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_2" id="__nav_4_2_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Tutorials
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_2">
+            <span class="md-nav__icon md-icon"></span>
+            Tutorials
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/tutorials/getting_started/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Getting started
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/tutorials/your_first_project/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Your first project
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Pipeline mini-project
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_3" id="__nav_4_3_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    How-to
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_3">
+            <span class="md-nav__icon md-icon"></span>
+            How-to
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/install_and_run/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Install/build/run
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/dependencies/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Managing dependencies
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/ci_and_automation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    CI & automation
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/troubleshooting/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Troubleshooting
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/editor_setup/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Editor setup
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/lsp/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    LSP
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/formatting/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Formatting with incan fmt
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/testing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Testing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_4" id="__nav_4_4_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Explanation
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_4">
+            <span class="md-nav__icon md-icon"></span>
+            Explanation
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/explanation/projects_today/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Projects today
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/explanation/lsp_architecture/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    LSP architecture
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_5" id="__nav_4_5_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Reference
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5">
+            <span class="md-nav__icon md-icon"></span>
+            Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/reference/cli_reference/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    CLI reference
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/reference/codegraph_inspection/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Codegraph inspection
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/reference/agent_docs_surfaces/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Agent and tooling docs surfaces
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/reference/contract_metadata/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Checked contract metadata
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/reference/checked_api_metadata/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Checked API metadata
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/reference/project_configuration/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Project configuration
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    LSP protocol support
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+          
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../contributing/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Contributing
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            Contributing
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/contributors/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Contributors
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Tutorials
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3">
+            <span class="md-nav__icon md-icon"></span>
+            Tutorials
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3_1" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../contributing/tutorials/book/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Incan Contributor Book (Advanced)
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_3_1" id="__nav_5_3_1_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_5_3_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3_1">
+            <span class="md-nav__icon md-icon"></span>
+            Incan Contributor Book (Advanced)
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    1. Architecture tour
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    2. Layering and boundaries
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    3. Proposals: issues vs RFCs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    4. Your first change: add a builtin
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    5. Your first syntax change
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    6. Tooling loop: formatter + tests
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    7. Tooling loop: LSP
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    8. Docsite contributor loop
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_4" id="__nav_5_4_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    How-to
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_4">
+            <span class="md-nav__icon md-icon"></span>
+            How-to
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/how-to/extending_language/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Extending the language
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Author library DSLs with incan_vocab
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/how-to/auditing_generated_rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Auditing generated Rust
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Benchmarks & profiling (repository)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/how-to/ci_and_automation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    CI & automation (repository)
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/how-to/writing_rfcs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Writing RFCs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_5" id="__nav_5_5_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Explanation
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_5">
+            <span class="md-nav__icon md-icon"></span>
+            Explanation
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/explanation/architecture/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Architecture
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/explanation/duckborrowing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Duckborrowing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/explanation/generated_rust_quality/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Generated Rust quality
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/explanation/layering/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Layering rules
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/explanation/incapunk_docs_theme/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Incapunk docs theme
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Readable, maintainable Rust
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.testing internals
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_6" id="__nav_5_6_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Reference
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_6">
+            <span class="md-nav__icon md-icon"></span>
+            Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/reference/backend_behavior_inventory/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Backend behavior inventory
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/reference/generated_rust_stdlib_coverage/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Generated Rust stdlib coverage
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/reference/hees_ai_v05_dependency_inventory/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hees.ai v0.5 dependency inventory
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/reference/rust_source_backend_deprecation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Rust-source backend deprecation policy
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    RFCs
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../release_notes/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Release notes
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            Release notes
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../release_notes/0_5/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.5
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../release_notes/0_4/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.4
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../release_notes/0_3/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.3
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../release_notes/0_2/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.2
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../release_notes/0_1/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.1
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Project
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            Project
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_1" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../whitepapers/" class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Whitepapers
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_7_1" id="__nav_7_1_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_1">
+            <span class="md-nav__icon md-icon"></span>
+            Whitepapers
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../whitepapers/incan_ecosystem_north_star/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Incan ecosystem north star
+  </span>
+  
+    
+  
+  
+    <span class="md-status md-status--Snapshot"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../roadmap/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Roadmap
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../stability/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Stability policy
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      Summary
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#core-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      Core model
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#motivation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Motivation
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Goals
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Non-Goals
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#guide-level-explanation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Guide-level explanation
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Guide-level explanation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-default-project-remains-boring" class="md-nav__link">
+    <span class="md-ellipsis">
+      The default project remains boring
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#select-a-smaller-sdk-surface-explicitly" class="md-nav__link">
+    <span class="md-ellipsis">
+      Select a smaller SDK surface explicitly
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#public-features-belong-to-packages" class="md-nav__link">
+    <span class="md-ellipsis">
+      Public features belong to packages
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#components-and-features-may-meet-without-becoming-the-same-thing" class="md-nav__link">
+    <span class="md-ellipsis">
+      Components and features may meet without becoming the same thing
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#inspect-what-the-compiler-resolved" class="md-nav__link">
+    <span class="md-ellipsis">
+      Inspect what the compiler resolved
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reference-level-explanation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Reference-level explanation
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Reference-level explanation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#terminology" class="md-nav__link">
+    <span class="md-ellipsis">
+      Terminology
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#provider-artifact-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      Provider artifact contract
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#namespace-authority-and-collision-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      Namespace authority and collision rules
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sdk-inventory" class="md-nav__link">
+    <span class="md-ellipsis">
+      SDK inventory
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#project-component-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      Project component selection
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#public-package-features" class="md-nav__link">
+    <span class="md-ellipsis">
+      Public package features
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#feature-conditioned-provider-facts" class="md-nav__link">
+    <span class="md-ellipsis">
+      Feature-conditioned provider facts
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#implementation-facets" class="md-nav__link">
+    <span class="md-ellipsis">
+      Implementation facets
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#provider-plan-construction" class="md-nav__link">
+    <span class="md-ellipsis">
+      Provider-plan construction
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#locking-and-reproducibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      Locking and reproducibility
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#workspace-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      Workspace behavior
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#diagnostics" class="md-nav__link">
+    <span class="md-ellipsis">
+      Diagnostics
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#design-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      Design details
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Design details">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#why-providers-components-and-features-share-one-rfc" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why providers, components, and features share one RFC
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#initial-official-standard-library-components" class="md-nav__link">
+    <span class="md-ellipsis">
+      Initial official standard-library components
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#profiles-are-distribution-policy-not-package-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      Profiles are distribution policy, not package API
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#public-feature-facts-and-source-authoring" class="md-nav__link">
+    <span class="md-ellipsis">
+      Public feature facts and source authoring
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#artifact-publication-and-caching" class="md-nav__link">
+    <span class="md-ellipsis">
+      Artifact publication and caching
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#interaction-with-rfc-075-capability-packs" class="md-nav__link">
+    <span class="md-ellipsis">
+      Interaction with RFC 075 capability packs
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compatibility-and-migration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Compatibility and migration
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alternatives-considered" class="md-nav__link">
+    <span class="md-ellipsis">
+      Alternatives considered
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Alternatives considered">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#keep-one-monolithic-standard-library-artifact" class="md-nav__link">
+    <span class="md-ellipsis">
+      Keep one monolithic standard-library artifact
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#use-cargo-features-as-sdk-components-and-incan-features" class="md-nav__link">
+    <span class="md-ellipsis">
+      Use Cargo features as SDK components and Incan features
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#give-every-standard-module-its-own-component" class="md-nav__link">
+    <span class="md-ellipsis">
+      Give every standard module its own component
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#infer-provider-contents-from-a-source-libincn-at-consumer-time" class="md-nav__link">
+    <span class="md-ellipsis">
+      Infer provider contents from a source lib.incn at consumer time
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#automatically-enable-components-or-features-from-imports" class="md-nav__link">
+    <span class="md-ellipsis">
+      Automatically enable components or features from imports
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#treat-sdk-profiles-as-rfc-075-starter-profiles" class="md-nav__link">
+    <span class="md-ellipsis">
+      Treat SDK profiles as RFC 075 starter profiles
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#allow-subtractive-and-mutually-exclusive-features-immediately" class="md-nav__link">
+    <span class="md-ellipsis">
+      Allow subtractive and mutually exclusive features immediately
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#drawbacks" class="md-nav__link">
+    <span class="md-ellipsis">
+      Drawbacks
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      Implementation architecture
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#layers-affected" class="md-nav__link">
+    <span class="md-ellipsis">
+      Layers affected
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#inspectability-and-tooling-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      Inspectability and tooling surface
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unresolved-questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Unresolved questions
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+  
+
+
+<h1 id="rfc-114-compiled-providers-sdk-components-and-package-features">RFC 114: Compiled providers, SDK components, and package features<a class="headerlink" href="#rfc-114-compiled-providers-sdk-components-and-package-features" title="Permanent link">&para;</a></h1>
+<ul>
+<li><strong>Status:</strong> Draft</li>
+<li><strong>Created:</strong> 2026-07-17</li>
+<li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
+<li><strong>Related:</strong><ul>
+<li>RFC 013 (Rust crate dependencies and parked Incan-native feature activation)</li>
+<li>RFC 015 (project lifecycle and manifest ownership)</li>
+<li>RFC 020 (offline, locked, and reproducible builds)</li>
+<li>RFC 022 (stdlib namespacing and compiler handoff)</li>
+<li>RFC 023 (compilable stdlib and Rust module binding)</li>
+<li>RFC 031 (Incan library artifacts and the <code>pub</code> namespace)</li>
+<li>RFC 034 (<code>incan.pub</code> package distribution)</li>
+<li>RFC 075 (starter profiles and capability packs)</li>
+<li>RFC 077 (workspaces and canonical locking)</li>
+<li>RFC 112 (crash-safe local artifact publication)</li>
+</ul>
+</li>
+<li><strong>Issue:</strong> #544</li>
+<li><strong>RFC PR:</strong> —</li>
+<li><strong>Written against:</strong> v0.5</li>
+<li><strong>Shipped in:</strong> —</li>
+</ul>
+<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
+<p>This RFC defines one generic compiled-provider model for Incan libraries and official SDK components, uses that model to split the standard library into independently describable artifacts, and activates the previously parked Incan-native package-feature model. An SDK installation advertises which components are available; a project profile and explicit component refinements determine which are enabled; source imports and compiler requirements determine which enabled providers are used. Public package features remain a separate additive dependency-selection mechanism, while Cargo features and other backend switches become private provider implementation details. The compiler resolves these inputs into one deterministic, session-owned provider plan consumed by checking, lowering, generated-project construction, LSP, inspection, and locking. The standard library is the first compiler-injected consumer of this generic machinery, not a permanent special case.</p>
+<h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
+<p>Read this RFC as twelve foundations:</p>
+<ol>
+<li><strong>The compiler core is not the standard library:</strong> syntax, primitive types, intrinsic operations, and compiler-only namespace roots belong to the language implementation. Importable <code>std.*</code> modules belong to compiled providers, even when an official SDK distributes them with the compiler.</li>
+<li><strong>A provider is generic:</strong> a compiled provider contributes checked semantic facts, generated Rust implementation artifacts, dependency requirements, optional public features, provenance, and namespace claims. Ordinary Incan libraries and SDK components use the same provider contract.</li>
+<li><strong>A component is a distribution unit:</strong> an SDK component is a named, versioned, independently installable provider or provider bundle selected through an SDK profile. A component is not a source-language feature flag and is not a Cargo feature.</li>
+<li><strong>A feature is a package-owned additive switch:</strong> public Incan features select optional dependencies, dependency features, and feature-conditioned provider facts. Features compose by union and may add behavior or API surface; they must not subtract or reinterpret behavior that is available without them.</li>
+<li><strong>A profile is a named component selection:</strong> <code>minimal</code>, <code>default</code>, and <code>full</code> describe coherent SDK component sets for one SDK release. Profiles do not alter language semantics, dependency feature semantics, optimization level, or runtime configuration.</li>
+<li><strong>Availability, enablement, and use are distinct:</strong> an installed SDK may contain a component, a project may enable it, and a compilation may use one of its modules. Tooling and diagnostics must not collapse those three states.</li>
+<li><strong>Imports never acquire software:</strong> importing a missing module must not download, install, or silently enable an SDK component or package feature. Compilation diagnoses the unmet requirement; explicit lifecycle tooling changes project or installation state.</li>
+<li><strong>Namespace ownership is explicit:</strong> every provider declares the exact import modules it owns, and the resolved provider set must contain at most one owner for each canonical module path. Reserved roots such as <code>std</code> require toolchain authority and cannot be claimed by an arbitrary dependency.</li>
+<li><strong>Backend switches are derived and private:</strong> a provider may map used modules and public features to Cargo features, cfg values, linked crates, or future backend controls. Those mappings are part of the provider artifact and must not become a second user-facing feature system.</li>
+<li><strong>The lock records the resolved semantic graph:</strong> exact provider identities, component selections, public feature closure, implementation requirements, and artifact integrity belong in the canonical lock state whenever they can change checking or generated output.</li>
+<li><strong>One provider plan feeds every compiler surface:</strong> build, run, test batches, library builds, LSP, codegraph, documentation, and inspection must agree on provider availability, module ownership, feature closure, and diagnostics.</li>
+<li><strong>The current monolith is a migration input, not the architecture:</strong> existing standard-library source, Rust runtime support, and cached artifacts may be repackaged incrementally, but new semantic authority must not be added to a hardcoded stdlib inventory or an independent stdlib-only manifest path.</li>
+</ol>
+<h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
+<p>The standard library is currently special in several overlapping ways. The compiler knows a hand-maintained module inventory, imports activate Rust crate features, generated projects wire a monolithic runtime crate, source modules can be materialized into consumer output, and compiled-library work introduces another artifact path beside ordinary library manifests. Each individual bridge was useful while the language and library system were young, but together they make the stdlib difficult to derive, difficult to slim down, and too easy to evolve through compiler-specific exceptions.</p>
+<p>This becomes visible as soon as compiled standard-library artifacts are packaged. A single precompiled artifact can improve build time and fresh-install behavior, but a single artifact containing every standard module also fixes the SDK's size and dependency closure at the largest possible setting. Conversely, splitting files without a provider contract merely moves a hardcoded list into more places. Users should eventually be able to install or enable a small SDK for constrained use, a conventional SDK for ordinary development, or the complete official surface without changing import syntax or teaching the compiler a new path for every component.</p>
+<p>The same architectural pressure appears in third-party libraries. RFC 031 already defines checked <code>.incnlib</code> facts plus a generated Rust crate, but its first phase assumes one unconditional public surface. RFC 013 parses the seed of <code>[project.features]</code> and supports Cargo optional dependencies, while deliberately postponing an Incan-native activation model. If SDK components are implemented as Cargo features, that postponement becomes permanent leakage: users would need to understand backend crate layout to select language libraries, lockfiles would conflate semantic and implementation choices, and a future non-Rust backend would inherit Cargo-shaped product semantics.</p>
+<p>The desired end-state is a compiler that receives a resolved set of compiled providers. The official standard library happens to be supplied by the active SDK and authorized to own <code>std.*</code>; an ordinary dependency happens to be selected from the project dependency graph and owns <code>pub.&lt;dependency&gt;.*</code>. Both contribute the same categories of checked facts and implementation requirements. Components decide which official artifacts can participate, features decide which additive package capabilities participate, imports decide which available modules are actually used, and the backend performs only the resulting implementation work.</p>
+<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Define a generic compiled-provider contract that can represent ordinary Incan libraries and SDK-supplied libraries without a stdlib-only semantic manifest path.</li>
+<li>Define available, enabled, and used provider states and expose them consistently in diagnostics, build reports, inspection, LSP, and codegraph output.</li>
+<li>Define SDK component identities, dependencies, compatibility, profiles, project refinements, and lockfile behavior.</li>
+<li>Preserve stable <code>std.*</code> source imports independently of how official modules are packaged into SDK components.</li>
+<li>Define an initial component split for the v0.5 standard-library surface that can be packaged independently without pretending every source module needs its own distribution artifact.</li>
+<li>Activate a first-class Incan package-feature graph based on the existing <code>[project.features]</code> direction, including defaults, optional Incan dependencies, dependency feature requests, deterministic additive unification, and targeted diagnostics.</li>
+<li>Keep public Incan features distinct from private Cargo features and other backend implementation controls.</li>
+<li>Extend checked library artifacts so module exports, runtime dependencies, soft syntax, registry facts, and other provider facts can declare feature requirements without requiring consumers to reparse provider source.</li>
+<li>Make provider resolution a session-owned input shared by single-project, workspace, test-batch, library, LSP, documentation, and inspection paths.</li>
+<li>Define deterministic lock and artifact-integrity requirements for provider selection and feature closure.</li>
+<li>Preserve offline compilation: provider resolution may consume installed, workspace, cached, or locked artifacts, but it must not perform implicit network acquisition.</li>
+<li>Leave room for future official and third-party provider families without granting ordinary packages authority over reserved namespace roots.</li>
+</ul>
+<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Defining a managed toolchain installer, remote component repository protocol, delta updater, or garbage collector in this RFC.</li>
+<li>Defining registry hosting, package ranking, signing infrastructure, or trust policy beyond the local authority checks required to protect reserved import roots.</li>
+<li>Turning every standard-library module into a separate package or promising that the initial component boundaries can never be revised before the language and SDK compatibility contract is declared stable.</li>
+<li>Letting projects replace language intrinsics, primitive types, compiler-owned derives, or the <code>rust</code> import root through providers.</li>
+<li>Treating RFC 075 starter profiles or capability packs as compile-time features. Those remain explicit project-mutation recipes.</li>
+<li>Treating RFC 073 environment matrices, build optimization profiles, target triples, runtime configuration, or policy capabilities as SDK components or package features.</li>
+<li>Automatically downloading a component because source imported one of its modules.</li>
+<li>Exposing Cargo feature names, generated crate names, generated module paths, or Rust dependency layout as stable Incan package API.</li>
+<li>Defining subtractive, mutually exclusive, value-carrying, target-predicate, or runtime feature flags in the initial package-feature model.</li>
+<li>Defining arbitrary third-party ownership of the <code>std</code> namespace.</li>
+</ul>
+<h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
+<h3 id="the-default-project-remains-boring">The default project remains boring<a class="headerlink" href="#the-default-project-remains-boring" title="Permanent link">&para;</a></h3>
+<p>A project that does not mention SDK selection uses the release's <code>default</code> SDK profile and the default features of its Incan dependencies. Existing <code>std.*</code> imports continue to look the same:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.fs</span><span class="w"> </span><span class="kn">import</span> <span class="kt">Path</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.json</span><span class="w"> </span><span class="kn">import</span> <span class="nc">JsonValue</span>
+</code></pre></div>
+<p>The important change is underneath the source. The active SDK inventory identifies which components provide <code>std.fs</code> and <code>std.json</code>; the project selection enables those components; the provider plan loads their checked manifests; and the generated project links only the implementation requirements selected by the used modules and public feature closure.</p>
+<h3 id="select-a-smaller-sdk-surface-explicitly">Select a smaller SDK surface explicitly<a class="headerlink" href="#select-a-smaller-sdk-surface-explicitly" title="Permanent link">&para;</a></h3>
+<p>A project that wants a deliberately small standard surface may select <code>minimal</code> and add only the components it needs:</p>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[sdk]</span>
+<span class="n">profile</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;minimal&quot;</span>
+<span class="n">components</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;stdlib-system&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;stdlib-data&quot;</span><span class="p">]</span>
+</code></pre></div>
+<p>Profile expansion is deterministic. <code>stdlib-core</code> is always present, selected components bring their declared component dependencies, and the expanded selection is recorded in <code>incan.lock</code>. Selecting a component does not promise that the local SDK installation contains it. If <code>stdlib-data</code> is enabled by the project but unavailable in the installation, the compiler reports an installation problem rather than pretending the import is unknown.</p>
+<p>A compatibility-oriented project may start from the conventional profile and remove components it deliberately forbids:</p>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[sdk]</span>
+<span class="n">profile</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;default&quot;</span>
+<span class="n">exclude-components</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;stdlib-web&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;stdlib-observability&quot;</span><span class="p">]</span>
+</code></pre></div>
+<p>An exclusion is checked after dependency expansion. Excluding <code>stdlib-async</code> while retaining <code>stdlib-web</code> is an error because the web component declares an async dependency. The resolver must show the dependency path that made the exclusion invalid.</p>
+<h3 id="public-features-belong-to-packages">Public features belong to packages<a class="headerlink" href="#public-features-belong-to-packages" title="Permanent link">&para;</a></h3>
+<p>An Incan library may define additive public features in its project metadata. The existing list form becomes a parsed reference language rather than an opaque list of strings:</p>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[project.features]</span>
+<span class="n">default</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;json&quot;</span><span class="p">]</span>
+<span class="n">json</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;dep:serializer&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;serializer/json&quot;</span><span class="p">]</span>
+<span class="n">full</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;json&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;http&quot;</span><span class="p">]</span>
+<span class="n">http</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;dep:http_client&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;http_client/tls&quot;</span><span class="p">]</span>
+
+<span class="k">[dependencies]</span>
+<span class="n">serializer</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;../serializer&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">optional</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="n">default-features</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">false</span><span class="w"> </span><span class="p">}</span>
+<span class="n">http_client</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;../http_client&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">optional</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="n">default-features</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">false</span><span class="w"> </span><span class="p">}</span>
+</code></pre></div>
+<p>Within a feature entry, a plain name refers to another feature in the same package, <code>dep:&lt;name&gt;</code> activates an optional Incan dependency, and <code>&lt;dependency&gt;/&lt;feature&gt;</code> requests one public feature from an active Incan dependency. These are checked identifiers with source-anchored manifest diagnostics; they are not arbitrary backend arguments.</p>
+<p>A consumer enables dependency features on the dependency declaration:</p>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[dependencies]</span>
+<span class="n">reporting</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;../reporting&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">default-features</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span><span class="w"> </span><span class="n">features</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;json&quot;</span><span class="p">]</span><span class="w"> </span><span class="p">}</span>
+</code></pre></div>
+<p>Command-line selection uses Incan-owned flags:</p>
+<div class="language-text highlight"><pre><span></span><code>incan build --features json,http
+incan test --all-features
+incan check --no-default-features
+</code></pre></div>
+<p>Cargo pass-through keeps its existing explicitly prefixed surface such as <code>--cargo-features</code>. An Incan <code>--features</code> argument must never be forwarded blindly to Cargo.</p>
+<p>Features do not silently activate from imports. If <code>pub.reporting.JsonReport</code> exists only when <code>reporting/json</code> is enabled, importing it without that feature produces a diagnostic that names the disabled feature and the dependency declaration that can enable it. This keeps source, manifest, lock state, CI, and editor behavior aligned.</p>
+<h3 id="components-and-features-may-meet-without-becoming-the-same-thing">Components and features may meet without becoming the same thing<a class="headerlink" href="#components-and-features-may-meet-without-becoming-the-same-thing" title="Permanent link">&para;</a></h3>
+<p>A package feature may expose API that requires an SDK component, but it does not own or install that component. Its provider facts declare the requirement. When the feature is active, provider resolution verifies that the required component is enabled and available. A package should therefore be able to say that its <code>server</code> feature requires <code>stdlib-web</code>, while the project still controls SDK composition under <code>[sdk]</code>.</p>
+<p>The initial feature-reference shorthand does not directly add or remove SDK components. This is intentional: a command-line <code>--features server</code> must not mutate the installed SDK or silently override a project's explicit component exclusions. Tooling may offer an explicit manifest edit when it diagnoses the missing requirement.</p>
+<h3 id="inspect-what-the-compiler-resolved">Inspect what the compiler resolved<a class="headerlink" href="#inspect-what-the-compiler-resolved" title="Permanent link">&para;</a></h3>
+<p>Users and tools should not need to infer component or feature state from generated Cargo files:</p>
+<div class="language-text highlight"><pre><span></span><code>incan inspect providers --format json
+incan inspect features --format json
+</code></pre></div>
+<p>Provider inspection shows the active SDK identity, available components, project-enabled components, transitive component reasons, used modules, provider artifact identities, public features, implementation facets, and source or manifest provenance. Feature inspection shows roots, defaults, dependency requests, unified closure, optional dependencies, feature-conditioned facts, and why each feature became active.</p>
+<p>Human diagnostics distinguish the important failure classes:</p>
+<div class="language-text highlight"><pre><span></span><code>error: `std.web` is provided by SDK component `stdlib-web`, but that component is disabled for this project
+help: add `stdlib-web` to `[sdk].components` or select a profile that includes it
+</code></pre></div>
+<div class="language-text highlight"><pre><span></span><code>error: SDK component `stdlib-web` is enabled but is not available in the active Incan SDK
+note: active SDK: 0.5.0 (minimal installation)
+help: install an SDK distribution containing `stdlib-web`; compilation will not download it automatically
+</code></pre></div>
+<div class="language-text highlight"><pre><span></span><code>error: `JsonReport` requires feature `reporting/json`
+help: add `features = [&quot;json&quot;]` to dependency `reporting`
+</code></pre></div>
+<h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
+<h3 id="terminology">Terminology<a class="headerlink" href="#terminology" title="Permanent link">&para;</a></h3>
+<ul>
+<li>A <strong>provider</strong> is one resolved compiled-library input containing checked semantic facts, implementation artifacts, dependency requirements, compatibility metadata, and provenance.</li>
+<li>A <strong>provider identity</strong> is the stable package or SDK artifact identity plus version, artifact digest, and feature projection used for locking and diagnostics.</li>
+<li>A <strong>namespace claim</strong> is the set of canonical import module paths for which a provider supplies semantic facts.</li>
+<li>An <strong>SDK component</strong> is an independently describable official distribution unit whose provider artifacts and component dependencies are listed in the active SDK inventory.</li>
+<li>An <strong>SDK profile</strong> is a release-owned named set of component ids.</li>
+<li>An <strong>available component</strong> is present and integrity-checked in the active SDK installation.</li>
+<li>An <strong>enabled component</strong> belongs to the project selection after profile expansion, explicit additions, exclusions, and transitive component dependency resolution.</li>
+<li>A <strong>used provider module</strong> is reached by source imports, reexports, soft-syntax activation, compiler-required runtime support, or another checked provider fact in the active compilation graph.</li>
+<li>A <strong>public feature</strong> is a package-owned additive selection visible in Incan manifests, checked artifacts, locks, diagnostics, and inspection.</li>
+<li>An <strong>implementation facet</strong> is a provider-owned backend requirement derived from used modules and public features, such as one Cargo feature, linked native library, generated helper, or future backend capability.</li>
+</ul>
+<h3 id="provider-artifact-contract">Provider artifact contract<a class="headerlink" href="#provider-artifact-contract" title="Permanent link">&para;</a></h3>
+<p>A provider must make the following information available before consumer source is typechecked against it:</p>
+<ul>
+<li>provider name, version, manifest schema version, compiler compatibility, and artifact digest;</li>
+<li>namespace authority and exact canonical module claims;</li>
+<li>checked exports, declaration identities, type facts, trait facts, soft-syntax activations, registry facts, documentation facts, and Rust ABI metadata relevant to the claimed modules;</li>
+<li>public feature declarations, default feature set, and feature requirements attached to provider facts;</li>
+<li>provider dependencies and requested public features;</li>
+<li>required SDK components, optionally conditioned on public features;</li>
+<li>generated Rust artifact identity and relocation information;</li>
+<li>implementation-facet mappings and backend dependency requirements;</li>
+<li>source, package, and generated-artifact provenance suitable for diagnostics and inspection.</li>
+</ul>
+<p>The semantic portion extends the RFC 031 <code>.incnlib</code> contract. A provider must not require consumers to parse, typecheck, or lower provider <code>.incn</code> source. The physical distribution may keep semantic facts and generated Rust in one archive or adjacent files, but the resolver must present one validated provider record to compiler stages.</p>
+<p>Provider artifacts must be relocatable within their declared distribution root. Absolute producer paths, workspace-only crate paths, and ambient source checkout assumptions are invalid in published or SDK-installed providers.</p>
+<h3 id="namespace-authority-and-collision-rules">Namespace authority and collision rules<a class="headerlink" href="#namespace-authority-and-collision-rules" title="Permanent link">&para;</a></h3>
+<p>The compiler owns the import roots and grants provider authority as follows:</p>
+<ul>
+<li>ordinary Incan dependencies receive the <code>pub.&lt;dependency-key&gt;</code> namespace derived from the consumer's resolved dependency graph;</li>
+<li>official SDK providers may receive exact <code>std.*</code> claims only through the integrity-checked active SDK inventory;</li>
+<li>compiler-only roots and modules remain compiler-owned and are not provider claims;</li>
+<li>future provider kinds may receive other explicit roots only through an RFC-defined authority mechanism.</li>
+</ul>
+<p>An ordinary package manifest must not self-assert ownership of <code>std.*</code>. A copied or modified provider artifact outside an authorized SDK inventory remains an ordinary package and cannot acquire reserved-root authority from metadata alone.</p>
+<p>Two enabled providers must not claim the same canonical module path. Parent namespaces may be virtual aggregation nodes, so providers may independently own <code>std.fs</code> and <code>std.web</code> without either claiming the bare <code>std</code> root. A provider that owns a facade module may reexport declarations from provider dependencies, but the reexport retains canonical declaration identity and provenance and does not create a second owner for the source declaration.</p>
+<p>Collision validation occurs before consumer typechecking. The diagnostic must identify both provider identities, both claim sources, the conflicting module path, and the project or SDK selections that introduced them.</p>
+<h3 id="sdk-inventory">SDK inventory<a class="headerlink" href="#sdk-inventory" title="Permanent link">&para;</a></h3>
+<p>Every component-aware SDK distribution must contain one integrity-checked inventory that declares:</p>
+<ul>
+<li>SDK identity and compiler compatibility;</li>
+<li>every component id and version known to that SDK release, including components omitted from the local installation;</li>
+<li>installation availability for each known component;</li>
+<li>expected component artifact identities and digests, plus local artifact locations only for installed components;</li>
+<li>provider records supplied by each component;</li>
+<li>component dependency edges;</li>
+<li>named profile membership;</li>
+<li>reserved namespace grants;</li>
+<li>whether a component is mandatory for that SDK release;</li>
+<li>enough provenance to distinguish official, locally developed, and overridden artifacts.</li>
+</ul>
+<p>The compiler must discover the inventory relative to the active executable or an explicit toolchain root, not from a repository-specific absolute path. An SDK without a component inventory is treated as a legacy monolithic installation during migration and projects using explicit component selection must receive a compatibility diagnostic.</p>
+<p>Component dependencies are additive and acyclic. A cycle, unknown component, incompatible component version, digest mismatch, or missing artifact makes the SDK inventory invalid. The compiler must not fall back from an invalid installed component to source material in a nearby checkout.</p>
+<h3 id="project-component-selection">Project component selection<a class="headerlink" href="#project-component-selection" title="Permanent link">&para;</a></h3>
+<p>The project-level <code>[sdk]</code> table has this initial shape:</p>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[sdk]</span>
+<span class="n">profile</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;default&quot;</span>
+<span class="n">components</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;stdlib-web&quot;</span><span class="p">]</span>
+<span class="n">exclude-components</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;stdlib-observability&quot;</span><span class="p">]</span>
+</code></pre></div>
+<ul>
+<li><code>profile</code> selects one named profile from the active SDK and defaults to <code>default</code> when omitted.</li>
+<li><code>components</code> adds component ids to the profile selection.</li>
+<li><code>exclude-components</code> rejects component ids from the final selection and exists to make deliberate slimming reviewable.</li>
+<li>the mandatory component set is always included and cannot be excluded;</li>
+<li>transitive component dependencies are added unless explicitly excluded, in which case resolution fails with the dependency path;</li>
+<li>unknown profile and component ids are configuration errors;</li>
+<li>duplicate entries are accepted only after deterministic deduplication and should produce a lint when they obscure intent.</li>
+</ul>
+<p>The expanded enabled set is compared with the installed available set. A component may therefore be disabled, enabled and available, or enabled but unavailable. Even a minimal installation must retain the release's small component catalog so the compiler can distinguish a known omitted component from an unknown id. An unavailable component is never silently treated as disabled because the remedies differ.</p>
+<p>Profile membership is versioned with the SDK. Lock generation records the expanded component ids and exact provider artifacts, not only the profile name, so an updated SDK profile cannot silently alter an existing locked build. A lock refresh may adopt changed profile membership after presenting the graph change in machine-readable and human output.</p>
+<h3 id="public-package-features">Public package features<a class="headerlink" href="#public-package-features" title="Permanent link">&para;</a></h3>
+<p><code>[project.features]</code> defines named public features for the current Incan package. Each entry is an array whose items use this grammar:</p>
+<div class="language-text highlight"><pre><span></span><code>feature_member ::= feature_name
+                 | &quot;dep:&quot; dependency_name
+                 | dependency_name &quot;/&quot; feature_name
+</code></pre></div>
+<p>Feature and dependency names must satisfy the corresponding manifest identifier rules. References are resolved structurally and validated for unknown packages, unknown features, non-optional dependencies behind <code>dep:</code>, dependency-feature references to inactive optional dependencies, cycles, and malformed spellings. Diagnostics point to the exact array item.</p>
+<p><code>default</code> is the conventional root feature set. It is enabled for a package unless the root command uses <code>--no-default-features</code> or the consumer dependency declaration sets <code>default-features = false</code>. A dependency declaration may request public features with <code>features = [...]</code>. Root commands may add root-package features with <code>--features</code>, select every declared root feature with <code>--all-features</code>, or suppress the root default with <code>--no-default-features</code>.</p>
+<p>Feature resolution is additive. The active set for one package is the union of its default selection, every requesting parent edge, root command selection, and recursively enabled local features. Enabling a feature twice has no additional effect. A feature cycle is rejected even when a fixed-point implementation could compute it, because cycles obscure ownership and make diagnostics and future evolution harder.</p>
+<p>Features may activate optional Incan dependencies and request features from active Incan dependencies. They do not directly contain Cargo feature names or Rust crate dependency keys. Rust dependency choices remain provider implementation facts or explicit <code>rust-dependencies</code> authored by the package itself.</p>
+<p>The initial model has no negative features, values, precedence, or mutual exclusion. A feature must not remove a declaration, change the type or meaning of an unconditional declaration, disable another feature, or select one of several incompatible global modes. Those requirements should use separate packages, typed runtime configuration, target configuration, or a future explicitly non-additive mechanism.</p>
+<h3 id="feature-conditioned-provider-facts">Feature-conditioned provider facts<a class="headerlink" href="#feature-conditioned-provider-facts" title="Permanent link">&para;</a></h3>
+<p>Checked provider facts may carry a positive requirement predicate consisting of one or more public features owned by that provider. A fact participates only when every required feature is active. This applies uniformly to modules, exports, provider dependencies, SDK component requirements, soft-syntax activations, registry entries, documentation entries, and implementation facets.</p>
+<p>The provider artifact must contain enough information to validate and inspect every feature-conditioned public fact without executing provider code. Publishers must verify the supported feature projections before publication. A consumer selects the projection after resolving feature closure and before making provider facts available to parsing, checking, lowering, LSP, or documentation.</p>
+<p>The exact Incan source spelling that authors use to attach a feature requirement remains an unresolved design question. The artifact contract is defined first so conditional-compilation syntax cannot force the compiler back into source scraping or backend cfg interpretation.</p>
+<h3 id="implementation-facets">Implementation facets<a class="headerlink" href="#implementation-facets" title="Permanent link">&para;</a></h3>
+<p>A provider may declare deterministic mappings from active semantic facts to implementation facets. For example, use of <code>std.web</code> may require one web facet, and that facet may map to a Cargo crate feature and several Rust dependencies for the current backend. The mapping belongs to the provider artifact and is validated when the provider is built.</p>
+<p>Implementation facets are not public Incan features:</p>
+<ul>
+<li>users do not select them with <code>[project.features]</code> or <code>--features</code>;</li>
+<li>import resolution may derive them because imports already selected semantically available modules;</li>
+<li>backend changes may replace them without changing source or public package features;</li>
+<li>their resolved values appear in build reports and fingerprints for reproducibility, but generated backend names are not stable package API;</li>
+<li>a provider must not expose a public API only because an undeclared implementation facet happened to be enabled by another dependency.</li>
+</ul>
+<p>This supersedes the direction in RFC 022 that treated import-driven <code>incan_stdlib</code> Cargo features as the durable feature model. Import-driven backend minimization remains valid, but Cargo feature names become private implementation-facet data rather than compiler-owned stdlib inventory.</p>
+<h3 id="provider-plan-construction">Provider-plan construction<a class="headerlink" href="#provider-plan-construction" title="Permanent link">&para;</a></h3>
+<p>Before semantic checking of consumer bodies, the toolchain constructs one provider plan from:</p>
+<ol>
+<li>the active SDK inventory and installed component set;</li>
+<li>the project or workspace SDK profile and component refinements;</li>
+<li>resolved Incan dependency provider artifacts;</li>
+<li>root and dependency public feature requests;</li>
+<li>the canonical lock state and active offline or locked policy;</li>
+<li>module use discovered through imports, reexports, test context, and compiler-required support facts.</li>
+</ol>
+<p>The plan contains provider identities, namespace ownership, active public feature sets, active provider facts, component reasons, used modules, implementation facets, backend dependencies, provenance, and diagnostics. Stages may add use facts as module resolution progresses, but they must update the same plan rather than construct an independent provider interpretation.</p>
+<p>Single-file mode uses the active SDK's <code>default</code> profile unless the command supplies an explicit non-persistent profile override. It has no project feature graph or Incan package dependencies. A single file that requires a disabled or unavailable component receives the same diagnostic categories as a project build.</p>
+<h3 id="locking-and-reproducibility">Locking and reproducibility<a class="headerlink" href="#locking-and-reproducibility" title="Permanent link">&para;</a></h3>
+<p>The canonical <code>incan.lock</code> graph must record every resolved input that can change checked semantics or emitted output, including:</p>
+<ul>
+<li>SDK identity and inventory digest;</li>
+<li>selected profile name and expanded component ids;</li>
+<li>exact component and provider artifact identities and digests;</li>
+<li>public feature sets per package;</li>
+<li>optional dependency activation and dependency feature requests;</li>
+<li>provider implementation-facet closure or a stable fingerprint of that closure;</li>
+<li>backend dependency resolution governed by RFC 020;</li>
+<li>workspace member roots whose selections contributed to the graph.</li>
+</ul>
+<p><code>--locked</code> fails when current manifest, SDK inventory, component availability, provider artifact, feature request, or implementation requirement differs from the lock. <code>--frozen</code> adds the existing no-network and no-mutation guarantees. Neither mode may repair an unavailable SDK component by downloading it.</p>
+<p>Lock publication and reusable provider-cache publication use RFC 112's coordinated crash-safe recipe. An interrupted publisher must leave either the previous complete artifact or the new complete artifact visible; readers must not consume a partially replaced manifest or provider archive.</p>
+<h3 id="workspace-behavior">Workspace behavior<a class="headerlink" href="#workspace-behavior" title="Permanent link">&para;</a></h3>
+<p>Each workspace member may declare its own SDK profile refinements and root features. The workspace root lock records the resolved graph for every member as required by RFC 077. Feature unification occurs within each selected compilation graph; the lock may share one provider artifact and backend dependency resolution across members, but inspection must retain which member roots requested each feature and component.</p>
+<p>Workspace-level defaults may be added through RFC 077's explicit inheritance model. A member must opt into inherited SDK or feature policy and may refine only fields the workspace contract marks refinable. Tooling must not infer one workspace-wide component set merely because members share a lockfile.</p>
+<h3 id="diagnostics">Diagnostics<a class="headerlink" href="#diagnostics" title="Permanent link">&para;</a></h3>
+<p>Provider and feature diagnostics must distinguish at least:</p>
+<ul>
+<li>unknown <code>std.*</code> module with no provider claim in the active SDK inventory;</li>
+<li>known module whose component is disabled by project selection;</li>
+<li>enabled component unavailable from the active SDK installation;</li>
+<li>installed artifact missing, corrupt, incompatible, or failing integrity validation;</li>
+<li>conflicting namespace claims;</li>
+<li>package export or module hidden behind a disabled public feature;</li>
+<li>unknown feature, feature cycle, inactive optional dependency, or invalid dependency-feature request;</li>
+<li>component exclusion conflicting with a transitive component requirement;</li>
+<li>provider requirement incompatible with the active SDK or target;</li>
+<li>locked provider, feature, component, or implementation closure differing from current inputs.</li>
+</ul>
+<p>Every diagnostic must name the owning provider or component when known, identify the manifest entry or source import that created the requirement, and provide a remedy at the correct layer. A missing installation must not suggest editing an import; a disabled component must not suggest downloading when it is already installed; and a disabled feature must not suggest a Cargo flag.</p>
+<h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
+<h3 id="why-providers-components-and-features-share-one-rfc">Why providers, components, and features share one RFC<a class="headerlink" href="#why-providers-components-and-features-share-one-rfc" title="Permanent link">&para;</a></h3>
+<p>These concerns are coupled at the checked-artifact boundary, not merely because the standard library happens to use all three. A provider manifest must say which modules exist, which public features condition its facts, which SDK components satisfy its external requirements, which backend facets implement the active projection, and which identities enter the lock. Defining components without package features would either freeze providers to one unconditional surface or leak backend features into the public model. Defining features separately without providers would leave no backend-neutral artifact capable of projecting feature-conditioned semantic facts. One RFC therefore owns the shared resolution and artifact contract while preserving the distinct user meanings of component, profile, feature, and implementation facet.</p>
+<h3 id="initial-official-standard-library-components">Initial official standard-library components<a class="headerlink" href="#initial-official-standard-library-components" title="Permanent link">&para;</a></h3>
+<p>The v0.5 standard-library source graph is grouped into eight component artifacts. The grouping follows public capability and dependency cohesion rather than source-file count:</p>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Public module ownership</th>
+<th>Direct component dependencies</th>
+<th>Profile membership in v0.5</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>stdlib-core</code></td>
+<td><code>std.prelude</code>, <code>std.result</code>, <code>std.traits.*</code>, <code>std.derives.*</code>, <code>std.this</code>, <code>std.reflection</code></td>
+<td>—</td>
+<td>mandatory, <code>minimal</code>, <code>default</code>, <code>full</code></td>
+</tr>
+<tr>
+<td><code>stdlib-system</code></td>
+<td><code>std.environ</code>, <code>std.io</code>, <code>std.fs.*</code>, <code>std.tempfile</code></td>
+<td><code>stdlib-core</code></td>
+<td><code>default</code>, <code>full</code></td>
+</tr>
+<tr>
+<td><code>stdlib-codecs</code></td>
+<td><code>std.encoding.*</code>, <code>std.checksum</code>, <code>std.hash.*</code>, <code>std.compression.*</code></td>
+<td><code>stdlib-core</code>, <code>stdlib-system</code></td>
+<td><code>default</code>, <code>full</code></td>
+</tr>
+<tr>
+<td><code>stdlib-data</code></td>
+<td><code>std.collections</code>, <code>std.graph</code>, <code>std.math</code>, <code>std.datetime.*</code>, <code>std.uuid</code>, <code>std.regex.*</code>, <code>std.json</code>, <code>std.serde.*</code></td>
+<td><code>stdlib-core</code>, <code>stdlib-system</code></td>
+<td><code>default</code>, <code>full</code></td>
+</tr>
+<tr>
+<td><code>stdlib-async</code></td>
+<td><code>std.async.*</code></td>
+<td><code>stdlib-core</code></td>
+<td><code>default</code>, <code>full</code></td>
+</tr>
+<tr>
+<td><code>stdlib-observability</code></td>
+<td><code>std.logging</code>, <code>std.telemetry.*</code></td>
+<td><code>stdlib-core</code>, <code>stdlib-data</code></td>
+<td><code>default</code>, <code>full</code></td>
+</tr>
+<tr>
+<td><code>stdlib-web</code></td>
+<td><code>std.web.*</code></td>
+<td><code>stdlib-core</code>, <code>stdlib-data</code>, <code>stdlib-async</code></td>
+<td><code>default</code>, <code>full</code></td>
+</tr>
+<tr>
+<td><code>stdlib-testing</code></td>
+<td><code>std.testing</code></td>
+<td><code>stdlib-core</code></td>
+<td><code>default</code>, <code>full</code>; activated for test contexts when enabled</td>
+</tr>
+</tbody>
+</table>
+<p><code>std.rust</code> capability traits and <code>std.builtins</code> escape calls remain compiler-owned symbolic surfaces and are not provider artifacts. Language primitives and ambient prelude behavior that cannot be expressed as an importable checked provider fact also remain compiler-owned, but their boundary must be documented rather than hidden inside the component inventory.</p>
+<p>The v0.5 <code>default</code> and <code>full</code> profiles intentionally contain the same stable standard-library modules to preserve source compatibility while the component system lands. They are distinct profile identities because later releases may keep the compatibility-oriented default smaller than the complete stable official set. The lock records expanded membership, so that future policy change is explicit rather than silently inherited.</p>
+<p>The initial dependency edges describe the intended public provider graph rather than freezing every current source-level coupling. In particular, <code>std.collections</code> currently reaches through the broad hashing surface for one ordinal-hash operation, while UUID reaches into public hashing for implementation algorithms. Those uses must become private implementation requirements or narrower provider-owned helpers before the logical split is considered honest; selecting <code>stdlib-data</code> must not enable the complete public codecs component solely because of those implementation details. The same rule prevents solving accidental edges by moving every transitive module into <code>stdlib-core</code>.</p>
+<p>Component boundaries are allowed to change while the language and SDK compatibility contract remains explicitly pre-stable, provided the SDK release changes and locks expose the expanded graph. Public import paths, declaration identities, and compatibility promises remain the stable user surface. Once component compatibility is declared stable, moving a module between components requires ordinary compatibility and migration policy even when its <code>std.*</code> path stays unchanged, because project exclusions and installation profiles may depend on component identity.</p>
+<h3 id="profiles-are-distribution-policy-not-package-api">Profiles are distribution policy, not package API<a class="headerlink" href="#profiles-are-distribution-policy-not-package-api" title="Permanent link">&para;</a></h3>
+<p><code>minimal</code> contains only the mandatory compiler and <code>stdlib-core</code> contract. It exists for constrained installations, compiler bootstrap, and projects that want every optional standard capability to be deliberate.</p>
+<p><code>default</code> is the compatibility-oriented SDK experience used when a project makes no SDK selection. For v0.5 it includes every initial stable standard-library component so existing imports continue to work.</p>
+<p><code>full</code> contains every stable official component made available by that SDK release. Experimental, preview, vendor, and locally overridden providers must not enter <code>full</code> merely because they are installed.</p>
+<p>Profile names are stable concepts, while their expanded membership is release-owned data. Projects that need a permanent exact surface should use explicit exclusions or a minimal profile with explicit additions and commit the lockfile.</p>
+<h3 id="public-feature-facts-and-source-authoring">Public feature facts and source authoring<a class="headerlink" href="#public-feature-facts-and-source-authoring" title="Permanent link">&para;</a></h3>
+<p>The provider artifact model deliberately supports feature requirements on all checked fact kinds rather than only generated Rust items. A source-level feature mechanism that gates emission but leaves an export visible to checking would be invalid. Likewise, a documentation generator or LSP that ignores the active feature projection would be inconsistent with compilation.</p>
+<p>The preferred source design should be general enough to express a positive compile-time condition on a declaration, import, reexport, or compilation unit without introducing a narrowly scoped <code>feature</code> keyword. A future generic compile-time predicate form such as a typed <code>when(...)</code> condition is one candidate; a declaration decorator plus an explicit compilation-unit form is another. Whichever spelling is selected must lower into the same positive feature requirement facts and must not execute user code.</p>
+<p>Until that spelling is accepted, implementations may deliver manifest feature resolution and provider/component plumbing only for unconditional provider facts. They must not invent a private stdlib-only feature annotation or infer feature-conditioned API by scraping import text.</p>
+<h3 id="artifact-publication-and-caching">Artifact publication and caching<a class="headerlink" href="#artifact-publication-and-caching" title="Permanent link">&para;</a></h3>
+<p>Provider artifacts are immutable by identity. A cache key includes provider digest, compiler compatibility, public feature projection when physical specialization is required, target/backend inputs, and implementation-facet fingerprint. Content-addressed storage should allow identical artifacts used by several projects or SDK profiles to share one physical copy.</p>
+<p>The SDK inventory must not require a project-local copy of an unchanged provider artifact. Generated consumer projects should reference or stage artifacts from a shared immutable cache using relocation-safe metadata. Packaging may include a compressed seed for offline first use, but extraction must deduplicate by artifact identity and must not reproduce the same generated source tree for every project.</p>
+<p>The logical provider contract does not require one permanent archive encoding. A future binary <code>.incnlib</code> representation or compressed provider bundle may replace JSON-heavy or duplicated storage as long as inspection remains available and compatibility is versioned. Format choice must be measured against installed size, compressed distribution size, load latency, random access, duplication, and forward-compatible schema evolution.</p>
+<h3 id="interaction-with-rfc-075-capability-packs">Interaction with RFC 075 capability packs<a class="headerlink" href="#interaction-with-rfc-075-capability-packs" title="Permanent link">&para;</a></h3>
+<p>An SDK component changes which compiled providers are available to a project. A package feature changes the additive dependency or checked-fact projection of a package. A capability pack changes project files and manifest entries through a reviewable mutation plan. These mechanisms may cooperate, but they do not substitute for one another.</p>
+<p>For example, a web starter may apply a capability pack that adds <code>stdlib-web</code> to <code>[sdk].components</code>, enables a package's <code>server</code> feature, writes an entrypoint, and adds scripts. After the mutation, compilation depends only on the resulting ordinary manifest and source state. The capability provenance is not a hidden feature switch, and the SDK component is not considered enabled merely because the starter once mentioned it.</p>
+<h3 id="compatibility-and-migration">Compatibility and migration<a class="headerlink" href="#compatibility-and-migration" title="Permanent link">&para;</a></h3>
+<p>Projects without <code>[sdk]</code> retain the v0.5 standard-library surface through the <code>default</code> profile. Existing <code>std.*</code> import syntax does not change. Existing Cargo-oriented stdlib feature wiring may remain as a backend adapter during migration, but its inputs must be derived from provider implementation facets and it must have a named removal condition.</p>
+<p>Existing <code>[project.features]</code> data has been parsed but has not had a complete public semantic contract. Activating the rules in this RFC may reject malformed or cyclic declarations that were previously ignored. Because ignored feature entries could not reliably affect builds, this is a validation tightening rather than a supported behavior break.</p>
+<p>Compiled standard-library artifact work must migrate from one hardcoded built-in manifest injection path to the generic provider plan. The current standard-library source inventory may bootstrap provider construction, but the published provider's checked namespace claims become the consumer authority. A hand-maintained compiler list must not remain necessary for adding or removing an ordinary <code>std.*</code> provider module.</p>
+<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
+<h3 id="keep-one-monolithic-standard-library-artifact">Keep one monolithic standard-library artifact<a class="headerlink" href="#keep-one-monolithic-standard-library-artifact" title="Permanent link">&para;</a></h3>
+<p>One artifact is simpler to build and cache, but it fixes every installation and project to the complete dependency closure, prevents meaningful minimal distributions, and encourages compiler code to treat the stdlib as one permanent special dependency. It remains a useful migration bundle, not the target architecture.</p>
+<h3 id="use-cargo-features-as-sdk-components-and-incan-features">Use Cargo features as SDK components and Incan features<a class="headerlink" href="#use-cargo-features-as-sdk-components-and-incan-features" title="Permanent link">&para;</a></h3>
+<p>This reuses existing backend behavior but exposes Rust crate topology as language and packaging semantics. It cannot distinguish installed components from enabled package capabilities, gives a future backend the wrong abstraction, and makes diagnostics and locking depend on backend vocabulary. Cargo features remain a valid private implementation mechanism behind providers.</p>
+<h3 id="give-every-standard-module-its-own-component">Give every standard module its own component<a class="headerlink" href="#give-every-standard-module-its-own-component" title="Permanent link">&para;</a></h3>
+<p>This maximizes theoretical choice while producing excessive artifact, lock, compatibility, and dependency-graph overhead. Public modules are not all independent: filesystem, streaming codecs, datetime, UUID, logging, and web currently form real dependency clusters. Coherent capability artifacts provide useful slimming without turning every import into distribution administration.</p>
+<h3 id="infer-provider-contents-from-a-source-libincn-at-consumer-time">Infer provider contents from a source <code>lib.incn</code> at consumer time<a class="headerlink" href="#infer-provider-contents-from-a-source-libincn-at-consumer-time" title="Permanent link">&para;</a></h3>
+<p>Deriving an artifact's module graph from checked producer source is valuable during provider construction. Asking consumers to parse provider source violates RFC 031's compiled-library boundary, makes installed SDK behavior depend on source layout, and duplicates checking work. The producer derives and validates the provider manifest once; consumers trust the integrity-checked artifact.</p>
+<h3 id="automatically-enable-components-or-features-from-imports">Automatically enable components or features from imports<a class="headerlink" href="#automatically-enable-components-or-features-from-imports" title="Permanent link">&para;</a></h3>
+<p>Import-driven activation feels convenient but makes lock and project intent incomplete, prevents deliberate exclusions, and turns a typo or dead import into a dependency mutation. Imports determine use after availability and enablement have been resolved. Diagnostics and explicit lifecycle commands handle unmet requirements.</p>
+<h3 id="treat-sdk-profiles-as-rfc-075-starter-profiles">Treat SDK profiles as RFC 075 starter profiles<a class="headerlink" href="#treat-sdk-profiles-as-rfc-075-starter-profiles" title="Permanent link">&para;</a></h3>
+<p>Starter profiles create or mutate project structure and leave ordinary files behind. SDK profiles are versioned selections inside an installed toolchain and participate directly in compilation and locking. Reusing the word does not make their lifecycle or authority equivalent.</p>
+<h3 id="allow-subtractive-and-mutually-exclusive-features-immediately">Allow subtractive and mutually exclusive features immediately<a class="headerlink" href="#allow-subtractive-and-mutually-exclusive-features-immediately" title="Permanent link">&para;</a></h3>
+<p>Negative or exclusive features introduce order, global-choice, and graph-conflict semantics that additive unification avoids. They are also commonly misused for runtime configuration. The initial model stays monotonic; incompatible implementations should be separate providers or typed runtime selections until a stronger compile-time configuration model is justified.</p>
+<h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
+<p>This design introduces more named concepts than a monolithic stdlib with Cargo features: providers, components, profiles, public features, implementation facets, and three participation states. The distinctions are necessary for truthful diagnostics and future backends, but documentation and inspection must make them understandable.</p>
+<p>Splitting artifacts creates packaging and test-matrix cost. Every component edge, profile, feature projection, relocation path, and missing-artifact state needs verification. Small components may also increase metadata and archive overhead enough to offset their payload savings, so the initial eight-way split must be measured rather than assumed optimal.</p>
+<p>Feature-conditioned checked artifacts require richer manifests and eventually a source-level conditional-compilation design. Defining the artifact semantics before the source spelling avoids an architectural shortcut, but it means the RFC cannot advance to Planned until the authoring form is settled.</p>
+<p>The compatibility-oriented v0.5 default profile does not immediately reduce the installed size for ordinary users. It creates the ability to ship and select smaller distributions while preserving existing imports; later profile policy and installer work are required to realize the full distribution benefit.</p>
+<h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
+<p>Implementations should introduce a provider-resolution layer above existing library-manifest indexing. It should normalize SDK and project dependencies into provider records, validate namespace authority and feature projection, and publish one immutable plan to compiler stages. Standard-library construction may use toolchain bootstrap knowledge, but consumers should see ordinary validated provider facts with an SDK provenance kind.</p>
+<p>The active SDK should publish component artifacts into a shared content-addressed store using RFC 112 coordination. The SDK inventory references immutable identities, while projects and generated builds reference those identities instead of copying complete source trees. Backend adapters translate provider implementation facets into current Cargo configuration at the final project-generation boundary.</p>
+<p>The initial delivery may keep one physical standard-library bundle while emitting logically separate provider/component descriptors and proving selection, diagnostics, locking, and inspection. Physical splitting should follow once dependency measurements and relocation tests show that the component graph is honest. This migration concession must not preserve a semantic monolith: disabled components must be absent from the active provider plan even if their bytes temporarily share an archive.</p>
+<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Project and workspace manifests:</strong> must parse, validate, and preserve SDK selection, public feature declarations, dependency feature requests, optional Incan dependencies, and source-anchored configuration diagnostics.</li>
+<li><strong>SDK discovery:</strong> must locate and integrity-check the active SDK inventory relative to the toolchain, distinguish legacy installations, and expose available component artifacts without repository-specific paths.</li>
+<li><strong>Dependency and lock resolution:</strong> must expand profiles, component dependencies, public feature closure, optional Incan dependencies, provider requirements, and exact artifact identities under offline and locked policy.</li>
+<li><strong>Library artifact construction:</strong> must derive namespace claims and checked provider facts from producer semantics, encode public feature declarations and requirements, validate relocation, and publish complete immutable artifacts.</li>
+<li><strong>Parser and module resolution:</strong> must consume the shared provider namespace map and active feature projection, preserve import-driven soft syntax where declared, and emit disabled, unavailable, and unknown-module diagnostics distinctly.</li>
+<li><strong>Typechecker:</strong> must resolve declarations and types only from active provider facts and retain canonical provider provenance in semantic identities and diagnostics.</li>
+<li><strong>Lowering and emission:</strong> must consume provider identities and implementation facets from the shared plan and must not independently infer stdlib activation from source paths.</li>
+<li><strong>Generated-project construction:</strong> must link resolved provider Rust artifacts and translate private implementation facets to backend dependencies without exposing those backend names as Incan API.</li>
+<li><strong>Test runner:</strong> must use the same provider and feature plan for discovery, package batches, generated Rust, and test-only providers; test context must not silently widen the project's production component set.</li>
+<li><strong>LSP and formatter:</strong> LSP must use project component and feature state for completion, navigation, hover, diagnostics, and code actions; formatting remains independent of availability and must preserve valid conditional source syntax once defined.</li>
+<li><strong>Inspection, reports, and codegraph:</strong> must project provider, component, feature, artifact, and provenance facts from the shared plan with deterministic schemas.</li>
+<li><strong>Documentation and release tooling:</strong> must build references against declared profile and feature projections, identify unavailable optional surfaces honestly, and package the selected SDK artifacts without duplicate mutable caches.</li>
+</ul>
+<h2 id="inspectability-and-tooling-surface">Inspectability and tooling surface<a class="headerlink" href="#inspectability-and-tooling-surface" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Artifact or metadata:</strong> the SDK inventory, extended <code>.incnlib</code> provider records, canonical <code>incan.lock</code>, and build report expose component, provider, feature, implementation-facet, integrity, and provenance state.</li>
+<li><strong>Inspection command:</strong> <code>incan inspect providers --format json</code> shows available, enabled, and used providers and components; <code>incan inspect features --format json</code> shows public feature roots, closure, optional dependencies, conditioned facts, and activation reasons.</li>
+<li><strong>Diagnostics:</strong> unknown, disabled, unavailable, corrupt, incompatible, conflicting, and feature-gated provider states have distinct source-anchored diagnostic codes and remedies.</li>
+<li><strong>Provenance:</strong> every selection records the SDK inventory entry, project or workspace manifest entry, dependency edge, feature edge, import, reexport, compiler requirement, and provider artifact identity that contributed it.</li>
+<li><strong>Not implicit:</strong> no network acquisition, project mutation, reserved namespace grant, public feature activation, or backend feature leakage may be inferred only from generated Cargo output or ambient source checkout state.</li>
+</ul>
+<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
+<ol>
+<li>What general Incan source form should attach a positive compile-time condition to declarations, imports, reexports, and the current compilation unit without introducing a narrowly scoped <code>feature</code> keyword or depending on a future named <code>module</code> declaration?</li>
+<li>Should <code>[project.features]</code> retain only the compact parsed-reference list, or also gain an expanded table form that names local features, optional dependencies, dependency features, and SDK requirements in separate typed fields?</li>
+<li>Should an active package feature be allowed to request an SDK component directly in a later extension, or should provider facts continue to declare a requirement that project tooling must satisfy explicitly under <code>[sdk]</code>?</li>
+<li>Should project environments and workspace matrices be allowed to select root package features and SDK profiles directly, or should they invoke commands with explicit selection flags so the canonical project manifest remains the only persistent owner?</li>
+<li>Which component-size and dependency measurements must pass before the v0.5 logical component split becomes eight physical distribution artifacts rather than one shared archive with eight independently selectable provider records?</li>
+</ol>
+<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.instant", "navigation.tabs", "navigation.tabs.sticky", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      
+        <script src="../../_snippets/javascripts/mathjax.js"></script>
+      
+        <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
+      
+        <script src="../../_snippets/javascripts/tablesort.js"></script>
+      
+        <script src="../../_snippets/javascripts/rfc_table_filter.js"></script>
+      
+    
+  </body>
+</html>
