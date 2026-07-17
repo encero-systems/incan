@@ -1,6 +1,6 @@
 # RFC 114: Compiled providers, SDK components, and package features
 
-- **Status:** Draft
+- **Status:** In Progress
 - **Created:** 2026-07-17
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -15,7 +15,7 @@
     - RFC 077 (workspaces and canonical locking)
     - RFC 112 (crash-safe local artifact publication)
 - **Issue:** #544
-- **RFC PR:** —
+- **RFC PR:** [#839](https://github.com/encero-systems/incan/pull/839)
 - **Written against:** v0.5
 - **Shipped in:** —
 
@@ -285,6 +285,18 @@ feature_member ::= feature_name
                  | dependency_name "/" feature_name
 ```
 
+The compact list remains the preferred form for small feature graphs. A feature may instead use an expanded table when its different edge kinds benefit from explicit structure:
+
+```toml
+[project.features.server]
+includes = ["json"]
+optional-dependencies = ["http_server"]
+dependency-features = { http_server = ["tls"] }
+requires-sdk-components = ["stdlib-web"]
+```
+
+`includes` names local features, `optional-dependencies` activates optional Incan dependencies, `dependency-features` requests features from active Incan dependencies, and `requires-sdk-components` records checked requirements without enabling or installing those components. Compact and expanded definitions are mutually exclusive for one feature and normalize into the same typed graph before validation.
+
 Feature and dependency names must satisfy the corresponding manifest identifier rules. References are resolved structurally and validated for unknown packages, unknown features, non-optional dependencies behind `dep:`, dependency-feature references to inactive optional dependencies, cycles, and malformed spellings. Diagnostics point to the exact array item.
 
 `default` is the conventional root feature set. It is enabled for a package unless the root command uses `--no-default-features` or the consumer dependency declaration sets `default-features = false`. A dependency declaration may request public features with `features = [...]`. Root commands may add root-package features with `--features`, select every declared root feature with `--all-features`, or suppress the root default with `--no-default-features`.
@@ -301,7 +313,17 @@ Checked provider facts may carry a positive requirement predicate consisting of 
 
 The provider artifact must contain enough information to validate and inspect every feature-conditioned public fact without executing provider code. Publishers must verify the supported feature projections before publication. A consumer selects the projection after resolving feature closure and before making provider facts available to parsing, checking, lowering, LSP, or documentation.
 
-The exact Incan source spelling that authors use to attach a feature requirement remains an unresolved design question. The artifact contract is defined first so conditional-compilation syntax cannot force the compiler back into source scraping or backend cfg interpretation.
+Authors attach feature requirements with a general compile-time `when` block whose condition uses the compiler-owned `feature` predicate:
+
+```incan
+when feature("json"):
+    from std.json import JsonValue
+
+    pub def encode(value: Report) -> JsonValue:
+        ...
+```
+
+At compilation-unit scope, the block may contain imports, reexports, declarations, registry entries, or other forms that are otherwise valid at that scope. The condition is evaluated while the active source projection is built; it does not execute user code. `when` is the general compile-time conditional form and `feature(...)` is one typed compiler predicate, so the language does not acquire a narrowly scoped `feature` statement. The initial grammar accepts only positive feature predicates and conjunctions of positive feature predicates. Negation, disjunction, target predicates, values, and runtime expressions remain outside this RFC.
 
 ### Implementation facets
 
@@ -415,9 +437,9 @@ Profile names are stable concepts, while their expanded membership is release-ow
 
 The provider artifact model deliberately supports feature requirements on all checked fact kinds rather than only generated Rust items. A source-level feature mechanism that gates emission but leaves an export visible to checking would be invalid. Likewise, a documentation generator or LSP that ignores the active feature projection would be inconsistent with compilation.
 
-The preferred source design should be general enough to express a positive compile-time condition on a declaration, import, reexport, or compilation unit without introducing a narrowly scoped `feature` keyword. A future generic compile-time predicate form such as a typed `when(...)` condition is one candidate; a declaration decorator plus an explicit compilation-unit form is another. Whichever spelling is selected must lower into the same positive feature requirement facts and must not execute user code.
+The source form is a top-level `when feature("name"):` block. It may gate declarations, imports, reexports, and registry entries together, which keeps related optional API in one readable unit and avoids requiring a named `module` declaration solely to annotate the current file. Nested `when` blocks form an additive conjunction. The parser retains the condition as typed syntax; semantic collection attaches the resulting positive feature requirement set to every checked fact produced by the block. Inactive blocks remain available to formatting, source navigation, and feature-aware documentation, but do not enter the active typechecking or emission projection.
 
-Until that spelling is accepted, implementations may deliver manifest feature resolution and provider/component plumbing only for unconditional provider facts. They must not invent a private stdlib-only feature annotation or infer feature-conditioned API by scraping import text.
+The compiler-owned `feature` predicate resolves names in the current package only. Dependency features are selected in manifests and appear in that dependency's own source projection; source cannot reach across package ownership with `feature("dependency/name")`. The predicate is not a normal function, cannot be imported or shadowed, and is rejected outside compile-time `when` conditions.
 
 ### Artifact publication and caching
 
@@ -477,7 +499,7 @@ This design introduces more named concepts than a monolithic stdlib with Cargo f
 
 Splitting artifacts creates packaging and test-matrix cost. Every component edge, profile, feature projection, relocation path, and missing-artifact state needs verification. Small components may also increase metadata and archive overhead enough to offset their payload savings, so the initial eight-way split must be measured rather than assumed optimal.
 
-Feature-conditioned checked artifacts require richer manifests and eventually a source-level conditional-compilation design. Defining the artifact semantics before the source spelling avoids an architectural shortcut, but it means the RFC cannot advance to Planned until the authoring form is settled.
+Feature-conditioned checked artifacts require richer manifests and a new source-level conditional-compilation form. The shared projection prevents backend leakage, but it also expands parser, formatter, semantic, documentation, and editor scope beyond artifact publication alone.
 
 The compatibility-oriented v0.5 default profile does not immediately reduce the installed size for ordinary users. It creates the ability to ship and select smaller distributions while preserving existing imports; later profile policy and installer work are required to realize the full distribution benefit.
 
@@ -487,7 +509,7 @@ Implementations should introduce a provider-resolution layer above existing libr
 
 The active SDK should publish component artifacts into a shared content-addressed store using RFC 112 coordination. The SDK inventory references immutable identities, while projects and generated builds reference those identities instead of copying complete source trees. Backend adapters translate provider implementation facets into current Cargo configuration at the final project-generation boundary.
 
-The initial delivery may keep one physical standard-library bundle while emitting logically separate provider/component descriptors and proving selection, diagnostics, locking, and inspection. Physical splitting should follow once dependency measurements and relocation tests show that the component graph is honest. This migration concession must not preserve a semantic monolith: disabled components must be absent from the active provider plan even if their bytes temporarily share an archive.
+Provider construction may use one staging workspace, but the published artifacts must be independently addressable and physically excludable from an SDK profile package. A component need not have a dedicated top-level release archive: one distribution archive may contain several selected component artifacts. Packaging tests must prove that excluded component payloads and their exclusive dependency closure are absent, that common immutable content is stored only once, and that every installed artifact retains relocation and integrity guarantees. Size and dependency measurements are release evidence rather than a discretionary gate that permits shipping a semantic or physical monolith.
 
 ## Layers affected
 
@@ -504,6 +526,66 @@ The initial delivery may keep one physical standard-library bundle while emittin
 - **Inspection, reports, and codegraph:** must project provider, component, feature, artifact, and provenance facts from the shared plan with deterministic schemas.
 - **Documentation and release tooling:** must build references against declared profile and feature projections, identify unavailable optional surfaces honestly, and package the selected SDK artifacts without duplicate mutable caches.
 
+## Implementation Plan
+
+### Phase 1: Shared provider model
+
+- Introduce backend-neutral provider identities, provenance, namespace claims, checked facts, implementation facets, feature requirements, component requirements, and one immutable session-owned provider plan.
+- Extend the existing library manifest index instead of creating a second stdlib-only semantic index, and validate namespace collisions and reserved-root authority before consumer typechecking.
+- Route build, run, library, test-batch, LSP, diagnostics, codegraph, documentation, and generated-project construction through the shared plan; retain any migration adapter only with a named removal condition.
+
+### Phase 2: SDK inventory, components, and profiles
+
+- Define and validate the relocatable SDK inventory, component catalog, provider artifact locations and digests, component dependencies, mandatory membership, profiles, and reserved namespace grants.
+- Discover the active inventory relative to the executable or explicit toolchain root, then resolve project `[sdk]` profile, additions, exclusions, dependency expansion, availability, and lock state without implicit acquisition.
+- Publish the eight initial stdlib component artifacts into the shared immutable cache and prove that minimal-profile packages omit excluded payloads and exclusive dependencies.
+
+### Phase 3: Public package-feature graph
+
+- Parse compact and expanded feature declarations, dependency feature requests, optional Incan dependencies, defaults, and root command selections into one typed graph with source-anchored validation.
+- Resolve additive feature closure for root and transitive packages, reject cycles and malformed or inactive edges, and record activation reasons in provider plans, locks, reports, and inspection.
+- Keep Cargo features and other backend controls private by deriving them only from provider implementation facets after semantic provider resolution.
+
+### Phase 4: Compile-time source projection
+
+- Add parser, AST, formatter, and documentation support for compilation-unit `when feature("name"):` blocks and positive conjunctions.
+- Attach positive requirements to every fact collected inside a block, retain inactive syntax for tooling, and project active imports, reexports, declarations, registry entries, documentation facts, and implementation facets consistently.
+- Reject unsupported predicates, runtime use, cross-package feature names, and non-additive conditions with targeted diagnostics.
+
+### Phase 5: Artifact, cache, lock, and backend integration
+
+- Extend `.incnlib` provider records and generated Rust artifacts with feature-conditioned facts, component requirements, implementation facets, integrity, relocation, and provenance.
+- Reuse RFC 112 atomic publication and advisory locking for shared content-addressed provider artifacts, compact offline seeds, and canonical lock publication without project-local duplication.
+- Remove the stdlib-only built-in manifest side channel after every consumer path resolves official providers through the generic plan.
+
+### Phase 6: Parity, documentation, and release proof
+
+- Add direct-import, facade/reexport, package-consumer, library, test-batch, generated-Rust, rust-metadata, LSP, diagnostics, codegraph, formatter, documentation, and inspection coverage across component and feature states.
+- Verify unknown, disabled, unavailable, corrupt, incompatible, conflicting, feature-gated, locked, offline, relocated, and concurrent-publication behavior on macOS and Linux.
+- Update feature inventory, CLI and manifest references, RFC links, rustdocs, v0.5 release notes, development version, installed-SDK smoke coverage, artifact-size evidence, and an InQL consumer lane before the RFC becomes Implemented.
+
+## Progress Checklist
+
+- [ ] Shared provider identity, provenance, namespace-claim, checked-fact, implementation-facet, and provider-plan models are implemented.
+- [ ] `LibraryManifestIndex` and `CompilationSession` consume the generic provider plan without a stdlib-only semantic side channel.
+- [ ] Reserved namespace authority and duplicate canonical module claims are validated before typechecking.
+- [ ] Relocatable SDK inventory discovery and integrity validation are implemented.
+- [ ] `[sdk]` profile, component additions, exclusions, dependencies, mandatory membership, and availability are resolved and locked.
+- [ ] The eight stdlib components are independently published and physically excludable from SDK profile packages.
+- [ ] Shared content-addressed cache publication, reuse, locking, relocation, and compact offline seed behavior are verified.
+- [ ] Compact and expanded package-feature declarations normalize into one typed graph.
+- [ ] Optional Incan dependencies, dependency feature requests, defaults, and CLI feature flags resolve additively across the package graph.
+- [ ] Feature cycles, unknown references, inactive dependency edges, and unsupported combinations have source-anchored diagnostics.
+- [ ] Compilation-unit `when feature(...)` blocks and positive conjunctions parse, format, project, and diagnose correctly.
+- [ ] Feature requirements project imports, reexports, declarations, registry facts, documentation facts, component requirements, and implementation facets consistently.
+- [ ] Cargo and other backend switches are derived privately from provider implementation facets.
+- [ ] `.incnlib`, generated Rust, locks, reports, and inspection preserve feature, component, integrity, relocation, and provenance facts.
+- [ ] Build, run, library, package, test-batch, LSP, diagnostics, codegraph, docs, and generated-project routes share provider and feature semantics.
+- [ ] Direct import, facade/reexport, package consumer, generated Rust, rust-metadata, locked, offline, and installed-SDK regressions pass.
+- [ ] Minimal, default, and full profile packaging proves excluded payload and dependency behavior with measured size evidence.
+- [ ] CLI, manifest, artifact, feature, component, generated-reference, rustdoc, and v0.5 release documentation are complete.
+- [ ] InQL consumer verification, macOS and Linux release lanes, development-version bump, and full repository gates pass.
+
 ## Inspectability and tooling surface
 
 - **Artifact or metadata:** the SDK inventory, extended `.incnlib` provider records, canonical `incan.lock`, and build report expose component, provider, feature, implementation-facet, integrity, and provenance state.
@@ -512,12 +594,10 @@ The initial delivery may keep one physical standard-library bundle while emittin
 - **Provenance:** every selection records the SDK inventory entry, project or workspace manifest entry, dependency edge, feature edge, import, reexport, compiler requirement, and provider artifact identity that contributed it.
 - **Not implicit:** no network acquisition, project mutation, reserved namespace grant, public feature activation, or backend feature leakage may be inferred only from generated Cargo output or ambient source checkout state.
 
-## Unresolved questions
+## Design Decisions
 
-1. What general Incan source form should attach a positive compile-time condition to declarations, imports, reexports, and the current compilation unit without introducing a narrowly scoped `feature` keyword or depending on a future named `module` declaration?
-2. Should `[project.features]` retain only the compact parsed-reference list, or also gain an expanded table form that names local features, optional dependencies, dependency features, and SDK requirements in separate typed fields?
-3. Should an active package feature be allowed to request an SDK component directly in a later extension, or should provider facts continue to declare a requirement that project tooling must satisfy explicitly under `[sdk]`?
-4. Should project environments and workspace matrices be allowed to select root package features and SDK profiles directly, or should they invoke commands with explicit selection flags so the canonical project manifest remains the only persistent owner?
-5. Which component-size and dependency measurements must pass before the v0.5 logical component split becomes eight physical distribution artifacts rather than one shared archive with eight independently selectable provider records?
-
-<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+1. Feature-conditioned source uses the general compilation-unit `when feature("name"):` form. `when` establishes compile-time selection and `feature` is one compiler-owned typed predicate, so neither syntax is limited to stdlib metadata or dependent on a future named module declaration.
+2. `[project.features]` supports both the compact reference list and an expanded typed table. Both normalize into the same feature graph, and a feature cannot mix both representations.
+3. A feature may declare that its active provider facts require SDK components, but it never enables or installs them. `[sdk]` remains the explicit owner of component enablement and tooling may offer a reviewable manifest edit when a requirement is unmet.
+4. Project environments and workspace matrices may pass explicit feature and SDK-profile selections into compilation commands. They do not become a second persistent owner: the project manifest and canonical lock remain authoritative, and reports record every transient override.
+5. The eight stdlib components must be independently addressable and physically excludable from release-profile packages before implementation is complete. Components do not require one top-level archive each, but packaging must prove that excluded payloads and exclusive dependencies are absent, shared immutable content is not duplicated, and all artifacts remain relocatable and integrity-checked. Size measurements are published as release evidence rather than used to waive those invariants.
