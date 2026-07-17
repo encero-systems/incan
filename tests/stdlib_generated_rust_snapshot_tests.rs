@@ -8,6 +8,9 @@ use incan::backend::IrCodegen;
 use incan::frontend::{lexer, parser};
 use std::fs;
 
+#[path = "support/builtin_stdlib.rs"]
+mod builtin_stdlib_support;
+
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 fn err_box(message: impl Into<String>) -> Box<dyn std::error::Error> {
@@ -17,7 +20,9 @@ fn err_box(message: impl Into<String>) -> Box<dyn std::error::Error> {
 fn generate_rust(source: &str, context: &str) -> Result<String, Box<dyn std::error::Error>> {
     let tokens = lexer::lex(source).map_err(|errs| err_box(format!("{context} lexer failed: {errs:?}")))?;
     let ast = parser::parse(&tokens).map_err(|errs| err_box(format!("{context} parser failed: {errs:?}")))?;
-    let code = IrCodegen::new()
+    let mut codegen = IrCodegen::new();
+    codegen.set_builtin_stdlib_artifact_module_paths(builtin_stdlib_support::artifact_module_paths());
+    let code = codegen
         .try_generate(&ast)
         .map_err(|err| err_box(format!("{context} codegen failed: {err:?}")))?;
     Ok(normalize_codegen_output(&code))

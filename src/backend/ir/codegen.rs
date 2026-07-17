@@ -33,6 +33,7 @@ use std::env;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::builtin_stdlib::BuiltinStdlibModules;
 use crate::frontend::ast::{Declaration, ImportKind, Program};
 use crate::frontend::diagnostics::CompileError;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
@@ -213,6 +214,8 @@ pub struct IrCodegen<'a> {
     library_manifest_index: Option<Arc<LibraryManifestIndex>>,
     /// Compiler-owned `.incnlib` metadata for migrated built-in stdlib modules.
     builtin_stdlib_manifest: Option<Arc<LibraryManifest>>,
+    /// Module ownership derived from the built-in stdlib entrypoint or its compiled manifest.
+    builtin_stdlib_modules: BuiltinStdlibModules,
     /// Whether generated Rust should deny warnings so tests can prove normal emission stays warning-clean.
     strict_generated_lints: bool,
     /// Private IR items called by generated code that is appended outside normal IR emission.
@@ -248,6 +251,7 @@ impl<'a> IrCodegen<'a> {
             declared_crate_names: None,
             library_manifest_index: None,
             builtin_stdlib_manifest: None,
+            builtin_stdlib_modules: BuiltinStdlibModules::default(),
             strict_generated_lints: false,
             externally_reachable_items: HashSet::new(),
             externally_reachable_items_by_module: HashMap::new(),
@@ -417,7 +421,14 @@ impl<'a> IrCodegen<'a> {
         metadata: &DependencySymbolMetadata,
         library_manifest_index: Option<&Arc<LibraryManifestIndex>>,
         builtin_stdlib_manifest: Option<&LibraryManifest>,
+        builtin_stdlib_modules: &BuiltinStdlibModules,
     ) {
+        emitter.set_builtin_stdlib_artifact_module_paths(
+            builtin_stdlib_modules
+                .relative_paths()
+                .map(<[String]>::to_vec)
+                .collect(),
+        );
         emitter.set_type_module_paths(metadata.module_paths.clone(), metadata.ambiguous_type_names.clone());
         emitter.set_value_module_paths(
             metadata.value_module_paths.clone(),
@@ -538,7 +549,17 @@ impl<'a> IrCodegen<'a> {
 
     /// Set the compiled built-in stdlib artifact manifest used by internal typechecking.
     pub fn set_builtin_stdlib_manifest(&mut self, manifest: LibraryManifest) {
+        self.builtin_stdlib_modules = BuiltinStdlibModules::from_manifest(&manifest);
         self.builtin_stdlib_manifest = Some(Arc::new(manifest));
+    }
+
+    /// Set built-in stdlib module paths already derived from the artifact entrypoint or checked manifest.
+    ///
+    /// Compiler frontends should normally call [`Self::set_builtin_stdlib_manifest`]. This lower-level hook supports
+    /// source-backed codegen fixtures and embedders that already own equivalent checked module discovery.
+    #[doc(hidden)]
+    pub fn set_builtin_stdlib_artifact_module_paths(&mut self, module_paths: Vec<Vec<String>>) {
+        self.builtin_stdlib_modules = BuiltinStdlibModules::from_relative_paths(module_paths);
     }
 
     /// Set the manifest/workspace root used for rust-inspect-backed typechecking during IR generation.
@@ -678,7 +699,7 @@ impl<'a> IrCodegen<'a> {
             let Some(path_segments) = path_segments.as_ref() else {
                 continue;
             };
-            if !stdlib::is_compiled_builtin_stdlib_emission_path(path_segments) {
+            if path_segments.first().map(String::as_str) != Some(stdlib::INCAN_STD_NAMESPACE) {
                 continue;
             }
             let module_key = Self::dependency_module_key(module_name, &Some(path_segments.clone()));
@@ -1018,6 +1039,7 @@ impl<'a> IrCodegen<'a> {
                 &dependency_symbol_metadata,
                 self.library_manifest_index.as_ref(),
                 self.builtin_stdlib_manifest.as_deref(),
+                &self.builtin_stdlib_modules,
             );
             inner.set_external_union_type_libraries(external_union_type_libraries.clone());
             inner.set_needs_serde(self.needs_serde);
@@ -1050,6 +1072,7 @@ impl<'a> IrCodegen<'a> {
                 &dependency_symbol_metadata,
                 self.library_manifest_index.as_ref(),
                 self.builtin_stdlib_manifest.as_deref(),
+                &self.builtin_stdlib_modules,
             );
             emitter.set_external_union_type_libraries(external_union_type_libraries.clone());
             emitter.set_needs_serde(self.needs_serde);
@@ -1401,6 +1424,7 @@ impl<'a> IrCodegen<'a> {
                     &dependency_symbol_metadata,
                     self.library_manifest_index.as_ref(),
                     self.builtin_stdlib_manifest.as_deref(),
+                    &self.builtin_stdlib_modules,
                 );
                 inner.set_external_union_type_libraries(external_union_type_libraries.clone());
                 inner.set_external_rust_functions(self.external_rust_functions.clone());
@@ -1428,6 +1452,7 @@ impl<'a> IrCodegen<'a> {
                     &dependency_symbol_metadata,
                     self.library_manifest_index.as_ref(),
                     self.builtin_stdlib_manifest.as_deref(),
+                    &self.builtin_stdlib_modules,
                 );
                 emitter.set_external_union_type_libraries(external_union_type_libraries.clone());
                 emitter.set_external_rust_functions(self.external_rust_functions.clone());
@@ -1662,6 +1687,7 @@ impl<'a> IrCodegen<'a> {
                     &dependency_symbol_metadata,
                     self.library_manifest_index.as_ref(),
                     self.builtin_stdlib_manifest.as_deref(),
+                    &self.builtin_stdlib_modules,
                 );
                 inner.set_external_union_type_libraries(external_union_type_libraries.clone());
                 inner.set_external_rust_functions(self.external_rust_functions.clone());
@@ -1689,6 +1715,7 @@ impl<'a> IrCodegen<'a> {
                     &dependency_symbol_metadata,
                     self.library_manifest_index.as_ref(),
                     self.builtin_stdlib_manifest.as_deref(),
+                    &self.builtin_stdlib_modules,
                 );
                 emitter.set_external_union_type_libraries(external_union_type_libraries.clone());
                 emitter.set_external_rust_functions(self.external_rust_functions.clone());
@@ -1752,6 +1779,14 @@ mod tests {
         let tokens = must_ok(lexer::lex(source));
         let ast = must_ok(parser::parse(&tokens));
         must_ok(IrCodegen::new().try_generate(&ast))
+    }
+
+    fn generate_with_builtin_stdlib_modules(source: &str, modules: Vec<Vec<String>>) -> String {
+        let tokens = must_ok(lexer::lex(source));
+        let ast = must_ok(parser::parse(&tokens));
+        let mut codegen = IrCodegen::new();
+        codegen.set_builtin_stdlib_artifact_module_paths(modules);
+        must_ok(codegen.try_generate(&ast))
     }
 
     fn assert_no_generated_unused_lint_allows(code: &str) {
@@ -1934,12 +1969,13 @@ pub modulo = alias mod
 
     #[test]
     fn top_level_qualified_alias_preserves_target_path() {
-        let code = generate(
+        let code = generate_with_builtin_stdlib_modules(
             r#"
 import std.math as math
 
 pub root = math.sqrt
 "#,
+            vec![vec!["math".to_string()]],
         );
         assert!(code.contains("pub use incan_builtin_stdlib::math as math;"), "{code}");
         assert!(code.contains("pub use math::sqrt as root;"), "{code}");

@@ -12,6 +12,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::builtin_stdlib::BuiltinStdlibModules;
 use crate::manifest::DependencySpec;
 use incan_core::lang::{rust_keywords, stdlib};
 use sha2::{Digest as _, Sha256};
@@ -83,6 +84,8 @@ pub struct ProjectGenerator {
     pub(super) rust_edition: Option<String>,
     /// Profile used when building the generated crate for `incan run`.
     pub(super) run_profile: RunProfile,
+    /// Modules supplied by the linked compiled built-in stdlib artifact.
+    pub(super) builtin_stdlib_modules: BuiltinStdlibModules,
 }
 
 /// Cargo profile used for `incan run`.
@@ -111,6 +114,7 @@ impl ProjectGenerator {
             cargo_target_dir_override: None,
             rust_edition: None,
             run_profile: RunProfile::Debug,
+            builtin_stdlib_modules: BuiltinStdlibModules::default(),
         }
     }
 
@@ -169,6 +173,11 @@ impl ProjectGenerator {
     /// Set the cargo profile used for `incan run`.
     pub fn set_run_profile(&mut self, profile: RunProfile) {
         self.run_profile = profile;
+    }
+
+    /// Set the artifact-owned stdlib modules that must not remain in a reused generated source tree.
+    pub(crate) fn set_builtin_stdlib_modules(&mut self, modules: BuiltinStdlibModules) {
+        self.builtin_stdlib_modules = modules;
     }
 
     /// Return the generated Rust project directory.
@@ -523,18 +532,10 @@ impl ProjectGenerator {
 
         // Remove only migrated artifact modules from a reused generated project. Other source-backed stdlib modules
         // must remain available until their own migration is complete.
-        for source_path in stdlib::compiled_builtin_stdlib_modules() {
-            let emitted_path: Vec<String> = source_path
-                .iter()
-                .enumerate()
-                .map(|(idx, segment)| {
-                    if idx == 0 {
-                        stdlib::INCAN_STD_NAMESPACE.to_string()
-                    } else {
-                        (*segment).to_string()
-                    }
-                })
-                .collect();
+        for relative_path in self.builtin_stdlib_modules.relative_paths() {
+            let mut emitted_path = Vec::with_capacity(relative_path.len() + 1);
+            emitted_path.push(stdlib::INCAN_STD_NAMESPACE.to_string());
+            emitted_path.extend(relative_path.iter().cloned());
             let Some(last_segment) = emitted_path.last() else {
                 continue;
             };
@@ -1120,6 +1121,27 @@ mod tests {
         assert!(!second, "identical nested regeneration should not rewrite files");
 
         let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_generate_nested_removes_manifest_owned_stdlib_source() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let stale_module = temp.path().join("src/__incan_std/fs/locking.rs");
+        fs::create_dir_all(stale_module.parent().ok_or("stale module had no parent")?)?;
+        fs::write(&stale_module, "pub fn stale() {}\n")?;
+
+        let mut generator = ProjectGenerator::new(temp.path(), "consumer", true);
+        generator.set_builtin_stdlib_modules(BuiltinStdlibModules::from_relative_paths([vec![
+            "fs".to_string(),
+            "locking".to_string(),
+        ]]));
+        generator.generate_nested("fn main() {}\n", &HashMap::new())?;
+
+        assert!(
+            !stale_module.exists(),
+            "artifact-owned modules discovered from the manifest must be removed from reused consumer projects"
+        );
         Ok(())
     }
 

@@ -21,94 +21,6 @@ pub const INCAN_STD_NAMESPACE: &str = "__incan_std";
 /// consumer-local `__incan_std` tree.
 pub const BUILTIN_STDLIB_ARTIFACT_CRATE: &str = "incan_builtin_stdlib";
 
-const COMPILED_BUILTIN_STDLIB_MODULES: &[&[&str]] = &[
-    &["std", "async"],
-    &["std", "async", "channel"],
-    &["std", "async", "race"],
-    &["std", "async", "sync"],
-    &["std", "async", "task"],
-    &["std", "async", "time"],
-    &["std", "checksum"],
-    &["std", "collections"],
-    &["std", "compression"],
-    &["std", "compression", "_auto"],
-    &["std", "compression", "_core"],
-    &["std", "compression", "bz2"],
-    &["std", "compression", "deflate"],
-    &["std", "compression", "gzip"],
-    &["std", "compression", "lzma"],
-    &["std", "compression", "snappy"],
-    &["std", "compression", "snappy", "raw"],
-    &["std", "compression", "zlib"],
-    &["std", "compression", "zstd"],
-    &["std", "datetime"],
-    &["std", "datetime", "civil"],
-    &["std", "datetime", "civil", "intervals"],
-    &["std", "datetime", "civil", "naive"],
-    &["std", "datetime", "civil", "offset"],
-    &["std", "datetime", "error"],
-    &["std", "datetime", "runtime"],
-    &["std", "derives", "collection"],
-    &["std", "derives", "comparison"],
-    &["std", "derives", "copying"],
-    &["std", "derives", "string"],
-    &["std", "encoding"],
-    &["std", "encoding", "_shared"],
-    &["std", "encoding", "base32"],
-    &["std", "encoding", "base58"],
-    &["std", "encoding", "base64"],
-    &["std", "encoding", "base85"],
-    &["std", "encoding", "bech32"],
-    &["std", "encoding", "hex"],
-    &["std", "environ"],
-    &["std", "fs"],
-    &["std", "fs", "file"],
-    &["std", "fs", "glob"],
-    &["std", "fs", "metadata"],
-    &["std", "fs", "path"],
-    &["std", "graph"],
-    &["std", "hash"],
-    &["std", "hash", "_core"],
-    &["std", "hash", "_streaming"],
-    &["std", "io"],
-    &["std", "json"],
-    &["std", "logging"],
-    &["std", "math"],
-    &["std", "prelude"],
-    &["std", "reflection"],
-    &["std", "regex"],
-    &["std", "regex", "_core"],
-    &["std", "regex", "_replacement"],
-    &["std", "regex", "types"],
-    &["std", "result"],
-    &["std", "serde"],
-    &["std", "serde", "json"],
-    &["std", "telemetry"],
-    &["std", "telemetry", "core"],
-    &["std", "tempfile"],
-    &["std", "testing"],
-    &["std", "this"],
-    &["std", "traits"],
-    &["std", "traits", "callable"],
-    &["std", "traits", "convert"],
-    &["std", "traits", "error"],
-    &["std", "traits", "indexing"],
-    &["std", "traits", "ops"],
-    &["std", "uuid"],
-    &["std", "web"],
-    &["std", "web", "app"],
-    &["std", "web", "macros"],
-    &["std", "web", "request"],
-    &["std", "web", "response"],
-    &["std", "web", "routing"],
-];
-
-/// Return every built-in source module emitted by the local compiled stdlib artifact.
-#[must_use]
-pub fn compiled_builtin_stdlib_modules() -> &'static [&'static [&'static str]] {
-    COMPILED_BUILTIN_STDLIB_MODULES
-}
-
 /// `std.web` module name.
 pub const STDLIB_WEB: &str = "web";
 
@@ -248,40 +160,6 @@ pub fn is_stdlib_module(path: &[String], module: &str) -> bool {
 /// `IrImportQualifier::None` — bypassing this check entirely.
 pub fn is_any_stdlib_path(path: &[String]) -> bool {
     path.len() >= 2 && path[0] == STDLIB_ROOT
-}
-
-/// Return whether a stdlib module is emitted from the local compiled artifact.
-///
-/// Every source module included by the built-in artifact entrypoint participates
-/// in this inventory. The source loader remains a temporary typechecking bridge,
-/// but generated consumers must never materialize any of these modules.
-///
-/// Only exact module paths match: importing `std.fs` still uses its facade
-/// until that facade itself has migrated and can re-export artifact symbols.
-#[must_use]
-pub fn is_compiled_builtin_stdlib_module(path: &[String]) -> bool {
-    COMPILED_BUILTIN_STDLIB_MODULES.iter().any(|candidate| {
-        path.len() == candidate.len()
-            && path
-                .iter()
-                .zip(candidate.iter())
-                .all(|(actual, expected)| actual == expected)
-    })
-}
-
-/// Return whether an emitted `__incan_std.*` path belongs to the compiled built-in artifact.
-///
-/// Module collection rewrites source `std.*` paths to the collision-safe Rust namespace before code generation. This
-/// helper keeps that internal spelling out of callers' migration tables.
-#[must_use]
-pub fn is_compiled_builtin_stdlib_emission_path(path: &[String]) -> bool {
-    if path.first().map(String::as_str) != Some(INCAN_STD_NAMESPACE) {
-        return false;
-    }
-    let mut source_path = Vec::with_capacity(path.len());
-    source_path.push(STDLIB_ROOT.to_string());
-    source_path.extend(path.iter().skip(1).cloned());
-    is_compiled_builtin_stdlib_module(&source_path)
 }
 
 /// Return whether a compiler-generated support call is a deliberate cross-crate
@@ -1114,26 +992,6 @@ mod tests {
         assert!(!is_typechecker_only_stdlib(&segs(&["std", "testing"])));
         assert!(!is_typechecker_only_stdlib(&segs(&["std", "async"])));
         assert!(!is_typechecker_only_stdlib(&segs(&["not", "stdlib"]))); // non-stdlib path
-    }
-
-    #[test]
-    fn compiled_builtin_stdlib_inventory_covers_public_module_families() {
-        for path in [
-            ["std", "async", "sync"].as_slice(),
-            ["std", "compression", "zstd"].as_slice(),
-            ["std", "datetime", "civil", "naive"].as_slice(),
-            ["std", "encoding", "base64"].as_slice(),
-            ["std", "serde", "json"].as_slice(),
-            ["std", "telemetry", "core"].as_slice(),
-            ["std", "web", "routing"].as_slice(),
-        ] {
-            assert!(
-                is_compiled_builtin_stdlib_module(&segs(path)),
-                "compiled stdlib inventory omitted {}",
-                path.join(".")
-            );
-        }
-        assert!(!is_compiled_builtin_stdlib_module(&segs(&["std", "does_not_exist"])));
     }
 
     #[test]

@@ -14,6 +14,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 use crate::backend::ProjectGenerator;
 use crate::backend::ir::detect_serde_non_import_usage;
 use crate::backend::project::generator::GENERATED_CARGO_TARGET_DIR_ENV;
+use crate::builtin_stdlib::BuiltinStdlibModules;
 use crate::cli::prelude::ParsedModule;
 use crate::cli::{CliError, CliResult};
 use crate::dependency_resolver::ResolvedDependencies;
@@ -161,11 +162,11 @@ pub(crate) struct ProjectRequirements {
 }
 
 /// Return whether any parsed source imports a stdlib module supplied by the compiled built-in artifact.
-fn uses_compiled_builtin_stdlib_artifact(modules: &[ParsedModule]) -> bool {
+fn uses_compiled_builtin_stdlib_artifact(modules: &[ParsedModule]) -> CliResult<bool> {
     if env::var_os(INTERNAL_BUILTIN_STDLIB_ARTIFACT_BUILD_ENV).is_some()
         || env::var_os(INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV).is_some()
     {
-        return false;
+        return Ok(false);
     }
     // `incan build --lib` is also the artifact producer. Its entry module lives under the built-in stdlib source
     // root, so linking `incan_builtin_stdlib` there would make the library depend on itself. Consumers still collect
@@ -174,13 +175,53 @@ fn uses_compiled_builtin_stdlib_artifact(modules: &[ParsedModule]) -> bool {
         let entry_path = fs::canonicalize(&entry.file_path).unwrap_or_else(|_| entry.file_path.clone());
         let stdlib_root = fs::canonicalize(&stdlib_root).unwrap_or(stdlib_root);
         if entry_path.starts_with(stdlib_root) {
-            return false;
+            return Ok(false);
         }
     }
-    modules.iter().any(|module| {
-        if stdlib::is_compiled_builtin_stdlib_emission_path(&module.path_segments)
+
+    let may_use_artifact = modules.iter().any(|module| {
+        module.path_segments.first().map(String::as_str) == Some(stdlib::INCAN_STD_NAMESPACE)
             || uses_iterator_adapter_surface(&module.ast)
             || uses_result_combinator_surface(&module.ast)
+            || module.ast.declarations.iter().any(|decl| {
+                let crate::frontend::ast::Declaration::Import(import) = &decl.node else {
+                    return false;
+                };
+                match &import.kind {
+                    ImportKind::From { module, .. } => {
+                        module.parent_levels == 0
+                            && !module.is_absolute
+                            && stdlib::stdlib_stub_path(&module.segments).is_some()
+                    }
+                    ImportKind::Module(path) => {
+                        path.parent_levels == 0
+                            && !path.is_absolute
+                            && stdlib::stdlib_stub_path(&path.segments).is_some()
+                    }
+                    _ => false,
+                }
+            })
+    });
+    if !may_use_artifact {
+        return Ok(false);
+    }
+
+    let inventory = compiled_builtin_stdlib_modules()?;
+    Ok(modules.iter().any(|module| {
+        if inventory.contains_emission_path(&module.path_segments) {
+            return true;
+        }
+        if uses_iterator_adapter_surface(&module.ast)
+            && inventory.contains_source_path(&[
+                stdlib::STDLIB_ROOT.to_string(),
+                "derives".to_string(),
+                "collection".to_string(),
+            ])
+        {
+            return true;
+        }
+        if uses_result_combinator_surface(&module.ast)
+            && inventory.contains_source_path(&[stdlib::STDLIB_ROOT.to_string(), "result".to_string()])
         {
             return true;
         }
@@ -203,9 +244,9 @@ fn uses_compiled_builtin_stdlib_artifact(modules: &[ParsedModule]) -> bool {
                 }
                 _ => return false,
             };
-            stdlib::is_compiled_builtin_stdlib_module(path)
+            inventory.contains_source_path(path)
         })
-    })
+    }))
 }
 
 /// Select the Incan CLI executable that prepares the built-in stdlib artifact.
@@ -751,6 +792,11 @@ pub(crate) fn compiled_builtin_stdlib_artifact_manifest() -> CliResult<LibraryMa
     })
 }
 
+/// Load the module inventory emitted by the resolved built-in stdlib library graph.
+pub(crate) fn compiled_builtin_stdlib_modules() -> CliResult<BuiltinStdlibModules> {
+    compiled_builtin_stdlib_artifact_manifest().map(|manifest| BuiltinStdlibModules::from_manifest(&manifest))
+}
+
 /// Load compiled built-in stdlib metadata exactly when a compilation will link its generated Rust crate.
 ///
 /// Keeping this decision alongside requirement collection prevents command-specific paths from accidentally using
@@ -1274,7 +1320,7 @@ pub(crate) fn collect_project_requirements(
         )?;
     }
 
-    if uses_compiled_builtin_stdlib_artifact(modules) {
+    if uses_compiled_builtin_stdlib_artifact(modules)? {
         let artifact = prepare_builtin_stdlib_artifact()?;
         merge_requirement_dependency(
             &mut requirements.dependencies,
@@ -2250,6 +2296,28 @@ pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
     collect_modules_detailed(entry_path).map_err(|failure| CliError::failure(failure.render_human()))
 }
 
+/// Lazily load the artifact-owned module set when source collection first encounters a built-in stdlib import.
+fn compiled_stdlib_owns_module_for_collection(
+    inventory: &mut Option<BuiltinStdlibModules>,
+    module_path: &[String],
+    file_path: &str,
+    source: &str,
+) -> Result<bool, CliDiagnosticFailure> {
+    if inventory.is_none() {
+        *inventory = Some(compiled_builtin_stdlib_modules().map_err(|error| {
+            CliDiagnosticFailure::single(
+                file_path,
+                source,
+                diagnostics::CompileError::new(error.message, Span::default()),
+                diagnostics::DiagnosticPhase::Import,
+            )
+        })?);
+    }
+    Ok(inventory
+        .as_ref()
+        .is_some_and(|inventory| inventory.contains_source_path(module_path)))
+}
+
 /// Collect and parse the entry file and all its dependencies, preserving structured diagnostic context.
 pub(crate) fn collect_modules_detailed(entry_path: &str) -> Result<Vec<ParsedModule>, CliDiagnosticFailure> {
     let path = if Path::new(entry_path).is_absolute() {
@@ -2284,6 +2352,7 @@ pub(crate) fn collect_modules_detailed(entry_path: &str) -> Result<Vec<ParsedMod
     let mut processed = HashSet::new();
     let mut dependency_edges: HashMap<String, HashSet<String>> = HashMap::new();
     let mut incan_source_stdlib_module_paths: HashMap<String, PathBuf> = HashMap::new();
+    let mut compiled_stdlib_modules = None;
     let compiling_builtin_stdlib_artifact = env::var_os(INTERNAL_BUILTIN_STDLIB_ARTIFACT_BUILD_ENV).is_some();
     let stdlib_module_segments = |module_path: &[String]| {
         if compiling_builtin_stdlib_artifact {
@@ -2339,7 +2408,14 @@ pub(crate) fn collect_modules_detailed(entry_path: &str) -> Result<Vec<ParsedMod
                 "derives".to_string(),
                 "collection".to_string(),
             ];
-            if compiling_builtin_stdlib_artifact || !stdlib::is_compiled_builtin_stdlib_module(&module_path) {
+            let artifact_owns_module = !compiling_builtin_stdlib_artifact
+                && compiled_stdlib_owns_module_for_collection(
+                    &mut compiled_stdlib_modules,
+                    &module_path,
+                    &file_path,
+                    &source,
+                )?;
+            if !artifact_owns_module {
                 let source_path = resolve_stdlib_module_source_path(&module_path)?;
                 let module_segments = stdlib_module_segments(&module_path);
                 let module_name = module_segments.join("_");
@@ -2355,7 +2431,14 @@ pub(crate) fn collect_modules_detailed(entry_path: &str) -> Result<Vec<ParsedMod
         }
         if uses_result_combinator_surface(&ast) {
             let module_path = vec![stdlib::STDLIB_ROOT.to_string(), "result".to_string()];
-            if compiling_builtin_stdlib_artifact || !stdlib::is_compiled_builtin_stdlib_module(&module_path) {
+            let artifact_owns_module = !compiling_builtin_stdlib_artifact
+                && compiled_stdlib_owns_module_for_collection(
+                    &mut compiled_stdlib_modules,
+                    &module_path,
+                    &file_path,
+                    &source,
+                )?;
+            if !artifact_owns_module {
                 let source_path = resolve_stdlib_module_source_path(&module_path)?;
                 let module_segments = stdlib_module_segments(&module_path);
                 let module_name = module_segments.join("_");
@@ -2375,7 +2458,14 @@ pub(crate) fn collect_modules_detailed(entry_path: &str) -> Result<Vec<ParsedMod
                     if stdlib::stdlib_stub_path(&module_path).is_none() {
                         continue;
                     }
-                    if !compiling_builtin_stdlib_artifact && stdlib::is_compiled_builtin_stdlib_module(&module_path) {
+                    if !compiling_builtin_stdlib_artifact
+                        && compiled_stdlib_owns_module_for_collection(
+                            &mut compiled_stdlib_modules,
+                            &module_path,
+                            &file_path,
+                            &source,
+                        )?
+                    {
                         continue;
                     }
                     let stdlib_key = module_path.join(".");

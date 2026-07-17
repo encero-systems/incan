@@ -277,6 +277,7 @@ fn compiled_builtin_stdlib_artifact_replaces_consumer_fs_source_closure() -> Res
     fs::write(
         &main_path,
         r#"from std.fs.glob import matches
+from std.fs.locking import try_exclusive
 from std.fs.path import Path
 
 def main() -> None:
@@ -287,6 +288,9 @@ def main() -> None:
     Err(_) => pass
   match target.read_bytes():
     Ok(data) => assert data == payload
+    Err(_) => pass
+  match try_exclusive("target/compiled-stdlib-artifact.bin"):
+    Ok(_) => pass
     Err(_) => pass
   println(matches("routes/users.incn", "routes/*.incn"))
   println(Path("routes/users.incn").name())
@@ -317,6 +321,10 @@ def main() -> None:
         "generated consumer must construct types from the compiled artifact:\n{main_rust}"
     );
     assert!(
+        main_rust.contains("incan_builtin_stdlib::fs::locking::try_exclusive"),
+        "manifest-discovered stdlib modules must link through the compiled artifact:\n{main_rust}"
+    );
+    assert!(
         main_rust.contains("target.write_bytes(payload.clone())"),
         "compiled newtype method metadata must preserve Incan ownership semantics:\n{main_rust}"
     );
@@ -333,6 +341,8 @@ fn compiled_builtin_stdlib_artifact_preserves_facade_imports() -> Result<(), Box
     fs::write(
         &main_path,
         r#"from std.fs import Path as FsPath
+from std.telemetry import TraceId
+from std.traits import TryFrom
 from std.web import App, route, Response, Json, GET
 
 def main() -> None:
@@ -381,11 +391,15 @@ def main() -> None:
     fs::create_dir_all(&tests_dir)?;
     fs::write(
         tests_dir.join("test_artifact.incn"),
-        r#"from std.fs.path import Path
+        r#"from std.fs.locking import try_exclusive
+from std.fs.path import Path
 from std.testing import assert_eq
 
 def test_artifact_path() -> None:
   assert_eq(Path("routes/users.incn").name(), "users.incn")
+  match try_exclusive("target/test-artifact.lock"):
+    Ok(_) => pass
+    Err(_) => pass
 "#,
     )?;
     let test_output = run_incan(tmp.path(), &["test"])?;

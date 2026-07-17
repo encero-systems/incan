@@ -285,7 +285,7 @@ impl TypeChecker {
         for module in api.modules {
             let mut consumer_path = vec![stdlib::STDLIB_ROOT.to_string()];
             consumer_path.extend(module.module_path.clone());
-            if !stdlib::is_compiled_builtin_stdlib_module(&consumer_path) {
+            if !self.builtin_stdlib_modules.contains_source_path(&consumer_path) {
                 continue;
             }
 
@@ -572,8 +572,10 @@ impl TypeChecker {
         if self.materialize_builtin_stdlib_artifact_import(context, item, testing_semantics, span) {
             return true;
         }
-        if self.builtin_stdlib_manifest.is_some() && stdlib::is_compiled_builtin_stdlib_module(&context.module.segments)
-        {
+        let artifact_owns_module = self
+            .builtin_stdlib_modules
+            .contains_source_path(&context.module.segments);
+        if artifact_owns_module {
             // A migrated module is owned by the artifact contract. Falling back to its source cache here would hide
             // an incomplete or stale artifact and give the source tree semantic authority again.
             return false;

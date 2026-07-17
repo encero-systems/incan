@@ -1233,7 +1233,7 @@ impl<'a> IrEmitter<'a> {
             }
             segments
         } else if module_path.first().map(String::as_str) == Some(stdlib::INCAN_STD_NAMESPACE)
-            && stdlib::is_compiled_builtin_stdlib_emission_path(&module_path)
+            && self.is_builtin_stdlib_artifact_emission_path(&module_path)
             && can_link_compiled_stdlib_symbol
         {
             let mut segments = if compiling_builtin_stdlib_artifact {
@@ -1260,7 +1260,7 @@ impl<'a> IrEmitter<'a> {
             }
             let mut segments = if compiling_builtin_stdlib_artifact {
                 vec![quote! { crate }]
-            } else if stdlib::is_compiled_builtin_stdlib_module(&module_path) && can_link_compiled_stdlib_symbol {
+            } else if self.is_builtin_stdlib_artifact_source_path(&module_path) && can_link_compiled_stdlib_symbol {
                 let artifact = Self::rust_ident(stdlib::BUILTIN_STDLIB_ARTIFACT_CRATE);
                 vec![quote! { #artifact }]
             } else {

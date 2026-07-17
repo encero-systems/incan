@@ -8,6 +8,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::backend::{IrCodegen, ProjectGenerator};
+use crate::builtin_stdlib::BuiltinStdlibModules;
 use crate::cli::commands;
 use crate::cli::commands::common::{self, CargoPolicy, ProjectRequirements};
 #[cfg(feature = "rust_inspect")]
@@ -29,7 +30,6 @@ use crate::frontend::vocab_desugar_pass;
 use crate::frontend::{lexer, parser};
 use crate::lockfile::CargoFeatureSelection;
 use crate::manifest::ProjectManifest;
-use incan_core::lang::stdlib;
 use sha2::{Digest, Sha256};
 
 use super::module_graph::collect_source_modules_for_test;
@@ -3281,7 +3281,7 @@ pub(super) fn run_file_tests_batch(
     let mut codegen = IrCodegen::new();
     codegen.set_preserve_dependency_public_items(false);
     codegen.set_library_manifest_index(prepared.library_manifest_index.clone());
-    if let Some(manifest) =
+    let builtin_stdlib_manifest =
         match common::compiled_builtin_stdlib_manifest_for_requirements(&prepared.project_requirements) {
             Ok(manifest) => manifest,
             Err(error) => {
@@ -3290,8 +3290,12 @@ pub(super) fn run_file_tests_batch(
                     .map(|test| (test.clone(), TestResult::Failed(start.elapsed(), error.message.clone())))
                     .collect();
             }
-        }
-    {
+        };
+    let builtin_stdlib_modules = builtin_stdlib_manifest
+        .as_ref()
+        .map(BuiltinStdlibModules::from_manifest)
+        .unwrap_or_default();
+    if let Some(manifest) = builtin_stdlib_manifest {
         codegen.set_builtin_stdlib_manifest(manifest);
     }
     #[cfg(feature = "rust_inspect")]
@@ -3304,12 +3308,12 @@ pub(super) fn run_file_tests_batch(
     let emitted_source_modules = prepared
         .source_modules
         .iter()
-        .filter(|module| !stdlib::is_compiled_builtin_stdlib_emission_path(&module.path_segments))
+        .filter(|module| !builtin_stdlib_modules.contains_emission_path(&module.path_segments))
         .collect::<Vec<_>>();
     for module in prepared
         .source_modules
         .iter()
-        .filter(|module| stdlib::is_compiled_builtin_stdlib_emission_path(&module.path_segments))
+        .filter(|module| builtin_stdlib_modules.contains_emission_path(&module.path_segments))
     {
         codegen.add_dependency_symbol_module_with_path_segments(
             &module.name,
@@ -3363,6 +3367,7 @@ pub(super) fn run_file_tests_batch(
     };
 
     let mut generator = ProjectGenerator::new(&temp_dir, &runner_crate_name, false);
+    generator.set_builtin_stdlib_modules(builtin_stdlib_modules);
     generator.set_package_name(Some(prepared.project_name.clone()));
     generator.set_stdlib_features(test_runner_stdlib_features_for_batch(
         &prepared.project_requirements.stdlib_features,

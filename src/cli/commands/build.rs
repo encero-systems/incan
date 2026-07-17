@@ -11,6 +11,7 @@ use std::time::Instant;
 
 use crate::backend::project::generator::GENERATED_CARGO_TARGET_DIR_ENV;
 use crate::backend::{IrCodegen, ProjectGenerator, RunProfile};
+use crate::builtin_stdlib::BuiltinStdlibModules;
 use crate::cli::{CliError, CliResult, ExitCode};
 use crate::dependency_resolver::{ResolvedDependencies, resolve_dependencies, resolve_reachable_dependencies};
 use crate::frontend::api_metadata::{
@@ -54,7 +55,6 @@ use super::vocab_extraction::{PendingDesugarerArtifact, collect_library_vocab_me
 use crate::cli::prelude::ParsedModule;
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect::{InspectError, Inspector, InspectorConfig};
-use incan_core::lang::stdlib;
 use sha2::{Digest as _, Sha256};
 
 // ============================================================================
@@ -775,12 +775,6 @@ fn prepare_project_with_options(
     };
 
     let dep_modules = &modules[..modules.len() - 1];
-    // Migrated stdlib modules resolve from the compiled artifact's checked metadata and are supplied by its linked
-    // Rust crate. Keep them out of local emission so consumers cannot materialize a second `__incan_std` tree.
-    let emitted_dep_modules: Vec<&ParsedModule> = dep_modules
-        .iter()
-        .filter(|module| !stdlib::is_compiled_builtin_stdlib_emission_path(&module.path_segments))
-        .collect();
     let project_root = manifest
         .as_ref()
         .map(|manifest| manifest.project_root().to_path_buf())
@@ -791,6 +785,16 @@ fn prepare_project_with_options(
         .unwrap_or_default();
     let project_requirements = collect_project_requirements(&modules, &library_manifest_index)?;
     let builtin_stdlib_manifest = compiled_builtin_stdlib_manifest_for_requirements(&project_requirements)?;
+    let builtin_stdlib_modules = builtin_stdlib_manifest
+        .as_ref()
+        .map(BuiltinStdlibModules::from_manifest)
+        .unwrap_or_default();
+    // Artifact-owned stdlib modules resolve from checked metadata and are supplied by its linked Rust crate. Keep
+    // them out of local emission so consumers cannot materialize a second `__incan_std` tree.
+    let emitted_dep_modules: Vec<&ParsedModule> = dep_modules
+        .iter()
+        .filter(|module| !builtin_stdlib_modules.contains_emission_path(&module.path_segments))
+        .collect();
 
     // Derive project name (manifest overrides filename)
     let project_name = options
@@ -828,7 +832,7 @@ fn prepare_project_with_options(
     }
     for module in dep_modules
         .iter()
-        .filter(|module| stdlib::is_compiled_builtin_stdlib_emission_path(&module.path_segments))
+        .filter(|module| builtin_stdlib_modules.contains_emission_path(&module.path_segments))
     {
         codegen.add_dependency_symbol_module_with_path_segments(
             &module.name,
@@ -842,6 +846,7 @@ fn prepare_project_with_options(
     }
     // ---- Setup project generator ----
     let mut generator = ProjectGenerator::new(&out_dir, project_name.as_str(), true);
+    generator.set_builtin_stdlib_modules(builtin_stdlib_modules.clone());
     generator.set_cargo_target_dir_override(options.generated_cargo_target_dir.map(Path::to_path_buf));
     generator.set_stdlib_features(project_requirements.stdlib_features.clone());
     generator.set_include_dev_dependencies(false);
@@ -980,7 +985,7 @@ fn prepare_project_with_options(
     let has_deps = !emitted_dep_modules.is_empty()
         || dep_modules
             .iter()
-            .any(|module| stdlib::is_compiled_builtin_stdlib_emission_path(&module.path_segments));
+            .any(|module| builtin_stdlib_modules.contains_emission_path(&module.path_segments));
     let project_changed = if has_deps {
         let module_paths: Vec<Vec<String>> = emitted_dep_modules.iter().map(|m| m.path_segments.clone()).collect();
         let (main_code, rust_modules) = codegen
@@ -1119,6 +1124,10 @@ fn prepare_library_project(
     let library_manifest_index = LibraryManifestIndex::from_project_manifest(&manifest);
     let project_requirements = collect_project_requirements(&modules, &library_manifest_index)?;
     let builtin_stdlib_manifest = compiled_builtin_stdlib_manifest_for_requirements(&project_requirements)?;
+    let builtin_stdlib_modules = builtin_stdlib_manifest
+        .as_ref()
+        .map(BuiltinStdlibModules::from_manifest)
+        .unwrap_or_default();
     let contract_model_bundles = read_project_model_bundles(&project_root, &manifest.contract_model_bundle_paths())
         .map_err(|error| CliError::failure(error.to_string()))?;
     let rust_extern_contexts = collect_rust_extern_contexts(&modules);
@@ -1127,7 +1136,7 @@ fn prepare_library_project(
     // migrated modules must not be generated into a second local `__incan_std` tree.
     let emitted_dep_modules: Vec<&ParsedModule> = dep_modules
         .iter()
-        .filter(|module| !stdlib::is_compiled_builtin_stdlib_emission_path(&module.path_segments))
+        .filter(|module| !builtin_stdlib_modules.contains_emission_path(&module.path_segments))
         .collect();
 
     let mut inline_imports = collect_rust_dependency_uses(lib_module, false);
@@ -1375,7 +1384,7 @@ fn prepare_library_project(
     ));
     for module in dep_modules
         .iter()
-        .filter(|module| stdlib::is_compiled_builtin_stdlib_emission_path(&module.path_segments))
+        .filter(|module| builtin_stdlib_modules.contains_emission_path(&module.path_segments))
     {
         codegen.add_dependency_symbol_module_with_path_segments(
             &module.name,
@@ -1387,6 +1396,7 @@ fn prepare_library_project(
         codegen.add_module_with_path_segments(&module.name, &module.ast, module.path_segments.clone());
     }
     let mut generator = ProjectGenerator::new(&out_dir, project_name.as_str(), false);
+    generator.set_builtin_stdlib_modules(builtin_stdlib_modules);
     generator.set_cargo_target_dir_override(generated_cargo_target_dir.map(Path::to_path_buf));
     generator.set_stdlib_features(project_requirements.stdlib_features.clone());
     generator.set_include_dev_dependencies(false);

@@ -70,6 +70,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::builtin_stdlib::BuiltinStdlibModules;
 use crate::frontend::ast::*;
 use crate::frontend::diagnostics::{CompileError, ErrorKind, errors};
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
@@ -248,6 +249,8 @@ pub struct TypeChecker {
     /// Unlike [`Self::library_manifests`], this is not a user-declared `pub::` dependency. The compiler supplies it
     /// when a generated consumer links the local built-in stdlib artifact.
     pub(crate) builtin_stdlib_manifest: Option<Arc<LibraryManifest>>,
+    /// Module ownership derived from [`Self::builtin_stdlib_manifest`].
+    pub(crate) builtin_stdlib_modules: BuiltinStdlibModules,
     /// Internal semantic type cache for `pub::` exports referenced transitively by imported signatures.
     ///
     /// These entries are intentionally **not** source-visible names: they exist so values returned from imported
@@ -380,6 +383,7 @@ impl TypeChecker {
             dependency_trait_rust_derive_paths: HashMap::new(),
             library_manifests: Arc::new(LibraryManifestIndex::default()),
             builtin_stdlib_manifest: None,
+            builtin_stdlib_modules: BuiltinStdlibModules::default(),
             transitive_pub_types: HashMap::new(),
             transitive_pub_traits: HashMap::new(),
             transitive_stdlib_stub_types: HashMap::new(),
@@ -1488,6 +1492,7 @@ impl TypeChecker {
 
     /// Set the compiled built-in stdlib manifest used to resolve migrated `std.*` public APIs.
     pub fn set_builtin_stdlib_manifest(&mut self, manifest: Arc<LibraryManifest>) {
+        self.builtin_stdlib_modules = BuiltinStdlibModules::from_manifest(&manifest);
         self.builtin_stdlib_manifest = Some(manifest);
         self.seed_builtin_stdlib_manifest_symbols();
     }

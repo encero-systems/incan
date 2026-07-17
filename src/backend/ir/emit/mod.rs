@@ -1115,7 +1115,7 @@ impl<'a> IrEmitter<'a> {
     ) -> Option<TokenStream> {
         let compiling_builtin_stdlib_artifact =
             std::env::var_os("INCAN_INTERNAL_BUILTIN_STDLIB_ARTIFACT_BUILD").is_some();
-        let compiled_builtin_stdlib_module = stdlib::is_compiled_builtin_stdlib_emission_path(module_path);
+        let compiled_builtin_stdlib_module = self.is_builtin_stdlib_artifact_emission_path(module_path);
         let (mut segments, path_segments): (Vec<TokenStream>, &[String]) =
             if compiled_builtin_stdlib_module && !compiling_builtin_stdlib_artifact {
                 let artifact = Self::rust_ident(stdlib::BUILTIN_STDLIB_ARTIFACT_CRATE);
@@ -1267,9 +1267,26 @@ impl<'a> IrEmitter<'a> {
         self.seed_builtin_stdlib_factory_metadata(&functions, &models, &classes);
     }
 
+    /// Set provider module paths when a caller already derived them from the artifact entrypoint or manifest.
+    pub(crate) fn set_builtin_stdlib_artifact_module_paths(&mut self, paths: HashSet<Vec<String>>) {
+        self.builtin_stdlib_artifact_module_paths = paths;
+    }
+
     /// Return whether a dependency module is supplied by the linked compiled built-in stdlib artifact.
     pub(in crate::backend::ir::emit) fn is_builtin_stdlib_artifact_module_path(&self, module: &[String]) -> bool {
         self.builtin_stdlib_artifact_module_paths.contains(module)
+    }
+
+    /// Return whether a public `std.*` path is supplied by the linked built-in stdlib artifact.
+    pub(in crate::backend::ir::emit) fn is_builtin_stdlib_artifact_source_path(&self, path: &[String]) -> bool {
+        path.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT)
+            && self.is_builtin_stdlib_artifact_module_path(&path[1..])
+    }
+
+    /// Return whether an emitted `__incan_std.*` path is supplied by the linked built-in stdlib artifact.
+    pub(in crate::backend::ir::emit) fn is_builtin_stdlib_artifact_emission_path(&self, path: &[String]) -> bool {
+        path.first().map(String::as_str) == Some(stdlib::INCAN_STD_NAMESPACE)
+            && self.is_builtin_stdlib_artifact_module_path(&path[1..])
     }
 
     /// Return whether a named type is owned by the direct crate-root projection of a compiled stdlib provider module.
