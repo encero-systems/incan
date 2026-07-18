@@ -270,6 +270,13 @@ pub const METADATA_FREE_FUNCTION_SIGNATURE_RULES: &[MetadataFreeFunctionSignatur
         is_unsafe: false,
     },
     MetadataFreeFunctionSignatureRule {
+        path: "std::io::stdout",
+        params: &[],
+        return_type: "std::io::Stdout",
+        is_async: false,
+        is_unsafe: false,
+    },
+    MetadataFreeFunctionSignatureRule {
         path: "std::fs::metadata",
         params: &[MetadataFreeFunctionParamRule {
             name: Some("path"),
@@ -1536,6 +1543,19 @@ pub fn run_inline<D: FnMut(&mut Data, &OutputCallbackInfo)>(callback: D) {
         };
 
         assert_eq!(signature.return_type, "std::io::Stdin");
+        assert!(signature.params.is_empty());
+        assert!(!signature.is_async);
+        assert!(!signature.is_unsafe);
+        Ok(())
+    }
+
+    #[test]
+    fn metadata_free_function_signature_preserves_stdout_receiver_type() -> Result<(), String> {
+        let Some(signature) = metadata_free_function_signature("std::io::stdout") else {
+            return Err("std::io::stdout should have a metadata-free signature".to_string());
+        };
+
+        assert_eq!(signature.return_type, "std::io::Stdout");
         assert!(signature.params.is_empty());
         assert!(!signature.is_async);
         assert!(!signature.is_unsafe);
