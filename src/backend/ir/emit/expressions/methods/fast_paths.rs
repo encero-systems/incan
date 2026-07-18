@@ -108,7 +108,7 @@ fn type_module_matches(emitter: &IrEmitter, type_name: &str, fast_path: &MethodF
     let short_name = terminal_type_name(type_name);
     type_path_matches(type_name, fast_path.source_module, fast_path.receiver_type)
         || type_path_matches(type_name, fast_path.generated_module, fast_path.receiver_type)
-        || emitter.is_builtin_stdlib_artifact_type_in_module(short_name, fast_path.source_module)
+        || emitter.is_compiled_sdk_type_in_module(short_name, fast_path.source_module)
         || [type_name, short_name].iter().any(|name| {
             emitter.type_module_paths.get(*name).is_some_and(|module| {
                 module_matches(module, fast_path.source_module)
@@ -123,7 +123,7 @@ fn compiled_artifact_module_matches(emitter: &IrEmitter, module: &[String], sour
     let Some(artifact_module) = source_module.strip_prefix("std.") else {
         return false;
     };
-    emitter.is_builtin_stdlib_artifact_module_path(module) && module_matches(module, artifact_module)
+    emitter.is_compiled_sdk_module_path(module) && module_matches(module, artifact_module)
 }
 
 /// Return whether a type path matches an expected Rust path.

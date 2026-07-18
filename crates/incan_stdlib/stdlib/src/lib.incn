@@ -1,9 +1,8 @@
 """
 Internal library entrypoint for compiled Incan standard-library artifacts.
 
-The compiler builds this project locally and links its generated Rust crate into
-consumer projects. Public `std.*` names remain the user-facing import surface;
-this entrypoint only defines the artifact's implementation module graph.
+The compiler builds this project locally and links its generated Rust crate into consumer projects. Public `std.*` names remain the
+user-facing import surface; this entrypoint only defines the artifact's implementation module graph.
 """
 
 import async.channel
@@ -47,6 +46,7 @@ import encoding.prelude
 import environ
 import fs.file
 import fs.glob
+import fs.locking
 import fs.metadata
 import fs.path
 import fs.prelude

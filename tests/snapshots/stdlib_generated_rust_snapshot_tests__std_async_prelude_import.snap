@@ -7,9 +7,9 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-pub use incan_builtin_stdlib::r#async;
-pub use incan_builtin_stdlib::r#async::sleep;
-pub use incan_builtin_stdlib::r#async::spawn;
-pub use incan_builtin_stdlib::r#async::JoinHandle;
-pub use incan_builtin_stdlib::r#async::Mutex;
-pub use incan_builtin_stdlib::r#async::RaceArm;
+pub use crate::__incan_std::r#async;
+pub use crate::__incan_std::r#async::sleep;
+pub use crate::__incan_std::r#async::spawn;
+pub use crate::__incan_std::r#async::JoinHandle;
+pub use crate::__incan_std::r#async::Mutex;
+pub use crate::__incan_std::r#async::RaceArm;

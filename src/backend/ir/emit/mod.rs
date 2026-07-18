@@ -39,7 +39,7 @@ use super::types::{IR_UNION_TYPE_NAME, IrType, Mutability};
 use super::{FunctionRegistry, FunctionSignature, IrProgram};
 use crate::frontend::api_metadata::{
     ApiDeclaration, class_export_from_api, enum_export_from_api, function_export_from_api, model_export_from_api,
-    newtype_export_from_api, trait_export_from_api,
+    newtype_export_from_api,
 };
 use crate::frontend::library_manifest_index::{LibraryManifestIndex, LibraryManifestIndexEntry};
 use crate::frontend::symbols::ResolvedType;
@@ -316,13 +316,13 @@ pub struct IrEmitter<'a> {
     const_string_literals: std::collections::HashMap<String, String>,
     /// Map of type name -> module path segments for dependency modules.
     type_module_paths: HashMap<String, Vec<String>>,
-    /// Provider module paths owned by the linked compiled built-in stdlib artifact.
+    /// Provider module paths owned by linked compiled SDK providers.
     ///
     /// These paths do not use the consumer-only `__incan_std` namespace, so generated support fast paths need an
     /// explicit ownership marker rather than inferring ownership from a short module name such as `collections`.
-    builtin_stdlib_artifact_module_paths: HashSet<Vec<String>>,
-    /// Nominal type names published by each provider module in the linked compiled built-in stdlib artifact.
-    builtin_stdlib_artifact_type_module_paths: HashMap<String, HashSet<Vec<String>>>,
+    compiled_sdk_module_paths: HashSet<Vec<String>>,
+    /// Nominal type names published by each linked compiled SDK provider module.
+    compiled_sdk_type_module_paths: HashMap<String, HashSet<Vec<String>>>,
     /// Type names that are declared in multiple modules (ambiguous).
     ambiguous_type_names: HashSet<String>,
     /// Map of value name -> module path segments for dependency modules.
@@ -377,8 +377,6 @@ pub struct IrEmitter<'a> {
     /// Multi-file source modules share generated ordinary union wrappers through the crate root so same-shaped unions
     /// remain one Rust nominal type across module boundaries.
     qualify_union_types_from_crate: bool,
-    /// Anonymous union wrappers owned by an external compiled artifact, keyed by their stable generated Rust name.
-    external_union_type_libraries: HashMap<String, String>,
     /// Extra anonymous union shapes that should be emitted in this module in addition to locally referenced shapes.
     generated_union_types: HashMap<String, IrType>,
     /// Whether this module should emit generated ordinary union wrapper definitions.
@@ -444,8 +442,8 @@ impl<'a> IrEmitter<'a> {
             in_return_context: RefCell::new(false),
             const_string_literals: std::collections::HashMap::new(),
             type_module_paths: HashMap::new(),
-            builtin_stdlib_artifact_module_paths: HashSet::new(),
-            builtin_stdlib_artifact_type_module_paths: HashMap::new(),
+            compiled_sdk_module_paths: HashSet::new(),
+            compiled_sdk_type_module_paths: HashMap::new(),
             ambiguous_type_names: HashSet::new(),
             value_module_paths: HashMap::new(),
             ambiguous_value_names: HashSet::new(),
@@ -461,7 +459,6 @@ impl<'a> IrEmitter<'a> {
             iterator_sum_used: RefCell::new(false),
             qualify_internal_canonical_paths: RefCell::new(false),
             qualify_union_types_from_crate: false,
-            external_union_type_libraries: HashMap::new(),
             generated_union_types: HashMap::new(),
             emit_generated_union_definitions: true,
             storage_binding_mut_names: RefCell::new(Vec::new()),
@@ -881,11 +878,6 @@ impl<'a> IrEmitter<'a> {
         self.qualify_union_types_from_crate = enabled;
     }
 
-    /// Set external owners for generated anonymous union wrappers.
-    pub fn set_external_union_type_libraries(&mut self, libraries: HashMap<String, String>) {
-        self.external_union_type_libraries = libraries;
-    }
-
     /// Add generated union wrapper definitions that should be emitted by this module.
     pub fn set_generated_union_types(&mut self, types: HashMap<String, IrType>) {
         self.generated_union_types = types;
@@ -1112,17 +1104,8 @@ impl<'a> IrEmitter<'a> {
         module_path: &[String],
         name: &str,
     ) -> Option<TokenStream> {
-        let compiling_builtin_stdlib_artifact =
-            std::env::var_os("INCAN_INTERNAL_BUILTIN_STDLIB_ARTIFACT_BUILD").is_some();
-        let compiled_builtin_stdlib_module = self.is_builtin_stdlib_artifact_emission_path(module_path);
-        let (mut segments, path_segments): (Vec<TokenStream>, &[String]) =
-            if compiled_builtin_stdlib_module && !compiling_builtin_stdlib_artifact {
-                let artifact = Self::rust_ident(stdlib::BUILTIN_STDLIB_ARTIFACT_CRATE);
-                (vec![quote! { #artifact }], &module_path[1..])
-            } else {
-                (vec![quote! { crate }], module_path)
-            };
-        for segment in path_segments {
+        let mut segments = vec![quote! { crate }];
+        for segment in module_path {
             let ident = Self::rust_ident(segment);
             segments.push(quote! { #ident });
         }
@@ -1139,8 +1122,21 @@ impl<'a> IrEmitter<'a> {
         if name.contains("::") || self.ambiguous_type_names.contains(name) {
             return None;
         }
-        let module_path = self.type_module_paths.get(name)?;
-        self.emit_dependency_item_path(module_path, name)
+        if let Some(module_path) = self.type_module_paths.get(name) {
+            return self.emit_dependency_item_path(module_path, name);
+        }
+
+        // Crate-root anonymous unions are emitted before module-local imports. A split compiled provider can collect
+        // a union whose payload is owned by another SDK component, so qualify the payload through the shared provider
+        // facade instead of relying on a bare type name being in scope at the crate root.
+        let module_paths = self.compiled_sdk_type_module_paths.get(name)?;
+        if module_paths.len() != 1 {
+            return None;
+        }
+        let module_path = module_paths.iter().next()?;
+        let mut facade_path = vec!["__incan_std".to_string()];
+        facade_path.extend(module_path.iter().cloned());
+        self.emit_dependency_item_path(&facade_path, name)
     }
 
     /// Emit a dependency-qualified value path when a local value name is ambiguous.
@@ -1210,13 +1206,13 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
-    /// Seed nominal method and enum metadata from the compiled built-in stdlib artifact manifest.
+    /// Seed nominal method and enum metadata from one compiled SDK-provider manifest.
     ///
     /// Built-in stdlib consumers intentionally do not materialize provider source modules. The artifact manifest is
     /// therefore the sole metadata source for whether a receiver uses Incan call semantics and whether a member is an
     /// enum variant rather than a Rust field access.
-    pub(crate) fn seed_builtin_stdlib_manifest_metadata(&mut self, manifest: &LibraryManifest) {
-        self.seed_builtin_stdlib_export_metadata(
+    pub(crate) fn seed_sdk_provider_manifest_metadata(&mut self, manifest: &LibraryManifest) {
+        self.seed_compiled_provider_export_metadata(
             &manifest.exports.models,
             &manifest.exports.classes,
             &manifest.exports.enums,
@@ -1229,9 +1225,8 @@ impl<'a> IrEmitter<'a> {
         let Some(api) = manifest.contract_metadata.api.as_ref() else {
             return;
         };
-        self.builtin_stdlib_artifact_module_paths =
-            api.modules.iter().map(|module| module.module_path.clone()).collect();
-        self.builtin_stdlib_artifact_type_module_paths.clear();
+        self.compiled_sdk_module_paths
+            .extend(api.modules.iter().map(|module| module.module_path.clone()));
         let mut models = Vec::new();
         let mut classes = Vec::new();
         let mut enums = Vec::new();
@@ -1247,7 +1242,7 @@ impl<'a> IrEmitter<'a> {
                     _ => None,
                 };
                 if let Some(name) = nominal_name {
-                    self.builtin_stdlib_artifact_type_module_paths
+                    self.compiled_sdk_type_module_paths
                         .entry(name.to_string())
                         .or_default()
                         .insert(module.module_path.clone());
@@ -1262,34 +1257,28 @@ impl<'a> IrEmitter<'a> {
                 }
             }
         }
-        self.seed_builtin_stdlib_export_metadata(&models, &classes, &enums, &newtypes);
-        self.seed_builtin_stdlib_factory_metadata(&functions, &models, &classes);
+        self.seed_compiled_provider_export_metadata(&models, &classes, &enums, &newtypes);
+        self.seed_compiled_provider_factory_metadata(&functions, &models, &classes);
     }
 
     /// Set provider module paths when a caller already derived them from the artifact entrypoint or manifest.
-    pub(crate) fn set_builtin_stdlib_artifact_module_paths(&mut self, paths: HashSet<Vec<String>>) {
-        self.builtin_stdlib_artifact_module_paths = paths;
+    pub(crate) fn set_compiled_sdk_module_paths(&mut self, paths: HashSet<Vec<String>>) {
+        self.compiled_sdk_module_paths = paths;
     }
 
-    /// Return whether a dependency module is supplied by the linked compiled built-in stdlib artifact.
-    pub(in crate::backend::ir::emit) fn is_builtin_stdlib_artifact_module_path(&self, module: &[String]) -> bool {
-        self.builtin_stdlib_artifact_module_paths.contains(module)
+    /// Return whether a dependency module is supplied by a linked compiled SDK provider.
+    pub(in crate::backend::ir::emit) fn is_compiled_sdk_module_path(&self, module: &[String]) -> bool {
+        self.compiled_sdk_module_paths.contains(module)
     }
 
-    /// Return whether a public `std.*` path is supplied by the linked built-in stdlib artifact.
-    pub(in crate::backend::ir::emit) fn is_builtin_stdlib_artifact_source_path(&self, path: &[String]) -> bool {
-        path.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT)
-            && self.is_builtin_stdlib_artifact_module_path(&path[1..])
-    }
-
-    /// Return whether an emitted `__incan_std.*` path is supplied by the linked built-in stdlib artifact.
-    pub(in crate::backend::ir::emit) fn is_builtin_stdlib_artifact_emission_path(&self, path: &[String]) -> bool {
+    /// Return whether an emitted `__incan_std.*` path is supplied by a linked compiled SDK provider.
+    pub(in crate::backend::ir::emit) fn is_compiled_sdk_emission_path(&self, path: &[String]) -> bool {
         path.first().map(String::as_str) == Some(stdlib::INCAN_STD_NAMESPACE)
-            && self.is_builtin_stdlib_artifact_module_path(&path[1..])
+            && self.is_compiled_sdk_module_path(&path[1..])
     }
 
     /// Return whether a named type is owned by the direct crate-root projection of a compiled stdlib provider module.
-    pub(in crate::backend::ir::emit) fn is_builtin_stdlib_artifact_type_in_module(
+    pub(in crate::backend::ir::emit) fn is_compiled_sdk_type_in_module(
         &self,
         type_name: &str,
         source_module: &str,
@@ -1298,7 +1287,7 @@ impl<'a> IrEmitter<'a> {
             return false;
         };
         let expected = artifact_module.split('.');
-        self.builtin_stdlib_artifact_type_module_paths
+        self.compiled_sdk_type_module_paths
             .get(type_name)
             .is_some_and(|modules| {
                 modules
@@ -1307,114 +1296,8 @@ impl<'a> IrEmitter<'a> {
             })
     }
 
-    /// Return anonymous union wrappers that are owned by a compiled stdlib artifact.
-    ///
-    /// The checked API is the artifact's structural type contract. Deriving these names from it preserves the
-    /// provider's Rust nominal identity without reopening any provider source module in a consumer compilation.
-    pub(crate) fn builtin_stdlib_artifact_union_type_libraries(manifest: &LibraryManifest) -> HashMap<String, String> {
-        let mut union_shapes = HashMap::new();
-        let Some(api) = manifest.contract_metadata.api.as_ref() else {
-            return HashMap::new();
-        };
-        for module in &api.modules {
-            for declaration in &module.declarations {
-                Self::collect_api_declaration_union_types(declaration, &mut union_shapes);
-            }
-        }
-        union_shapes
-            .into_keys()
-            .map(|name| (name, stdlib::BUILTIN_STDLIB_ARTIFACT_CRATE.to_string()))
-            .collect()
-    }
-
-    /// Collect anonymous union shapes reachable from one checked API declaration.
-    fn collect_api_declaration_union_types(declaration: &ApiDeclaration, unions: &mut HashMap<String, IrType>) {
-        match declaration {
-            ApiDeclaration::Function(function) => {
-                Self::collect_manifest_param_union_types(&function.params, unions);
-                Self::collect_manifest_type_ref_union_types(&function.return_type, unions);
-            }
-            ApiDeclaration::Model(model) => {
-                let model = model_export_from_api(model);
-                Self::collect_manifest_nominal_union_types(&model.fields, &model.methods, unions);
-            }
-            ApiDeclaration::Class(class) => {
-                let class = class_export_from_api(class);
-                Self::collect_manifest_nominal_union_types(&class.fields, &class.methods, unions);
-            }
-            ApiDeclaration::Trait(trait_decl) => {
-                let trait_decl = trait_export_from_api(trait_decl);
-                Self::collect_manifest_method_union_types(&trait_decl.methods, unions);
-            }
-            ApiDeclaration::Enum(enum_) => {
-                let enum_ = enum_export_from_api(enum_);
-                for variant in &enum_.variants {
-                    for field in &variant.fields {
-                        Self::collect_manifest_type_ref_union_types(field, unions);
-                    }
-                }
-                Self::collect_manifest_method_union_types(&enum_.methods, unions);
-            }
-            ApiDeclaration::Newtype(newtype) => {
-                let newtype = newtype_export_from_api(newtype);
-                Self::collect_manifest_type_ref_union_types(&newtype.underlying, unions);
-                Self::collect_manifest_method_union_types(&newtype.methods, unions);
-            }
-            ApiDeclaration::TypeAlias(alias) => {
-                Self::collect_manifest_type_ref_union_types(&alias.type_alias.target, unions);
-            }
-            ApiDeclaration::Const(konst) => Self::collect_manifest_type_ref_union_types(&konst.ty, unions),
-            ApiDeclaration::Static(static_) => Self::collect_manifest_type_ref_union_types(&static_.ty, unions),
-            ApiDeclaration::Alias(alias) => {
-                if let Some(function) = &alias.projected_function {
-                    Self::collect_manifest_param_union_types(&function.callable.params, unions);
-                    Self::collect_manifest_type_ref_union_types(&function.callable.return_type, unions);
-                }
-            }
-            ApiDeclaration::Partial(partial) => {
-                Self::collect_manifest_param_union_types(&partial.params, unions);
-                Self::collect_manifest_type_ref_union_types(&partial.return_type, unions);
-            }
-        }
-    }
-
-    /// Collect anonymous union shapes exposed by one nominal declaration.
-    fn collect_manifest_nominal_union_types(
-        fields: &[FieldExport],
-        methods: &[MethodExport],
-        unions: &mut HashMap<String, IrType>,
-    ) {
-        for field in fields {
-            Self::collect_manifest_type_ref_union_types(&field.ty, unions);
-        }
-        Self::collect_manifest_method_union_types(methods, unions);
-    }
-
-    /// Collect anonymous union shapes exposed by a method set.
-    fn collect_manifest_method_union_types(methods: &[MethodExport], unions: &mut HashMap<String, IrType>) {
-        for method in methods {
-            Self::collect_manifest_param_union_types(&method.params, unions);
-            Self::collect_manifest_type_ref_union_types(&method.return_type, unions);
-        }
-    }
-
-    /// Collect anonymous union shapes used by callable parameters.
-    fn collect_manifest_param_union_types(
-        params: &[crate::library_manifest::ParamExport],
-        unions: &mut HashMap<String, IrType>,
-    ) {
-        for param in params {
-            Self::collect_manifest_type_ref_union_types(&param.ty, unions);
-        }
-    }
-
-    /// Decode one manifest type reference and register every anonymous union it contains.
-    fn collect_manifest_type_ref_union_types(ty: &TypeRef, unions: &mut HashMap<String, IrType>) {
-        Self::collect_union_types_from_type(&Self::manifest_type_ref_to_ir_type(ty), unions);
-    }
-
     /// Seed nominal metadata represented by one artifact export surface.
-    fn seed_builtin_stdlib_export_metadata(
+    fn seed_compiled_provider_export_metadata(
         &mut self,
         models: &[crate::library_manifest::ModelExport],
         classes: &[crate::library_manifest::ClassExport],
@@ -1459,7 +1342,7 @@ impl<'a> IrEmitter<'a> {
     }
 
     /// Project factory method metadata onto its public constructor identity.
-    fn seed_builtin_stdlib_factory_metadata(
+    fn seed_compiled_provider_factory_metadata(
         &mut self,
         functions: &[crate::library_manifest::FunctionExport],
         models: &[crate::library_manifest::ModelExport],

@@ -248,9 +248,9 @@
     },
     {
       "path": "src/cli/commands/common.rs",
-      "category": "project materialization, dependency, and rust-inspect prewarm compatibility",
+      "category": "project materialization, provider hashing, dependency, and rust-inspect prewarm compatibility",
       "expected_count": 9,
-      "expected_fingerprint": "0x340d577958c9d5cb"
+      "expected_fingerprint": "0x7139ce9680f780f3"
     },
     {
       "path": "src/dependency_resolver.rs",
@@ -332,9 +332,9 @@
     },
     {
       "path": "src/frontend/typechecker/collect/stdlib_imports.rs",
-      "category": "stdlib import, checked API target paths, and extension-trait compatibility",
-      "expected_count": 9,
-      "expected_fingerprint": "0x56c1ff8fc69debec"
+      "category": "stdlib import, checked API target paths, provider-bound roots, and extension-trait compatibility",
+      "expected_count": 10,
+      "expected_fingerprint": "0x6b541f0e7968ad59"
     },
     {
       "path": "src/frontend/typechecker/const_eval.rs",

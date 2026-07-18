@@ -33,13 +33,13 @@ use std::env;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::builtin_stdlib::BuiltinStdlibModules;
 use crate::frontend::ast::{Declaration, ImportKind, Program};
 use crate::frontend::diagnostics::CompileError;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::canonicalize_source_module_segments;
 use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
 use crate::library_manifest::LibraryManifest;
+use crate::provider::ProviderPlan;
 use incan_core::lang::stdlib;
 
 use super::emit::CallableNameResolution;
@@ -157,8 +157,8 @@ struct IrGenerationOptions<'a> {
     direct_generated_path_support_items: Option<&'a mut HashMap<Vec<String>, HashSet<String>>>,
 }
 
-/// Lowered metadata-only modules whose generated Rust identity belongs to the compiled built-in stdlib artifact.
-type CompiledStdlibMetadataPrograms = Vec<(Vec<String>, IrProgram)>;
+/// Lowered metadata-only modules whose generated Rust identity belongs to compiled SDK providers.
+type CompiledSdkMetadataPrograms = Vec<(Vec<String>, IrProgram)>;
 
 impl IrGenerationOptions<'_> {
     /// Build options for an ordinary single-program generation pass.
@@ -186,9 +186,9 @@ pub struct IrCodegen<'a> {
     dependency_modules: Vec<(&'a str, &'a Program, Option<Vec<String>>)>,
     /// Source-derived dependency symbols used for Rust qualification but linked from an external artifact.
     ///
-    /// The compiler still typechecks built-in stdlib imports against their source contracts. Once a module is supplied
-    /// by `incan_builtin_stdlib`, codegen must retain those contracts' canonical symbol paths without treating the
-    /// module as a consumer-local Rust source module.
+    /// The compiler typechecks provider imports against checked contracts. Once a module is supplied by a compiled
+    /// provider, codegen must retain those contracts' canonical symbol paths without treating the module as a
+    /// consumer-local Rust source module.
     dependency_symbol_modules: Vec<(&'a str, &'a Program, Option<Vec<String>>)>,
     /// Whether serde is needed for emitted Rust derives or helpers.
     // Serde still affects emitted Rust imports and derive augmentation in IR emission, so this remains an
@@ -207,12 +207,8 @@ pub struct IrCodegen<'a> {
     /// When set, internal typechecking (used to obtain `TypeCheckInfo` for lowering) will validate `rust.module()`
     /// crate segments against this set.
     declared_crate_names: Option<HashSet<String>>,
-    /// Consumer-side `pub::` dependency metadata used by internal typechecking.
-    library_manifest_index: Option<Arc<LibraryManifestIndex>>,
-    /// Compiler-owned `.incnlib` metadata for migrated built-in stdlib modules.
-    builtin_stdlib_manifest: Option<Arc<LibraryManifest>>,
-    /// Module ownership derived from the built-in stdlib entrypoint or its compiled manifest.
-    builtin_stdlib_modules: BuiltinStdlibModules,
+    /// Shared provider and feature projection used by checking, lowering, and emission.
+    provider_plan: Option<Arc<ProviderPlan>>,
     /// Whether generated Rust should deny warnings so tests can prove normal emission stays warning-clean.
     strict_generated_lints: bool,
     /// Private IR items called by generated code that is appended outside normal IR emission.
@@ -246,9 +242,7 @@ impl<'a> IrCodegen<'a> {
             rust_crates: HashSet::new(),
             emit_zen_in_main: false,
             declared_crate_names: None,
-            library_manifest_index: None,
-            builtin_stdlib_manifest: None,
-            builtin_stdlib_modules: BuiltinStdlibModules::default(),
+            provider_plan: None,
             strict_generated_lints: false,
             externally_reachable_items: HashSet::new(),
             externally_reachable_items_by_module: HashMap::new(),
@@ -416,43 +410,52 @@ impl<'a> IrCodegen<'a> {
     fn apply_dependency_symbol_metadata(
         emitter: &mut IrEmitter<'_>,
         metadata: &DependencySymbolMetadata,
-        library_manifest_index: Option<&Arc<LibraryManifestIndex>>,
-        builtin_stdlib_manifest: Option<&LibraryManifest>,
-        builtin_stdlib_modules: &BuiltinStdlibModules,
+        provider_plan: Option<&ProviderPlan>,
     ) {
-        emitter.set_builtin_stdlib_artifact_module_paths(
-            builtin_stdlib_modules
-                .relative_paths()
-                .map(<[String]>::to_vec)
-                .collect(),
-        );
+        let stdlib_module_paths = provider_plan
+            .map(ProviderPlan::active_std_module_paths)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|path| {
+                path.strip_prefix(&[stdlib::STDLIB_ROOT.to_string()])
+                    .map(<[String]>::to_vec)
+            })
+            .collect();
+        emitter.set_compiled_sdk_module_paths(stdlib_module_paths);
         emitter.set_type_module_paths(metadata.module_paths.clone(), metadata.ambiguous_type_names.clone());
         emitter.set_value_module_paths(
             metadata.value_module_paths.clone(),
             metadata.ambiguous_value_names.clone(),
         );
         let mut enum_type_names = metadata.enum_type_names.clone();
-        if let Some(manifest) = builtin_stdlib_manifest {
-            enum_type_names.extend(manifest.exports.enums.iter().map(|enum_| enum_.name.clone()));
-            enum_type_names.extend(
-                manifest
-                    .contract_metadata
-                    .api
-                    .iter()
-                    .flat_map(|api| api.modules.iter())
-                    .flat_map(|module| module.declarations.iter())
-                    .filter_map(|declaration| match declaration {
-                        crate::frontend::api_metadata::ApiDeclaration::Enum(enum_) => Some(enum_.name.clone()),
-                        _ => None,
-                    }),
-            );
+        if let Some(plan) = provider_plan {
+            for provider in plan.active_sdk_records() {
+                let Some(manifest) = provider.manifest.as_deref() else {
+                    continue;
+                };
+                enum_type_names.extend(manifest.exports.enums.iter().map(|enum_| enum_.name.clone()));
+                enum_type_names.extend(
+                    manifest
+                        .contract_metadata
+                        .api
+                        .iter()
+                        .flat_map(|api| api.modules.iter())
+                        .flat_map(|module| module.declarations.iter())
+                        .filter_map(|declaration| match declaration {
+                            crate::frontend::api_metadata::ApiDeclaration::Enum(enum_) => Some(enum_.name.clone()),
+                            _ => None,
+                        }),
+                );
+            }
         }
         emitter.set_dependency_enum_types(enum_type_names);
-        if let Some(index) = library_manifest_index {
-            emitter.seed_public_dependency_nominal_metadata(index);
-        }
-        if let Some(manifest) = builtin_stdlib_manifest {
-            emitter.seed_builtin_stdlib_manifest_metadata(manifest);
+        if let Some(plan) = provider_plan {
+            emitter.seed_public_dependency_nominal_metadata(plan.library_manifest_index());
+            for provider in plan.active_sdk_records() {
+                if let Some(manifest) = provider.manifest.as_deref() {
+                    emitter.seed_sdk_provider_manifest_metadata(manifest);
+                }
+            }
         }
     }
 
@@ -478,7 +481,10 @@ impl<'a> IrCodegen<'a> {
 
     /// Collect the OrdinalKey bridge facts needed by the emitter for this program.
     fn ordinal_bridge_config(&self, uses_std_ordinal_contract: bool) -> OrdinalBridgeConfig {
-        OrdinalBridgeConfig::for_crate_root(uses_std_ordinal_contract, self.library_manifest_index.as_ref())
+        OrdinalBridgeConfig::for_crate_root(
+            uses_std_ordinal_contract,
+            self.provider_plan.as_deref().map(ProviderPlan::library_manifest_index),
+        )
     }
 
     /// Collect `TryFrom[str]` bridge facts needed at the generated crate root.
@@ -539,24 +545,47 @@ impl<'a> IrCodegen<'a> {
         self.declared_crate_names = Some(names);
     }
 
-    /// Set the consumer-side library manifest index for `pub::` import validation.
+    /// Set the consumer-side library manifest index for focused `pub::` tests and embedding adapters.
     pub fn set_library_manifest_index(&mut self, index: LibraryManifestIndex) {
-        self.library_manifest_index = Some(Arc::new(index));
+        self.provider_plan = Some(Arc::new(ProviderPlan::for_library_index(index)));
     }
 
-    /// Set the compiled built-in stdlib artifact manifest used by internal typechecking.
-    pub fn set_builtin_stdlib_manifest(&mut self, manifest: LibraryManifest) {
-        self.builtin_stdlib_modules = BuiltinStdlibModules::from_manifest(&manifest);
-        self.builtin_stdlib_manifest = Some(Arc::new(manifest));
+    /// Set one in-memory SDK provider manifest for focused compiler tests.
+    #[doc(hidden)]
+    pub fn set_sdk_provider_manifest(&mut self, manifest: LibraryManifest) {
+        let library_index = self
+            .provider_plan
+            .as_deref()
+            .map(ProviderPlan::library_manifest_index)
+            .cloned()
+            .unwrap_or_default();
+        self.provider_plan = Some(Arc::new(ProviderPlan::for_in_memory_sdk_manifest(
+            library_index,
+            manifest,
+        )));
     }
 
-    /// Set built-in stdlib module paths already derived from the artifact entrypoint or checked manifest.
+    /// Set SDK-provider module paths already derived from a producer entrypoint or checked manifest.
     ///
-    /// Compiler frontends should normally call [`Self::set_builtin_stdlib_manifest`]. This lower-level hook supports
+    /// Compiler frontends should normally call [`Self::set_sdk_provider_manifest`]. This lower-level hook supports
     /// source-backed codegen fixtures and embedders that already own equivalent checked module discovery.
     #[doc(hidden)]
-    pub fn set_builtin_stdlib_artifact_module_paths(&mut self, module_paths: Vec<Vec<String>>) {
-        self.builtin_stdlib_modules = BuiltinStdlibModules::from_relative_paths(module_paths);
+    pub fn set_sdk_provider_module_paths(&mut self, module_paths: Vec<Vec<String>>) {
+        let library_index = self
+            .provider_plan
+            .as_deref()
+            .map(ProviderPlan::library_manifest_index)
+            .cloned()
+            .unwrap_or_default();
+        self.provider_plan = Some(Arc::new(ProviderPlan::for_in_memory_sdk_modules(
+            library_index,
+            module_paths,
+        )));
+    }
+
+    /// Set the immutable provider plan shared across every compiler stage.
+    pub fn set_provider_plan(&mut self, plan: Arc<ProviderPlan>) {
+        self.provider_plan = Some(plan);
     }
 
     /// Set the manifest/workspace root used for rust-inspect-backed typechecking during IR generation.
@@ -587,11 +616,8 @@ impl<'a> IrCodegen<'a> {
         if let Some(names) = self.declared_crate_names.clone() {
             tc.set_declared_crate_names(names);
         }
-        if let Some(index) = self.library_manifest_index.clone() {
-            tc.set_library_manifest_index_shared(index);
-        }
-        if let Some(manifest) = self.builtin_stdlib_manifest.clone() {
-            tc.set_builtin_stdlib_manifest(manifest);
+        if let Some(plan) = self.provider_plan.clone() {
+            tc.set_provider_plan(plan);
         }
         #[cfg(feature = "rust_inspect")]
         if let Some(dir) = self.rust_inspect_manifest_dir.clone() {
@@ -615,8 +641,7 @@ impl<'a> IrCodegen<'a> {
     /// Apply codegen's shared metadata context to one AST lowering pass.
     fn configure_lowering(&self, lowering: &mut AstLowering) {
         lowering.set_stdlib_cache(self.stdlib_cache.clone());
-        lowering.set_library_manifest_index(self.library_manifest_index.clone());
-        lowering.set_builtin_stdlib_manifest(self.builtin_stdlib_manifest.clone());
+        lowering.set_provider_plan(self.provider_plan.clone());
     }
 
     /// Add a dependency module (for multi-file compilation)
@@ -640,7 +665,7 @@ impl<'a> IrCodegen<'a> {
 
     /// Add dependency source metadata without scheduling that module for local Rust emission.
     ///
-    /// This remains available for non-emitted source dependencies. Migrated built-in stdlib imports instead derive
+    /// This remains available for non-emitted source dependencies. Compiled SDK-provider imports instead derive
     /// their semantics from the compiled artifact manifest and resolve Rust symbols through the linked artifact crate.
     pub fn add_dependency_symbol_module_with_path_segments(
         &mut self,
@@ -672,22 +697,25 @@ impl<'a> IrCodegen<'a> {
     /// Anonymous unions have stable structural names but no source-level name to place in the `.incnlib` contract yet.
     /// Until that manifest capability exists, this source-derived registry preserves one Rust nominal identity without
     /// re-emitting the provider modules in every consumer.
-    fn compiled_builtin_stdlib_metadata_programs(
-        &mut self,
-    ) -> Result<(HashMap<String, String>, CompiledStdlibMetadataPrograms), GenerationError> {
-        if let Some(manifest) = self.builtin_stdlib_manifest.as_deref() {
-            return Ok((
-                IrEmitter::builtin_stdlib_artifact_union_type_libraries(manifest),
-                Vec::new(),
-            ));
+    fn compiled_sdk_metadata_programs(&mut self) -> Result<CompiledSdkMetadataPrograms, GenerationError> {
+        if let Some(plan) = self.provider_plan.as_deref() {
+            let mut has_compiled_provider = false;
+            for provider in plan.active_sdk_records() {
+                let Some(_manifest) = provider.manifest.as_deref() else {
+                    continue;
+                };
+                has_compiled_provider = true;
+            }
+            if has_compiled_provider {
+                return Ok(Vec::new());
+            }
         }
         if self.dependency_symbol_modules.is_empty() {
-            return Ok((HashMap::new(), Vec::new()));
+            return Ok(Vec::new());
         }
 
         let dependencies = self.dependency_modules_for_symbol_metadata();
         let symbol_modules = self.dependency_symbol_modules.clone();
-        let mut libraries = HashMap::new();
         let mut programs = Vec::new();
         for (module_name, module_ast, path_segments) in symbol_modules {
             let Some(path_segments) = path_segments.as_ref() else {
@@ -715,12 +743,9 @@ impl<'a> IrCodegen<'a> {
             lowering.set_current_source_module_name(Some(path_segments.join(".")));
             lowering.seed_dependency_trait_decls(&dependencies);
             let ir = lowering.lower_program(module_ast)?;
-            for name in IrEmitter::collect_union_types_from_program(&ir).into_keys() {
-                libraries.insert(name, stdlib::BUILTIN_STDLIB_ARTIFACT_CRATE.to_string());
-            }
             programs.push((path_segments.clone(), ir));
         }
-        Ok((libraries, programs))
+        Ok(programs)
     }
 
     /// Backfill nested module path segments for a dependency module by name.
@@ -889,8 +914,7 @@ impl<'a> IrCodegen<'a> {
     ) -> Result<String, GenerationError> {
         let dependency_modules = self.dependency_modules.clone();
         let dependency_symbol_modules = self.dependency_modules_for_symbol_metadata();
-        let (external_union_type_libraries, compiled_stdlib_metadata_programs) =
-            self.compiled_builtin_stdlib_metadata_programs()?;
+        let compiled_stdlib_metadata_programs = self.compiled_sdk_metadata_programs()?;
         let deps: Vec<(&str, &Program)> = dependency_modules.iter().map(|(name, ast, _)| (*name, *ast)).collect();
 
         // RFC 021: Make alias-aware lowering work across module boundaries by seeding alias maps
@@ -1028,14 +1052,7 @@ impl<'a> IrCodegen<'a> {
             if self.emit_zen_in_main {
                 inner.set_emit_zen(true);
             }
-            Self::apply_dependency_symbol_metadata(
-                inner,
-                &dependency_symbol_metadata,
-                self.library_manifest_index.as_ref(),
-                self.builtin_stdlib_manifest.as_deref(),
-                &self.builtin_stdlib_modules,
-            );
-            inner.set_external_union_type_libraries(external_union_type_libraries.clone());
+            Self::apply_dependency_symbol_metadata(inner, &dependency_symbol_metadata, self.provider_plan.as_deref());
             inner.set_needs_serde(self.needs_serde);
             inner.set_external_rust_functions(self.external_rust_functions.clone());
             inner.set_strict_generated_lints(self.strict_generated_lints);
@@ -1064,11 +1081,8 @@ impl<'a> IrCodegen<'a> {
             Self::apply_dependency_symbol_metadata(
                 &mut emitter,
                 &dependency_symbol_metadata,
-                self.library_manifest_index.as_ref(),
-                self.builtin_stdlib_manifest.as_deref(),
-                &self.builtin_stdlib_modules,
+                self.provider_plan.as_deref(),
             );
-            emitter.set_external_union_type_libraries(external_union_type_libraries.clone());
             emitter.set_needs_serde(self.needs_serde);
             emitter.set_external_rust_functions(self.external_rust_functions.clone());
             emitter.set_strict_generated_lints(self.strict_generated_lints);
@@ -1278,8 +1292,7 @@ impl<'a> IrCodegen<'a> {
 
         let dependency_modules = self.dependency_modules.clone();
         let dependency_symbol_modules = self.dependency_modules_for_symbol_metadata();
-        let (external_union_type_libraries, compiled_stdlib_metadata_programs) =
-            self.compiled_builtin_stdlib_metadata_programs()?;
+        let compiled_stdlib_metadata_programs = self.compiled_sdk_metadata_programs()?;
         let deps: Vec<(&str, &Program)> = dependency_modules.iter().map(|(name, ast, _)| (*name, *ast)).collect();
         let global_aliases = collect_model_field_aliases(program, &deps);
         let dependency_symbol_metadata = collect_dependency_symbol_metadata(&dependency_symbol_modules);
@@ -1416,11 +1429,8 @@ impl<'a> IrCodegen<'a> {
                 Self::apply_dependency_symbol_metadata(
                     inner,
                     &dependency_symbol_metadata,
-                    self.library_manifest_index.as_ref(),
-                    self.builtin_stdlib_manifest.as_deref(),
-                    &self.builtin_stdlib_modules,
+                    self.provider_plan.as_deref(),
                 );
-                inner.set_external_union_type_libraries(external_union_type_libraries.clone());
                 inner.set_external_rust_functions(self.external_rust_functions.clone());
                 inner.set_qualify_union_types_from_crate(true);
                 inner.set_emit_generated_union_definitions(false);
@@ -1444,11 +1454,8 @@ impl<'a> IrCodegen<'a> {
                 Self::apply_dependency_symbol_metadata(
                     &mut emitter,
                     &dependency_symbol_metadata,
-                    self.library_manifest_index.as_ref(),
-                    self.builtin_stdlib_manifest.as_deref(),
-                    &self.builtin_stdlib_modules,
+                    self.provider_plan.as_deref(),
                 );
-                emitter.set_external_union_type_libraries(external_union_type_libraries.clone());
                 emitter.set_external_rust_functions(self.external_rust_functions.clone());
                 emitter.set_qualify_union_types_from_crate(true);
                 emitter.set_emit_generated_union_definitions(false);
@@ -1541,8 +1548,7 @@ impl<'a> IrCodegen<'a> {
 
         let dependency_modules = self.dependency_modules.clone();
         let dependency_symbol_modules = self.dependency_modules_for_symbol_metadata();
-        let (external_union_type_libraries, compiled_stdlib_metadata_programs) =
-            self.compiled_builtin_stdlib_metadata_programs()?;
+        let compiled_stdlib_metadata_programs = self.compiled_sdk_metadata_programs()?;
         let deps: Vec<(&str, &Program)> = dependency_modules.iter().map(|(name, ast, _)| (*name, *ast)).collect();
         let global_aliases = collect_model_field_aliases(program, &deps);
         let dependency_symbol_metadata = collect_dependency_symbol_metadata(&dependency_symbol_modules);
@@ -1679,11 +1685,8 @@ impl<'a> IrCodegen<'a> {
                 Self::apply_dependency_symbol_metadata(
                     inner,
                     &dependency_symbol_metadata,
-                    self.library_manifest_index.as_ref(),
-                    self.builtin_stdlib_manifest.as_deref(),
-                    &self.builtin_stdlib_modules,
+                    self.provider_plan.as_deref(),
                 );
-                inner.set_external_union_type_libraries(external_union_type_libraries.clone());
                 inner.set_external_rust_functions(self.external_rust_functions.clone());
                 inner.set_qualify_union_types_from_crate(true);
                 inner.set_emit_generated_union_definitions(false);
@@ -1707,11 +1710,8 @@ impl<'a> IrCodegen<'a> {
                 Self::apply_dependency_symbol_metadata(
                     &mut emitter,
                     &dependency_symbol_metadata,
-                    self.library_manifest_index.as_ref(),
-                    self.builtin_stdlib_manifest.as_deref(),
-                    &self.builtin_stdlib_modules,
+                    self.provider_plan.as_deref(),
                 );
-                emitter.set_external_union_type_libraries(external_union_type_libraries.clone());
                 emitter.set_external_rust_functions(self.external_rust_functions.clone());
                 emitter.set_qualify_union_types_from_crate(true);
                 emitter.set_emit_generated_union_definitions(false);
@@ -1775,11 +1775,11 @@ mod tests {
         must_ok(IrCodegen::new().try_generate(&ast))
     }
 
-    fn generate_with_builtin_stdlib_modules(source: &str, modules: Vec<Vec<String>>) -> String {
+    fn generate_with_sdk_provider_modules(source: &str, modules: Vec<Vec<String>>) -> String {
         let tokens = must_ok(lexer::lex(source));
         let ast = must_ok(parser::parse(&tokens));
         let mut codegen = IrCodegen::new();
-        codegen.set_builtin_stdlib_artifact_module_paths(modules);
+        codegen.set_sdk_provider_module_paths(modules);
         must_ok(codegen.try_generate(&ast))
     }
 
@@ -1963,7 +1963,7 @@ pub modulo = alias mod
 
     #[test]
     fn top_level_qualified_alias_preserves_target_path() {
-        let code = generate_with_builtin_stdlib_modules(
+        let code = generate_with_sdk_provider_modules(
             r#"
 import std.math as math
 
@@ -1971,7 +1971,7 @@ pub root = math.sqrt
 "#,
             vec![vec!["math".to_string()]],
         );
-        assert!(code.contains("pub use incan_builtin_stdlib::math as math;"), "{code}");
+        assert!(code.contains("pub use crate::__incan_std::math as math;"), "{code}");
         assert!(code.contains("pub use math::sqrt as root;"), "{code}");
     }
 

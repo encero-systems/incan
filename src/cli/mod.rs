@@ -46,12 +46,14 @@ use std::path::PathBuf;
 use std::process;
 
 use crate::manifest::ProjectManifest;
-use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
+use crate::provider::FeatureSelection;
+use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use commands::build_report::{BuildReportFormat, BuildReportOptions, RustInspectionFormat};
 use commands::codegraph::CodegraphInspectionFormat;
 use commands::common::{CargoPolicy, CargoPolicyCliFlags};
 use commands::diagnostics::DiagnosticOutputFormat;
 use commands::lifecycle::{EnvOutputFormat, VersionBumpArg};
+use commands::provider_inspect::ProviderInspectionFormat;
 use commands::tools::{ToolsDoctorFormat, ToolsMetadataFormat, ToolsModelMetadataFormat};
 
 // ============================================================================
@@ -173,6 +175,48 @@ pub enum ColorMode {
     Never,
 }
 
+/// Incan package-feature selection shared by compilation commands.
+///
+/// These flags select package-owned semantic features. They are intentionally separate from the explicitly prefixed
+/// Cargo feature flags, which remain private backend controls.
+#[derive(Args, Debug, Clone, Default, PartialEq, Eq)]
+pub struct PackageFeatureCliFlags {
+    /// Incan package features to enable (comma-separated)
+    #[arg(long = "features", value_delimiter = ',', value_name = "FEATURE")]
+    features: Vec<String>,
+    /// Disable the Incan package's default features
+    #[arg(long = "no-default-features")]
+    no_default_features: bool,
+    /// Enable every Incan package feature
+    #[arg(long = "all-features")]
+    all_features: bool,
+}
+
+impl From<PackageFeatureCliFlags> for FeatureSelection {
+    fn from(flags: PackageFeatureCliFlags) -> Self {
+        Self {
+            requested: flags.features.into_iter().collect(),
+            no_default_features: flags.no_default_features,
+            all_features: flags.all_features,
+        }
+    }
+}
+
+/// Command-local SDK profile selection shared by compilation and inspection commands.
+#[derive(Args, Debug, Clone, Default, PartialEq, Eq)]
+pub struct SdkProfileCliFlags {
+    /// Replace the project's SDK profile for this invocation without changing explicit additions or exclusions
+    #[arg(long = "sdk-profile", value_name = "PROFILE")]
+    sdk_profile: Option<String>,
+}
+
+impl SdkProfileCliFlags {
+    /// Return the command-local SDK profile override without changing persistent project selection.
+    fn profile(&self) -> Option<&str> {
+        self.sdk_profile.as_deref()
+    }
+}
+
 #[derive(Subcommand, Debug)]
 pub enum Command {
     /// Compile to Rust and build executable
@@ -186,6 +230,12 @@ pub enum Command {
         /// Output directory (default: `target/incan/<name>`)
         #[arg(value_name = "OUTPUT_DIR")]
         output_dir: Option<PathBuf>,
+        /// Select Incan package features for this compilation
+        #[command(flatten)]
+        package_features: PackageFeatureCliFlags,
+        /// Select a non-persistent SDK profile for this compilation
+        #[command(flatten)]
+        sdk_profile: SdkProfileCliFlags,
         /// Require up-to-date incan.lock and pass --locked to Cargo
         #[arg(long)]
         locked: bool,
@@ -242,6 +292,12 @@ pub enum Command {
         /// Output format
         #[arg(long = "format", value_enum, default_value = "text")]
         format: DiagnosticOutputFormat,
+        /// Select Incan package features for this check
+        #[command(flatten)]
+        package_features: PackageFeatureCliFlags,
+        /// Select a non-persistent SDK profile for this check
+        #[command(flatten)]
+        sdk_profile: SdkProfileCliFlags,
     },
 
     /// Explain a diagnostic code
@@ -262,6 +318,12 @@ pub enum Command {
         /// Run inline source code
         #[arg(short = 'c', long = "command", value_name = "CODE")]
         command: Option<String>,
+        /// Select Incan package features for this compilation
+        #[command(flatten)]
+        package_features: PackageFeatureCliFlags,
+        /// Select a non-persistent SDK profile for this compilation
+        #[command(flatten)]
+        sdk_profile: SdkProfileCliFlags,
         /// Require up-to-date incan.lock and pass --locked to Cargo
         #[arg(long)]
         locked: bool,
@@ -355,6 +417,12 @@ pub enum Command {
         /// Path to test file or directory
         #[arg(value_name = "PATH", default_value = ".")]
         path: PathBuf,
+        /// Select Incan package features for collection and generated test batches
+        #[command(flatten)]
+        package_features: PackageFeatureCliFlags,
+        /// Select a non-persistent SDK profile for collection and generated test batches
+        #[command(flatten)]
+        sdk_profile: SdkProfileCliFlags,
         /// Verbose output
         #[arg(short, long)]
         verbose: bool,
@@ -505,6 +573,12 @@ pub enum Command {
         /// Entry file used to resolve inline dependencies
         #[arg(value_name = "FILE")]
         file: Option<PathBuf>,
+        /// Select Incan package features for the locked graph
+        #[command(flatten)]
+        package_features: PackageFeatureCliFlags,
+        /// Select a non-persistent SDK profile for the locked graph
+        #[command(flatten)]
+        sdk_profile: SdkProfileCliFlags,
         /// Cargo features to enable (comma-separated)
         #[arg(long = "cargo-features", value_delimiter = ',')]
         cargo_features: Vec<String>,
@@ -542,6 +616,40 @@ pub enum InspectCommand {
         /// Emit partial graph records and diagnostics for broken source
         #[arg(long = "allow-errors")]
         allow_errors: bool,
+        /// Select Incan package features for this graph projection
+        #[command(flatten)]
+        package_features: PackageFeatureCliFlags,
+        /// Select a non-persistent SDK profile for this graph projection
+        #[command(flatten)]
+        sdk_profile: SdkProfileCliFlags,
+    },
+    /// Inspect active SDK components and compiled providers
+    Providers {
+        /// Source file or project directory whose provider projection should be inspected
+        #[arg(value_name = "PATH", default_value = ".")]
+        path: PathBuf,
+        /// Output format
+        #[arg(long = "format", value_enum, default_value = "text")]
+        format: ProviderInspectionFormat,
+        #[command(flatten)]
+        package_features: PackageFeatureCliFlags,
+        /// Select a non-persistent SDK profile for this provider projection
+        #[command(flatten)]
+        sdk_profile: SdkProfileCliFlags,
+    },
+    /// Inspect public package-feature roots, closure, edges, and conditioned facts
+    Features {
+        /// Source file or project directory whose feature projection should be inspected
+        #[arg(value_name = "PATH", default_value = ".")]
+        path: PathBuf,
+        /// Output format
+        #[arg(long = "format", value_enum, default_value = "text")]
+        format: ProviderInspectionFormat,
+        #[command(flatten)]
+        package_features: PackageFeatureCliFlags,
+        /// Select a non-persistent SDK profile for this feature projection
+        #[command(flatten)]
+        sdk_profile: SdkProfileCliFlags,
     },
 }
 
@@ -690,6 +798,8 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             file,
             lib_mode,
             output_dir,
+            package_features,
+            sdk_profile,
             locked,
             offline,
             no_offline,
@@ -725,6 +835,8 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             );
             let build_options = commands::build::BuildCommandOptions {
                 cargo_policy,
+                package_features: package_features.into(),
+                sdk_profile: sdk_profile.sdk_profile,
                 cargo_features,
                 cargo_no_default_features,
                 cargo_all_features,
@@ -738,7 +850,12 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 commands::build_file(&file.to_string_lossy(), out.as_ref(), build_options, report_options)
             }
         }
-        Some(Command::Check { path, format }) => commands::check_path(&path, format),
+        Some(Command::Check {
+            path,
+            format,
+            package_features,
+            sdk_profile,
+        }) => commands::check_path_with_selections(&path, format, &package_features.into(), sdk_profile.profile()),
         Some(Command::Explain { code, format }) => commands::explain_diagnostic(&code, format),
         Some(Command::Inspect { command }) => match command {
             InspectCommand::Rust { path, lib_mode, format } => commands::inspect_rust(&path, lib_mode, format),
@@ -746,11 +863,33 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 path,
                 format,
                 allow_errors,
-            } => commands::inspect_codegraph(&path, format, allow_errors),
+                package_features,
+                sdk_profile,
+            } => commands::inspect_codegraph(
+                &path,
+                format,
+                allow_errors,
+                &package_features.into(),
+                sdk_profile.profile(),
+            ),
+            InspectCommand::Providers {
+                path,
+                format,
+                package_features,
+                sdk_profile,
+            } => commands::inspect_providers(&path, format, &package_features.into(), sdk_profile.profile()),
+            InspectCommand::Features {
+                path,
+                format,
+                package_features,
+                sdk_profile,
+            } => commands::inspect_features(&path, format, &package_features.into(), sdk_profile.profile()),
         },
         Some(Command::Run {
             file,
             command,
+            package_features,
+            sdk_profile,
             locked,
             offline,
             no_offline,
@@ -778,6 +917,8 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                     cargo_args,
                     cargo_passthrough,
                 ),
+                package_features: package_features.into(),
+                sdk_profile: sdk_profile.sdk_profile,
                 cargo_features,
                 cargo_no_default_features,
                 cargo_all_features,
@@ -787,6 +928,8 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
         Some(Command::Fmt { path, check, diff }) => commands::format_files(&path.to_string_lossy(), check, diff),
         Some(Command::Test {
             path,
+            package_features,
+            sdk_profile,
             verbose,
             stop_on_fail,
             slow,
@@ -826,6 +969,8 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             strict_markers,
             jobs,
             test_features,
+            package_features: package_features.into(),
+            sdk_profile: sdk_profile.sdk_profile,
             timeout: timeout.as_deref(),
             no_capture,
             use_color,
@@ -928,11 +1073,15 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
         ),
         Some(Command::Lock {
             file,
+            package_features,
+            sdk_profile,
             cargo_features,
             cargo_no_default_features,
             cargo_all_features,
         }) => commands::lock_project(
             file.as_ref(),
+            &package_features.into(),
+            sdk_profile.profile(),
             cargo_features,
             cargo_no_default_features,
             cargo_all_features,
@@ -967,6 +1116,8 @@ struct RunInput {
 
 struct RunOptions {
     cargo_policy: CargoPolicy,
+    package_features: FeatureSelection,
+    sdk_profile: Option<String>,
     cargo_features: Vec<String>,
     cargo_no_default_features: bool,
     cargo_all_features: bool,
@@ -1020,6 +1171,8 @@ fn execute_run(input: RunInput, opts: RunOptions) -> CliResult<ExitCode> {
         commands::run_inline_source(
             &code,
             opts.cargo_policy.clone(),
+            opts.package_features.clone(),
+            opts.sdk_profile.clone(),
             opts.cargo_features.clone(),
             opts.cargo_no_default_features,
             opts.cargo_all_features,
@@ -1031,6 +1184,8 @@ fn execute_run(input: RunInput, opts: RunOptions) -> CliResult<ExitCode> {
         commands::run_file(
             &file.to_string_lossy(),
             opts.cargo_policy,
+            opts.package_features,
+            opts.sdk_profile,
             opts.cargo_features,
             opts.cargo_no_default_features,
             opts.cargo_all_features,
@@ -1191,6 +1346,35 @@ mod tests {
         assert!(!no_locked);
         assert!(!no_frozen);
         assert_eq!(cargo_args, vec!["--timings", "--color=always"]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_cli_keeps_incan_and_cargo_feature_flags_separate() -> Result<(), clap::Error> {
+        let cli = parse_cli([
+            "incan",
+            "build",
+            "test.incn",
+            "--features",
+            "json,http",
+            "--no-default-features",
+            "--cargo-features",
+            "serde,tokio",
+        ])?;
+        let Some(Command::Build {
+            package_features,
+            cargo_features,
+            cargo_no_default_features,
+            ..
+        }) = cli.command
+        else {
+            return Err(expected_command("build"));
+        };
+        assert_eq!(package_features.features, ["json", "http"]);
+        assert!(package_features.no_default_features);
+        assert!(!package_features.all_features);
+        assert_eq!(cargo_features, ["serde", "tokio"]);
+        assert!(!cargo_no_default_features);
         Ok(())
     }
 

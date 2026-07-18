@@ -7,7 +7,7 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-pub use incan_builtin_stdlib::compression::_core::Codec;
-pub use incan_builtin_stdlib::compression::_core::CompressionError;
-pub use incan_builtin_stdlib::compression::_auto::decompress_auto;
-pub use incan_builtin_stdlib::compression::_auto::decompress_auto_stream;
+pub use crate::__incan_std::compression::_core::Codec;
+pub use crate::__incan_std::compression::_core::CompressionError;
+pub use crate::__incan_std::compression::_auto::decompress_auto;
+pub use crate::__incan_std::compression::_auto::decompress_auto_stream;

@@ -11,16 +11,15 @@ use serde::Serialize;
 
 use crate::cli::{CliError, CliResult, ExitCode};
 use crate::frontend::diagnostics::{self, DIAGNOSTIC_SCHEMA_VERSION, StableDiagnostic};
-use crate::frontend::library_manifest_index::LibraryManifestIndex;
 #[cfg(feature = "rust_inspect")]
 use crate::lockfile::CargoFeatureSelection;
 use crate::manifest::ProjectManifest;
+use crate::provider::FeatureSelection;
 
 #[cfg(feature = "rust_inspect")]
 use super::common::CargoPolicy;
 use super::common::{
-    CliDiagnosticFailure, collect_modules_detailed, collect_project_requirements,
-    compiled_builtin_stdlib_manifest_for_requirements, resolve_project_root,
+    CliDiagnosticFailure, CompilationSession, collect_modules_detailed_with_selections, resolve_project_root,
     typecheck_modules_with_import_graph_detailed,
 };
 #[cfg(feature = "rust_inspect")]
@@ -49,7 +48,30 @@ struct ExplainReport {
 
 /// Run the canonical check pipeline for a file or project entrypoint.
 pub fn check_path(path: &Path, format: DiagnosticOutputFormat) -> CliResult<ExitCode> {
-    let modules = match collect_modules_detailed(&path.to_string_lossy()) {
+    check_path_with_features(path, format, &FeatureSelection::default())
+}
+
+/// Run the canonical check pipeline for an explicit Incan package-feature projection.
+pub fn check_path_with_features(
+    path: &Path,
+    format: DiagnosticOutputFormat,
+    feature_selection: &FeatureSelection,
+) -> CliResult<ExitCode> {
+    check_path_with_selections(path, format, feature_selection, None)
+}
+
+/// Run the canonical check pipeline for explicit package-feature and transient SDK-profile selections.
+pub fn check_path_with_selections(
+    path: &Path,
+    format: DiagnosticOutputFormat,
+    feature_selection: &FeatureSelection,
+    sdk_profile_override: Option<&str>,
+) -> CliResult<ExitCode> {
+    let modules = match collect_modules_detailed_with_selections(
+        &path.to_string_lossy(),
+        feature_selection,
+        sdk_profile_override,
+    ) {
         Ok(modules) => modules,
         Err(failure) => return render_check_failure(failure, format),
     };
@@ -67,12 +89,10 @@ pub fn check_path(path: &Path, format: DiagnosticOutputFormat) -> CliResult<Exit
             return render_check_failure(failure, format);
         }
     };
-    let library_manifest_index = manifest
-        .as_ref()
-        .map(LibraryManifestIndex::from_project_manifest)
-        .unwrap_or_default();
-    let project_requirements = collect_project_requirements(&modules, &library_manifest_index)?;
-    let builtin_stdlib_manifest = compiled_builtin_stdlib_manifest_for_requirements(&project_requirements)?;
+    let compilation_session =
+        CompilationSession::discover_with_selections(&normalized_path, feature_selection, sdk_profile_override)?;
+    let library_manifest_index = compilation_session.library_manifest_index.clone();
+    let provider_plan = compilation_session.provider_plan_for_modules(&modules, true)?;
     #[cfg(feature = "rust_inspect")]
     let project_name = manifest
         .as_ref()
@@ -105,8 +125,7 @@ pub fn check_path(path: &Path, format: DiagnosticOutputFormat) -> CliResult<Exit
     match typecheck_modules_with_import_graph_detailed(
         &modules,
         manifest.as_ref(),
-        &library_manifest_index,
-        builtin_stdlib_manifest.as_ref(),
+        &provider_plan,
         #[cfg(feature = "rust_inspect")]
         rust_inspect_manifest_dir.as_deref(),
     ) {

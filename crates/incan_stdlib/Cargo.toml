@@ -17,10 +17,11 @@ serde_json = { version = "1.0", optional = true }
 axum = { version = "0.8", optional = true }
 tokio = { version = "1", optional = true, features = ["rt-multi-thread", "macros", "time", "sync", "net"] }
 inventory = { version = "0.3", optional = true }
-xxhash_rust = { package = "xxhash-rust", version = "0.8", features = ["xxh3"] }
+xxhash_rust = { package = "xxhash-rust", version = "0.8", optional = true, features = ["xxh3"] }
 
 [features]
 default = []
+ordinal = ["dep:xxhash_rust"]
 json = ["dep:serde", "dep:serde_json"]
 async = ["dep:tokio"]
 web = ["dep:axum", "async", "dep:serde", "dep:inventory"]

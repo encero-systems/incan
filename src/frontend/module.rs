@@ -601,6 +601,7 @@ mod tests {
             node,
             span: Span::default(),
             leading_blank_lines: 0,
+            required_features: Vec::new(),
         }
     }
 

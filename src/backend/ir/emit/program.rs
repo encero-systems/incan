@@ -43,7 +43,7 @@ use super::super::types::{IR_UNION_TYPE_NAME, IrType};
 use super::super::{FunctionRegistry, FunctionSignature, IrDecl, IrProgram, IrStmt, IrStmtKind, TypedExpr};
 use super::{CallableNameUseFacts, EmitError, GeneratedUseAnalysis, IrEmitter};
 
-const BUILTIN_STDLIB_ARTIFACT_BUILD_ENV: &str = "INCAN_INTERNAL_BUILTIN_STDLIB_ARTIFACT_BUILD";
+const SDK_PROVIDER_BUILD_ENV: &str = "INCAN_INTERNAL_SDK_PROVIDER_BUILD";
 
 struct OrdinalValueEnumBridgeSpec {
     type_path: TokenStream,
@@ -1391,7 +1391,7 @@ impl<'a> IrEmitter<'a> {
             Some(module_name)
                 if module_name == support.source_module
                     || module_name == support.generated_module
-                    || (std::env::var_os(BUILTIN_STDLIB_ARTIFACT_BUILD_ENV).is_some()
+                    || (std::env::var_os(SDK_PROVIDER_BUILD_ENV).is_some()
                         && support
                             .source_module
                             .strip_prefix("std.")
@@ -1759,14 +1759,10 @@ impl<'a> IrEmitter<'a> {
 
     /// Return the source-owned `TryFrom[str]` trait identity for the current generated crate.
     ///
-    /// A normal consumer must implement the trait exported by the compiled built-in artifact; only the artifact build
+    /// A normal consumer must implement the trait exported by the compiled provider; only the provider build
     /// itself owns the compatibility facade under `crate::__incan_std`.
     fn string_try_from_trait_path() -> TokenStream {
-        if std::env::var_os(BUILTIN_STDLIB_ARTIFACT_BUILD_ENV).is_some() {
-            quote! { crate::__incan_std::traits::convert::TryFrom }
-        } else {
-            quote! { incan_builtin_stdlib::traits::convert::TryFrom }
-        }
+        quote! { crate::__incan_std::traits::convert::TryFrom }
     }
 
     /// Return the `OrdinalKey` contract and error identities for the current generated crate.
@@ -1774,17 +1770,10 @@ impl<'a> IrEmitter<'a> {
     /// Consumers implement the trait exported by the compiled stdlib artifact; the artifact build itself keeps using
     /// its crate-local compatibility facade while source modules are compiled together.
     fn ordinal_key_contract_paths() -> (TokenStream, TokenStream) {
-        if std::env::var_os(BUILTIN_STDLIB_ARTIFACT_BUILD_ENV).is_some() {
-            (
-                quote! { crate::__incan_std::collections::OrdinalKey },
-                quote! { crate::__incan_std::collections::OrdinalMapError },
-            )
-        } else {
-            (
-                quote! { incan_builtin_stdlib::collections::OrdinalKey },
-                quote! { incan_builtin_stdlib::collections::OrdinalMapError },
-            )
-        }
+        (
+            quote! { crate::__incan_std::collections::OrdinalKey },
+            quote! { crate::__incan_std::collections::OrdinalMapError },
+        )
     }
 
     /// Emit compiler-provided `TryFrom[str]` implementations from local newtype construction plans.
@@ -3377,9 +3366,6 @@ impl<'a> IrEmitter<'a> {
                     continue;
                 }
                 if let Some(name) = union_ty.union_type_name() {
-                    if self.external_union_type_libraries.contains_key(&name) {
-                        continue;
-                    }
                     canonical_union_types.insert(name, union_ty);
                 }
             }

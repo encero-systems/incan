@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 
 fn incan_binary() -> PathBuf {
     if let Ok(path) = std::env::var("CARGO_BIN_EXE_incan") {
@@ -36,11 +36,16 @@ fn run_incan_with_env_and_removed(
     envs: &[(&str, &str)],
     removed_envs: &[&str],
 ) -> Result<Output, Box<dyn std::error::Error>> {
-    let mut command = Command::new(incan_binary());
+    let mut command = configured_incan_command(current_dir, args);
     for key in removed_envs {
         command.env_remove(key);
     }
-    Ok(command
+    Ok(command.envs(envs.iter().copied()).output()?)
+}
+
+fn configured_incan_command(current_dir: &Path, args: &[&str]) -> Command {
+    let mut command = Command::new(incan_binary());
+    command
         .args(args)
         .current_dir(current_dir)
         .env("CARGO_NET_OFFLINE", "true")
@@ -57,8 +62,11 @@ fn run_incan_with_env_and_removed(
             "INCAN_GENERATED_CARGO_TARGET_DIR",
             Path::new(env!("CARGO_MANIFEST_DIR")).join("target/incan_generated_shared_target"),
         )
-        .envs(envs.iter().copied())
-        .output()?)
+        .env(
+            "INCAN_INTERNAL_SDK_PROVIDER_STORE",
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("target/incan_test_sdk_provider_store"),
+        );
+    command
 }
 
 #[cfg(unix)]
@@ -84,6 +92,10 @@ fn run_incan_with_os_env(
         .env(
             "INCAN_GENERATED_CARGO_TARGET_DIR",
             Path::new(env!("CARGO_MANIFEST_DIR")).join("target/incan_generated_shared_target"),
+        )
+        .env(
+            "INCAN_INTERNAL_SDK_PROVIDER_STORE",
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("target/incan_test_sdk_provider_store"),
         )
         .env(key, value)
         .output()?)
@@ -270,10 +282,67 @@ fn parse_jsonl_stdout(output: &Output) -> Result<Vec<serde_json::Value>, Box<dyn
         .collect()
 }
 
+#[cfg(unix)]
 #[test]
-fn compiled_builtin_stdlib_artifact_replaces_consumer_fs_source_closure() -> Result<(), Box<dyn std::error::Error>> {
+fn concurrent_sdk_provider_publication_reuses_one_complete_identity() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
-    let main_path = write_minimal_project(tmp.path(), "compiled_builtin_stdlib_glob", "")?;
+    let main_path = write_minimal_project(tmp.path(), "concurrent_sdk_provider_publication", "")?;
+    let store = tmp.path().join("provider-store");
+    let main_arg = main_path.to_str().ok_or("main path was not valid UTF-8")?;
+    let store_arg = store.to_str().ok_or("provider-store path was not valid UTF-8")?;
+
+    let mut first = configured_incan_command(tmp.path(), &["check", main_arg]);
+    first
+        .env("INCAN_INTERNAL_SDK_PROVIDER_STORE", store_arg)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut second = configured_incan_command(tmp.path(), &["check", main_arg]);
+    second
+        .env("INCAN_INTERNAL_SDK_PROVIDER_STORE", store_arg)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let first = first.spawn()?;
+    let second = second.spawn()?;
+    let first = first.wait_with_output()?;
+    let second = second.wait_with_output()?;
+    assert_success(&first, "first concurrent SDK provider publication");
+    assert_success(&second, "second concurrent SDK provider publication");
+
+    let entries = fs::read_dir(&store)?.collect::<Result<Vec<_>, _>>()?;
+    assert!(
+        entries
+            .iter()
+            .all(|entry| !entry.file_name().to_string_lossy().starts_with(".staging-")),
+        "successful concurrent publication must not leave private staging directories"
+    );
+    let artifact_roots = entries
+        .into_iter()
+        .filter(|entry| entry.file_type().is_ok_and(|file_type| file_type.is_dir()))
+        .map(|entry| entry.path())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        artifact_roots.len(),
+        1,
+        "identical concurrent producers must publish and reuse one immutable identity: {artifact_roots:?}"
+    );
+    let inventory_path = artifact_roots
+        .first()
+        .ok_or("concurrent provider publication did not produce an artifact root")?
+        .join("sdk-inventory.json");
+    let inventory = incan::provider::SdkInventory::read_from_path(&inventory_path)?;
+    inventory.validate_compiler_version(incan::version::INCAN_VERSION)?;
+    assert!(
+        inventory.components.values().all(|component| component.available),
+        "the reused full-profile provider identity must contain every component"
+    );
+    Ok(())
+}
+
+#[test]
+fn compiled_sdk_providers_replace_consumer_fs_source_closure() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "compiled_sdk_provider_glob", "")?;
     fs::write(
         &main_path,
         r#"from std.fs.glob import matches
@@ -304,8 +373,15 @@ def main() -> None:
 
     let cargo_toml = fs::read_to_string(output_dir.join("Cargo.toml"))?;
     assert!(
-        cargo_toml.contains("[dependencies.incan_builtin_stdlib]"),
-        "consumer must link the compiled stdlib artifact:\n{cargo_toml}"
+        cargo_toml.contains("[dependencies.incan_stdlib_system]")
+            && !cargo_toml.contains("[dependencies.incan_stdlib_core]"),
+        "consumer must link only the directly used compiled SDK provider; component dependencies remain transitive:\n\
+         {cargo_toml}"
+    );
+    assert!(
+        !cargo_toml.contains("[dependencies.incan_stdlib_data]")
+            && !cargo_toml.contains("[dependencies.incan_stdlib_web]"),
+        "filesystem-only consumers must not link unrelated SDK providers:\n{cargo_toml}"
     );
     assert!(
         !output_dir.join("src/__incan_std").exists(),
@@ -313,16 +389,17 @@ def main() -> None:
     );
     let main_rust = fs::read_to_string(output_dir.join("src/main.rs"))?;
     assert!(
-        main_rust.contains("incan_builtin_stdlib::fs::glob::matches"),
-        "generated consumer must call the compiled artifact:\n{main_rust}"
+        main_rust.contains("pub use incan_stdlib_system::__incan_std::*;")
+            && main_rust.contains("pub use crate::__incan_std::fs::glob::matches;"),
+        "generated consumer must route the stable std.fs facade through its compiled provider:\n{main_rust}"
     );
     assert!(
-        main_rust.contains("incan_builtin_stdlib::fs::path::Path"),
-        "generated consumer must construct types from the compiled artifact:\n{main_rust}"
+        main_rust.contains("pub use crate::__incan_std::fs::path::Path;"),
+        "generated consumer must construct types through the stable provider facade:\n{main_rust}"
     );
     assert!(
-        main_rust.contains("incan_builtin_stdlib::fs::locking::try_exclusive"),
-        "manifest-discovered stdlib modules must link through the compiled artifact:\n{main_rust}"
+        main_rust.contains("crate::__incan_std::fs::locking::try_exclusive"),
+        "manifest-discovered stdlib modules must call through the stable provider facade:\n{main_rust}"
     );
     assert!(
         main_rust.contains("target.write_bytes(payload.clone())"),
@@ -335,9 +412,9 @@ def main() -> None:
 }
 
 #[test]
-fn compiled_builtin_stdlib_artifact_preserves_facade_imports() -> Result<(), Box<dyn std::error::Error>> {
+fn compiled_sdk_providers_preserve_facade_imports() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
-    let main_path = write_minimal_project(tmp.path(), "compiled_builtin_stdlib_web_facade", "")?;
+    let main_path = write_minimal_project(tmp.path(), "compiled_sdk_provider_web_facade", "")?;
     fs::write(
         &main_path,
         r#"from std.fs import Path as FsPath
@@ -359,10 +436,9 @@ def main() -> None:
 }
 
 #[test]
-fn compiled_builtin_stdlib_artifact_keeps_serde_trait_imports_out_of_consumers()
--> Result<(), Box<dyn std::error::Error>> {
+fn compiled_sdk_providers_keep_serde_trait_imports_out_of_consumers() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
-    let main_path = write_minimal_project(tmp.path(), "compiled_builtin_stdlib_serde", "")?;
+    let main_path = write_minimal_project(tmp.path(), "compiled_sdk_provider_serde", "")?;
     fs::write(
         &main_path,
         r#"from std.serde.json import Serialize
@@ -383,8 +459,8 @@ def main() -> None:
     );
     let cargo_toml = fs::read_to_string(output_dir.join("Cargo.toml"))?;
     assert!(
-        cargo_toml.contains("[dependencies.incan_builtin_stdlib]"),
-        "consumer must link the compiled stdlib artifact:\n{cargo_toml}"
+        cargo_toml.contains("[dependencies.incan_stdlib_data]"),
+        "consumer must link the compiled stdlib data provider:\n{cargo_toml}"
     );
 
     let tests_dir = tmp.path().join("tests");
@@ -402,6 +478,19 @@ def test_artifact_path() -> None:
     Err(_) => pass
 "#,
     )?;
+    let minimal_test = run_incan(tmp.path(), &["test", "--sdk-profile", "minimal"])?;
+    assert_failure(&minimal_test, "incan test with disabled SDK components");
+    let minimal_test_output = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&minimal_test.stdout),
+        String::from_utf8_lossy(&minimal_test.stderr)
+    );
+    assert!(
+        minimal_test_output.contains("disabled")
+            && (minimal_test_output.contains("stdlib-system") || minimal_test_output.contains("stdlib-testing")),
+        "minimal test projection should identify its disabled component:\n{minimal_test_output}"
+    );
+
     let test_output = run_incan(tmp.path(), &["test"])?;
     assert_success(&test_output, "incan test with compiled std.fs artifact");
     let mut generated_test_harnesses = 0;
@@ -419,6 +508,73 @@ def test_artifact_path() -> None:
     assert!(
         generated_test_harnesses > 0,
         "incan test did not create a generated test harness"
+    );
+    Ok(())
+}
+
+#[test]
+fn data_component_builds_with_private_codecs_without_enabling_public_codec_imports()
+-> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(
+        tmp.path(),
+        "data_component_private_codecs",
+        "\n\n[sdk]\nprofile = \"minimal\"\ncomponents = [\"stdlib-data\"]\n",
+    )?;
+    fs::write(
+        &main_path,
+        r#"from std.collections import OrdinalMap
+
+def main() -> None:
+  println("data provider linked")
+"#,
+    )?;
+    let output_dir = tmp.path().join("generated");
+    let main_arg = main_path.to_string_lossy();
+    let output_arg = output_dir.to_string_lossy();
+    let build = run_incan(tmp.path(), &["build", &main_arg, &output_arg])?;
+    assert_success(&build, "data-only SDK component generated-Rust build");
+
+    let cargo_toml = fs::read_to_string(output_dir.join("Cargo.toml"))?;
+    assert!(
+        cargo_toml.contains("[dependencies.incan_stdlib_data]")
+            && !cargo_toml.contains("[dependencies.incan_stdlib_codecs]"),
+        "private publisher dependencies must not become direct consumer component selections:\n{cargo_toml}"
+    );
+    assert!(
+        !output_dir.join("src/__incan_std").exists(),
+        "data-only consumers must use the compiled provider without materializing stdlib source"
+    );
+
+    let hash_probe = tmp.path().join("src/hash_probe.incn");
+    fs::write(
+        &hash_probe,
+        r#"from std.hash import sha256
+
+def main() -> None:
+  pass
+"#,
+    )?;
+    let probe = run_incan(
+        tmp.path(),
+        &[
+            "check",
+            hash_probe.to_str().ok_or("hash probe path was not valid UTF-8")?,
+        ],
+    )?;
+    assert_failure(&probe, "public std.hash import with codecs disabled");
+    let diagnostic = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&probe.stdout),
+        String::from_utf8_lossy(&probe.stderr)
+    );
+    assert!(
+        diagnostic.contains("stdlib-codecs") && diagnostic.contains("disabled"),
+        "disabled public codec imports must identify the component selection remedy:\n{diagnostic}"
+    );
+    assert!(
+        !diagnostic.contains("hash/_streaming.incn") && !diagnostic.contains("stdlib/hash"),
+        "disabled provider source must not be materialized into the consumer diagnostic cascade:\n{diagnostic}"
     );
     Ok(())
 }
@@ -1580,6 +1736,18 @@ fn build_report_json_describes_executable_build() -> Result<(), Box<dyn std::err
         })
     }));
     assert_eq!(report["cargo"]["offline"], serde_json::json!(true));
+    assert!(report["semantic"]["packages"].as_array().is_some());
+    assert!(report["semantic"]["feature_edges"].as_array().is_some());
+    assert!(report["semantic"]["providers"].as_array().is_some_and(|providers| {
+        !providers.is_empty()
+            && providers.iter().all(|provider| {
+                provider["identity"].is_string()
+                    && provider["participation"].is_string()
+                    && provider["provenance"].is_object()
+                    && provider["implementation_facets"].is_array()
+                    && provider["backend_requirements"].is_array()
+            })
+    }));
     assert!(report["artifacts"].as_array().is_some_and(|artifacts| {
         artifacts.iter().any(|artifact| {
             artifact["kind"] == serde_json::json!("binary") && artifact["exists"] == serde_json::json!(true)
@@ -1958,6 +2126,319 @@ pub def entrypoint() -> int:
             })
             && record["provenance"] == serde_json::json!("checked")
     }));
+
+    Ok(())
+}
+
+#[test]
+fn inspect_codegraph_projects_the_selected_incan_package_features() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(
+        tmp.path(),
+        "feature_graph_demo",
+        r#"
+
+[project.features]
+alpha = []
+beta = []
+"#,
+    )?;
+    fs::write(
+        &main_path,
+        r#"when feature("alpha"):
+    pub def alpha_entrypoint() -> str:
+        return "alpha"
+
+when feature("beta"):
+    pub def beta_entrypoint() -> str:
+        return "beta"
+"#,
+    )?;
+    let main_arg = main_path.to_str().ok_or("main path was not valid UTF-8")?;
+
+    for (selected, expected, excluded) in [
+        ("alpha", "alpha_entrypoint", "beta_entrypoint"),
+        ("beta", "beta_entrypoint", "alpha_entrypoint"),
+    ] {
+        let output = run_incan(
+            tmp.path(),
+            &[
+                "inspect",
+                "codegraph",
+                main_arg,
+                "--format",
+                "jsonl",
+                "--no-default-features",
+                "--features",
+                selected,
+            ],
+        )?;
+        assert_success(&output, &format!("codegraph projection for package feature {selected}"));
+        let records = parse_jsonl_stdout(&output)?;
+        let header = records.first().ok_or("codegraph did not emit a header")?;
+        let semantic_context = header["semantic_contexts"]
+            .as_array()
+            .and_then(|contexts| contexts.first())
+            .ok_or("codegraph header did not project semantic context")?;
+        let package = semantic_context["packages"]
+            .as_array()
+            .and_then(|packages| packages.first())
+            .ok_or("codegraph semantic context did not project package features")?;
+        assert_eq!(package["active_features"], serde_json::json!([selected]));
+        assert!(semantic_context["providers"].as_array().is_some_and(|providers| {
+            providers.iter().any(|provider| {
+                provider["provenance"]["kind"] == serde_json::json!("sdk")
+                    && provider["enabled"] == serde_json::json!(true)
+                    && provider["manifest_path"].as_str().is_some()
+            })
+        }));
+        assert!(records.iter().any(|record| {
+            record["record"] == serde_json::json!("declaration") && record["name"] == serde_json::json!(expected)
+        }));
+        assert!(
+            records.iter().all(|record| {
+                record["record"] != serde_json::json!("declaration") || record["name"] != serde_json::json!(excluded)
+            }),
+            "codegraph for `{selected}` retained inactive declaration `{excluded}`"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn transient_sdk_profile_is_shared_by_check_and_provider_inspection() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "sdk_profile_override", "")?;
+    let main_arg = main_path.to_str().ok_or("main path was not valid UTF-8")?;
+
+    let minimal_core = run_incan(tmp.path(), &["check", main_arg, "--sdk-profile", "minimal"])?;
+    assert_success(
+        &minimal_core,
+        "minimal SDK profile check using only core language surface",
+    );
+    let minimal_codegraph = run_incan(
+        tmp.path(),
+        &[
+            "inspect",
+            "codegraph",
+            main_arg,
+            "--format",
+            "jsonl",
+            "--sdk-profile",
+            "minimal",
+        ],
+    )?;
+    assert_success(
+        &minimal_codegraph,
+        "minimal SDK profile codegraph using only core language surface",
+    );
+
+    fs::write(
+        &main_path,
+        r#"from std.fs.path import Path
+
+def main() -> None:
+    _ = Path("profile")
+"#,
+    )?;
+
+    let minimal = run_incan(tmp.path(), &["check", main_arg, "--sdk-profile", "minimal"])?;
+    assert_failure(&minimal, "minimal SDK profile check using std.fs");
+    let minimal_stderr = String::from_utf8_lossy(&minimal.stderr);
+    assert!(
+        minimal_stderr.contains("stdlib-system") && minimal_stderr.contains("disabled"),
+        "minimal profile should diagnose the disabled std.fs component:\n{minimal_stderr}"
+    );
+    let minimal_json = run_incan(
+        tmp.path(),
+        &["check", main_arg, "--format", "json", "--sdk-profile", "minimal"],
+    )?;
+    assert_failure(&minimal_json, "minimal SDK profile JSON diagnostic using std.fs");
+    let minimal_json = parse_json_stdout(&minimal_json)?;
+    assert_eq!(minimal_json["diagnostics"][0]["code"], serde_json::json!("INCAN-I0101"));
+
+    let default = run_incan(tmp.path(), &["check", main_arg, "--sdk-profile", "default"])?;
+    assert_success(&default, "default SDK profile check using std.fs");
+
+    for command in ["build", "run"] {
+        let output = run_incan(tmp.path(), &[command, main_arg, "--sdk-profile", "minimal"])?;
+        assert_failure(&output, &format!("{command} using disabled std.fs component"));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("stdlib-system") && stderr.contains("disabled"),
+            "{command} should use the transient provider projection:\n{stderr}"
+        );
+    }
+
+    let inspection = run_incan(
+        tmp.path(),
+        &[
+            "inspect",
+            "providers",
+            main_arg,
+            "--format",
+            "json",
+            "--sdk-profile",
+            "minimal",
+        ],
+    )?;
+    assert_success(&inspection, "provider inspection with transient minimal SDK profile");
+    let report = parse_json_stdout(&inspection)?;
+    assert_eq!(report["sdk"]["profile"], serde_json::json!("minimal"));
+    let components = report["sdk"]["components"]
+        .as_array()
+        .ok_or("provider report did not contain SDK components")?;
+    let system = components
+        .iter()
+        .find(|component| component["id"] == serde_json::json!("stdlib-system"))
+        .ok_or("provider report did not contain stdlib-system")?;
+    assert_eq!(system["available"], serde_json::json!(true));
+    assert_eq!(system["enabled"], serde_json::json!(false));
+    let providers = report["providers"]
+        .as_array()
+        .ok_or("provider report did not contain providers")?;
+    let system_provider = providers
+        .iter()
+        .find(|provider| provider["provenance"]["component_id"] == serde_json::json!("stdlib-system"))
+        .ok_or("provider report did not contain the stdlib-system provider")?;
+    assert_eq!(system_provider["available"], serde_json::json!(true));
+    assert_eq!(system_provider["enabled"], serde_json::json!(false));
+    assert_eq!(system_provider["used"], serde_json::json!(false));
+    assert!(system_provider["provider_dependencies"].is_array());
+
+    Ok(())
+}
+
+#[test]
+fn lock_and_feature_inspection_record_transient_semantic_selections() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(
+        tmp.path(),
+        "semantic_selection_lock",
+        r#"
+
+[project.features]
+default = ["alpha"]
+alpha = []
+beta = []
+"#,
+    )?;
+    let main_arg = main_path.to_str().ok_or("main path was not valid UTF-8")?;
+    let selection_args = [
+        "--no-default-features",
+        "--features",
+        "beta",
+        "--sdk-profile",
+        "minimal",
+    ];
+
+    let inspection = run_incan(
+        tmp.path(),
+        &[
+            "inspect",
+            "features",
+            main_arg,
+            "--format",
+            "json",
+            selection_args[0],
+            selection_args[1],
+            selection_args[2],
+            selection_args[3],
+            selection_args[4],
+        ],
+    )?;
+    assert_success(&inspection, "feature inspection with transient semantic selections");
+    let report = parse_json_stdout(&inspection)?;
+    let package = report["packages"]
+        .as_array()
+        .and_then(|packages| packages.first())
+        .ok_or("feature report did not contain the root package")?;
+    assert_eq!(package["active_features"], serde_json::json!(["beta"]));
+    assert_eq!(package["reasons"]["beta"][0]["kind"], serde_json::json!("requested"));
+
+    let lock = run_incan(
+        tmp.path(),
+        &[
+            "lock",
+            main_arg,
+            selection_args[0],
+            selection_args[1],
+            selection_args[2],
+            selection_args[3],
+            selection_args[4],
+        ],
+    )?;
+    assert_success(&lock, "semantic lock generation with transient selections");
+    let lock: toml::Value = toml::from_str(&fs::read_to_string(tmp.path().join("incan.lock"))?)?;
+    assert_eq!(lock["semantic"]["sdk"]["profile"].as_str(), Some("minimal"));
+    let locked_package = lock["semantic"]["packages"]
+        .as_array()
+        .and_then(|packages| packages.first())
+        .ok_or("semantic lock did not contain the root package")?;
+    assert_eq!(
+        locked_package["active_features"].as_array(),
+        Some(&vec![toml::Value::String("beta".to_string())])
+    );
+
+    Ok(())
+}
+
+#[test]
+fn locked_build_rejects_package_feature_or_sdk_projection_drift() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(
+        tmp.path(),
+        "semantic_lock_drift",
+        r#"
+
+[project.features]
+alpha = []
+beta = []
+"#,
+    )?;
+    let main_arg = main_path.to_str().ok_or("main path was not valid UTF-8")?;
+
+    let lock = run_incan(
+        tmp.path(),
+        &[
+            "lock",
+            main_arg,
+            "--no-default-features",
+            "--features",
+            "alpha",
+            "--sdk-profile",
+            "minimal",
+        ],
+    )?;
+    assert_success(&lock, "lock semantic alpha/minimal projection");
+
+    for (feature, profile) in [("beta", "minimal"), ("alpha", "default")] {
+        let build = run_incan(
+            tmp.path(),
+            &[
+                "build",
+                main_arg,
+                "--locked",
+                "--no-default-features",
+                "--features",
+                feature,
+                "--sdk-profile",
+                profile,
+            ],
+        )?;
+        assert_failure(
+            &build,
+            &format!("locked build with drifted {feature}/{profile} projection"),
+        );
+        let stderr = String::from_utf8_lossy(&build.stderr);
+        assert!(
+            stderr.contains("incan.lock")
+                && stderr.contains("out of date")
+                && stderr.contains("package-feature or SDK-profile"),
+            "locked projection drift should fail as stale lock state:\n{stderr}"
+        );
+    }
 
     Ok(())
 }

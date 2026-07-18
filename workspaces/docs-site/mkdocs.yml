@@ -161,6 +161,7 @@ nav:
           - Generators: language/reference/generators.md
           - Symbol aliases: language/reference/symbol_aliases.md
           - Callable presets: language/reference/callable_presets.md
+          - Conditional compilation: language/reference/conditional_compilation.md
           - Glossary: language/reference/glossary.md
           - File I/O reference (Path/File APIs): language/reference/file_io.md
           - Imports and modules: language/reference/imports_and_modules.md
@@ -264,6 +265,7 @@ nav:
           - Checked contract metadata: tooling/reference/contract_metadata.md
           - Checked API metadata: tooling/reference/checked_api_metadata.md
           - Project configuration: tooling/reference/project_configuration.md
+          - SDK components and package features: tooling/reference/sdk_components_and_package_features.md
           - LSP protocol support: tooling/reference/lsp_protocol_support.md
   - Contributing:
       - Start here: contributing/index.md

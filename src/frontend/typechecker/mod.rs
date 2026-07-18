@@ -70,7 +70,6 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::builtin_stdlib::BuiltinStdlibModules;
 use crate::frontend::ast::*;
 use crate::frontend::diagnostics::{CompileError, ErrorKind, errors};
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
@@ -79,6 +78,7 @@ use crate::frontend::resolved_type_subst::{substitute_resolved_type, type_param_
 use crate::frontend::surface_semantics::SurfaceContext;
 use crate::frontend::symbols::*;
 use crate::library_manifest::LibraryManifest;
+use crate::provider::ProviderPlan;
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect::{Inspector, RustMetadataCache};
 use helpers::{collection_name, collection_type_id, render_resolved_type_as_rust_arg, stringlike_type_id};
@@ -242,15 +242,8 @@ pub struct TypeChecker {
     pub(crate) dependency_module_traits: HashMap<String, TraitInfo>,
     /// RFC 024 trait-level Rust derive metadata from imported source modules, keyed by module-qualified trait name.
     pub(crate) dependency_trait_rust_derive_paths: HashMap<String, Vec<String>>,
-    /// Consumer-side dependency library manifests (`pub::`) keyed by library name.
-    pub(crate) library_manifests: Arc<LibraryManifestIndex>,
-    /// Compiler-owned artifact metadata for migrated `std.*` modules.
-    ///
-    /// Unlike [`Self::library_manifests`], this is not a user-declared `pub::` dependency. The compiler supplies it
-    /// when a generated consumer links the local built-in stdlib artifact.
-    pub(crate) builtin_stdlib_manifest: Option<Arc<LibraryManifest>>,
-    /// Module ownership derived from [`Self::builtin_stdlib_manifest`].
-    pub(crate) builtin_stdlib_modules: BuiltinStdlibModules,
+    /// Shared provider and feature projection for ordinary dependencies and SDK-supplied libraries.
+    pub(crate) provider_plan: Arc<ProviderPlan>,
     /// Internal semantic type cache for `pub::` exports referenced transitively by imported signatures.
     ///
     /// These entries are intentionally **not** source-visible names: they exist so values returned from imported
@@ -307,6 +300,11 @@ pub struct TypeChecker {
     pub(crate) surface_type_import_bindings: HashMap<String, (SurfaceTypeId, SymbolId)>,
     /// Fixture function names collected before body checking so dependency metadata is order-independent.
     pub(crate) testing_fixture_names: HashSet<String>,
+    /// Checked `std.testing` marker contract supplied by the active provider projection.
+    ///
+    /// This is populated while imports are collected. Keeping it with the checker prevents declaration checking from
+    /// reopening provider source after the compiled manifest has become the semantic authority.
+    pub(crate) testing_marker_semantics: Option<crate::frontend::testing_markers::TestingMarkerSemantics>,
     /// Import aliases collected from `import` / `from ... import` declarations.
     ///
     /// Maps each local binding name to the fully qualified module path segments. Used as a fallback in
@@ -381,9 +379,7 @@ impl TypeChecker {
             dependency_derivable_modules: HashMap::new(),
             dependency_module_traits: HashMap::new(),
             dependency_trait_rust_derive_paths: HashMap::new(),
-            library_manifests: Arc::new(LibraryManifestIndex::default()),
-            builtin_stdlib_manifest: None,
-            builtin_stdlib_modules: BuiltinStdlibModules::default(),
+            provider_plan: Arc::new(ProviderPlan::default()),
             transitive_pub_types: HashMap::new(),
             transitive_pub_traits: HashMap::new(),
             transitive_stdlib_stub_types: HashMap::new(),
@@ -397,6 +393,7 @@ impl TypeChecker {
             surface_function_import_bindings: HashMap::new(),
             surface_type_import_bindings: HashMap::new(),
             testing_fixture_names: HashSet::new(),
+            testing_marker_semantics: None,
             import_aliases: HashMap::new(),
             surface_context: SurfaceContext::default(),
             supertrait_closure: HashMap::new(),
@@ -505,7 +502,7 @@ impl TypeChecker {
     pub(crate) fn rust_item_metadata_for_path(&self, canonical_path: &str) -> Option<RustItemMetadata> {
         let canonical_path = Self::normalize_rust_namespace_path(canonical_path);
         let lookup_path = Self::rust_metadata_lookup_path(canonical_path)?;
-        if let Some(metadata) = self.library_manifests.rust_abi_item(lookup_path) {
+        if let Some(metadata) = self.provider_plan.library_manifest_index().rust_abi_item(lookup_path) {
             return Some(metadata);
         }
         let dir = self.rust_inspect_manifest_dir.as_ref()?;
@@ -537,7 +534,7 @@ impl TypeChecker {
         if !Self::rust_identity_metadata_base_should_probe(lookup_path) {
             return None;
         }
-        if let Some(metadata) = self.library_manifests.rust_abi_item(lookup_path) {
+        if let Some(metadata) = self.provider_plan.library_manifest_index().rust_abi_item(lookup_path) {
             return Some(metadata);
         }
         let dir = self.rust_inspect_manifest_dir.as_ref()?;
@@ -588,7 +585,7 @@ impl TypeChecker {
     pub(crate) fn rust_item_metadata_for_path(&self, canonical_path: &str) -> Option<RustItemMetadata> {
         let canonical_path = Self::normalize_rust_namespace_path(canonical_path);
         let lookup_path = Self::rust_metadata_lookup_path(canonical_path)?;
-        self.library_manifests.rust_abi_item(lookup_path)
+        self.provider_plan.library_manifest_index().rust_abi_item(lookup_path)
     }
 
     #[cfg(not(feature = "rust_inspect"))]
@@ -1482,19 +1479,26 @@ impl TypeChecker {
 
     /// Set the loaded dependency library manifests used for `pub::` import resolution.
     pub fn set_library_manifest_index(&mut self, index: LibraryManifestIndex) {
-        self.library_manifests = Arc::new(index);
+        self.provider_plan = Arc::new(ProviderPlan::for_library_index(index));
     }
 
     /// Set shared dependency library manifests used for `pub::` import resolution.
     pub fn set_library_manifest_index_shared(&mut self, index: Arc<LibraryManifestIndex>) {
-        self.library_manifests = index;
+        self.provider_plan = Arc::new(ProviderPlan::for_library_index((*index).clone()));
     }
 
-    /// Set the compiled built-in stdlib manifest used to resolve migrated `std.*` public APIs.
-    pub fn set_builtin_stdlib_manifest(&mut self, manifest: Arc<LibraryManifest>) {
-        self.builtin_stdlib_modules = BuiltinStdlibModules::from_manifest(&manifest);
-        self.builtin_stdlib_manifest = Some(manifest);
-        self.seed_builtin_stdlib_manifest_symbols();
+    /// Set the immutable provider plan consumed by import resolution and semantic checking.
+    pub fn set_provider_plan(&mut self, plan: Arc<ProviderPlan>) {
+        self.provider_plan = plan;
+        self.seed_sdk_provider_symbols();
+    }
+
+    /// Install one in-memory SDK provider for focused compiler tests.
+    #[doc(hidden)]
+    pub fn set_in_memory_sdk_manifest(&mut self, manifest: LibraryManifest) {
+        let plan =
+            ProviderPlan::for_in_memory_sdk_manifest(self.provider_plan.library_manifest_index().clone(), manifest);
+        self.set_provider_plan(Arc::new(plan));
     }
 
     pub fn set_current_module_path(&mut self, path: Option<Vec<String>>) {
@@ -3836,6 +3840,7 @@ impl TypeChecker {
         self.surface_function_import_bindings.clear();
         self.surface_type_import_bindings.clear();
         self.testing_fixture_names.clear();
+        self.testing_marker_semantics = None;
         self.source_import_targets.clear();
         self.surface_context = SurfaceContext::from_program(program);
         self.import_aliases = self.surface_context.import_aliases().clone();
@@ -4409,7 +4414,7 @@ impl TypeChecker {
         self.dependency_derivable_modules.clear();
         self.dependency_module_traits.clear();
         self.dependency_trait_rust_derive_paths.clear();
-        self.seed_builtin_stdlib_manifest_symbols();
+        self.seed_sdk_provider_symbols();
         for (name, dep_ast) in dependencies {
             if Self::is_generated_stdlib_dependency_module(name) {
                 continue;
@@ -4449,7 +4454,7 @@ impl TypeChecker {
         self.dependency_derivable_modules.clear();
         self.dependency_module_traits.clear();
         self.dependency_trait_rust_derive_paths.clear();
-        self.seed_builtin_stdlib_manifest_symbols();
+        self.seed_sdk_provider_symbols();
         self.predeclare_dependency_interfaces(dependencies, false);
         for (name, dep_ast) in dependencies {
             if Self::is_generated_stdlib_dependency_module(name) {

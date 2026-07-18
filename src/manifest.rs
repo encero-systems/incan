@@ -121,8 +121,16 @@ impl DependencySpec {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LibraryDependencySpec {
+    /// Dependency key used by `pub::<name>` imports.
     pub library_name: String,
+    /// Resolved path to the dependency project root.
     pub path: PathBuf,
+    /// Public Incan features requested from this dependency.
+    pub features: Vec<String>,
+    /// Whether the dependency's `default` feature is enabled.
+    pub default_features: bool,
+    /// Whether this dependency participates only when a project feature activates it.
+    pub optional: bool,
 }
 
 // ============================================================================
@@ -190,7 +198,53 @@ pub struct ProjectSection {
     pub scripts: HashMap<String, String>,
     /// Named project feature groups.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub features: HashMap<String, Vec<String>>,
+    pub features: HashMap<String, ProjectFeatureDefinition>,
+}
+
+/// One public Incan package-feature definition.
+///
+/// Small feature graphs use the compact reference list. Larger definitions may separate each edge kind in an expanded
+/// table; both representations normalize into the same resolver-owned graph.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ProjectFeatureDefinition {
+    /// Compact members such as `json`, `dep:serializer`, or `serializer/json`.
+    Compact(Vec<String>),
+    /// Typed feature edges grouped by their semantic role.
+    Expanded(ExpandedProjectFeature),
+}
+
+/// Expanded public feature declaration under `[project.features.<name>]`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct ExpandedProjectFeature {
+    /// Other features in this package that become active.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub includes: Vec<String>,
+    /// Optional Incan dependencies that become active.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub optional_dependencies: Vec<String>,
+    /// Public features requested from active Incan dependencies.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub dependency_features: BTreeMap<String, Vec<String>>,
+    /// SDK components that must already be enabled and available while this feature is active.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requires_sdk_components: Vec<String>,
+}
+
+/// Project-owned SDK profile and component refinements.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct SdkSection {
+    /// Named SDK profile; omission selects the SDK's `default` profile.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+    /// Components added to the selected profile.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub components: Vec<String>,
+    /// Components deliberately excluded from the expanded selection.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude_components: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -316,6 +370,8 @@ pub struct WritableManifest {
     pub vocab: Option<VocabSection>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool: Option<ToolSection>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sdk: Option<SdkSection>,
 }
 
 impl WritableManifest {
@@ -338,6 +394,8 @@ pub struct ProjectManifest {
     pub vocab: Option<VocabSection>,
     /// `[tool]` configuration (optional).
     pub tool: Option<ToolSection>,
+    /// `[sdk]` profile and component selection (optional).
+    pub sdk: Option<SdkSection>,
     /// `[dependencies]` (Incan library dependencies).
     library_dependencies: HashMap<String, LibraryDependencySpec>,
     /// `[rust-dependencies]` (Rust crate dependencies).
@@ -390,6 +448,19 @@ impl ProjectManifest {
     /// Incan library dependencies from the manifest.
     pub fn library_dependencies(&self) -> &HashMap<String, LibraryDependencySpec> {
         &self.library_dependencies
+    }
+
+    /// Public package features declared under `[project.features]`.
+    pub fn project_features(&self) -> &HashMap<String, ProjectFeatureDefinition> {
+        match self.project.as_ref() {
+            Some(project) => &project.features,
+            None => empty_project_features(),
+        }
+    }
+
+    /// Project-owned SDK profile and component refinements.
+    pub fn sdk(&self) -> Option<&SdkSection> {
+        self.sdk.as_ref()
     }
 
     /// Normal Rust dependencies from the manifest.
@@ -535,6 +606,8 @@ struct RawManifest {
     vocab: Option<VocabSection>,
     #[serde(default)]
     tool: Option<ToolSection>,
+    #[serde(default)]
+    sdk: Option<SdkSection>,
     #[serde(default)]
     dependencies: Option<DependencyTable>,
     #[serde(rename = "rust-dependencies", default)]
@@ -788,6 +861,7 @@ fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest,
         build: raw.build,
         vocab: raw.vocab,
         tool: raw.tool,
+        sdk: raw.sdk,
         library_dependencies,
         rust_dependencies: rust_dependencies.specs,
         rust_dev_dependencies: rust_dev_dependencies.specs,
@@ -1244,6 +1318,14 @@ fn library_dependency_from_entry(
     Ok(LibraryDependencySpec {
         library_name: name.to_string(),
         path: resolved_path,
+        features: {
+            let mut features = table.features.clone().unwrap_or_default();
+            features.sort();
+            features.dedup();
+            features
+        },
+        default_features: table.default_features.unwrap_or(true),
+        optional: table.optional.unwrap_or(false),
     })
 }
 
@@ -1253,16 +1335,19 @@ fn looks_like_legacy_rust_dependency(entry: &DependencyEntry) -> bool {
         DependencyEntry::Version(_) => true,
         DependencyEntry::Table(table) => {
             table.version.is_some()
-                || table.features.is_some()
                 || table.git.is_some()
                 || table.branch.is_some()
                 || table.tag.is_some()
                 || table.rev.is_some()
-                || table.optional.is_some()
                 || table.package.is_some()
-                || table.default_features.is_some()
         }
     }
+}
+
+/// Shared empty project-feature map used by manifest accessors without allocating.
+fn empty_project_features() -> &'static HashMap<String, ProjectFeatureDefinition> {
+    static EMPTY: std::sync::OnceLock<HashMap<String, ProjectFeatureDefinition>> = std::sync::OnceLock::new();
+    EMPTY.get_or_init(HashMap::new)
 }
 
 /// Parse one Rust dependency table, including the optional-subtable overlay form.
@@ -1845,6 +1930,82 @@ some_other_field = "value"
             rendered.contains("unknown field `some_other_field`"),
             "expected unknown-field wording, got: {rendered}"
         );
+    }
+
+    #[test]
+    fn parse_compact_and_expanded_project_features() -> TestResult {
+        let content = r#"
+[project]
+name = "reporting"
+
+[project.features]
+default = ["json"]
+json = ["dep:serializer", "serializer/json"]
+
+[project.features.server]
+includes = ["json"]
+optional-dependencies = ["http_server"]
+dependency-features = { http_server = ["tls"] }
+requires-sdk-components = ["stdlib-web"]
+"#;
+        let manifest = ProjectManifest::from_str(content, Path::new("incan.toml"))?;
+        let features = manifest.project_features();
+
+        assert_eq!(
+            features.get("json"),
+            Some(&ProjectFeatureDefinition::Compact(vec![
+                "dep:serializer".to_string(),
+                "serializer/json".to_string(),
+            ]))
+        );
+        assert_eq!(
+            features.get("server"),
+            Some(&ProjectFeatureDefinition::Expanded(ExpandedProjectFeature {
+                includes: vec!["json".to_string()],
+                optional_dependencies: vec!["http_server".to_string()],
+                dependency_features: BTreeMap::from([("http_server".to_string(), vec!["tls".to_string()])]),
+                requires_sdk_components: vec!["stdlib-web".to_string()],
+            }))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn parse_incan_dependency_feature_selection() -> TestResult {
+        let content = r#"
+[dependencies]
+reporting = { path = "../reporting", optional = true, default-features = false, features = ["json", "http"] }
+"#;
+        let manifest = ProjectManifest::from_str(content, Path::new("incan.toml"))?;
+        let reporting = manifest
+            .library_dependencies()
+            .get("reporting")
+            .ok_or("missing reporting dependency")?;
+
+        assert!(reporting.optional);
+        assert!(!reporting.default_features);
+        assert_eq!(reporting.features, vec!["http".to_string(), "json".to_string()]);
+        Ok(())
+    }
+
+    #[test]
+    fn parse_sdk_component_selection() -> TestResult {
+        let content = r#"
+[sdk]
+profile = "minimal"
+components = ["stdlib-data", "stdlib-system"]
+exclude-components = ["stdlib-web"]
+"#;
+        let manifest = ProjectManifest::from_str(content, Path::new("incan.toml"))?;
+        let sdk = manifest.sdk().ok_or("missing sdk selection")?;
+
+        assert_eq!(sdk.profile.as_deref(), Some("minimal"));
+        assert_eq!(
+            sdk.components,
+            vec!["stdlib-data".to_string(), "stdlib-system".to_string()]
+        );
+        assert_eq!(sdk.exclude_components, vec!["stdlib-web".to_string()]);
+        Ok(())
     }
 
     fn tempdir_with_manifest(content: &str) -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {

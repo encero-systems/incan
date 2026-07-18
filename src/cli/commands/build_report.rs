@@ -3,7 +3,7 @@
 //! These structs are the stable, machine-readable projection of the existing build and code generation paths. They
 //! deliberately describe current emitted artifacts without making generated Rust a stable ABI.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -13,6 +13,10 @@ use serde::Serialize;
 use crate::cli::{CliError, CliResult};
 use crate::dependency_resolver::InlineRustImport;
 use crate::manifest::{DependencySource, DependencySpec, GitReference, LibraryDependencySpec};
+use crate::provider::{
+    BackendImplementationRequirement, ComponentSelectionReason, FeatureActivationReason, PackageFeaturePlan,
+    ProviderParticipation, ProviderPlan, ProviderProvenance, ResolvedSdkComponents, SdkInventory,
+};
 use crate::version::INCAN_VERSION;
 
 use super::common::CargoPolicy;
@@ -144,6 +148,75 @@ pub struct BuildInteropReport {
     pub rust_abi_query_paths: Vec<String>,
 }
 
+/// Backend-neutral SDK, public feature, and provider state that shaped the build.
+#[derive(Debug, Clone, Serialize)]
+pub struct BuildSemanticReport {
+    pub sdk: Option<BuildSdkReport>,
+    pub packages: Vec<BuildPackageFeaturesReport>,
+    pub feature_edges: Vec<BuildFeatureEdgeReport>,
+    pub providers: Vec<BuildProviderReport>,
+}
+
+/// Active SDK identity and expanded project component selection.
+#[derive(Debug, Clone, Serialize)]
+pub struct BuildSdkReport {
+    pub identity: String,
+    pub profile: String,
+    pub components: Vec<BuildSdkComponentReport>,
+}
+
+/// One known SDK component with availability, enablement, dependencies, and activation provenance kept distinct.
+#[derive(Debug, Clone, Serialize)]
+pub struct BuildSdkComponentReport {
+    pub id: String,
+    pub version: String,
+    pub available: bool,
+    pub enabled: bool,
+    pub mandatory: bool,
+    pub dependencies: BTreeSet<String>,
+    pub reason: Option<ComponentSelectionReason>,
+}
+
+/// Additive public feature closure for one concrete package root.
+#[derive(Debug, Clone, Serialize)]
+pub struct BuildPackageFeaturesReport {
+    pub package: String,
+    pub project_root: String,
+    pub active_features: BTreeSet<String>,
+    pub active_optional_dependencies: BTreeSet<String>,
+    pub dependency_features: BTreeMap<String, BTreeSet<String>>,
+    pub required_sdk_components: BTreeSet<String>,
+    pub reasons: BTreeMap<String, BTreeSet<FeatureActivationReason>>,
+}
+
+/// One active package-dependency edge and its unified public feature request.
+#[derive(Debug, Clone, Serialize)]
+pub struct BuildFeatureEdgeReport {
+    pub from: String,
+    pub dependency_key: String,
+    pub to: String,
+    pub requested_features: BTreeSet<String>,
+    pub default_features: bool,
+    pub optional: bool,
+}
+
+/// Exact provider identity, participation, provenance, semantic use, and private backend closure.
+#[derive(Debug, Clone, Serialize)]
+pub struct BuildProviderReport {
+    pub identity: String,
+    pub available: bool,
+    pub enabled: bool,
+    pub used: bool,
+    pub participation: ProviderParticipation,
+    pub provenance: ProviderProvenance,
+    pub namespace_claims: BTreeSet<Vec<String>>,
+    pub used_modules: BTreeSet<Vec<String>>,
+    pub active_features: BTreeSet<String>,
+    pub implementation_facets: Vec<String>,
+    pub backend_requirements: BTreeSet<String>,
+    pub manifest_path: Option<String>,
+}
+
 /// Versioned build report.
 #[derive(Debug, Clone, Serialize)]
 pub struct BuildReport {
@@ -159,6 +232,7 @@ pub struct BuildReport {
     pub generated: GeneratedRustProjectReport,
     pub artifacts: Vec<BuildArtifactReport>,
     pub dependencies: BuildDependencyReport,
+    pub semantic: BuildSemanticReport,
     pub cargo: BuildCargoReport,
     pub interop: BuildInteropReport,
     pub timings_ms: BTreeMap<String, u64>,
@@ -177,6 +251,7 @@ pub struct BuildReportDraft {
     pub generated: GeneratedRustProjectReport,
     pub artifacts: Vec<BuildArtifactReport>,
     pub dependencies: BuildDependencyReport,
+    pub semantic: BuildSemanticReport,
     pub cargo: BuildCargoReport,
     pub interop: BuildInteropReport,
     pub notes: Vec<String>,
@@ -198,10 +273,110 @@ impl BuildReportDraft {
             generated: self.generated,
             artifacts: self.artifacts,
             dependencies: self.dependencies,
+            semantic: self.semantic,
             cargo: self.cargo,
             interop: self.interop,
             timings_ms,
             notes: self.notes,
+        }
+    }
+}
+
+/// Build the shared provider/component/feature projection used by executable and library reports.
+pub(crate) fn semantic_report(
+    sdk_inventory: Option<&SdkInventory>,
+    sdk_components: Option<&ResolvedSdkComponents>,
+    package_features: Option<&PackageFeaturePlan>,
+    provider_plan: &ProviderPlan,
+) -> BuildSemanticReport {
+    let sdk = sdk_inventory
+        .zip(sdk_components)
+        .map(|(inventory, components)| BuildSdkReport {
+            identity: inventory.identity(),
+            profile: components.profile.clone(),
+            components: inventory
+                .components
+                .values()
+                .map(|component| BuildSdkComponentReport {
+                    id: component.id.clone(),
+                    version: component.version.clone(),
+                    available: component.available,
+                    enabled: components.enabled.contains(&component.id),
+                    mandatory: component.mandatory,
+                    dependencies: component.dependencies.clone(),
+                    reason: components.reasons.get(&component.id).cloned(),
+                })
+                .collect(),
+        });
+    let packages = package_features
+        .iter()
+        .flat_map(|plan| plan.packages())
+        .map(|package| BuildPackageFeaturesReport {
+            package: package.package_name.clone(),
+            project_root: path_string(&package.project_root),
+            active_features: package.features.active_features.clone(),
+            active_optional_dependencies: package.features.active_optional_dependencies.clone(),
+            dependency_features: package.features.dependency_features.clone(),
+            required_sdk_components: package.features.required_sdk_components.clone(),
+            reasons: package.features.reasons.clone(),
+        })
+        .collect();
+    let feature_edges = package_features
+        .iter()
+        .flat_map(|plan| plan.edges())
+        .map(|edge| BuildFeatureEdgeReport {
+            from: path_string(&edge.from),
+            dependency_key: edge.dependency_key.clone(),
+            to: path_string(&edge.to),
+            requested_features: edge.requested_features.clone(),
+            default_features: edge.default_features,
+            optional: edge.optional,
+        })
+        .collect();
+    let providers = provider_plan
+        .records()
+        .map(|provider| BuildProviderReport {
+            identity: provider.identity.stable_key(),
+            available: provider.available,
+            enabled: provider.enabled,
+            used: provider_plan.participation(provider) == ProviderParticipation::Used,
+            participation: provider_plan.participation(provider),
+            provenance: provider.provenance.clone(),
+            namespace_claims: provider.namespace_claims.clone(),
+            used_modules: provider_plan.used_modules(provider),
+            active_features: provider.identity.feature_projection.clone(),
+            implementation_facets: provider_plan
+                .selected_implementation_facets(provider)
+                .into_iter()
+                .map(|facet| facet.id.clone())
+                .collect(),
+            backend_requirements: provider_plan
+                .selected_backend_requirements(provider)
+                .iter()
+                .map(render_backend_requirement)
+                .collect(),
+            manifest_path: provider
+                .artifact
+                .as_ref()
+                .map(|artifact| path_string(&artifact.manifest_path)),
+        })
+        .collect();
+    BuildSemanticReport {
+        sdk,
+        packages,
+        feature_edges,
+        providers,
+    }
+}
+
+/// Render one private provider implementation requirement in the stable build-report vocabulary.
+fn render_backend_requirement(requirement: &BackendImplementationRequirement) -> String {
+    match requirement {
+        BackendImplementationRequirement::CargoFeature { crate_name, feature } => {
+            format!("cargo-feature:{crate_name}/{feature}")
+        }
+        BackendImplementationRequirement::CargoDependency { dependency } => {
+            format!("cargo-dependency:{}", dependency.crate_name)
         }
     }
 }

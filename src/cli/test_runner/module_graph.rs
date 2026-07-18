@@ -2,12 +2,12 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::builtin_stdlib::BuiltinStdlibModules;
 use crate::cli::commands::common::{
-    compiled_builtin_stdlib_modules, resolve_stdlib_module_source_path, topologically_sort_modules,
-    uses_iterator_adapter_surface, uses_result_combinator_surface,
+    compiled_sdk_modules, resolve_stdlib_module_source_path, topologically_sort_modules, uses_iterator_adapter_surface,
+    uses_result_combinator_surface,
 };
 use crate::cli::prelude::ParsedModule;
+use crate::compiled_sdk::CompiledSdkModules;
 use crate::frontend::ast::Program;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::{SourceModuleImportResolution, resolve_program_source_imports};
@@ -23,7 +23,7 @@ use incan_core::lang::stdlib;
 /// - avoids re-queueing modules that have already been processed
 fn queue_incan_stdlib_source_module(
     module_path: &[String],
-    compiled_stdlib_modules: &mut Option<BuiltinStdlibModules>,
+    compiled_stdlib_modules: &mut Option<CompiledSdkModules>,
     incan_source_stdlib_module_paths: &mut HashMap<String, PathBuf>,
     processed: &HashSet<PathBuf>,
     to_process: &mut Vec<(PathBuf, String, Vec<String>)>,
@@ -31,7 +31,7 @@ fn queue_incan_stdlib_source_module(
     // The compiled artifact owns this module's generated Rust implementation. Its checked manifest is loaded by the
     // test preparation path, so materializing source here would create a second `__incan_std` tree in the harness.
     if compiled_stdlib_modules.is_none() {
-        *compiled_stdlib_modules = Some(compiled_builtin_stdlib_modules().map_err(|error| error.message)?);
+        *compiled_stdlib_modules = Some(compiled_sdk_modules().map_err(|error| error.message)?);
     }
     if compiled_stdlib_modules
         .as_ref()
@@ -59,7 +59,7 @@ fn queue_incan_stdlib_source_module(
 /// Queue one canonical source-import resolution for test dependency collection.
 fn queue_resolved_source_import(
     resolution: SourceModuleImportResolution,
-    compiled_stdlib_modules: &mut Option<BuiltinStdlibModules>,
+    compiled_stdlib_modules: &mut Option<CompiledSdkModules>,
     incan_source_stdlib_module_paths: &mut HashMap<String, PathBuf>,
     processed: &HashSet<PathBuf>,
     to_process: &mut Vec<(PathBuf, String, Vec<String>)>,
@@ -94,7 +94,7 @@ fn queue_resolved_source_import(
 /// Queue implicit source stdlib helper modules that generated Rust may reference without a source import.
 fn queue_implicit_stdlib_helpers(
     program: &Program,
-    compiled_stdlib_modules: &mut Option<BuiltinStdlibModules>,
+    compiled_stdlib_modules: &mut Option<CompiledSdkModules>,
     incan_source_stdlib_module_paths: &mut HashMap<String, PathBuf>,
     processed: &HashSet<PathBuf>,
     to_process: &mut Vec<(PathBuf, String, Vec<String>)>,

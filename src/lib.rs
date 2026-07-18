@@ -14,9 +14,9 @@
 //! That is generated program code, not compiler code.
 
 pub mod backend;
-pub(crate) mod builtin_stdlib;
 #[cfg(feature = "cli")]
 pub mod cli;
+pub(crate) mod compiled_sdk;
 pub mod dependency_resolver;
 pub mod format;
 pub mod frontend;
@@ -28,6 +28,7 @@ pub mod manifest;
 pub mod numeric;
 pub mod numeric_adapters;
 pub mod project_lifecycle;
+pub mod provider;
 #[cfg(feature = "rust_inspect")]
 pub mod rust_inspect;
 pub(crate) mod semantics_registry;

@@ -12,8 +12,8 @@ pub enum __IncanUnionf13d01fefab04049 {
     V0(File),
     V1(_BytesIO),
 }
-pub use incan_builtin_stdlib::fs::File;
-pub use incan_builtin_stdlib::traits::error::Error;
+pub use crate::__incan_std::fs::File;
+pub use crate::__incan_std::traits::error::Error;
 /// Compression codec identity used by `std.compression` autodetection.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Codec {

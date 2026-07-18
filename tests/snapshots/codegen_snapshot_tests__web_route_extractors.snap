@@ -7,10 +7,10 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-pub use incan_builtin_stdlib::r#async;
-pub use incan_builtin_stdlib::web::route;
-pub use incan_builtin_stdlib::web::GET;
-pub use incan_builtin_stdlib::web::POST;
+pub use crate::__incan_std::r#async;
+pub use crate::__incan_std::web::route;
+pub use crate::__incan_std::web::GET;
+pub use crate::__incan_std::web::POST;
 #[incan_web_macros::route("/posts/{year}/{month}", methods = ["GET"])]
 async fn get_posts(year: i64, month: i64) -> i64 {
     return year + month;

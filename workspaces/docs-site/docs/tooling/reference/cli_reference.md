@@ -32,9 +32,9 @@ Commands:
 
 ## Semantic inspection surfaces
 
-Incan 0.4 exposes several machine-readable inspection commands that are meant to agree on schema version, compiler version, project identity, source-file breadcrumbs, generated artifact paths, diagnostics, and provenance where their scopes overlap. Use `incan check --format json` for the stable diagnostic plane, `incan build --report json` for successful build and artifact metadata, `incan inspect rust --format json` for current generated Rust output, and `incan inspect codegraph --format jsonl` for source-structure graph facts.
+Incan 0.5 extends the machine-readable inspection surfaces introduced in 0.4. Use `incan check --format json` for the stable diagnostic plane, `incan build --report json` for successful build and artifact metadata, `incan inspect rust --format json` for current generated Rust output, `incan inspect codegraph --format jsonl` for source-structure graph facts, `incan inspect providers --format json` for SDK component and provider participation, and `incan inspect features --format json` for the additive package-feature graph.
 
-These commands are intentionally not a single full semantic database yet. They are the 0.4 baseline for the broader RFC 102 semantic inspection direction: stable public JSON surfaces that tools can join without scraping terminal prose, generated Rust, or source text independently. When a fact appears in more than one surface, consumers should prefer compiler-owned identity fields, source paths, schema versions, and explicit degraded-state or diagnostic records over human output.
+These commands are intentionally not a single full semantic database. They are stable public surfaces that tools can join without scraping terminal prose, generated Rust, or source text independently. When a fact appears in more than one surface, consumers should prefer compiler-owned identity fields, source paths, schema versions, and explicit degraded-state or diagnostic records over human output.
 
 ## Global options
 
@@ -45,6 +45,19 @@ Banner policy:
 
 - The banner is shown only for interactive `incan build` and `incan run` commands.
 - Utility commands such as `new`, `init`, `version`, `env`, `lock`, `fmt`, and `test` stay quiet by default.
+
+## Package-feature and SDK projection options
+
+Compilation, locking, and semantic inspection commands share these Incan-owned options:
+
+- `--features <FEATURES>`: Add comma-separated public features to the root Incan package projection.
+- `--no-default-features`: Do not select the root package's `default` feature.
+- `--all-features`: Select every public feature declared by the root package.
+- `--sdk-profile <PROFILE>`: Replace the project's base SDK profile for this invocation while preserving explicit component additions and exclusions from `[sdk]`.
+
+They are supported by `build`, `check`, `run`, `test`, and `lock`, plus the `inspect codegraph`, `inspect providers`, and `inspect features` projections. The package-feature flags do not forward names to Cargo. Backend pass-through remains explicitly prefixed as `--cargo-features`, `--cargo-no-default-features`, and `--cargo-all-features` where supported.
+
+`incan test --feature <NAME>` is a separate test-runner option for `std.testing.feature("NAME")` collection probes. Use plural `--features` for public package features.
 
 ## Global options (debug)
 
@@ -80,6 +93,8 @@ Type-checks a file or project entrypoint without building or running it. This is
 Options:
 
 - `--format text|json`: Output human diagnostics or a stable machine-readable JSON report (default: `text`).
+- `--features`, `--no-default-features`, `--all-features`: Select the root package-feature projection.
+- `--sdk-profile <PROFILE>`: Select a non-persistent SDK profile for this check.
 
 JSON output uses `schema_version: 1` and prints a deterministic report with `ok` and `diagnostics`. Each diagnostic includes a stable `code`, `severity`, compiler `phase` and `origin`, primary source span, message, notes, hints, labeled related spans, and an `incan explain <CODE>` hook. Diagnostics that compare two compiler-known values also include optional `expected` and `actual` fields, so consumers do not need to parse the message. The LSP and `incan inspect codegraph --allow-errors` project these same compiler-owned facts; codegraph uses byte offsets for source spans while the diagnostic JSON and LSP retain line and column positions. Human output remains the default and continues to use source-highlighted compiler diagnostics.
 
@@ -110,6 +125,9 @@ Seeded catalog codes:
 - `INCAN-P0001`: Syntax error.
 - `INCAN-T0001`: Type checking error.
 - `INCAN-I0001`: Import or module resolution error.
+- `INCAN-I0101`: A known SDK provider module belongs to a component disabled by the project.
+- `INCAN-I0102`: The project enabled an SDK component that is unavailable in the active installation.
+- `INCAN-I0103`: A known package export requires a public feature projection that is not active.
 - `INCAN-C0001`: CLI or tooling error.
 - `INCAN-U0001`: Unknown diagnostic code.
 
@@ -139,6 +157,8 @@ Behavior:
 
 Dependency flags:
 
+- `--features`, `--no-default-features`, `--all-features`: Select public Incan package features for this build.
+- `--sdk-profile <PROFILE>`: Select a non-persistent SDK profile for this build.
 - `--offline`: Pass `--offline` to Cargo subprocesses so dependency resolution/fetching fails instead of using the network.
 - `--locked`: Require `incan.lock` to exist and be up to date. Also passes `--locked` to Cargo.
 - `--frozen`: Like `--locked`, plus passes `--frozen` to Cargo (offline + locked).
@@ -175,6 +195,7 @@ incan build examples/simple/hello.incn
 incan build src/main.incn --offline
 incan build src/main.incn --locked
 incan build src/main.incn --frozen
+incan build src/main.incn --features json,http --sdk-profile minimal
 incan build src/main.incn --cargo-features fancy_logging
 incan build src/main.incn -- --timings
 incan build --lib
@@ -216,21 +237,74 @@ Usage:
 incan inspect codegraph [OPTIONS] <PATH>
 ```
 
-Exports compiler-backed codegraph records for an Incan source file or directory. The 0.4 export is a deterministic JSONL stream of Incan-language files, modules, top-level declarations, imports, public exports, body-level reference and call syntax, conservative resolved reference and call targets, containment relationships, source spans, provenance, degraded state, and diagnostics. It is intended for tools and agents that need Incan structure without scraping source text.
+Exports compiler-backed codegraph records for an Incan source file or directory. The export is a deterministic JSONL stream of Incan-language files, modules, top-level declarations, imports, public exports, body-level reference and call syntax, conservative resolved reference and call targets, containment relationships, source spans, provenance, degraded state, diagnostics, and the active provider/component/feature projection. It is intended for tools and agents that need Incan structure without scraping source text.
 
 Options:
 
 - `--format jsonl`: Emit newline-delimited JSON records. JSONL is the only supported 0.4 format.
 - `--allow-errors`: Emit a degraded partial graph and diagnostic records when the source is broken. Without this flag, diagnostics fail the command.
+- `--features`, `--no-default-features`, `--all-features`: Select which feature-conditioned source facts enter the graph.
+- `--sdk-profile <PROFILE>`: Select the SDK profile used to resolve provider-backed facts.
 
-`incan inspect codegraph` is tooling output, not runtime `std.graph`, not a generated-Rust ABI, and not a whole-program reference/call graph in 0.4. The header lists the represented languages, and every fact record carries `language`, `provenance`, and `degraded` fields. Body facts with a compiler-proven `target_id` use checked provenance; syntax-only body facts keep syntax provenance. In 0.4, `target_id` points only at declaration records emitted in the same JSONL export; public-package manifest identity remains available in library manifests, but external package declarations are not emitted as codegraph targets yet. The 0.4 exporter emits `language: "incan"` only; first-class Rust graph records and MCP/task-context consumers are follow-up work.
+`incan inspect codegraph` is tooling output, not runtime `std.graph`, not a generated-Rust ABI, and not a whole-program reference/call graph. The header lists the represented languages and has a typed `semantic_contexts` entry for each represented project. Each context records the SDK identity and profile, component availability and enablement, package feature closures and activation reasons, and provider identities, participation, artifacts, implementation facets, and authority provenance. Every fact record carries `language`, `provenance`, and `degraded` fields. Body facts with a compiler-proven `target_id` use checked provenance; syntax-only body facts keep syntax provenance. In v0.5, `target_id` points only at declaration records emitted in the same JSONL export; public-package manifest identity remains available in library manifests, but external package declarations are not emitted as codegraph targets yet. The v0.5 exporter emits `language: "incan"` only; first-class Rust graph records remain follow-up work.
 
 Examples:
 
 ```bash
 incan inspect codegraph src/main.incn --format jsonl
 incan inspect codegraph src --format jsonl --allow-errors
+incan inspect codegraph src --format jsonl --features json --sdk-profile minimal
 ```
+
+### `incan inspect providers`
+
+Usage:
+
+```text
+incan inspect providers [PATH] [OPTIONS]
+```
+
+Reports the active SDK identity and profile, component availability and enablement, selection reasons, separate provider availability, enablement, and use facts, compiled provider identities and provenance, canonical namespace claims, used modules, active features, private implementation facets, and provider manifest paths. `PATH` defaults to the current project.
+
+Options:
+
+- `--format text|json`: Emit concise human output or the schema-v1 provider report.
+- `--features`, `--no-default-features`, `--all-features`: Select the package-feature projection whose providers should be inspected.
+- `--sdk-profile <PROFILE>`: Select a non-persistent SDK profile for this projection.
+
+Examples:
+
+```bash
+incan inspect providers
+incan inspect providers . --format json
+incan inspect providers src/main.incn --format json --sdk-profile minimal
+```
+
+### `incan inspect features`
+
+Usage:
+
+```text
+incan inspect features [PATH] [OPTIONS]
+```
+
+Reports the resolved feature projection for every active Incan package: active features, optional dependencies, dependency-feature requests, required SDK components, activation reasons, active dependency edges, and feature-conditioned provider facts. `PATH` defaults to the current project.
+
+Options:
+
+- `--format text|json`: Emit concise human output or the schema-v1 feature report.
+- `--features`, `--no-default-features`, `--all-features`: Select the root package projection to inspect.
+- `--sdk-profile <PROFILE>`: Select the SDK profile used to validate component requirements.
+
+Examples:
+
+```bash
+incan inspect features
+incan inspect features . --format json
+incan inspect features . --format json --no-default-features --features json
+```
+
+See [SDK components and package features](sdk_components_and_package_features.md) for the state and resolution model.
 
 ### `incan run`
 
@@ -262,7 +336,7 @@ If `FILE` is omitted, `incan run` uses `[project.scripts].main` from the nearest
 
 Dependency flags (same as `build`):
 
-- `--offline`, `--locked`, `--frozen`, `--no-offline`, `--no-locked`, `--no-frozen`, `--cargo-args`, `--cargo-features`, `--cargo-no-default-features`, `--cargo-all-features`
+- `--features`, `--no-default-features`, `--all-features`, `--sdk-profile`, `--offline`, `--locked`, `--frozen`, `--no-offline`, `--no-locked`, `--no-frozen`, `--cargo-args`, `--cargo-features`, `--cargo-no-default-features`, `--cargo-all-features`
 - `--release`: Build and run with Cargo's release profile.
 
 ### `incan fmt`
@@ -319,7 +393,7 @@ Test runner flags:
 
 Dependency flags (same as `build`):
 
-- `--offline`, `--locked`, `--frozen`, `--no-offline`, `--no-locked`, `--no-frozen`, `--cargo-args`, `--cargo-features`, `--cargo-no-default-features`, `--cargo-all-features`
+- `--features`, `--no-default-features`, `--all-features`, `--sdk-profile`, `--offline`, `--locked`, `--frozen`, `--no-offline`, `--no-locked`, `--no-frozen`, `--cargo-args`, `--cargo-features`, `--cargo-no-default-features`, `--cargo-all-features`
 
 Without `--locked` or `--frozen`, `incan test` creates `incan.lock` when it is missing. If an existing lockfile is stale, the command warns and reuses the embedded `Cargo.lock` payload without rewriting `incan.lock`; run `incan lock` to refresh the committed lockfile intentionally.
 
@@ -374,6 +448,9 @@ incan test --shuffle --seed 12345 tests/
 
 # Strict mode for CI
 incan test --frozen
+
+# Test one package-feature projection against a smaller SDK profile
+incan test tests/ --no-default-features --features json --sdk-profile minimal
 ```
 
 ### `incan new`
@@ -519,6 +596,10 @@ If `FILE` is omitted, uses the `[project.scripts].main` entry from `incan.toml`.
 
 Options:
 
+- `--features <FEATURES>`: Add public Incan features to the root package's locked projection.
+- `--no-default-features`: Do not select the root package's `default` feature.
+- `--all-features`: Select every public feature declared by the root package.
+- `--sdk-profile <PROFILE>`: Replace the base SDK profile for the locked projection while preserving manifest additions and exclusions.
 - `--cargo-features <FEATURES>`: Enable specific Cargo features for resolution.
 - `--cargo-no-default-features`: Disable default Cargo features.
 - `--cargo-all-features`: Enable all Cargo features.
@@ -528,10 +609,12 @@ Example:
 ```bash
 incan lock src/main.incn
 incan lock                          # uses [project.scripts].main
-incan lock --cargo-features metrics # include optional deps in lock
+incan lock --features metrics       # select public Incan package features
+incan lock --sdk-profile minimal    # lock the minimal SDK profile projection
+incan lock --cargo-features metrics # select explicit backend Cargo features
 ```
 
-The generated `incan.lock` contains an embedded `Cargo.lock` payload and a fingerprint of your dependency inputs. Commit it to version control for reproducible builds.
+The generated `incan.lock` contains an embedded `Cargo.lock` payload, the expanded SDK component and provider identities, the public package-feature graph and activation reasons, private implementation-facet closure, and a fingerprint of dependency inputs. Commit it to version control for reproducible builds.
 
 See: [Managing dependencies](../how-to/dependencies.md) for practical guidance.
 

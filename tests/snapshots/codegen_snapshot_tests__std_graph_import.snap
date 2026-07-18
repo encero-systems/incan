@@ -7,12 +7,12 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-pub use incan_builtin_stdlib::graph::DiGraph;
-pub use incan_builtin_stdlib::graph::Dag;
-pub use incan_builtin_stdlib::graph::MultiDiGraph;
-pub use incan_builtin_stdlib::graph::NodeId;
-pub use incan_builtin_stdlib::graph::EdgeId;
-pub use incan_builtin_stdlib::graph::GraphError;
+pub use crate::__incan_std::graph::DiGraph;
+pub use crate::__incan_std::graph::Dag;
+pub use crate::__incan_std::graph::MultiDiGraph;
+pub use crate::__incan_std::graph::NodeId;
+pub use crate::__incan_std::graph::EdgeId;
+pub use crate::__incan_std::graph::GraphError;
 fn exercise_graphs() {
     let mut graph = DiGraph::<String>::__incan_new();
     let a: NodeId = graph.add_node("a".into());

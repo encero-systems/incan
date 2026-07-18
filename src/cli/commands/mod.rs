@@ -25,6 +25,7 @@ pub mod format;
 pub mod init;
 pub mod lifecycle;
 pub mod lock;
+pub mod provider_inspect;
 pub mod stdlib_loader;
 pub mod tools;
 pub(crate) mod vocab_extraction;
@@ -34,11 +35,14 @@ pub use build::{build_file, build_library, inspect_rust, run_file, run_inline_so
 pub use codegraph::{CodegraphInspectionFormat, inspect_codegraph};
 pub use common::{collect_modules, read_source};
 pub use debug::{check_file, emit_rust, lex_file, parse_file};
-pub use diagnostics::{DiagnosticOutputFormat, check_path, explain_diagnostic};
+pub use diagnostics::{
+    DiagnosticOutputFormat, check_path, check_path_with_features, check_path_with_selections, explain_diagnostic,
+};
 pub use format::format_files;
 pub use init::init_project;
 pub use lifecycle::{env_list, env_run, env_show, version_project};
 pub use lock::lock_project;
+pub use provider_inspect::{ProviderInspectionFormat, inspect_features, inspect_providers};
 pub use tools::{
     ToolsDoctorFormat, ToolsMetadataFormat, ToolsModelMetadataFormat, tools_doctor, tools_metadata_api,
     tools_metadata_model,

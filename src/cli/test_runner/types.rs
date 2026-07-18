@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::provider::FeatureSelection;
+
 use crate::cli::commands::common::CargoPolicy;
 
 /// Output format for `incan test` results.
@@ -163,6 +165,8 @@ pub struct TestRunConfig<'a> {
     pub strict_markers: bool,
     pub jobs: usize,
     pub test_features: Vec<String>,
+    pub package_features: FeatureSelection,
+    pub sdk_profile: Option<String>,
     pub timeout: Option<&'a str>,
     pub no_capture: bool,
     pub cargo_policy: CargoPolicy,

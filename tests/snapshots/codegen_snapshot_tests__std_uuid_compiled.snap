@@ -16,16 +16,16 @@ use ::rand::Rng;
 use ::rand::thread_rng;
 use ::incan_stdlib::errors::raise_value_error;
 use ::std::string::String as RustString;
-pub use incan_builtin_stdlib::collections::OrdinalKey;
-pub use incan_builtin_stdlib::collections::OrdinalMapError;
-pub use incan_builtin_stdlib::datetime::runtime::SystemTime;
-pub use incan_builtin_stdlib::hash::md5 as hash_md5;
-pub use incan_builtin_stdlib::hash::sha1 as hash_sha1;
-pub use incan_builtin_stdlib::io::BytesIO;
-pub use incan_builtin_stdlib::io::Endian;
-pub use incan_builtin_stdlib::io::IoError;
-use incan_builtin_stdlib::io::_BytesIO;
-pub use incan_builtin_stdlib::traits::error::Error;
+pub use crate::__incan_std::collections::OrdinalKey;
+pub use crate::__incan_std::collections::OrdinalMapError;
+pub use crate::__incan_std::datetime::runtime::SystemTime;
+pub use crate::__incan_std::hash::md5 as hash_md5;
+pub use crate::__incan_std::hash::sha1 as hash_sha1;
+pub use crate::__incan_std::io::BytesIO;
+pub use crate::__incan_std::io::Endian;
+pub use crate::__incan_std::io::IoError;
+use crate::__incan_std::io::_BytesIO;
+pub use crate::__incan_std::traits::error::Error;
 pub const NIL: UUID = UUID(0);
 pub const MAX: UUID = UUID(340282366920938463463374607431768211455);
 pub const NAMESPACE_DNS: UUID = UUID(143098242404177361603877621312831893704);
@@ -614,7 +614,7 @@ impl OrdinalKey for UUID {
     }
     fn ordinal_hash(&self) -> i64 {
         let _ = "\n        Hash this key's canonical bytes for `OrdinalMap` lookup.\n\n        Builtin key implementations override this to avoid materializing a fresh byte vector before every lookup.\n        ";
-        return incan_builtin_stdlib::collections::_ordinal_hash(self.ordinal_bytes());
+        return crate::__incan_std::collections::_ordinal_hash(self.ordinal_bytes());
     }
     fn ordinal_bytes_equal(&self, data: Vec<u8>) -> bool {
         let _ = "\n        Return whether `data` is this key's canonical byte representation.\n\n        Builtin key implementations override this to compare borrowed key bytes without allocating query bytes.\n        ";
@@ -876,7 +876,7 @@ impl _UuidBytesWriter {
     ///     `Ok(None)` when the write succeeds.
     pub fn data(&self, value: Vec<u8>) -> Result<(), UuidError> {
         let _ = "\n        Append raw bytes to the UUID buffer.\n\n        Args:\n            value: Bytes to append unchanged.\n\n        Returns:\n            `Ok(None)` when the write succeeds.\n        ";
-        return incan_builtin_stdlib::result::map(
+        return crate::__incan_std::result::map(
                 self.out.write_bytes(value),
                 _discard_written_count,
             )
@@ -1006,7 +1006,7 @@ pub fn _discard_written_count(_: i64) {
 fn _uuid_writer(operation: String) -> _UuidBytesWriter {
     let _ = "\n    Create a UUID byte writer tagged with an operation name for errors.\n\n    Args:\n        operation: Human-readable operation label used in converted `UuidError` details.\n\n    Returns:\n        An empty UUID byte writer.\n    ";
     return _UuidBytesWriter {
-        out: incan_builtin_stdlib::io::BytesIO(b"".to_vec()),
+        out: crate::__incan_std::io::BytesIO(b"".to_vec()),
         operation: operation,
     };
 }
@@ -1312,7 +1312,7 @@ fn _hex_byte(value: u8) -> String {
 }
 fn _read_u128_from_bytes(raw: Vec<u8>) -> Result<u128, IoError> {
     let _ = "\n    Read sixteen network-order bytes into a `u128`.\n\n    Args:\n        raw: Bytes to read.\n\n    Returns:\n        The decoded integer, or `Err(IoError)` when the input is too short.\n    ";
-    let reader = incan_builtin_stdlib::io::BytesIO(raw);
+    let reader = crate::__incan_std::io::BytesIO(raw);
     let value: u128 = crate::__incan_std::io::BinaryRead::<
         u128,
     >::read(&reader, Endian::Big.clone())?;
@@ -1320,7 +1320,7 @@ fn _read_u128_from_bytes(raw: Vec<u8>) -> Result<u128, IoError> {
 }
 fn _byte_at(raw: Vec<u8>, index: i64) -> Result<u8, IoError> {
     let _ = "\n    Read one byte from a byte buffer.\n\n    Args:\n        raw: Source bytes.\n        index: Byte offset to read.\n\n    Returns:\n        The selected byte, or `Err(IoError)` when the offset is outside the buffer.\n    ";
-    let reader = incan_builtin_stdlib::io::BytesIO(raw);
+    let reader = crate::__incan_std::io::BytesIO(raw);
     let _ = reader.seek(index)?;
     let value: u8 = crate::__incan_std::io::BinaryRead::<
         u8,

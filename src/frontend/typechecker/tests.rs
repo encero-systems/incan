@@ -24,6 +24,9 @@ use crate::library_manifest::{
     PartialPresetExport, PartialTargetKindExport, PresetValueExport, ReceiverExport, StaticExport, TraitExport,
     TypeAliasExport, TypeBoundExport, TypeParamExport, TypeRef,
 };
+use crate::provider::{
+    NamespaceAuthority, ProviderIdentity, ProviderPlan, ProviderPlanError, ProviderProvenance, ProviderRecord,
+};
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect::{Inspector, InspectorConfig, write_borrowed_param_probe_crate, write_substrait_probe_crate};
 use incan_core::interop::{
@@ -34,10 +37,11 @@ use incan_core::interop::{
 use incan_core::lang::surface::constructors::{self as surface_constructors, ConstructorId};
 use incan_core::lang::traits::{self as builtin_traits, TraitId};
 use incan_core::lang::types::collections::{self as collection_types, CollectionTypeId};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 #[cfg(feature = "rust_inspect")]
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 fn check_str(source: &str) -> Result<(), Vec<CompileError>> {
     let tokens = lexer::lex(source)?;
@@ -2067,6 +2071,7 @@ fn library_index_with_identity_graph_alias_collision() -> LibraryManifestIndex {
                     },
                 }],
             },
+            provider: Default::default(),
         },
         rust_abi: None,
     };
@@ -11888,6 +11893,160 @@ fn test_unknown_stdlib_module_from_import() {
         "Expected unknown stdlib module error; got: {:?}",
         errs.iter().map(|e| &e.message).collect::<Vec<_>>()
     );
+}
+
+fn provider_plan_for_sdk_module(
+    module: &[&str],
+    enabled: bool,
+    available: bool,
+) -> Result<Arc<ProviderPlan>, ProviderPlanError> {
+    provider_plan_for_sdk_modules(&[module], enabled, available)
+}
+
+fn provider_plan_for_sdk_modules(
+    modules: &[&[&str]],
+    enabled: bool,
+    available: bool,
+) -> Result<Arc<ProviderPlan>, ProviderPlanError> {
+    let manifest = available.then(|| Arc::new(LibraryManifest::new("incan_stdlib_web", "0.5.0")));
+    let namespace_claims = modules
+        .iter()
+        .map(|module| module.iter().map(|segment| (*segment).to_string()).collect())
+        .collect::<BTreeSet<Vec<String>>>();
+    ProviderPlan::new(
+        LibraryManifestIndex::default(),
+        vec![ProviderRecord {
+            identity: ProviderIdentity {
+                name: "incan_stdlib_web".to_string(),
+                version: "0.5.0".to_string(),
+                digest: "sha256:fixture".to_string(),
+                feature_projection: BTreeSet::new(),
+            },
+            provenance: ProviderProvenance::Sdk {
+                sdk_identity: "incan@0.5.0".to_string(),
+                component_id: "stdlib-web".to_string(),
+                inventory_path: None,
+            },
+            authority: NamespaceAuthority::SdkReserved,
+            namespace_claims: namespace_claims.clone(),
+            available,
+            enabled,
+            manifest,
+            artifact: None,
+            implementation_facets: Vec::new(),
+        }],
+        namespace_claims,
+    )
+    .map(Arc::new)
+}
+
+#[test]
+fn disabled_sdk_component_import_has_a_component_selection_remedy() -> Result<(), Box<dyn std::error::Error>> {
+    let ast = parse_program("import std.web\n", "disabled SDK provider import");
+    let mut checker = TypeChecker::new();
+    checker.set_provider_plan(provider_plan_for_sdk_module(&["std", "web"], false, true)?);
+    let result = checker.check_program(&ast);
+    assert!(result.is_err(), "a disabled SDK provider import must fail");
+    let errors = result.err().unwrap_or_default();
+    assert!(
+        errors.iter().any(|error| {
+            error.message.contains("component `stdlib-web`") && error.message.contains("disabled for this project")
+        }),
+        "expected disabled-component diagnostic, got: {errors:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn unavailable_sdk_component_import_has_an_installation_remedy() -> Result<(), Box<dyn std::error::Error>> {
+    let ast = parse_program("import std.web\n", "unavailable SDK provider import");
+    let mut checker = TypeChecker::new();
+    checker.set_provider_plan(provider_plan_for_sdk_module(&["std", "web"], true, false)?);
+    let result = checker.check_program(&ast);
+    assert!(result.is_err(), "an unavailable SDK provider import must fail");
+    let errors = result.err().unwrap_or_default();
+    assert!(
+        errors
+            .iter()
+            .any(|error| { error.message.contains("component `stdlib-web`") && error.message.contains("unavailable") }),
+        "expected unavailable-component diagnostic, got: {errors:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn sdk_provider_catalog_accepts_modules_without_a_compiler_registry_entry() -> Result<(), Box<dyn std::error::Error>> {
+    let ast = parse_program("import std.future\n", "provider-owned future SDK module");
+    let mut checker = TypeChecker::new();
+    checker.set_provider_plan(provider_plan_for_sdk_module(&["std", "future"], true, true)?);
+    let result = checker.check_program(&ast);
+    assert!(
+        result.is_ok(),
+        "provider-owned modules should not require a compiler registry entry: {result:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn sdk_provider_catalog_materializes_submodule_imports_without_a_compiler_registry_entry()
+-> Result<(), Box<dyn std::error::Error>> {
+    let ast = parse_program("from std.future import tools\n", "provider-owned future SDK submodule");
+    let mut checker = TypeChecker::new();
+    checker.set_provider_plan(provider_plan_for_sdk_modules(
+        &[&["std", "future"], &["std", "future", "tools"]],
+        true,
+        true,
+    )?);
+    let result = checker.check_program(&ast);
+    assert!(
+        result.is_ok(),
+        "provider-owned submodules should not require a compiler registry entry: {result:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn sdk_provider_bootstrap_preserves_source_stdlib_model_constructors() -> Result<(), String> {
+    let ast = parse_program(
+        r#"from std.io import IoError
+
+def make_error() -> IoError:
+    return IoError(kind="other", detail="failed", operation="test", position=-1, path=None)
+"#,
+        "source SDK provider constructor import",
+    );
+    let plan = ProviderPlan::for_in_memory_sdk_modules(
+        LibraryManifestIndex::default(),
+        [vec!["traits".to_string(), "error".to_string()]],
+    )
+    .with_bootstrap_sdk_namespace_roots(["io".to_string()]);
+    let mut checker = TypeChecker::new();
+    checker.set_provider_plan(Arc::new(plan));
+    let result = checker.check_program(&ast);
+    assert!(
+        matches!(checker.lookup_type_info("IoError"), Some(TypeInfo::Model(_))),
+        "source SDK provider imports must preserve concrete model metadata: {:?}",
+        checker.lookup_symbol("IoError")
+    );
+    result.map_err(|errors| format!("source SDK provider constructors should typecheck: {errors:?}"))
+}
+
+#[test]
+fn sdk_provider_catalog_does_not_fall_back_to_the_compiler_stdlib_inventory() -> Result<(), Box<dyn std::error::Error>>
+{
+    let ast = parse_program("import std.web\n", "module absent from active SDK catalog");
+    let mut checker = TypeChecker::new();
+    checker.set_provider_plan(provider_plan_for_sdk_module(&["std", "future"], true, true)?);
+    let result = checker.check_program(&ast);
+    assert!(result.is_err(), "a module absent from the active SDK catalog must fail");
+    let errors = result.err().unwrap_or_default();
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("Unknown stdlib module `std.web`")),
+        "expected provider-catalog unknown-module diagnostic, got: {errors:?}"
+    );
+    Ok(())
 }
 
 #[test]

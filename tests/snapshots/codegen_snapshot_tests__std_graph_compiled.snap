@@ -7,7 +7,7 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-pub use incan_builtin_stdlib::traits::error::Error;
+pub use crate::__incan_std::traits::error::Error;
 /// Stable handle for one node in a graph instance.
 #[derive(Debug, Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
 pub struct NodeId(pub i64);

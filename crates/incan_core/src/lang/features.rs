@@ -69,6 +69,7 @@ pub enum FeatureId {
     BuildTestPreheatObservability,
     CodegraphInspection,
     CheckedApiMetadata,
+    CompiledProvidersSdkComponentsPackageFeatures,
     FormatterContract,
 }
 
@@ -1308,6 +1309,35 @@ pub const FEATURES: &[FeatureDescriptor] = &[
         references: links![
             ("Release 0.3", "../../release_notes/0_3.md"),
             ("Project lifecycle", "project_lifecycle.md"),
+        ],
+    },
+    FeatureDescriptor {
+        id: FeatureId::CompiledProvidersSdkComponentsPackageFeatures,
+        name: "Compiled providers, SDK components, and package features",
+        category: FeatureCategory::Libraries,
+        since: Since(0, 5),
+        introduced_in_rfc: RFC::_114,
+        stability: Stability::Stable,
+        activation: "Select SDK components in `[sdk]`; select additive package features in manifests or with Incan feature flags.",
+        summary: "Checked libraries and official SDK components resolve through one provider plan, while package-owned features project additive source and dependency facts without exposing Cargo features as Incan API.",
+        canonical_forms: &[
+            "[sdk]\nprofile = \"minimal\"\ncomponents = [\"stdlib-data\"]",
+            "incan build --features json --sdk-profile minimal",
+            "when feature(\"json\"):\n    pub from json_support import JsonReport",
+            "incan inspect providers --format json",
+        ],
+        prefer_over: "Hardcoded stdlib inventories, copied provider source, or Cargo feature names used as public package semantics.",
+        references: links![
+            (
+                "SDK components and package features",
+                "../../tooling/reference/sdk_components_and_package_features.md"
+            ),
+            ("Conditional compilation", "conditional_compilation.md"),
+            (
+                "Project configuration",
+                "../../tooling/reference/project_configuration.md"
+            ),
+            ("Release 0.5", "../../release_notes/0_5.md"),
         ],
     },
     FeatureDescriptor {

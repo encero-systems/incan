@@ -21,14 +21,18 @@ use crate::cli::{CliError, CliResult, ExitCode};
 use crate::dependency_resolver::{InlineRustImport, ResolvedDependencies, resolve_reachable_dependencies};
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::{diagnostics, lexer, parser};
-use crate::lockfile::{CargoFeatureSelection, IncanLock, compute_deps_fingerprint};
+use crate::lockfile::{
+    CargoFeatureSelection, IncanLock, SemanticLockState, compute_resolved_fingerprint, semantic_lock_state,
+};
 use crate::manifest::ProjectManifest;
+use crate::provider::{FeatureSelection, PackageFeaturePlan, ProviderPlan, SdkComponentSelection};
 
 use super::common::{
-    CargoPolicy, INTERNAL_BUILTIN_STDLIB_ARTIFACT_BUILD_ENV, INTERNAL_CARGO_LOCK_PAYLOAD_PATH_ENV, ProjectRequirements,
+    CargoPolicy, INTERNAL_CARGO_LOCK_PAYLOAD_PATH_ENV, INTERNAL_SDK_PROVIDER_BUILD_ENV, ProjectRequirements,
     build_source_map, cargo_command_flags, cargo_lockfile_flags, collect_modules, collect_project_requirements,
-    collect_rust_dependency_uses, enforce_project_toolchain_constraint, format_dependency_error,
-    merge_project_requirement_dependencies, merge_project_requirements, merge_resolved_dependencies,
+    collect_rust_dependency_uses, enforce_project_toolchain_constraint, extend_lock_requirements_with_provider_plan,
+    format_dependency_error, merge_project_requirement_dependencies, merge_project_requirements,
+    merge_resolved_dependencies, prepare_or_discover_sdk_inventory, provider_used_module_paths,
 };
 #[cfg(feature = "rust_inspect")]
 use super::common::{collect_rust_inspect_query_paths, ensure_rust_inspect_workspace, prewarm_rust_inspect_workspace};
@@ -66,6 +70,8 @@ pub(crate) struct GeneratedLibraryDependencyPreheatRequest<'a> {
 /// Generate or update incan.lock for a project.
 pub fn lock_project(
     entry_file: Option<&PathBuf>,
+    package_features: &FeatureSelection,
+    sdk_profile_override: Option<&str>,
     cargo_features: Vec<String>,
     cargo_no_default_features: bool,
     cargo_all_features: bool,
@@ -84,10 +90,14 @@ pub fn lock_project(
         cargo_all_features,
     }
     .normalized();
-    let context = collect_project_lock_context(&manifest, entry_file.map(PathBuf::as_path), &cargo_features)?
-        .ok_or_else(|| {
-            CliError::failure("incan lock requires a FILE argument or at least one [project.scripts] entry")
-        })?;
+    let context = collect_project_lock_context(
+        &manifest,
+        entry_file.map(PathBuf::as_path),
+        &cargo_features,
+        package_features,
+        sdk_profile_override,
+    )?
+    .ok_or_else(|| CliError::failure("incan lock requires a FILE argument or at least one [project.scripts] entry"))?;
 
     let project_name = manifest
         .project
@@ -112,6 +122,7 @@ pub fn lock_project(
         &context.project_requirements,
         &cargo_features,
         &cargo_policy,
+        &context.semantic,
         #[cfg(feature = "rust_inspect")]
         &context.rust_inspect_query_paths,
     )?;
@@ -133,6 +144,11 @@ pub(crate) struct LockResolutionRequest<'a> {
     pub project_requirements: &'a ProjectRequirements,
     pub cargo_features: &'a CargoFeatureSelection,
     pub cargo_policy: &'a CargoPolicy,
+    pub semantic: Option<&'a SemanticLockState>,
+    /// Incan package-feature selection used when rebuilding the canonical project-wide lock context.
+    pub package_features: Option<&'a FeatureSelection>,
+    /// Command-local SDK profile used when rebuilding the canonical project-wide lock context.
+    pub sdk_profile_override: Option<&'a str>,
     #[cfg(feature = "rust_inspect")]
     pub rust_inspect_query_paths: &'a [String],
 }
@@ -249,6 +265,9 @@ pub(crate) fn prepare_rust_inspect_typecheck_workspace(
         project_requirements: &project_requirements,
         cargo_features,
         cargo_policy,
+        semantic: None,
+        package_features: None,
+        sdk_profile_override: None,
         rust_inspect_query_paths: &metadata_query_paths,
     })?;
     prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {
@@ -277,6 +296,9 @@ pub(crate) fn resolve_lock_payload(request: LockResolutionRequest<'_>) -> CliRes
         project_requirements,
         cargo_features,
         cargo_policy,
+        semantic,
+        package_features,
+        sdk_profile_override,
         #[cfg(feature = "rust_inspect")]
         rust_inspect_query_paths,
     } = request;
@@ -285,7 +307,7 @@ pub(crate) fn resolve_lock_payload(request: LockResolutionRequest<'_>) -> CliRes
         return Ok(None);
     }
 
-    if std::env::var_os(INTERNAL_BUILTIN_STDLIB_ARTIFACT_BUILD_ENV).is_some()
+    if std::env::var_os(INTERNAL_SDK_PROVIDER_BUILD_ENV).is_some()
         && let Some(payload) = cargo_lock_payload_override(
             std::env::var_os(INTERNAL_CARGO_LOCK_PAYLOAD_PATH_ENV)
                 .filter(|path| !path.is_empty())
@@ -295,8 +317,15 @@ pub(crate) fn resolve_lock_payload(request: LockResolutionRequest<'_>) -> CliRes
         return Ok(Some(payload));
     }
 
+    let default_package_features = FeatureSelection::default();
     let project_context = if let Some(manifest) = manifest {
-        collect_project_lock_context(manifest, None, cargo_features)?
+        collect_project_lock_context(
+            manifest,
+            None,
+            cargo_features,
+            package_features.unwrap_or(&default_package_features),
+            sdk_profile_override,
+        )?
     } else {
         None
     };
@@ -322,11 +351,20 @@ pub(crate) fn resolve_lock_payload(request: LockResolutionRequest<'_>) -> CliRes
     let rust_edition = manifest.and_then(|m| m.build.as_ref().and_then(|b| b.rust_edition.clone()));
     let mut resolved_with_requirements = resolved.clone();
     merge_project_requirement_dependencies(&mut resolved_with_requirements, project_requirements)?;
-    let fingerprint = compute_deps_fingerprint(
+    // A manifest-backed lock is project-wide, so its canonical context must win over an entrypoint-local semantic
+    // snapshot. The supplied snapshot remains authoritative for manifest-less callers, where no project closure can
+    // be rebuilt.
+    let semantic = project_context
+        .as_ref()
+        .map(|context| context.semantic.clone())
+        .or_else(|| semantic.cloned())
+        .unwrap_or_default();
+    let fingerprint = compute_resolved_fingerprint(
         &resolved_with_requirements.dependencies,
         &resolved_with_requirements.dev_dependencies,
         cargo_features,
         Some(project_root),
+        &semantic,
     );
 
     let strict = cargo_policy.locked || cargo_policy.frozen;
@@ -345,6 +383,7 @@ pub(crate) fn resolve_lock_payload(request: LockResolutionRequest<'_>) -> CliRes
                      \x20 - incan.toml dependency entries changed, and/or\n\
                      \x20 - inline rust::... annotations changed, and/or\n\
                      \x20 - toolchain known-good defaults changed (if you rely on defaults)\n\
+                     \x20 - Incan package-feature or SDK-profile selection changed, and/or\n\
                      \x20 - Cargo feature selection changed\n\n\
                      Fix:\n\n\
                      \x20   incan lock\n\n\
@@ -374,6 +413,7 @@ pub(crate) fn resolve_lock_payload(request: LockResolutionRequest<'_>) -> CliRes
         project_requirements,
         cargo_features,
         cargo_policy,
+        &semantic,
         #[cfg(feature = "rust_inspect")]
         rust_inspect_query_paths,
     )?;
@@ -385,6 +425,7 @@ struct ProjectLockContext {
     modules: Vec<ParsedModule>,
     resolved: ResolvedDependencies,
     project_requirements: ProjectRequirements,
+    semantic: SemanticLockState,
     #[cfg(feature = "rust_inspect")]
     rust_inspect_query_paths: Vec<String>,
 }
@@ -414,13 +455,24 @@ fn collect_project_lock_context(
     manifest: &ProjectManifest,
     explicit_entry_file: Option<&Path>,
     cargo_features: &CargoFeatureSelection,
+    package_features: &FeatureSelection,
+    sdk_profile_override: Option<&str>,
 ) -> CliResult<Option<ProjectLockContext>> {
     let entry_paths = project_lock_entry_paths(manifest, explicit_entry_file);
     if entry_paths.is_empty() {
         return Ok(None);
     }
 
-    let library_manifest_index = LibraryManifestIndex::from_project_manifest(manifest);
+    let package_feature_plan = PackageFeaturePlan::resolve(manifest, package_features)
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    let active_dependencies = package_feature_plan
+        .root_package()
+        .map(|package| package.active_dependencies.clone())
+        .unwrap_or_default();
+    let library_manifest_index = LibraryManifestIndex::from_project_manifest_dependencies(
+        manifest,
+        active_dependencies.iter().map(String::as_str),
+    );
     let library_imported_vocab = library_manifest_index.library_imported_vocab();
     let library_imported_dsl_surfaces = library_manifest_index.library_imported_dsl_surfaces();
     let mut modules = Vec::new();
@@ -437,7 +489,32 @@ fn collect_project_lock_context(
 
     let mut project_requirement_modules = modules.clone();
     project_requirement_modules.extend(test_inputs.project_requirement_modules);
-    let project_requirements = collect_project_requirements(&project_requirement_modules, &library_manifest_index)?;
+    let mut project_requirements = collect_project_requirements(&project_requirement_modules, &library_manifest_index)?;
+    let sdk_inventory = prepare_or_discover_sdk_inventory()?;
+    let sdk_selection =
+        SdkComponentSelection::from_manifest_with_profile_override(Some(manifest), sdk_profile_override);
+    let sdk_components = sdk_inventory
+        .as_ref()
+        .map(|inventory| inventory.resolve(&sdk_selection))
+        .transpose()
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    let provider_plan = ProviderPlan::from_resolved_inputs(
+        library_manifest_index.clone(),
+        Some(&package_feature_plan),
+        sdk_inventory.as_deref(),
+        sdk_components.as_ref(),
+        provider_used_module_paths(&project_requirement_modules),
+    )
+    .map_err(|error| CliError::failure(error.to_string()))?;
+    extend_lock_requirements_with_provider_plan(&mut project_requirements, &provider_plan)?;
+    let semantic = semantic_lock_state(
+        manifest.project_root(),
+        sdk_inventory.as_deref(),
+        sdk_components.as_ref(),
+        Some(&package_feature_plan),
+        &provider_plan,
+    )
+    .map_err(CliError::failure)?;
 
     let mut inline_imports = Vec::new();
     for module in &modules {
@@ -462,6 +539,7 @@ fn collect_project_lock_context(
         modules,
         resolved,
         project_requirements,
+        semantic,
         #[cfg(feature = "rust_inspect")]
         rust_inspect_query_paths,
     }))
@@ -961,6 +1039,7 @@ pub(crate) fn generate_lockfile(
     project_requirements: &ProjectRequirements,
     cargo_features: &CargoFeatureSelection,
     cargo_policy: &CargoPolicy,
+    semantic: &SemanticLockState,
     #[cfg(feature = "rust_inspect")] rust_inspect_query_paths: &[String],
 ) -> CliResult<IncanLock> {
     let lock_dir = project_root.join("target").join("incan_lock");
@@ -977,7 +1056,6 @@ pub(crate) fn generate_lockfile(
     generator
         .generate(rust_code)
         .map_err(|e| CliError::failure(format!("Failed to generate lock project: {}", e)))?;
-    seed_builtin_stdlib_artifact_lock(&lock_dir, project_requirements)?;
 
     let mut command = Command::new("cargo");
     sanitize_cargo_environment(&mut command);
@@ -1000,13 +1078,14 @@ pub(crate) fn generate_lockfile(
 
     let cargo_lock = fs::read_to_string(lock_dir.join("Cargo.lock"))
         .map_err(|e| CliError::failure(format!("Failed to read Cargo.lock: {}", e)))?;
-    let fingerprint = compute_deps_fingerprint(
+    let fingerprint = compute_resolved_fingerprint(
         &resolved.dependencies,
         &resolved.dev_dependencies,
         cargo_features,
         Some(project_root),
+        semantic,
     );
-    let lock = IncanLock::new(fingerprint, cargo_features.clone(), cargo_lock);
+    let lock = IncanLock::new_with_semantic(fingerprint, cargo_features.clone(), semantic.clone(), cargo_lock);
 
     if should_preheat_lockfile_dependencies(resolved, project_requirements) {
         run_lock_dependency_preheat(project_root, &lock_dir, cargo_features, cargo_policy)?;
@@ -1027,51 +1106,6 @@ pub(crate) fn generate_lockfile(
         .map_err(|e| CliError::failure(format!("Failed to write incan.lock: {}", e)))?;
 
     Ok(lock)
-}
-
-/// Seed a generated consumer lockfile from the compiled built-in stdlib artifact.
-///
-/// Cargo does not use a path dependency's lockfile while resolving its parent. Seeding a fresh generated lock workspace
-/// from the artifact's verified lock retains the transitive stdlib closure for offline consumers without exposing
-/// implementation crates as Incan source dependencies.
-pub(crate) fn compiled_builtin_stdlib_artifact_lock_payload(
-    requirements: &ProjectRequirements,
-) -> CliResult<Option<String>> {
-    let artifact_root = requirements.dependencies.iter().find_map(|dependency| {
-        if dependency.crate_name != incan_core::lang::stdlib::BUILTIN_STDLIB_ARTIFACT_CRATE {
-            return None;
-        }
-        match &dependency.source {
-            crate::manifest::DependencySource::Path { path } => Some(path),
-            _ => None,
-        }
-    });
-    let Some(artifact_root) = artifact_root else {
-        return Ok(None);
-    };
-    let artifact_lock = artifact_root.join("Cargo.lock");
-    if !artifact_lock.is_file() {
-        return Ok(None);
-    }
-    let payload = fs::read_to_string(&artifact_lock).map_err(|error| {
-        CliError::failure(format!(
-            "failed to read compiled built-in stdlib lock {}: {error}",
-            artifact_lock.display()
-        ))
-    })?;
-    Ok(Some(payload))
-}
-
-/// Seed a generated consumer lockfile with the compiled built-in stdlib artifact closure.
-fn seed_builtin_stdlib_artifact_lock(lock_dir: &Path, requirements: &ProjectRequirements) -> CliResult<()> {
-    let Some(payload) = compiled_builtin_stdlib_artifact_lock_payload(requirements)? else {
-        return Ok(());
-    };
-    fs::write(lock_dir.join("Cargo.lock"), payload).map_err(|error| {
-        CliError::failure(format!(
-            "failed to seed generated lockfile from compiled built-in stdlib artifact: {error}"
-        ))
-    })
 }
 
 /// Collect inline Rust crate imports and stdlib/provider requirements from test files for lock resolution.
@@ -1232,33 +1266,6 @@ mod tests {
         let mut requirements = empty_project_requirements();
         requirements.stdlib_features.push("json".to_string());
         assert!(should_preheat_lockfile_dependencies(&empty_resolved(), &requirements));
-    }
-
-    #[test]
-    fn compiled_builtin_stdlib_artifact_lock_payload_reads_the_artifact_closure()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let temp_dir = tempfile::tempdir()?;
-        let artifact_root = temp_dir.path().join("incan_builtin_stdlib");
-        fs::create_dir_all(&artifact_root)?;
-        fs::write(artifact_root.join("Cargo.lock"), "version = 4\n")?;
-        let requirements = ProjectRequirements {
-            stdlib_features: Vec::new(),
-            dependencies: vec![DependencySpec {
-                crate_name: incan_core::lang::stdlib::BUILTIN_STDLIB_ARTIFACT_CRATE.to_string(),
-                version: None,
-                features: Vec::new(),
-                default_features: true,
-                source: DependencySource::Path { path: artifact_root },
-                optional: false,
-                package: None,
-            }],
-        };
-
-        assert_eq!(
-            compiled_builtin_stdlib_artifact_lock_payload(&requirements)?,
-            Some("version = 4\n".to_string())
-        );
-        Ok(())
     }
 
     #[test]

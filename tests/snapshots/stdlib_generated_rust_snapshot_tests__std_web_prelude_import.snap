@@ -7,15 +7,15 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-pub use incan_builtin_stdlib::r#async;
-pub use incan_builtin_stdlib::web::App;
-pub use incan_builtin_stdlib::web::Json;
-pub use incan_builtin_stdlib::web::Html;
-pub use incan_builtin_stdlib::web::Response;
-pub use incan_builtin_stdlib::web::Query;
-pub use incan_builtin_stdlib::web::Path;
-pub use incan_builtin_stdlib::web::route;
-pub use incan_builtin_stdlib::web::GET;
+pub use crate::__incan_std::r#async;
+pub use crate::__incan_std::web::App;
+pub use crate::__incan_std::web::Json;
+pub use crate::__incan_std::web::Html;
+pub use crate::__incan_std::web::Response;
+pub use crate::__incan_std::web::Query;
+pub use crate::__incan_std::web::Path;
+pub use crate::__incan_std::web::route;
+pub use crate::__incan_std::web::GET;
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Search {
     q: String,
@@ -68,5 +68,5 @@ impl incan_stdlib::reflection::HasFieldValueReflection for Search {
 }
 #[incan_web_macros::route("/snapshot/{id}", method = "GET")]
 async fn snapshot(_: Path<i64>, query: Query<Search>) -> Json<Search> {
-    return incan_builtin_stdlib::web::Json(query.value.clone());
+    return crate::__incan_std::web::Json(query.value.clone());
 }

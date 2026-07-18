@@ -1,7 +1,6 @@
 //! OrdinalKey bridge planning for generated IR emission.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use crate::frontend::ast::Program;
 use crate::frontend::library_manifest_index::{LibraryManifestIndex, LibraryManifestIndexEntry};
@@ -26,7 +25,7 @@ pub(super) fn compilation_imports_std_ordinal_contract(
 }
 
 /// Collect public scalar value enums from loaded `.incnlib` dependencies.
-fn external_ordinal_value_enums(index: Option<&Arc<LibraryManifestIndex>>) -> Vec<ExternalOrdinalValueEnum> {
+fn external_ordinal_value_enums(index: Option<&LibraryManifestIndex>) -> Vec<ExternalOrdinalValueEnum> {
     let Some(index) = index else {
         return Vec::new();
     };
@@ -110,7 +109,7 @@ fn external_ordinal_custom_key(
 }
 
 /// Collect public user-authored `OrdinalKey` adopters from loaded `.incnlib` dependencies.
-fn external_ordinal_custom_keys(index: Option<&Arc<LibraryManifestIndex>>) -> Vec<ExternalOrdinalCustomKey> {
+fn external_ordinal_custom_keys(index: Option<&LibraryManifestIndex>) -> Vec<ExternalOrdinalCustomKey> {
     let Some(index) = index else {
         return Vec::new();
     };
@@ -200,7 +199,7 @@ impl OrdinalBridgeConfig {
     }
 
     /// Build a bridge configuration for crate-root emission where dependency adapters live.
-    pub(super) fn for_crate_root(uses_std_ordinal_contract: bool, index: Option<&Arc<LibraryManifestIndex>>) -> Self {
+    pub(super) fn for_crate_root(uses_std_ordinal_contract: bool, index: Option<&LibraryManifestIndex>) -> Self {
         if !uses_std_ordinal_contract {
             return Self::for_internal_module(false);
         }

@@ -7,8 +7,8 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-pub use incan_builtin_stdlib::fs::Path;
-pub use incan_builtin_stdlib::fs::File;
+pub use crate::__incan_std::fs::Path;
+pub use crate::__incan_std::fs::File;
 fn main() {
     std::panic::set_hook(
         std::boxed::Box::new(|panic_info| {

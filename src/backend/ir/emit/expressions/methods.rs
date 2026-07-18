@@ -249,11 +249,7 @@ impl<'a> IrEmitter<'a> {
     ///
     /// Consumers link the compiled stdlib artifact; artifact builds use the crate-local compatibility facade.
     fn result_stdlib_helper_path() -> TokenStream {
-        if std::env::var_os("INCAN_INTERNAL_BUILTIN_STDLIB_ARTIFACT_BUILD").is_some() {
-            quote! { crate::__incan_std::result }
-        } else {
-            quote! { incan_builtin_stdlib::result }
-        }
+        quote! { crate::__incan_std::result }
     }
 
     /// Return whether a value-transforming Result combinator can dogfood the pure Incan std.result helper.
@@ -528,6 +524,7 @@ impl<'a> IrEmitter<'a> {
                     emitted = quote! { &mut *#emitted };
                 }
                 if idx == 0
+                    && param.is_none()
                     && Self::receiver_type_for_method_dispatch(&receiver.ty).nominal_type_name() == Some("Path")
                     && Self::method_first_arg_is_path_or_str_union(method)
                     && let Some(wrapped) = self.emit_union_payload_arg(arg, &Self::path_or_str_union_type(), None)?

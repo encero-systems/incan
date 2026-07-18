@@ -121,19 +121,22 @@ smoke_direct() {
     --incan-home "${dist_dir}/install-home" \
     --bin-dir "${dist_dir}/install-bin"
   "${dist_dir}/install-bin/incan" --version
-  local installed_seed_store
-  installed_seed_store="${dist_dir}/install-home/toolchains/$(toolchain_version)/crates/incan_stdlib/stdlib/target/incan_builtin_stdlib"
-  [ -d "$installed_seed_store" ] || fail "installed toolchain is missing its compiled stdlib seed store"
-  [ -f "$installed_seed_store/.incan-release-seed-identity" ] \
-    || fail "installed toolchain is missing its compiled stdlib release-seed marker"
-  local seed_identities_before
-  seed_identities_before="$(find "$installed_seed_store" -mindepth 1 -maxdepth 1 -type d -print | sort)"
-  [ "$(printf '%s\n' "$seed_identities_before" | sed '/^$/d' | wc -l | tr -d ' ')" = "1" ] \
-    || fail "installed toolchain must contain exactly one compiled stdlib seed identity"
-  [ "$(tr -d '\r\n' < "$installed_seed_store/.incan-release-seed-identity")" = "$(basename "$seed_identities_before")" ] \
-    || fail "installed compiled stdlib release-seed marker does not match its only identity"
-  [ ! -d "$installed_seed_store/.cargo-target" ] \
-    || fail "installed toolchain must not contain the stdlib producer Cargo target"
+  local installed_sdk_store
+  installed_sdk_store="${dist_dir}/install-home/toolchains/$(toolchain_version)/share/incan/sdk"
+  [ -d "$installed_sdk_store" ] || fail "installed toolchain is missing its compiled SDK provider seed"
+  [ -f "$installed_sdk_store/sdk-inventory.json" ] || fail "installed toolchain is missing sdk-inventory.json"
+  local component
+  for component in \
+    stdlib-core stdlib-system stdlib-codecs stdlib-data \
+    stdlib-async stdlib-observability stdlib-web stdlib-testing
+  do
+    [ -d "$installed_sdk_store/components/$component" ] \
+      || fail "installed toolchain is missing SDK component $component"
+  done
+  [ ! -d "$installed_sdk_store/.cargo-target" ] \
+    || fail "installed toolchain must not contain an SDK provider Cargo target"
+  local sdk_payload_before
+  sdk_payload_before="$(find "$installed_sdk_store" -type f -exec shasum -a 256 {} \; | sort)"
   # Exercise the user-facing symlink path, not the real toolchain binary path. Some hosts report the symlink path from
   # current_exe(), so stdlib/support-crate lookup must resolve the canonical target before walking toolchain ancestors.
   rm -rf "${dist_dir}/starter-smoke"
@@ -146,12 +149,12 @@ smoke_direct() {
     "${dist_dir}/install-bin/incan" test
     "${dist_dir}/install-bin/incan" build --release
   )
-  local seed_identities_after
-  seed_identities_after="$(find "$installed_seed_store" -mindepth 1 -maxdepth 1 -type d -print | sort)"
-  [ "$seed_identities_after" = "$seed_identities_before" ] \
-    || fail "installed compiler regenerated the shipped compiled stdlib seed"
-  [ ! -d "$installed_seed_store/.cargo-target" ] \
-    || fail "installed compiler created a redundant stdlib producer Cargo target"
+  local sdk_payload_after
+  sdk_payload_after="$(find "$installed_sdk_store" -type f -exec shasum -a 256 {} \; | sort)"
+  [ "$sdk_payload_after" = "$sdk_payload_before" ] \
+    || fail "installed compiler mutated or regenerated the shipped SDK provider seed"
+  [ ! -d "$installed_sdk_store/.cargo-target" ] \
+    || fail "installed compiler created a redundant SDK provider Cargo target"
 }
 
 # npm and Homebrew render metadata for every supported target, while a local smoke build produces only the current

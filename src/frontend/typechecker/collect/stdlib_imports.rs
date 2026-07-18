@@ -15,7 +15,10 @@ use crate::frontend::diagnostics::errors;
 use crate::frontend::library_manifest_index::{LibraryManifestFailureKind, LibraryManifestIndexEntry};
 use crate::frontend::module::{ExportedSymbol, canonicalize_source_module_segments};
 use crate::frontend::symbols::*;
-use crate::frontend::testing_markers::{TestingMarkerSemantics, load_testing_marker_semantics};
+use crate::frontend::testing_markers::{
+    TestingMarkerLoadError, TestingMarkerSemantics, load_testing_marker_semantics,
+    testing_marker_semantics_from_manifest,
+};
 use crate::frontend::typechecker::type_info::RustTraitImportInfo;
 use crate::frontend::typechecker::{
     PartialProjectionInfo, PartialProjectionPreset, PartialProjectionTargetKind, TypeChecker,
@@ -23,9 +26,10 @@ use crate::frontend::typechecker::{
 use crate::library_manifest::{
     AliasExport, ClassExport, ConstExport, EnumExport, EnumValueExport, EnumValueTypeExport, FieldExport,
     FunctionExport, LibraryManifest, MethodExport, ModelExport, NewtypeExport, ParamDefaultExport, ParamExport,
-    ParamKindExport, PartialExport, PartialTargetKindExport, PresetValueExport, ReceiverExport, StaticExport,
-    TraitExport, TypeAliasExport, TypeBoundExport, TypeParamExport, resolved_type_from_manifest_type_ref,
+    ParamKindExport, PartialExport, PartialTargetKindExport, PresetValueExport, ProviderFactKind, ReceiverExport,
+    StaticExport, TraitExport, TypeAliasExport, TypeBoundExport, TypeParamExport, resolved_type_from_manifest_type_ref,
 };
+use crate::provider::{ProviderModuleResolution, ProviderProvenance};
 use incan_core::interop::{RustItemKind, RustTraitAssoc, fallback_rust_trait_methods, is_rust_capability_bound};
 use incan_core::lang::stdlib::{self, is_typechecker_only_stdlib};
 use incan_core::lang::surface::functions as surface_functions;
@@ -50,6 +54,24 @@ enum ManifestExportRef<'a> {
     Static(&'a StaticExport),
 }
 
+/// Return the project dependency or SDK component name that owns a provider diagnostic remedy.
+fn sdk_provider_component_id(provenance: &ProviderProvenance) -> &str {
+    match provenance {
+        ProviderProvenance::Sdk { component_id, .. } => component_id,
+        ProviderProvenance::ProjectDependency { dependency_key, .. } => dependency_key,
+        ProviderProvenance::Compiler => "compiler",
+    }
+}
+
+/// Return the package or SDK identity used to explain provider authority in diagnostics.
+fn sdk_provider_identity(provenance: &ProviderProvenance) -> &str {
+    match provenance {
+        ProviderProvenance::Sdk { sdk_identity, .. } => sdk_identity,
+        ProviderProvenance::ProjectDependency { dependency_key, .. } => dependency_key,
+        ProviderProvenance::Compiler => "compiler",
+    }
+}
+
 /// Classified context for a `from ... import ...` declaration during first-pass collection.
 ///
 /// This keeps stdlib namespace decisions close to the parsed module path while leaving concrete item materialization to
@@ -61,10 +83,10 @@ struct FromImportContext<'a> {
 
 impl<'a> FromImportContext<'a> {
     /// Classify one parsed from-import module path for namespace validation and stdlib import materialization.
-    fn new(module: &'a ImportPath) -> Self {
+    fn new(module: &'a ImportPath, is_known_stdlib_module: bool, provider_owned: bool) -> Self {
         Self {
             module,
-            stdlib: StdlibFromImportContext::new(module),
+            stdlib: StdlibFromImportContext::new(module, is_known_stdlib_module, provider_owned),
         }
     }
 
@@ -100,13 +122,12 @@ struct StdlibFromImportContext {
 
 impl StdlibFromImportContext {
     /// Build stdlib classification for an unqualified `std...` module path.
-    fn new(module: &ImportPath) -> Option<Self> {
+    fn new(module: &ImportPath, is_known_module: bool, provider_owned: bool) -> Option<Self> {
         if module.parent_levels != 0 || module.is_absolute || !stdlib::is_any_stdlib_path(&module.segments) {
             return None;
         }
 
         let module_path_str = module.segments.join(".");
-        let is_known_module = stdlib::is_known_stdlib_module(&module.segments);
         let is_web_namespace = module.segments.len() >= 2
             && module.segments[0] == stdlib::STDLIB_ROOT
             && module.segments[1] == stdlib::STDLIB_WEB;
@@ -117,7 +138,7 @@ impl StdlibFromImportContext {
             && module.segments[1] == "reflection";
         let is_testing_module =
             module.segments.len() == 2 && module.segments[0] == stdlib::STDLIB_ROOT && module.segments[1] == "testing";
-        let has_stub = is_known_module && stdlib::stdlib_stub_path(&module.segments).is_some();
+        let has_stub = is_known_module && !provider_owned && stdlib::stdlib_stub_path(&module.segments).is_some();
 
         Some(Self {
             module_path_str,
@@ -194,8 +215,12 @@ impl TypeChecker {
 
     /// Collect a plain module import, including stdlib namespace validation.
     fn collect_module_import(&mut self, path: &ImportPath, alias: Option<&Ident>, span: Span) {
+        if let Some(error) = self.sdk_provider_module_error(&path.segments, span) {
+            self.errors.push(error);
+            return;
+        }
         // Reject `import std.f64.consts` - unknown stdlib module; suggest `import rust::std::f64::consts`.
-        if stdlib::is_any_stdlib_path(&path.segments) && !stdlib::is_known_stdlib_module(&path.segments) {
+        if stdlib::is_any_stdlib_path(&path.segments) && !self.is_known_stdlib_module(&path.segments) {
             self.errors
                 .push(errors::unknown_stdlib_module(&path.segments.join("."), span));
         }
@@ -216,7 +241,17 @@ impl TypeChecker {
     /// Collect a `from module import item, ...` declaration as concrete stdlib/dependency symbols when possible,
     /// otherwise as module-path placeholders.
     fn collect_from_imports(&mut self, module: &ImportPath, items: &[ImportItem], span: Span) {
-        let context = FromImportContext::new(module);
+        if let Some(error) = self.sdk_provider_module_error(&module.segments, span) {
+            self.errors.push(error);
+            return;
+        }
+        // Manifestless in-memory plans are the explicit source-backed compiler-test adapter exposed by
+        // `set_sdk_provider_module_paths`; installed and package consumers always resolve checked manifests here.
+        let provider_owned = matches!(
+            self.provider_plan.resolve_module(&module.segments),
+            ProviderModuleResolution::Active(provider) if provider.manifest.is_some()
+        );
+        let context = FromImportContext::new(module, self.is_known_stdlib_module(&module.segments), provider_owned);
         if context.is_unknown_stdlib_module() {
             self.errors
                 .push(errors::unknown_stdlib_module(&context.dotted_module_path(), span));
@@ -237,15 +272,64 @@ impl TypeChecker {
                 ));
                 continue;
             }
-            if let Some(kind) = self.imported_source_dependency_symbol_kind(module, item) {
-                let projection = self.imported_source_dependency_partial_projection(module, item);
-                self.define_resolved_source_import_symbol(module, item, kind, projection, span);
+            if self.materialize_source_dependency_import(module, item, span) {
                 continue;
             }
             if self.preserve_existing_from_import_symbol(module, item, span) {
                 continue;
             }
             self.define_from_import_placeholder(module, item, span);
+        }
+    }
+
+    /// Materialize one imported source dependency, preserving package-private implementation facts during provider
+    /// construction before the published checked facade becomes the consumer authority.
+    fn materialize_source_dependency_import(&mut self, module: &ImportPath, item: &ImportItem, span: Span) -> bool {
+        let Some(kind) = self.imported_source_dependency_symbol_kind(module, item) else {
+            return false;
+        };
+        let projection = self.imported_source_dependency_partial_projection(module, item);
+        self.define_resolved_source_import_symbol(module, item, kind, projection, span);
+        true
+    }
+
+    /// Resolve module ownership from the active SDK catalog, retaining only explicit compiler-owned legacy surfaces.
+    fn is_known_stdlib_module(&self, module: &[String]) -> bool {
+        match self.provider_plan.resolve_module(module) {
+            ProviderModuleResolution::Active(_)
+            | ProviderModuleResolution::Disabled(_)
+            | ProviderModuleResolution::Unavailable(_) => true,
+            ProviderModuleResolution::Unknown if self.provider_plan.has_sdk_catalog() => {
+                is_typechecker_only_stdlib(module)
+                    || (self.provider_plan.bootstrap_owns_sdk_module(module) && stdlib::is_known_stdlib_module(module))
+            }
+            ProviderModuleResolution::Unknown => stdlib::is_known_stdlib_module(module),
+        }
+    }
+
+    /// Preserve distinct remedies for known-but-disabled and enabled-but-unavailable SDK provider modules.
+    fn sdk_provider_module_error(
+        &self,
+        module: &[String],
+        span: Span,
+    ) -> Option<crate::frontend::diagnostics::CompileError> {
+        if module.first().map(String::as_str) != Some(stdlib::STDLIB_ROOT) {
+            return None;
+        }
+        let dotted = module.join(".");
+        match self.provider_plan.resolve_module(module) {
+            ProviderModuleResolution::Disabled(provider) => Some(errors::sdk_component_disabled(
+                &dotted,
+                sdk_provider_component_id(&provider.provenance),
+                span,
+            )),
+            ProviderModuleResolution::Unavailable(provider) => Some(errors::sdk_component_unavailable(
+                &dotted,
+                sdk_provider_component_id(&provider.provenance),
+                sdk_provider_identity(&provider.provenance),
+                span,
+            )),
+            ProviderModuleResolution::Active(_) | ProviderModuleResolution::Unknown => None,
         }
     }
 
@@ -265,82 +349,85 @@ impl TypeChecker {
         }
     }
 
-    /// Seed exact module-member and transitive semantic caches from the compiled built-in stdlib artifact.
+    /// Seed exact module-member and transitive semantic caches from active SDK providers.
     ///
     /// The artifact stores checked API metadata with paths relative to its own crate root (`environ`, `serde.json`,
     /// and so on). Consumers continue to spell those modules as `std.environ` and `std.serde.json`, so this method
     /// restores the public `std` prefix only in the consumer-side lookup keys. No provider source AST is loaded here.
-    pub(crate) fn seed_builtin_stdlib_manifest_symbols(&mut self) {
-        let Some(api) = self
-            .builtin_stdlib_manifest
-            .as_ref()
-            .and_then(|manifest| manifest.contract_metadata.api.as_ref())
-            .cloned()
-        else {
-            return;
-        };
-
+    pub(crate) fn seed_sdk_provider_symbols(&mut self) {
+        let providers = self
+            .provider_plan
+            .active_sdk_records()
+            .filter_map(|provider| {
+                let manifest = provider.manifest.clone()?;
+                let api = manifest.contract_metadata.api.clone()?;
+                Some((provider.namespace_claims.clone(), api))
+            })
+            .collect::<Vec<_>>();
         let mut seeded_modules = HashSet::new();
         let mut aliases = Vec::new();
-        for module in api.modules {
-            let mut consumer_path = vec![stdlib::STDLIB_ROOT.to_string()];
-            consumer_path.extend(module.module_path.clone());
-            if !self.builtin_stdlib_modules.contains_source_path(&consumer_path) {
-                continue;
-            }
+        for (namespace_claims, api) in providers {
+            for module in api.modules {
+                let mut consumer_path = vec![stdlib::STDLIB_ROOT.to_string()];
+                consumer_path.extend(module.module_path.clone());
+                if !namespace_claims.contains(&consumer_path) {
+                    continue;
+                }
 
-            let module_key = consumer_path.join(".");
-            if !seeded_modules.insert(module_key.clone()) {
-                // The aggregate builtin artifact can carry the same checked module snapshot through more than one
-                // entrypoint import. It is one public module, not a second set of overloads.
-                continue;
-            }
-            let function_counts = module
-                .declarations
-                .iter()
-                .filter_map(|declaration| match declaration {
-                    ApiDeclaration::Function(function) => Some(function.name.clone()),
-                    _ => None,
-                })
-                .fold(HashMap::<String, usize>::new(), |mut counts, name| {
-                    *counts.entry(name).or_default() += 1;
-                    counts
-                });
-            let mut artifact_members = Vec::new();
-            for declaration in module.declarations {
-                if let ApiDeclaration::Alias(alias) = &declaration {
-                    aliases.push((module_key.clone(), alias.name.clone(), alias.target_path.clone()));
+                let module_key = consumer_path.join(".");
+                if !seeded_modules.insert(module_key.clone()) {
+                    // Collision validation has already guaranteed one provider owner. Repeated API snapshots within one
+                    // artifact are still one public module rather than a second overload set.
                     continue;
                 }
-                let Some(name) = Self::api_declaration_name(&declaration).map(ToString::to_string) else {
-                    continue;
-                };
-                let Some(mut kind) = self.symbol_kind_from_api_declaration(&declaration) else {
-                    continue;
-                };
-                if function_counts.get(name.as_str()).copied().unwrap_or_default() > 1
-                    && let SymbolKind::Function(info) = &mut kind
-                {
-                    info.emitted_name = Some(overloaded_function_emitted_name(&name, info));
-                }
-                artifact_members.push((name.clone(), kind.clone()));
-                match kind {
-                    SymbolKind::Type(type_info) => {
-                        self.transitive_stdlib_stub_types.entry(name).or_insert(type_info);
+                let function_counts = module
+                    .declarations
+                    .iter()
+                    .filter_map(|declaration| match declaration {
+                        ApiDeclaration::Function(function) => Some(function.name.clone()),
+                        _ => None,
+                    })
+                    .fold(HashMap::<String, usize>::new(), |mut counts, name| {
+                        *counts.entry(name).or_default() += 1;
+                        counts
+                    });
+                let mut provider_members = Vec::new();
+                for declaration in module.declarations {
+                    if let ApiDeclaration::Alias(alias) = &declaration {
+                        aliases.push((module_key.clone(), alias.name.clone(), alias.target_path.clone()));
+                        continue;
                     }
-                    SymbolKind::Trait(trait_info) => {
-                        self.transitive_stdlib_stub_traits
-                            .entry(name.clone())
-                            .or_insert(trait_info.clone());
-                        self.dependency_module_traits
-                            .insert(format!("{module_key}.{name}"), trait_info);
+                    let Some(name) = Self::api_declaration_name(&declaration).map(ToString::to_string) else {
+                        continue;
+                    };
+                    let Some(mut kind) = self.symbol_kind_from_api_declaration(&declaration) else {
+                        continue;
+                    };
+                    Self::qualify_provider_symbol_bounds(&mut kind, &[stdlib::STDLIB_ROOT.to_string()]);
+                    if function_counts.get(name.as_str()).copied().unwrap_or_default() > 1
+                        && let SymbolKind::Function(info) = &mut kind
+                    {
+                        info.emitted_name = Some(overloaded_function_emitted_name(&name, info));
                     }
-                    _ => {}
+                    provider_members.push((name.clone(), kind.clone()));
+                    match kind {
+                        SymbolKind::Type(type_info) => {
+                            self.transitive_stdlib_stub_types.entry(name).or_insert(type_info);
+                        }
+                        SymbolKind::Trait(trait_info) => {
+                            self.transitive_stdlib_stub_traits
+                                .entry(name.clone())
+                                .or_insert(trait_info.clone());
+                            self.dependency_module_traits
+                                .insert(format!("{module_key}.{name}"), trait_info);
+                        }
+                        _ => {}
+                    }
                 }
-            }
-            let members = self.dependency_member_symbols.entry(module_key).or_default();
-            for (name, kind) in artifact_members {
-                Self::insert_artifact_module_symbol(members, name, kind);
+                let members = self.dependency_member_symbols.entry(module_key).or_default();
+                for (name, kind) in provider_members {
+                    Self::insert_provider_module_symbol(members, name, kind);
+                }
             }
         }
 
@@ -350,7 +437,7 @@ impl TypeChecker {
         while !unresolved.is_empty() {
             let mut progressed = false;
             unresolved.retain(|(module_key, name, target_path)| {
-                let Some((target_module, target_name)) = Self::builtin_stdlib_alias_target(target_path) else {
+                let Some((target_module, target_name)) = Self::sdk_provider_alias_target(target_path) else {
                     return false;
                 };
                 let Some(kind) = self
@@ -378,7 +465,7 @@ impl TypeChecker {
                     _ => {}
                 }
                 let members = self.dependency_member_symbols.entry(module_key.clone()).or_default();
-                Self::insert_artifact_module_symbol(members, name.clone(), kind);
+                Self::insert_provider_module_symbol(members, name.clone(), kind);
                 progressed = true;
                 false
             });
@@ -388,8 +475,8 @@ impl TypeChecker {
         }
     }
 
-    /// Return an artifact module/member target for one checked built-in stdlib facade alias.
-    fn builtin_stdlib_alias_target(target_path: &[String]) -> Option<(String, String)> {
+    /// Return an SDK-provider module/member target for one checked facade alias.
+    fn sdk_provider_alias_target(target_path: &[String]) -> Option<(String, String)> {
         if target_path.first().map(String::as_str) != Some(stdlib::STDLIB_ROOT) {
             return None;
         }
@@ -421,8 +508,8 @@ impl TypeChecker {
         }
     }
 
-    /// Preserve same-name checked overloads while indexing one artifact module.
-    fn insert_artifact_module_symbol(members: &mut HashMap<String, SymbolKind>, name: String, incoming: SymbolKind) {
+    /// Preserve same-name checked overloads while indexing one provider module.
+    fn insert_provider_module_symbol(members: &mut HashMap<String, SymbolKind>, name: String, incoming: SymbolKind) {
         let Some(existing) = members.remove(&name) else {
             members.insert(name, incoming);
             return;
@@ -530,8 +617,25 @@ impl TypeChecker {
             return None;
         }
 
-        match load_testing_marker_semantics() {
-            Ok(semantics) => Some(semantics),
+        let checked_provider_manifest = self
+            .provider_plan
+            .active_sdk_provider_for_module(&context.module.segments)
+            .and_then(|provider| provider.manifest.as_deref());
+        let loaded = match checked_provider_manifest {
+            Some(manifest) => testing_marker_semantics_from_manifest(manifest).and_then(|semantics| {
+                semantics.ok_or_else(|| {
+                    TestingMarkerLoadError::new(
+                        "compiled std.testing provider does not contain checked marker metadata",
+                    )
+                })
+            }),
+            None => load_testing_marker_semantics(),
+        };
+        match loaded {
+            Ok(semantics) => {
+                self.testing_marker_semantics = Some(semantics.clone());
+                Some(semantics)
+            }
             Err(err) => {
                 self.errors
                     .push(errors::invalid_std_testing_marker_metadata(&err.to_string(), span));
@@ -569,15 +673,16 @@ impl TypeChecker {
         if self.materialize_stdlib_submodule_import(context.module, item, span) {
             return true;
         }
-        if self.materialize_builtin_stdlib_artifact_import(context, item, testing_semantics, span) {
+        if self.materialize_sdk_provider_import(context, item, testing_semantics, span) {
             return true;
         }
-        let artifact_owns_module = self
-            .builtin_stdlib_modules
-            .contains_source_path(&context.module.segments);
-        if artifact_owns_module {
-            // A migrated module is owned by the artifact contract. Falling back to its source cache here would hide
-            // an incomplete or stale artifact and give the source tree semantic authority again.
+        if self
+            .provider_plan
+            .active_sdk_provider_for_module(&context.module.segments)
+            .is_some_and(|provider| provider.manifest.is_some())
+        {
+            // An active provider owns this module. Falling back to its source cache would hide an incomplete artifact
+            // and give the source tree semantic authority again.
             return false;
         }
         if stdlib_context.has_stub {
@@ -586,8 +691,8 @@ impl TypeChecker {
         false
     }
 
-    /// Materialize one migrated stdlib item from the compiled artifact's checked API metadata.
-    fn materialize_builtin_stdlib_artifact_import(
+    /// Materialize one SDK-provider item from checked API metadata.
+    fn materialize_sdk_provider_import(
         &mut self,
         context: &FromImportContext<'_>,
         item: &ImportItem,
@@ -625,7 +730,20 @@ impl TypeChecker {
         }
         let mut submodule_path = module.segments.clone();
         submodule_path.push(item.name.clone());
-        if !stdlib::is_known_stdlib_module(&submodule_path) {
+        let is_known_submodule = match self.provider_plan.resolve_module(&submodule_path) {
+            ProviderModuleResolution::Active(_)
+            | ProviderModuleResolution::Disabled(_)
+            | ProviderModuleResolution::Unavailable(_) => true,
+            ProviderModuleResolution::Unknown if self.provider_plan.has_sdk_catalog() => {
+                // A source-publisher bootstrap grant authorizes a namespace root; it does not claim that every item
+                // imported from that root is itself a module. The legacy source registry remains the narrow publisher
+                // adapter until source component entrypoints publish exact checked claims for ordinary consumers.
+                self.provider_plan.bootstrap_owns_sdk_module(&submodule_path)
+                    && stdlib::is_known_stdlib_module(&submodule_path)
+            }
+            ProviderModuleResolution::Unknown => stdlib::is_known_stdlib_module(&submodule_path),
+        };
+        if !is_known_submodule {
             return false;
         }
 
@@ -885,9 +1003,11 @@ impl TypeChecker {
         })
     }
 
+    /// Validate one imported `pub::<library>` root before selected or wildcard item collection begins.
     fn validate_pub_library_entry(&mut self, library: &str, span: Span) {
-        let known_libraries = self.library_manifests.known_libraries();
-        let Some(entry) = self.library_manifests.get(library).cloned() else {
+        let library_manifests = self.provider_plan.library_manifest_index();
+        let known_libraries = library_manifests.known_libraries();
+        let Some(entry) = library_manifests.get(library).cloned() else {
             self.errors
                 .push(errors::unknown_pub_library(library, &known_libraries, span));
             return;
@@ -899,8 +1019,9 @@ impl TypeChecker {
 
     /// Collect selected public imports from one loaded library manifest.
     fn collect_pub_imports(&mut self, library: &str, items: &[ImportItem], span: Span) {
-        let known_libraries = self.library_manifests.known_libraries();
-        let Some(entry) = self.library_manifests.get(library).cloned() else {
+        let library_manifests = self.provider_plan.library_manifest_index();
+        let known_libraries = library_manifests.known_libraries();
+        let Some(entry) = library_manifests.get(library).cloned() else {
             self.errors
                 .push(errors::unknown_pub_library(library, &known_libraries, span));
             return;
@@ -953,12 +1074,21 @@ impl TypeChecker {
             }
 
             let Some(export) = Self::find_manifest_export(&manifest, &item.name) else {
-                self.errors.push(errors::pub_library_symbol_not_exported(
-                    &item.name,
-                    library,
-                    &available_exports,
-                    span,
-                ));
+                if let Some(feature_sets) = Self::inactive_pub_export_features(&manifest, &item.name) {
+                    self.errors.push(errors::pub_library_symbol_requires_features(
+                        &item.name,
+                        library,
+                        &feature_sets,
+                        span,
+                    ));
+                } else {
+                    self.errors.push(errors::pub_library_symbol_not_exported(
+                        &item.name,
+                        library,
+                        &available_exports,
+                        span,
+                    ));
+                }
                 continue;
             };
 
@@ -975,6 +1105,32 @@ impl TypeChecker {
 
             self.define_pub_import_symbol(&manifest, local_name, export, &imported_type_aliases, span);
         }
+    }
+
+    /// Return the missing public features for one known provider export that is inactive in this artifact projection.
+    fn inactive_pub_export_features(manifest: &LibraryManifest, symbol: &str) -> Option<Vec<Vec<String>>> {
+        let active = &manifest.contract_metadata.provider.active_features;
+        let mut alternatives = manifest
+            .contract_metadata
+            .provider
+            .fact_requirements
+            .iter()
+            .filter(|requirement| {
+                requirement.kind == ProviderFactKind::Export
+                    && requirement.identity.rsplit("::").next() == Some(symbol)
+                    && !requirement.required_features.is_subset(active)
+            })
+            .map(|requirement| {
+                requirement
+                    .required_features
+                    .difference(active)
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        alternatives.sort();
+        alternatives.dedup();
+        (!alternatives.is_empty()).then_some(alternatives)
     }
 
     /// Resolve one exported function name from a public manifest into a local symbol kind.
@@ -1010,7 +1166,7 @@ impl TypeChecker {
         library: &str,
         member: &str,
     ) -> Option<VariableInfo> {
-        let entry = self.library_manifests.get(library)?;
+        let entry = self.provider_plan.library_manifest_index().get(library)?;
         let LibraryManifestIndexEntry::Loaded { manifest, .. } = entry else {
             return None;
         };
@@ -1041,7 +1197,7 @@ impl TypeChecker {
         library: &str,
         member: &str,
     ) -> Option<SymbolKind> {
-        let entry = self.library_manifests.get(library)?;
+        let entry = self.provider_plan.library_manifest_index().get(library)?;
         let LibraryManifestIndexEntry::Loaded { manifest, .. } = entry else {
             return None;
         };
@@ -2063,6 +2219,121 @@ impl TypeChecker {
             .collect()
     }
 
+    /// Apply a consumer namespace grant to provider-local trait provenance carried by checked artifact facts.
+    fn qualify_provider_symbol_bounds(kind: &mut SymbolKind, namespace_prefix: &[String]) {
+        match kind {
+            SymbolKind::Function(info) => Self::qualify_provider_function_bounds(info, namespace_prefix),
+            SymbolKind::FunctionOverloads(overloads) => {
+                for overload in overloads {
+                    Self::qualify_provider_function_bounds(&mut overload.info, namespace_prefix);
+                }
+            }
+            SymbolKind::Type(TypeInfo::Model(info)) => {
+                Self::qualify_provider_type_bounds(
+                    &mut info.trait_adoptions,
+                    &mut info.methods,
+                    &mut info.method_overloads,
+                    namespace_prefix,
+                );
+            }
+            SymbolKind::Type(TypeInfo::Class(info)) => {
+                Self::qualify_provider_type_bounds(
+                    &mut info.trait_adoptions,
+                    &mut info.methods,
+                    &mut info.method_overloads,
+                    namespace_prefix,
+                );
+            }
+            SymbolKind::Type(TypeInfo::Newtype(info)) => {
+                Self::qualify_provider_type_bounds(
+                    &mut info.trait_adoptions,
+                    &mut info.methods,
+                    &mut info.method_overloads,
+                    namespace_prefix,
+                );
+            }
+            SymbolKind::Type(TypeInfo::Enum(info)) => {
+                Self::qualify_provider_type_bounds(
+                    &mut info.trait_adoptions,
+                    &mut info.methods,
+                    &mut info.method_overloads,
+                    namespace_prefix,
+                );
+            }
+            SymbolKind::Trait(info) => {
+                for method in info.methods.values_mut() {
+                    Self::qualify_provider_method_bounds(method, namespace_prefix);
+                }
+            }
+            SymbolKind::Type(TypeInfo::Builtin | TypeInfo::TypeAlias)
+            | SymbolKind::Variable(_)
+            | SymbolKind::Static(_)
+            | SymbolKind::Module(_)
+            | SymbolKind::Variant(_)
+            | SymbolKind::Field(_)
+            | SymbolKind::Property(_)
+            | SymbolKind::RustItem(_) => {}
+        }
+    }
+
+    /// Qualify one provider-owned nominal type's trait adoptions and callable bounds.
+    fn qualify_provider_type_bounds(
+        adoptions: &mut [TypeBoundInfo],
+        methods: &mut HashMap<String, MethodInfo>,
+        overloads: &mut HashMap<String, Vec<MethodInfo>>,
+        namespace_prefix: &[String],
+    ) {
+        for adoption in adoptions {
+            Self::qualify_provider_bound(adoption, namespace_prefix);
+        }
+        for method in methods.values_mut() {
+            Self::qualify_provider_method_bounds(method, namespace_prefix);
+        }
+        for candidates in overloads.values_mut() {
+            for method in candidates {
+                Self::qualify_provider_method_bounds(method, namespace_prefix);
+            }
+        }
+    }
+
+    /// Qualify generic bounds on one provider function.
+    fn qualify_provider_function_bounds(info: &mut FunctionInfo, namespace_prefix: &[String]) {
+        for bounds in info.type_param_bound_details.values_mut() {
+            for bound in bounds {
+                Self::qualify_provider_bound(bound, namespace_prefix);
+            }
+        }
+    }
+
+    /// Qualify generic and explicit trait-target bounds on one provider method.
+    fn qualify_provider_method_bounds(info: &mut MethodInfo, namespace_prefix: &[String]) {
+        if let Some(target) = info.trait_target.as_mut() {
+            Self::qualify_provider_bound(target, namespace_prefix);
+        }
+        for bounds in info.type_param_bound_details.values_mut() {
+            for bound in bounds {
+                Self::qualify_provider_bound(bound, namespace_prefix);
+            }
+        }
+    }
+
+    /// Prefix a provider-local module path while preserving already canonical external provenance.
+    fn qualify_provider_bound(bound: &mut TypeBoundInfo, namespace_prefix: &[String]) {
+        let Some(module_path) = bound.module_path.as_mut() else {
+            return;
+        };
+        if module_path.starts_with(namespace_prefix)
+            || module_path
+                .first()
+                .is_some_and(|root| matches!(root.as_str(), "std" | "pub" | "rust" | "crate"))
+        {
+            return;
+        }
+        let mut canonical = namespace_prefix.to_vec();
+        canonical.append(module_path);
+        *module_path = canonical;
+    }
+
     /// Convert a manifest enum export into local enum symbol metadata.
     fn enum_info_from_manifest(&self, export: &EnumExport) -> EnumInfo {
         let value_enum = export.value_type.map(|value_type| ValueEnumInfo {
@@ -2500,5 +2771,38 @@ fn param_kind_from_manifest(kind: ParamKindExport) -> ParamKind {
         ParamKindExport::Normal => ParamKind::Normal,
         ParamKindExport::RestPositional => ParamKind::RestPositional,
         ParamKindExport::RestKeyword => ParamKind::RestKeyword,
+    }
+}
+
+#[cfg(test)]
+mod provider_feature_tests {
+    use std::collections::BTreeSet;
+
+    use super::*;
+    use crate::library_manifest::{ProviderFactKind, ProviderFactRequirement};
+
+    #[test]
+    fn inactive_export_features_preserve_alternative_additive_paths() {
+        let mut manifest = LibraryManifest::new("widgets".to_string(), "0.1.0".to_string());
+        manifest.contract_metadata.provider.fact_requirements = vec![
+            ProviderFactRequirement {
+                kind: ProviderFactKind::Export,
+                identity: "leaf::Leaf".to_string(),
+                required_features: BTreeSet::from(["alternate".to_string()]),
+            },
+            ProviderFactRequirement {
+                kind: ProviderFactKind::Export,
+                identity: "leaf::Leaf".to_string(),
+                required_features: BTreeSet::from(["inner".to_string(), "outer".to_string()]),
+            },
+        ];
+
+        assert_eq!(
+            TypeChecker::inactive_pub_export_features(&manifest, "Leaf"),
+            Some(vec![
+                vec!["alternate".to_string()],
+                vec!["inner".to_string(), "outer".to_string()],
+            ])
+        );
     }
 }

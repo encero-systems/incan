@@ -52,7 +52,7 @@ Use it when deciding whether code should use an existing Incan surface before ad
 | `std.math` numeric helpers | Stdlib | 0.2 | Import `std.math`. | `import std.math`<br>`math.sqrt(9.0)`<br>`math.gcd(12, 18)`<br>`math.is_float_like("1.25e3")` | `std.math` provides mathematical constants, integer gcd/lcm helpers, floating-point functions, and numeric-string shape checks. | Direct Rust math imports or project-local numeric string probes for ordinary numeric helper calls. | [std.math](stdlib/math.md), [Release 0.2](../../release_notes/0_2.md) |
 | `std.collections` specialized containers | Stdlib | 0.3 | Import from `std.collections`. | `from std.collections import Deque, Counter, PriorityQueue`<br>`queue = Deque[int]()` | Specialized containers cover deque, counter, default dict, ordered/sorted maps and sets, chain maps, and priority queues. | Encoding specialized container behavior in plain `list`, `dict`, or `set` plus ad hoc helpers. | [std.collections](stdlib/collections.md), [Choosing collections](../how-to/choosing_collections.md), [Release 0.3](../../release_notes/0_3.md) |
 | `std.graph` directed graph types | Stdlib | 0.3 | Import from `std.graph`. | `from std.graph import DiGraph, Dag`<br>`graph = DiGraph[Task]()` | Graph types provide stable node/edge ids, DAG invariants, adjacency queries, traversal, and topological ordering. | Hand-rolled adjacency maps for ordinary dependency, plan, or workflow graphs. | [std.graph](stdlib/graph.md), [Release 0.3](../../release_notes/0_3.md) |
-| `std.fs` filesystem APIs | Stdlib | 0.3 | Import from `std.fs` or submodules such as `std.fs.path`. | `from std.fs import Path`<br>`Path("data").join("orders.csv")` | Path-centric filesystem APIs cover paths, files, metadata, traversal, globbing, copy/move/delete, and crash-safe publication with directory synchronization and advisory locks. | One-off Rust filesystem wrappers for ordinary path and file work. | [std.fs](stdlib/fs.md), [File IO](../how-to/file_io.md), [RFC 055](../../RFCs/closed/implemented/055_std_fs.md), [RFC 112](../../RFCs/closed/implemented/112_crash_safe_publication_and_file_coordination.md), [Release 0.5](../../release_notes/0_5.md) |
+| `std.fs` filesystem APIs | Stdlib | 0.3 | Import from `std.fs` or submodules such as `std.fs.path`. | `from std.fs import Path`<br>`Path("data").join("orders.csv")` | Path-centric filesystem APIs cover paths, files, metadata, traversal, globbing, copy/move/delete, and durability syncs. | One-off Rust filesystem wrappers for ordinary path and file work. | [std.fs](stdlib/fs.md), [File IO](../how-to/file_io.md), [Release 0.3](../../release_notes/0_3.md) |
 | `std.io` in-memory binary streams | Stdlib | 0.3 | Import from `std.io`. | `from std.io import BytesIO, Endian`<br>`stream.write(value, Endian.Little)` | Binary stream APIs cover `BytesIO`, endian-aware reads/writes, cursor helpers, delimiter operations, and buffer extraction. | Byte-twiddling helpers with unclear endian or cursor semantics. | [std.io](stdlib/io.md), [Release 0.3](../../release_notes/0_3.md) |
 | `std.regex` safe-default regular expressions | Stdlib | 0.3 | Import from `std.regex`. | `from std.regex import Regex`<br>`regex = Regex(r"\w+")?`<br>`regex.find_iter(text)` | `std.regex` provides compiled regular expressions, match spans, captures, splitting, and replacement through the predictable stdlib regex engine. | Ad hoc string scans or direct Rust regex interop when the safe default stdlib engine is sufficient. | [std.regex](stdlib/regex.md), [Regular expressions](../how-to/regular_expressions.md), [RFC 059](../../RFCs/closed/implemented/059_std_regex.md), [Release 0.3](../../release_notes/0_3.md) |
 | `std.uuid` UUID values | Stdlib | 0.3 | Import from `std.uuid`. | `from std.uuid import UUID`<br>`UUID.parse("550e8400-e29b-41d4-a716-446655440000")?`<br>`UUID.v7()?` | `std.uuid` provides RFC 9562 UUID parsing, formatting, generation, byte and integer conversion, version inspection, and standard namespace constants. | Loose UUID strings, byte arrays, or project-local UUID wrappers when UUID semantics belong in the type. | [std.uuid](stdlib/uuid.md), [Working with UUIDs](../how-to/working_with_uuids.md), [RFC 060](../../RFCs/closed/implemented/060_std_uuid.md), [Release 0.3](../../release_notes/0_3.md) |
@@ -78,6 +78,7 @@ Use it when deciding whether code should use an existing Incan surface before ad
 | Build and test preheat observability | Tooling | 0.4 | Use verbose test output or `INCAN_RUST_INSPECT_TIMING=1` when build/test preheat timing needs to be inspected. | `incan test -v tests`<br>`INCAN_RUST_INSPECT_TIMING=1 incan build --lib`<br>`incan build --lib` | Build and test preheat paths report phase timing, Cargo target reuse, Rust metadata warmed/reused/skipped counts, vocab companion cache reuse, and cache split reasons. | Silent long-running preheat phases or separate probes that do not share the real build/test cache policy. | [CLI reference](../../tooling/reference/cli_reference.md), [Release 0.4](../../release_notes/0_4.md) |
 | Compiler-backed codegraph inspection | Tooling | 0.4 | Use `incan inspect codegraph`. | `incan inspect codegraph src/main.incn --format jsonl`<br>`incan inspect codegraph src --format jsonl --allow-errors` | Incan-language source files, modules, declarations, imports, exports, body-level reference and call syntax, conservative resolved reference and call targets, containment, spans, provenance, language tags, degraded state, and diagnostics can be exported as deterministic JSONL records. | Repeated grep/read loops or tool-specific source scrapers when agents and tooling need basic Incan structure. | [Codegraph inspection](../../tooling/reference/codegraph_inspection.md), [CLI reference](../../tooling/reference/cli_reference.md), [Release 0.4](../../release_notes/0_4.md) |
 | Checked API metadata | Tooling | 0.3 | Use `incan tools metadata api` or LSP metadata commands. | `incan tools metadata api src/lib.incn`<br>`incan tools metadata model emit` | Typechecked public APIs can emit structured metadata for docs, manifests, hovers, and model bundle tooling. | Scraping source text or generated Rust when tooling needs API contracts. | [Release 0.3](../../release_notes/0_3.md), [Project lifecycle](project_lifecycle.md) |
+| Compiled providers, SDK components, and package features | Libraries | 0.5 | Select SDK components in `[sdk]`; select additive package features in manifests or with Incan feature flags. | `[sdk] profile = "minimal" components = ["stdlib-data"]`<br>`incan build --features json --sdk-profile minimal`<br>`when feature("json"):     pub from json_support import JsonReport`<br>`incan inspect providers --format json` | Checked libraries and official SDK components resolve through one provider plan, while package-owned features project additive source and dependency facts without exposing Cargo features as Incan API. | Hardcoded stdlib inventories, copied provider source, or Cargo feature names used as public package semantics. | [SDK components and package features](../../tooling/reference/sdk_components_and_package_features.md), [Conditional compilation](conditional_compilation.md), [Project configuration](../../tooling/reference/project_configuration.md), [Release 0.5](../../release_notes/0_5.md) |
 | Formatter spacing and wrapping contract | Tooling | 0.3 | Run `incan fmt`. | `incan fmt src/main.incn`<br>`incan fmt --check` | Formatter output has explicit vertical-spacing buckets, docstring normalization, comment attachment, and common wrapping rules. | Hand-maintained whitespace conventions that drift from the formatter. | [Code style](code_style.md), [Formatting how-to](../../tooling/how-to/formatting.md), [Release 0.3](../../release_notes/0_3.md) |
 
 ## Feature details
@@ -726,9 +727,9 @@ Canonical forms:
 - **Stability:** `Stable`
 - **Activation:** Import from `std.fs` or submodules such as `std.fs.path`.
 - **Use instead of:** One-off Rust filesystem wrappers for ordinary path and file work.
-- **References:** [std.fs](stdlib/fs.md), [File IO](../how-to/file_io.md), [RFC 055](../../RFCs/closed/implemented/055_std_fs.md), [RFC 112](../../RFCs/closed/implemented/112_crash_safe_publication_and_file_coordination.md), [Release 0.5](../../release_notes/0_5.md)
+- **References:** [std.fs](stdlib/fs.md), [File IO](../how-to/file_io.md), [Release 0.3](../../release_notes/0_3.md)
 
-Path-centric filesystem APIs cover paths, files, metadata, traversal, globbing, copy/move/delete, durability syncs, and crash-safe publication through same-filesystem replacement, directory synchronization, and advisory locks.
+Path-centric filesystem APIs cover paths, files, metadata, traversal, globbing, copy/move/delete, and durability syncs.
 
 Canonical forms:
 
@@ -1209,6 +1210,37 @@ Canonical forms:
 
 - `incan tools metadata api src/lib.incn`
 - `incan tools metadata model emit`
+
+### Compiled providers, SDK components, and package features
+
+- **Id:** `CompiledProvidersSdkComponentsPackageFeatures`
+- **Category:** `Libraries`
+- **Since:** `0.5`
+- **RFC:** `RFC 114`
+- **Stability:** `Stable`
+- **Activation:** Select SDK components in `[sdk]`; select additive package features in manifests or with Incan feature flags.
+- **Use instead of:** Hardcoded stdlib inventories, copied provider source, or Cargo feature names used as public package semantics.
+- **References:** [SDK components and package features](../../tooling/reference/sdk_components_and_package_features.md), [Conditional compilation](conditional_compilation.md), [Project configuration](../../tooling/reference/project_configuration.md), [Release 0.5](../../release_notes/0_5.md)
+
+Checked libraries and official SDK components resolve through one provider plan, while package-owned features project additive source and dependency facts without exposing Cargo features as Incan API.
+
+Canonical forms:
+
+
+```text
+[sdk]
+profile = "minimal"
+components = ["stdlib-data"]
+```
+
+- `incan build --features json --sdk-profile minimal`
+
+```text
+when feature("json"):
+    pub from json_support import JsonReport
+```
+
+- `incan inspect providers --format json`
 
 ### Formatter spacing and wrapping contract
 

@@ -7,8 +7,8 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-pub use incan_builtin_stdlib::traits::convert::From;
-pub use incan_builtin_stdlib::traits::convert::TryFrom;
+pub use crate::__incan_std::traits::convert::From;
+pub use crate::__incan_std::traits::convert::TryFrom;
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct UserId {
     value: i64,

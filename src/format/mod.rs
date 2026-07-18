@@ -2674,4 +2674,31 @@ trait Named:
         assert_eq!(format_source(&formatted)?, expected);
         Ok(())
     }
+
+    #[test]
+    fn test_format_source_feature_conditions_are_typed_and_idempotent() -> Result<(), FormatError> {
+        let source = r#"when feature("pretty") and feature("json"):
+  from std.json import JsonValue
+  pub def render(value: JsonValue) -> str:
+    return "json"
+
+pub def always() -> str:
+  return "always"
+"#;
+        let expected = r#"when feature("json") and feature("pretty"):
+    from std.json import JsonValue
+
+    pub def render(value: JsonValue) -> str:
+        return "json"
+
+
+pub def always() -> str:
+    return "always"
+"#;
+
+        let formatted = format_source(source)?;
+        assert_eq!(formatted, expected);
+        assert_eq!(format_source(&formatted)?, expected);
+        Ok(())
+    }
 }

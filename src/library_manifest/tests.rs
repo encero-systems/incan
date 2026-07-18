@@ -1,3 +1,5 @@
+use std::collections::{BTreeMap, BTreeSet};
+
 use super::*;
 
 #[test]
@@ -1096,6 +1098,112 @@ fn manifest_reader_rejects_unknown_manifest_format() -> Result<(), Box<dyn std::
 
     let err = LibraryManifest::from_json_str(content);
     assert!(err.is_err(), "expected invalid manifest_format to fail");
+    Ok(())
+}
+
+#[test]
+fn compiled_provider_metadata_roundtrips_feature_and_facet_facts() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("reporting", "0.5.0");
+    manifest.contract_metadata.provider = CompiledProviderMetadata {
+        namespace_claims: vec![ProviderModuleClaim {
+            module_path: vec!["reports".to_string()],
+            required_features: BTreeSet::new(),
+        }],
+        public_features: BTreeMap::from([(
+            "json".to_string(),
+            ProviderFeatureMetadata {
+                optional_dependencies: BTreeSet::from(["serializer".to_string()]),
+                ..Default::default()
+            },
+        )]),
+        active_features: BTreeSet::from(["json".to_string()]),
+        provider_dependencies: vec![ProviderDependencyMetadata {
+            kind: ProviderDependencyKind::PublicPackage,
+            dependency_key: "serializer".to_string(),
+            provider_name: "serializer_core".to_string(),
+            provider_version: "0.5.0".to_string(),
+            artifact_digest: format!("sha256:{}", "a".repeat(64)),
+            relative_artifact_path: "../../../serializer/target/lib".to_string(),
+            requested_features: BTreeSet::from(["json".to_string()]),
+            default_features: false,
+            optional: true,
+        }],
+        fact_requirements: vec![ProviderFactRequirement {
+            kind: ProviderFactKind::Export,
+            identity: "reports.encode".to_string(),
+            required_features: BTreeSet::from(["json".to_string()]),
+        }],
+        implementation_facets: vec![ProviderImplementationFacet {
+            id: "json-runtime".to_string(),
+            required_modules: BTreeSet::from([vec!["reports".to_string()]]),
+            required_features: BTreeSet::from(["json".to_string()]),
+            cargo_features: BTreeMap::from([("reporting_runtime".to_string(), BTreeSet::from(["json".to_string()]))]),
+            cargo_dependencies: vec![ProviderCargoDependency {
+                crate_name: "reporting_runtime".to_string(),
+                package: None,
+                version: Some("1".to_string()),
+                features: BTreeSet::new(),
+                default_features: true,
+                source: ProviderCargoDependencySource::Registry,
+            }],
+        }],
+        ..Default::default()
+    };
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("reporting.incnlib");
+
+    manifest.write_to_path(&path)?;
+    let loaded = LibraryManifest::read_from_path(&path)?;
+
+    assert_eq!(loaded.contract_metadata.provider, manifest.contract_metadata.provider);
+    Ok(())
+}
+
+#[test]
+fn compiled_provider_metadata_rejects_unknown_active_feature() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("reporting", "0.5.0");
+    manifest
+        .contract_metadata
+        .provider
+        .active_features
+        .insert("missing".to_string());
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("reporting.incnlib");
+
+    let error = manifest
+        .write_to_path(&path)
+        .err()
+        .ok_or("expected invalid provider metadata")?;
+
+    assert!(matches!(error, LibraryManifestError::Invalid(message) if message.contains("missing")));
+    Ok(())
+}
+
+#[test]
+fn compiled_provider_metadata_rejects_absolute_dependency_artifact_path() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("reporting", "0.5.0");
+    manifest
+        .contract_metadata
+        .provider
+        .provider_dependencies
+        .push(ProviderDependencyMetadata {
+            kind: ProviderDependencyKind::PublicPackage,
+            dependency_key: "serializer".to_string(),
+            provider_name: "serializer_core".to_string(),
+            provider_version: "0.5.0".to_string(),
+            artifact_digest: format!("sha256:{}", "a".repeat(64)),
+            relative_artifact_path: "/producer/serializer/target/lib".to_string(),
+            requested_features: BTreeSet::new(),
+            default_features: true,
+            optional: false,
+        });
+    let dir = tempfile::tempdir()?;
+    let error = manifest
+        .write_to_path(&dir.path().join("reporting.incnlib"))
+        .err()
+        .ok_or("expected absolute provider dependency path to fail")?;
+
+    assert!(matches!(error, LibraryManifestError::Invalid(message) if message.contains("portable relative path")));
     Ok(())
 }
 

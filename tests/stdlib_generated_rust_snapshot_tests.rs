@@ -21,7 +21,7 @@ fn generate_rust(source: &str, context: &str) -> Result<String, Box<dyn std::err
     let tokens = lexer::lex(source).map_err(|errs| err_box(format!("{context} lexer failed: {errs:?}")))?;
     let ast = parser::parse(&tokens).map_err(|errs| err_box(format!("{context} parser failed: {errs:?}")))?;
     let mut codegen = IrCodegen::new();
-    codegen.set_builtin_stdlib_artifact_module_paths(builtin_stdlib_support::artifact_module_paths());
+    codegen.set_sdk_provider_module_paths(builtin_stdlib_support::artifact_module_paths());
     let code = codegen
         .try_generate(&ast)
         .map_err(|err| err_box(format!("{context} codegen failed: {err:?}")))?;

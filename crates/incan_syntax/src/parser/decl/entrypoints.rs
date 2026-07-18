@@ -1,6 +1,98 @@
 /// Declaration entrypoints and visibility handling.
 impl<'a> Parser<'a> {
     // ========================================================================
+
+    /// Return whether the current tokens start the contextual RFC 114 `when feature(...):` form.
+    fn starts_feature_condition(&self) -> bool {
+        self.peek_ident_text("when")
+            && matches!(
+                self.tokens.get(self.pos + 1).map(|token| &token.kind),
+                Some(TokenKind::Ident(_))
+            )
+            && matches!(
+                self.tokens.get(self.pos + 2).map(|token| &token.kind),
+                Some(TokenKind::Punctuation(PunctuationId::LParen))
+            )
+    }
+
+    /// Parse one feature-conditioned compilation-unit block and flatten its declarations with typed requirements.
+    fn feature_conditioned_declarations(
+        &mut self,
+        inherited_features: &[String],
+    ) -> Result<Vec<Spanned<Declaration>>, CompileError> {
+        let start = self.current_span().start;
+        if !self.match_ident_text("when") {
+            return Err(CompileError::syntax(
+                "Expected `when` to start a compile-time condition".to_string(),
+                self.current_span(),
+            ));
+        }
+
+        let mut required_features = inherited_features.to_vec();
+        loop {
+            if !self.match_ident_text("feature") {
+                return Err(CompileError::syntax(
+                    "Compile-time `when` currently accepts only `feature(\"name\")` predicates".to_string(),
+                    self.current_span(),
+                ));
+            }
+            self.expect_punct(PunctuationId::LParen, "Expected '(' after `feature`")?;
+            let feature = self.string_literal()?;
+            if let Err(message) = validate_package_feature_identifier(&feature) {
+                return Err(CompileError::syntax(
+                    format!("Invalid package feature name `{feature}`: {message}"),
+                    self.current_span(),
+                ));
+            }
+            required_features.push(feature);
+            self.expect_punct(PunctuationId::RParen, "Expected ')' after package feature name")?;
+            if !self.match_keyword(KeywordId::And) {
+                break;
+            }
+        }
+        required_features.sort();
+        required_features.dedup();
+
+        self.expect_punct(
+            PunctuationId::Colon,
+            "Expected ':' after compile-time feature condition",
+        )?;
+        self.expect(&TokenKind::Newline, "Expected newline after compile-time feature condition")?;
+        self.expect_suite_indent("Expected indented declaration block after compile-time feature condition")?;
+
+        let outer_soft_keywords = self.active_soft_keywords.clone();
+        let outer_imported_specs = self.active_imported_keyword_specs.clone();
+        let declarations_result = (|| {
+            let mut declarations = Vec::new();
+            self.skip_newlines();
+            while !self.check(&TokenKind::Dedent) && !self.is_at_end() {
+                if self.starts_feature_condition() {
+                    declarations.extend(self.feature_conditioned_declarations(&required_features)?);
+                } else {
+                    let mut declaration = self.declaration()?;
+                    declaration.required_features.clone_from(&required_features);
+                    self.activate_soft_keywords_for_declaration(&declaration.node);
+                    declarations.push(declaration);
+                }
+                self.skip_newlines();
+            }
+            Ok(declarations)
+        })();
+        self.active_soft_keywords = outer_soft_keywords;
+        self.active_imported_keyword_specs = outer_imported_specs;
+        let declarations = declarations_result?;
+        self.expect(&TokenKind::Dedent, "Expected dedent after compile-time feature block")?;
+
+        if declarations.is_empty() {
+            return Err(CompileError::syntax(
+                "Compile-time feature block must contain at least one declaration".to_string(),
+                Span::new(start, self.current_span().end),
+            ));
+        }
+        Ok(declarations)
+    }
+
+    // ========================================================================
     // Declarations
     // ========================================================================
 
@@ -270,9 +362,13 @@ impl<'a> Parser<'a> {
                 continue;
             }
 
-            let decl = self.declaration()?;
-            self.activate_soft_keywords_for_declaration(&decl.node);
-            body.push(decl);
+            if self.starts_feature_condition() {
+                body.extend(self.feature_conditioned_declarations(&[])?);
+            } else {
+                let decl = self.declaration()?;
+                self.activate_soft_keywords_for_declaration(&decl.node);
+                body.push(decl);
+            }
             self.skip_newlines();
         }
         Ok(body)

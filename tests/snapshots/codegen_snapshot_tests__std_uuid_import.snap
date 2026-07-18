@@ -12,14 +12,14 @@ pub enum __IncanUniond83007a429c21b6f {
     V0(String),
     V1(Vec<u8>),
 }
-pub use incan_builtin_stdlib::uuid::MAX;
-pub use incan_builtin_stdlib::uuid::NAMESPACE_DNS;
-pub use incan_builtin_stdlib::uuid::NAMESPACE_URL;
-pub use incan_builtin_stdlib::uuid::NIL;
-pub use incan_builtin_stdlib::uuid::UUID;
-pub use incan_builtin_stdlib::uuid::UuidError;
-pub use incan_builtin_stdlib::uuid::UuidVariant;
-pub use incan_builtin_stdlib::uuid::UuidVersion;
+pub use crate::__incan_std::uuid::MAX;
+pub use crate::__incan_std::uuid::NAMESPACE_DNS;
+pub use crate::__incan_std::uuid::NAMESPACE_URL;
+pub use crate::__incan_std::uuid::NIL;
+pub use crate::__incan_std::uuid::UUID;
+pub use crate::__incan_std::uuid::UuidError;
+pub use crate::__incan_std::uuid::UuidVariant;
+pub use crate::__incan_std::uuid::UuidVersion;
 fn exercise_uuid() -> Result<(), UuidError> {
     let parsed = UUID::parse("550e8400-e29b-41d4-a716-446655440000".to_string())?;
     let same = UUID::from_int(parsed.to_int());

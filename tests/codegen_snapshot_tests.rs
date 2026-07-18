@@ -15,7 +15,7 @@ mod builtin_stdlib_support;
 
 fn codegen_with_builtin_stdlib_inventory() -> IrCodegen<'static> {
     let mut codegen = IrCodegen::new();
-    codegen.set_builtin_stdlib_artifact_module_paths(builtin_stdlib_support::artifact_module_paths());
+    codegen.set_sdk_provider_module_paths(builtin_stdlib_support::artifact_module_paths());
     codegen
 }
 
@@ -714,15 +714,15 @@ def main(result: Result[int, str]) -> Result[int, str]:
 "#;
     let rust_code = generate_rust(source);
     assert!(
-        rust_code.contains("incan_builtin_stdlib::result::map(result, double)"),
+        rust_code.contains("crate::__incan_std::result::map(result, double)"),
         "map with a named function callback should dogfood the std.result helper:\n{rust_code}"
     );
     assert!(
-        rust_code.contains("incan_builtin_stdlib::result::and_then"),
+        rust_code.contains("crate::__incan_std::result::and_then"),
         "and_then with a named function callback should dogfood the std.result helper:\n{rust_code}"
     );
     assert!(
-        rust_code.contains("incan_builtin_stdlib::result::inspect"),
+        rust_code.contains("crate::__incan_std::result::inspect"),
         "inspect with a named function callback should dogfood the std.result helper:\n{rust_code}"
     );
     assert!(
@@ -792,7 +792,7 @@ pub def transform_with_observer(result: Result[Payload, str]) -> Result[Payload,
         "non-Copy named observer callbacks should get a generated borrowed function adapter:\n{rust_code}"
     );
     assert!(
-        rust_code.contains("incan_builtin_stdlib::result::inspect(")
+        rust_code.contains("crate::__incan_std::result::inspect(")
             && rust_code.contains("__incan_borrow_adapter_observe_payload_0"),
         "inspect should pass the borrowed adapter into the Incan-authored std.result helper:\n{rust_code}"
     );
@@ -908,6 +908,32 @@ def main() -> None:
     assert!(
         compact.contains("App::run(\"127.0.0.1\".to_string(),8080)"),
         "imported stdlib static method call should expand omitted defaults:\n{rust_code}"
+    );
+}
+
+#[test]
+fn imported_stdlib_associated_function_defaults_expand_in_generated_rust() {
+    let source = r#"
+from std.collections import OrdinalMapError
+
+def main() -> None:
+  error = OrdinalMapError.invalid_key_record("bad key")
+  print(error.message())
+"#;
+    let tokens = lexer::lex(source).expect("fixture should lex");
+    let ast = parser::parse(&tokens).expect("fixture should parse");
+    let plan = incan::provider::ProviderPlan::default().with_bootstrap_sdk_namespace_roots(["collections".to_string()]);
+    let mut codegen = IrCodegen::new();
+    codegen.set_provider_plan(std::sync::Arc::new(plan));
+    let rust_code = normalize_codegen_output(
+        &codegen
+            .try_generate(&ast)
+            .expect("provider-bootstrap fixture should typecheck and lower"),
+    );
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("OrdinalMapError::invalid_key_record(\"badkey\".to_string(),-1)"),
+        "imported stdlib associated-function calls must expand omitted defaults:\n{rust_code}"
     );
 }
 
@@ -1186,7 +1212,7 @@ fn test_std_fs_import_codegen() {
     let source = load_test_file("std_fs_import");
     let rust_code = generate_rust(&source);
     assert!(
-        rust_code.contains("pub use incan_builtin_stdlib::fs::Path;"),
+        rust_code.contains("pub use crate::__incan_std::fs::Path;"),
         "std.fs Path import should emit through the compiled stdlib artifact; generated:\n{rust_code}"
     );
     assert!(
@@ -1201,19 +1227,19 @@ fn test_std_tempfile_import_codegen() {
     let source = load_test_file("std_tempfile_import");
     let rust_code = generate_rust(&source);
     assert!(
-        rust_code.contains("pub use incan_builtin_stdlib::tempfile::NamedTemporaryFile;"),
+        rust_code.contains("pub use crate::__incan_std::tempfile::NamedTemporaryFile;"),
         "std.tempfile NamedTemporaryFile import should emit through the compiled stdlib artifact; generated:\n{rust_code}"
     );
     assert!(
-        rust_code.contains("pub use incan_builtin_stdlib::tempfile::TemporaryDirectory;"),
+        rust_code.contains("pub use crate::__incan_std::tempfile::TemporaryDirectory;"),
         "std.tempfile TemporaryDirectory import should emit through the compiled stdlib artifact; generated:\n{rust_code}"
     );
     assert!(
-        rust_code.contains("pub use incan_builtin_stdlib::tempfile::SpooledTemporaryFile;"),
+        rust_code.contains("pub use crate::__incan_std::tempfile::SpooledTemporaryFile;"),
         "std.tempfile SpooledTemporaryFile import should emit through the compiled stdlib artifact; generated:\n{rust_code}"
     );
     assert!(
-        rust_code.contains("pub use incan_builtin_stdlib::fs::Path;"),
+        rust_code.contains("pub use crate::__incan_std::fs::Path;"),
         "std.tempfile call sites should use the compiled std.fs Path value; generated:\n{rust_code}"
     );
     assert!(
@@ -3443,11 +3469,11 @@ fn test_ordinal_key_builtin_impls_codegen() {
     let rust_code = generate_rust(&source);
     let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
     assert!(
-        compact.contains("pubuseincan_builtin_stdlib::collections::OrdinalKey;"),
+        compact.contains("pubusecrate::__incan_std::collections::OrdinalKey;"),
         "expected imported std.collections.OrdinalKey re-export; generated:\n{rust_code}"
     );
     assert!(
-        compact.contains("implincan_builtin_stdlib::collections::OrdinalKeyforStatus{")
+        compact.contains("implcrate::__incan_std::collections::OrdinalKeyforStatus{")
             && compact
                 .contains("fnordinal_hash(&self)->i64{incan_stdlib::collections::__private::ordinal_key_hash_bytes")
             && compact
@@ -3455,7 +3481,7 @@ fn test_ordinal_key_builtin_impls_codegen() {
         "expected generated OrdinalKey impl for string value enum; generated:\n{rust_code}"
     );
     assert!(
-        compact.contains("implincan_builtin_stdlib::collections::OrdinalKeyforHttpStatus{")
+        compact.contains("implcrate::__incan_std::collections::OrdinalKeyforHttpStatus{")
             && compact.contains(
                 "fnordinal_hash(&self)->i64{incan_stdlib::collections::__private::ordinal_key_hash_bytes"
             )

@@ -14,12 +14,6 @@ pub const STDLIB_ROOT: &str = "std";
 /// `std` crate. For example, `std.testing` compiles to `crate::__incan_std::testing`.
 pub const INCAN_STD_NAMESPACE: &str = "__incan_std";
 
-/// Cargo crate name for the locally compiled built-in Incan stdlib artifact.
-///
-/// Public Incan source continues to import modules through `std.*`; this name is only used in generated Rust after a
-/// module has migrated out of the consumer-local `__incan_std` tree.
-pub const BUILTIN_STDLIB_ARTIFACT_CRATE: &str = "incan_builtin_stdlib";
-
 /// `std.web` module name.
 pub const STDLIB_WEB: &str = "web";
 
@@ -161,13 +155,13 @@ pub fn is_any_stdlib_path(path: &[String]) -> bool {
     path.len() >= 2 && path[0] == STDLIB_ROOT
 }
 
-/// Return whether a compiler-generated support call crosses the compiled built-in stdlib boundary.
+/// Return whether a compiler-generated support call crosses a compiled SDK-provider boundary.
 ///
 /// These names remain underscored in Incan because they are not general user API. They are nevertheless public Rust
 /// symbols: generated trait defaults in a consumer must be able to call them when their source contract is owned by
 /// the compiled artifact.
 #[must_use]
-pub fn is_compiled_builtin_stdlib_support_function(path: &[String], name: &str) -> bool {
+pub fn is_compiled_sdk_provider_support_function(path: &[String], name: &str) -> bool {
     name == "_ordinal_hash"
         && (path.iter().map(String::as_str).eq([STDLIB_ROOT, "collections"])
             || path.iter().map(String::as_str).eq([INCAN_STD_NAMESPACE, "collections"]))

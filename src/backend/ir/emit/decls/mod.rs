@@ -326,23 +326,11 @@ impl<'a> IrEmitter<'a> {
         let is_pub_library_import = matches!(origin, IrImportOrigin::PubLibrary { .. });
         let is_stdlib = Self::is_incan_source_stdlib_import(origin, qualifier, path);
 
-        let is_non_rust_stdlib_emission_path =
-            !matches!(qualifier, IrImportQualifier::None) && self.is_builtin_stdlib_artifact_emission_path(path);
-        if std::env::var_os("INCAN_INTERNAL_BUILTIN_STDLIB_ARTIFACT_BUILD").is_some()
-            && (is_stdlib || is_non_rust_stdlib_emission_path)
-        {
+        let is_non_rust_stdlib_emission_path = !matches!(qualifier, IrImportQualifier::None)
+            && path.first().map(String::as_str) == Some(stdlib::INCAN_STD_NAMESPACE);
+        if is_non_rust_stdlib_emission_path {
             let mut tokens = vec![quote! { crate }];
-            for seg in path.iter().skip(1) {
-                let ident = Self::rust_ident(seg);
-                tokens.push(quote! { #ident });
-            }
-            return tokens;
-        }
-
-        if (is_stdlib && self.is_builtin_stdlib_artifact_source_path(path)) || is_non_rust_stdlib_emission_path {
-            let artifact = Self::rust_ident(stdlib::BUILTIN_STDLIB_ARTIFACT_CRATE);
-            let mut tokens = vec![quote! { #artifact }];
-            for seg in path.iter().skip(1) {
+            for seg in path {
                 let ident = Self::rust_ident(seg);
                 tokens.push(quote! { #ident });
             }

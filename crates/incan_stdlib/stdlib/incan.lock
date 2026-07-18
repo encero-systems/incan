@@ -3,7 +3,7 @@
 
 [incan]
 format = 1
-incan-version = "0.5.0-dev.5"
+incan-version = "0.5.0-dev.6"
 deps-fingerprint = "sha256:af4696b510f97fc49384ed28aecc6a022e04a8fbd9311de6f99d701b8e4fef58"
 cargo-features = []
 cargo-no-default-features = false
@@ -428,7 +428,7 @@ dependencies = [
 
 [[package]]
 name = "incan_builtin_stdlib"
-version = "0.5.0-dev.5"
+version = "0.5.0-dev.6"
 dependencies = [
  "axum",
  "blake2",
@@ -460,14 +460,14 @@ dependencies = [
 
 [[package]]
 name = "incan_core"
-version = "0.5.0-dev.5"
+version = "0.5.0-dev.6"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "incan_derive"
-version = "0.5.0-dev.5"
+version = "0.5.0-dev.6"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -476,7 +476,7 @@ dependencies = [
 
 [[package]]
 name = "incan_stdlib"
-version = "0.5.0-dev.5"
+version = "0.5.0-dev.6"
 dependencies = [
  "axum",
  "incan_core",
@@ -490,7 +490,7 @@ dependencies = [
 
 [[package]]
 name = "incan_web_macros"
-version = "0.5.0-dev.5"
+version = "0.5.0-dev.6"
 dependencies = [
  "proc-macro2",
  "quote",

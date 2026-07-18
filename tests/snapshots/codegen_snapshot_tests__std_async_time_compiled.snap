@@ -7,8 +7,8 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-pub use incan_builtin_stdlib::r#async;
-pub use incan_builtin_stdlib::traits::error::Error;
+pub use crate::__incan_std::r#async;
+pub use crate::__incan_std::traits::error::Error;
 use ::incan_stdlib::r#async::task::JoinHandle;
 use ::incan_stdlib::r#async::task::RuntimeFuture;
 use ::incan_stdlib::r#async::time::TimeoutJoinOutcome as RustTimeoutJoinOutcome;
