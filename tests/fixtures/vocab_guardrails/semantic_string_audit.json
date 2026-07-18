@@ -249,8 +249,8 @@
     {
       "path": "src/cli/commands/common.rs",
       "category": "project materialization, provider hashing, dependency, and rust-inspect prewarm compatibility",
-      "expected_count": 9,
-      "expected_fingerprint": "0x7139ce9680f780f3"
+      "expected_count": 10,
+      "expected_fingerprint": "0xad8c166a6309d24b"
     },
     {
       "path": "src/dependency_resolver.rs",
