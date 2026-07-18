@@ -340,7 +340,13 @@ impl TypeChecker {
                             match &meta.kind {
                                 RustItemKind::Function(sig) => {
                                     let error_count_before = self.errors.len();
-                                    let result = self.validate_rust_function_call(info.path.as_str(), sig, args, span);
+                                    let result = self.validate_rust_function_call_with_expected(
+                                        info.path.as_str(),
+                                        sig,
+                                        args,
+                                        span,
+                                        expected_return_ty,
+                                    );
                                     if self.errors.len() == error_count_before {
                                         self.record_expr_type(
                                             callee.span,
@@ -401,7 +407,13 @@ impl TypeChecker {
                             }
                         } else if let Some(sig) = metadata_free_function_signature(info.path.as_str()) {
                             let error_count_before = self.errors.len();
-                            let result = self.validate_rust_function_call(info.path.as_str(), &sig, args, span);
+                            let result = self.validate_rust_function_call_with_expected(
+                                info.path.as_str(),
+                                &sig,
+                                args,
+                                span,
+                                expected_return_ty,
+                            );
                             if self.errors.len() == error_count_before {
                                 self.record_expr_type(
                                     callee.span,

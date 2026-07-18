@@ -107,9 +107,13 @@ pub fn regular_enum_variant_value_not_allowed(enum_name: &str, variant_name: &st
 }
 
 /// Build the diagnostic for passing the same call argument more than once.
-pub fn duplicate_call_argument(callee: &str, name: &str, span: Span) -> CompileError {
-    CompileError::type_error(format!("Duplicate argument '{name}' when calling '{callee}'"), span)
-        .with_hint("Pass each fixed parameter at most once")
+pub fn duplicate_call_argument(callee: &str, name: &str, first_span: Span, duplicate_span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Duplicate argument '{name}' when calling '{callee}'"),
+        duplicate_span,
+    )
+    .with_related_span(first_span, format!("First argument named '{name}'"))
+    .with_hint("Pass each fixed parameter at most once")
 }
 
 /// Build the diagnostic for a keyword argument that the callee does not accept.
@@ -294,11 +298,13 @@ pub fn rust_allow_unsupported_attachment(kind: &str, span: Span) -> CompileError
 
 // -- Type mismatches ---------------------------------------------------------
 
+/// Build the generic expected-versus-actual type mismatch diagnostic.
 pub fn type_mismatch(expected: &str, found: &str, span: Span) -> CompileError {
     let mut error = CompileError::type_error(
         format!("Type mismatch: expected '{}', found '{}'", expected, found),
         span,
-    );
+    )
+    .with_expected_actual(expected, found);
     error = add_type_mismatch_hints(error, expected, found);
     error
 }
@@ -310,6 +316,7 @@ pub fn return_type_mismatch(expected: &str, found: &str, span: Span) -> CompileE
             format!("Return type mismatch: expected '{}', found '{}'", expected, found),
             span,
         )
+        .with_expected_actual(expected, found)
         .with_note(format!(
             "This return expression must match the function return type '{}'",
             expected
@@ -329,6 +336,7 @@ pub fn assignment_type_mismatch(binding: &str, expected: &str, found: &str, span
             ),
             span,
         )
+        .with_expected_actual(expected, found)
         .with_note(format!("'{}' is declared as '{}'", binding, expected)),
         expected,
         found,
@@ -363,7 +371,13 @@ pub fn call_argument_type_mismatch(
             expected, callee
         ),
     };
-    add_type_mismatch_hints(CompileError::type_error(message, span).with_note(note), expected, found)
+    add_type_mismatch_hints(
+        CompileError::type_error(message, span)
+            .with_expected_actual(expected, found)
+            .with_note(note),
+        expected,
+        found,
+    )
 }
 
 /// Add smart hints based on the expected and found types.
@@ -675,6 +689,13 @@ pub fn mutation_without_mut(name: &str, span: Span) -> CompileError {
         .with_hint(format!("Declare with 'mut' to allow mutation: mut {} = ...", name))
         .with_note("In Incan, variables are immutable by default for safety")
         .with_note("This prevents accidental modifications and makes code easier to reason about")
+}
+
+/// A Rust interop parameter requires an exclusive borrow of an immutable Incan binding.
+pub fn mutable_rust_borrow_requires_mut(name: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("Rust parameter requires a mutable borrow of '{name}'"), span).with_hint(format!(
+        "Declare with 'mut' before passing '{name}' to this Rust method"
+    ))
 }
 
 pub fn self_mutation_without_mut(span: Span) -> CompileError {
@@ -1569,6 +1590,7 @@ pub fn duplicate_interop_edge(
         format!("Duplicate interop edge `{direction} {edge_ty}` on `{type_name}`"),
         second_span,
     )
+    .with_related_span(first_span, "First interop edge declaration")
     .with_note(format!("First declaration at span: {:?}", first_span))
 }
 
@@ -1591,11 +1613,13 @@ pub fn conflicting_interop_edge(
     .with_hint("Keep one canonical adapter edge for each directed type")
 }
 
+/// Build the diagnostic for two fields that claim the same serialized alias.
 pub fn duplicate_alias(type_name: &str, alias: &str, first_span: Span, second_span: Span) -> CompileError {
     CompileError::type_error(
         format!("Duplicate alias '{}' on type '{}'", alias, type_name),
         second_span,
     )
+    .with_related_span(first_span, format!("First field alias '{alias}'"))
     .with_note(format!(
         "Alias '{}' is already used by another field on '{}'",
         alias, type_name

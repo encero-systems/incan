@@ -4,7 +4,7 @@ See docs/derives/string_representation.md for detailed documentation.
 """
 
 
-trait Debug:
+pub trait Debug:
     """
     Debug trait - Provides debug string representation via {:?} format
     Python equivalent: __repr__
@@ -26,7 +26,7 @@ trait Debug:
     def __repr__(self) -> str: ...
 
 
-trait Display:
+pub trait Display:
     """
     Display trait - Provides user-friendly string representation via {} format
     Python equivalent: __str__

@@ -1,0 +1,11 @@
+"""Compiled provider entrypoint for Incan encoding and checksum support."""
+
+import checksum
+import encoding._shared
+import encoding.base32
+import encoding.base58
+import encoding.base64
+import encoding.base85
+import encoding.bech32
+import encoding.hex
+import encoding.prelude

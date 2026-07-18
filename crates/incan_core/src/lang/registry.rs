@@ -217,6 +217,9 @@ pub const RFC_106: RfcId = "RFC 106";
 /// RFC 107 — type-directed library APIs and compile-time type tokens.
 pub const RFC_107: RfcId = "RFC 107";
 
+/// RFC 114 — compiled providers, SDK components, and package features.
+pub const RFC_114: RfcId = "RFC 114";
+
 /// Namespace-style access to RFC ids.
 ///
 /// This exists purely for ergonomics at call sites so individual registries don’t need to import
@@ -355,6 +358,8 @@ impl RFC {
     pub const _106: RfcId = RFC_106;
     /// RFC 107 — type-directed library APIs and compile-time type tokens.
     pub const _107: RfcId = RFC_107;
+    /// RFC 114 — compiled providers, SDK components, and package features.
+    pub const _114: RfcId = RFC_114;
 }
 
 /// Identify the language/compiler version a vocabulary item is available since.

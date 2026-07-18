@@ -19,6 +19,7 @@ pub struct VscodeKeywordBucket {
 const FLOW_KEYWORDS: &[KeywordId] = &[
     KeywordId::Assert,
     KeywordId::If,
+    KeywordId::When,
     KeywordId::Else,
     KeywordId::Elif,
     KeywordId::Loop,

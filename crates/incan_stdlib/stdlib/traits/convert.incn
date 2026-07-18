@@ -1,4 +1,4 @@
-trait From[T]:
+pub trait From[T]:
     """
     From trait - Type conversion from another type
     Rust equivalent: std::convert::From
@@ -40,7 +40,7 @@ trait From[T]:
     def from(cls, value: T) -> Self: ...
 
 
-trait Into[T]:
+pub trait Into[T]:
     """
     Into trait - Convert self into another type
     Rust equivalent: std::convert::Into
@@ -58,7 +58,7 @@ trait Into[T]:
     def into(self) -> T: ...
 
 
-trait TryFrom[T]:
+pub trait TryFrom[T]:
     """
     TryFrom trait - Fallible type conversion
     Rust equivalent: std::convert::TryFrom
@@ -89,7 +89,7 @@ trait TryFrom[T]:
     def try_from(cls, value: T) -> Result[Self, str]: ...
 
 
-trait TryInto[T]:
+pub trait TryInto[T]:
     """
     TryInto trait - Fallible conversion of self into another type
     Rust equivalent: std::convert::TryInto

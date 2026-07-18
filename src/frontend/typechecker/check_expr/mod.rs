@@ -124,7 +124,7 @@ impl TypeChecker {
             return Some(kind);
         }
         if module_path.len() == 2 && module_path.first().is_some_and(|seg| seg == "pub") {
-            let entry = self.library_manifests.get(&module_path[1])?;
+            let entry = self.provider_plan.library_manifest_index().get(&module_path[1])?;
             let crate::frontend::library_manifest_index::LibraryManifestIndexEntry::Loaded { manifest, .. } = entry
             else {
                 return None;

@@ -23,6 +23,7 @@ use crate::manifest::{
 use crate::project_lifecycle::env::{EnvConfigError, EnvConfigSet, EnvRunPreview, ResolvedEnv, resolve_cwd};
 use crate::project_lifecycle::toolchain::{ToolchainCompatibility, ToolchainConstraintSet};
 use crate::project_lifecycle::version::{VersionBump, VersionChange, VersionRequest};
+use crate::workspace::WorkspaceGraph;
 
 /// CLI spelling of version bumps accepted by `incan version`.
 ///
@@ -278,8 +279,8 @@ fn load_env_context(project: Option<&Path>) -> CliResult<EnvContext> {
         let project_root = explicit_project_root(project)?;
         let manifest_path = project_root.join(MANIFEST_FILENAME);
         let manifest_content = read_manifest_content(&manifest_path)?;
-        let manifest = ProjectManifest::from_str(&manifest_content, &manifest_path)
-            .map_err(|error| CliError::failure(error.to_string()))?;
+        let manifest = crate::cli::commands::common::discover_effective_project_manifest(&project_root)?
+            .ok_or_else(|| CliError::failure(format!("No incan.toml found at {}", manifest_path.display())))?;
         (project_root, manifest_path, manifest_content, manifest)
     } else {
         let manifest = discover_lifecycle_manifest()?;
@@ -291,7 +292,13 @@ fn load_env_context(project: Option<&Path>) -> CliResult<EnvContext> {
             manifest,
         )
     };
-    let config = EnvConfigSet::from_manifest(&manifest);
+    let workspace_envs = WorkspaceGraph::discover(&project_root)
+        .map_err(|error| CliError::failure(error.to_string()))?
+        .map(|workspace| workspace.workspace_env_sections())
+        .transpose()
+        .map_err(|error| CliError::failure(error.to_string()))?
+        .unwrap_or_default();
+    let config = EnvConfigSet::from_manifest(&manifest).with_workspace_envs(workspace_envs);
     Ok(EnvContext {
         project_root,
         manifest_path,
@@ -318,11 +325,9 @@ fn explicit_project_root(path: &Path) -> CliResult<PathBuf> {
 fn discover_lifecycle_manifest() -> CliResult<ProjectManifest> {
     let cwd = env::current_dir()
         .map_err(|error| CliError::failure(format!("failed to determine current directory: {error}")))?;
-    ProjectManifest::discover(&cwd)
-        .map_err(|error| CliError::failure(error.to_string()))?
-        .ok_or_else(|| {
-            CliError::failure("No incan.toml found; run `incan init` or `incan new <name>` to create a project")
-        })
+    crate::cli::commands::common::discover_effective_project_manifest(&cwd)?.ok_or_else(|| {
+        CliError::failure("No incan.toml found; run `incan init` or `incan new <name>` to create a project")
+    })
 }
 
 /// Read one manifest file into memory as UTF-8 text.

@@ -14,7 +14,7 @@ use super::super::super::expr::{
 };
 use super::super::super::ownership::{
     ArgumentPassingPlan, AssociatedFunctionArgumentContext, RegularMethodArgumentContext, ValueUseSite,
-    associated_function_argument_use_site, is_byte_buffer_type, is_string_buffer_type,
+    associated_function_argument_use_site, is_byte_buffer_type, is_string_buffer_type, plan_read_by_ref_receiver,
     regular_method_argument_use_site,
 };
 use super::super::super::reference_shape::{expr_has_rust_reference_shape, type_has_rust_reference_shape};
@@ -120,7 +120,7 @@ impl<'a> IrEmitter<'a> {
 
         match &callback.kind {
             _ if matches!(callback.ty, IrType::Function { .. }) => {
-                let callback_tokens = self.emit_expr(callback)?;
+                let callback_tokens = self.emit_result_observer_stdlib_callback_arg(callback, observed_ty)?;
                 Ok(quote! { (#callback_tokens)(#borrowed_payload) })
             }
             _ => {
@@ -200,8 +200,9 @@ impl<'a> IrEmitter<'a> {
             ResultMethodId::Map | ResultMethodId::MapErr | ResultMethodId::AndThen | ResultMethodId::OrElse => {
                 if self.result_value_combinator_can_use_stdlib_helper(callback) {
                     let callback_tokens = self.emit_expr(callback)?;
+                    let helper_path = Self::result_stdlib_helper_path();
                     return Ok(quote! {
-                        crate::__incan_std::result::#method_ident(#receiver_tokens, #callback_tokens)
+                        #helper_path::#method_ident(#receiver_tokens, #callback_tokens)
                     });
                 }
                 if matches!(callback.kind, IrExprKind::Closure { .. }) {
@@ -223,8 +224,9 @@ impl<'a> IrEmitter<'a> {
                 };
                 if self.result_observer_can_use_stdlib_helper(callback) {
                     let callback_tokens = self.emit_result_observer_stdlib_callback_arg(callback, &observed_ty)?;
+                    let helper_path = Self::result_stdlib_helper_path();
                     return Ok(quote! {
-                        crate::__incan_std::result::#method_ident(#receiver_tokens, #callback_tokens)
+                        #helper_path::#method_ident(#receiver_tokens, #callback_tokens)
                     });
                 }
                 let body = self.emit_result_observer_callback_call(callback, &observed_ty)?;
@@ -241,6 +243,13 @@ impl<'a> IrEmitter<'a> {
             }
         };
         Ok(call)
+    }
+
+    /// Return the Result helper module for the current generated crate.
+    ///
+    /// Consumers link the compiled stdlib artifact; artifact builds use the crate-local compatibility facade.
+    fn result_stdlib_helper_path() -> TokenStream {
+        quote! { crate::__incan_std::result }
     }
 
     /// Return whether a value-transforming Result combinator can dogfood the pure Incan std.result helper.
@@ -274,6 +283,54 @@ impl<'a> IrEmitter<'a> {
                 arg.ty,
                 IrType::String | IrType::StaticStr | IrType::StrRef | IrType::FrozenStr
             ) || is_string_buffer_type(&arg.ty))
+    }
+
+    /// Return whether `std::path::Path.new` should preserve its source string shape for a borrowed generic parameter.
+    ///
+    /// Rust's `Path::new` takes `S: AsRef<OsStr>`. A literal or compiler-managed static string provides the necessary
+    /// inference shape; adding `.into()` introduces an unconstrained intermediate target once consumer dependencies
+    /// provide additional `AsRef<OsStr>` implementations. Owned runtime strings must instead follow the ordinary
+    /// external borrow boundary and emit `&value` for Path's `&S` parameter.
+    fn std_path_new_preserves_static_string_argument_shape(
+        receiver: &TypedExpr,
+        method: &str,
+        arg: &TypedExpr,
+    ) -> bool {
+        Self::is_std_path_new_call(receiver, method)
+            && (Self::static_string_source_shape(arg)
+                || matches!(
+                    arg.ty,
+                    IrType::String | IrType::StaticStr | IrType::StrRef | IrType::FrozenStr
+                ))
+    }
+
+    /// Return whether this associated call is the Rust standard-library `Path::new` constructor.
+    fn is_std_path_new_call(receiver: &TypedExpr, method: &str) -> bool {
+        method == "new"
+            && matches!(
+                &receiver.ty,
+                IrType::Struct(path) | IrType::RustDisplay(path) | IrType::NamedGeneric(path, _)
+                    if matches!(path.as_str(), "std::path::Path" | "Path")
+            )
+    }
+
+    /// Return whether an expression is a literal or compiler-static string after transparent interop coercions.
+    ///
+    /// Const bindings can be wrapped while their declared Incan `str` type is reconciled with an external method
+    /// parameter. The wrapper must not turn the source into an owned `String`: `Path::new(CONST.into())` leaves Rust
+    /// with no concrete generic target, whereas the original static string is already a valid `AsRef<OsStr>` input.
+    fn static_string_source_shape(expr: &TypedExpr) -> bool {
+        match &expr.kind {
+            IrExprKind::String(_) | IrExprKind::Literal(super::super::super::expr::Literal::StaticStr(_)) => true,
+            IrExprKind::StaticRead { .. }
+            | IrExprKind::StaticBinding { .. }
+            | IrExprKind::Var {
+                ref_kind: VarRefKind::StaticBinding,
+                ..
+            } => true,
+            IrExprKind::InteropCoerce { expr, .. } => Self::static_string_source_shape(expr),
+            _ => false,
+        }
     }
 
     /// Emit method-call arguments with Rust-boundary borrowing and union wrapping applied from callable metadata.
@@ -375,24 +432,28 @@ impl<'a> IrEmitter<'a> {
                     context.base_use_site,
                     ValueUseSite::ExternalCallArg { .. } | ValueUseSite::MethodArg
                 );
-                let arg_use_site = match (context.base_use_site, param) {
-                    (ValueUseSite::ExternalCallArg { .. }, Some(param))
-                        if context.infer_unresolved_generic_args
-                            && Self::unresolved_external_generic_should_infer_from_string_arg(arg, &param.ty) =>
-                    {
-                        ValueUseSite::ExternalInferredGenericArg {
-                            target_ty: Some(&param.ty),
+                let arg_use_site = if Self::std_path_new_preserves_static_string_argument_shape(receiver, method, arg) {
+                    ValueUseSite::MethodArg
+                } else {
+                    match (context.base_use_site, param) {
+                        (ValueUseSite::ExternalCallArg { .. }, Some(param))
+                            if context.infer_unresolved_generic_args
+                                && Self::unresolved_external_generic_should_infer_from_string_arg(arg, &param.ty) =>
+                        {
+                            ValueUseSite::ExternalInferredGenericArg {
+                                target_ty: Some(&param.ty),
+                            }
                         }
+                        (ValueUseSite::ExternalCallArg { .. }, Some(param)) => ValueUseSite::ExternalCallArg {
+                            target_ty: Some(&param.ty),
+                        },
+                        (ValueUseSite::IncanCallArg { in_return, .. }, Some(param)) => ValueUseSite::IncanCallArg {
+                            target_ty: Some(&param.ty),
+                            callee_param: Some(param),
+                            in_return,
+                        },
+                        _ => context.base_use_site,
                     }
-                    (ValueUseSite::ExternalCallArg { .. }, Some(param)) => ValueUseSite::ExternalCallArg {
-                        target_ty: Some(&param.ty),
-                    },
-                    (ValueUseSite::IncanCallArg { in_return, .. }, Some(param)) => ValueUseSite::IncanCallArg {
-                        target_ty: Some(&param.ty),
-                        callee_param: Some(param),
-                        in_return,
-                    },
-                    _ => context.base_use_site,
                 };
                 let previous_qualify = if *from_default {
                     Some(self.qualify_internal_canonical_paths.replace(true))
@@ -438,6 +499,13 @@ impl<'a> IrEmitter<'a> {
                 if direct_mut_trait_receiver {
                     return Ok(quote! { &mut #emitted });
                 }
+                if Self::is_std_path_new_call(receiver, method)
+                    && matches!(arg.ty, IrType::String)
+                    && !Self::static_string_source_shape(arg)
+                    && !expr_has_rust_reference_shape(arg)
+                {
+                    emitted = quote! { &#emitted };
+                }
                 if idx == 0
                     && method == "take"
                     && matches!(arg.ty, IrType::Int)
@@ -453,9 +521,10 @@ impl<'a> IrEmitter<'a> {
                     };
                 }
                 if idx == 0 && method == "by_ref" {
-                    emitted = quote! { &mut *#emitted };
+                    emitted = plan_read_by_ref_receiver(&arg.ty).apply(emitted);
                 }
                 if idx == 0
+                    && param.is_none()
                     && Self::receiver_type_for_method_dispatch(&receiver.ty).nominal_type_name() == Some("Path")
                     && Self::method_first_arg_is_path_or_str_union(method)
                     && let Some(wrapped) = self.emit_union_payload_arg(arg, &Self::path_or_str_union_type(), None)?
@@ -468,6 +537,16 @@ impl<'a> IrEmitter<'a> {
                             quote! { &#emitted }
                         }
                         MetadataFreeMethodArgBorrowPolicy::Mutable => quote! { &mut #emitted },
+                        MetadataFreeMethodArgBorrowPolicy::StringAsStr
+                            if !matches!(
+                                arg.kind,
+                                IrExprKind::String(_)
+                                    | IrExprKind::Literal(super::super::super::expr::Literal::StaticStr(_))
+                            ) =>
+                        {
+                            quote! { (#emitted).as_str() }
+                        }
+                        MetadataFreeMethodArgBorrowPolicy::StringAsStr => emitted,
                         MetadataFreeMethodArgBorrowPolicy::Shared => emitted,
                     };
                 }
@@ -526,6 +605,9 @@ impl<'a> IrEmitter<'a> {
             MetadataFreeReceiverClass::EncodingInstance => {
                 Self::receiver_type_matches_any(receiver, &["Encoding", "encoding_rs::Encoding"])
             }
+            MetadataFreeReceiverClass::TokenizerInstance => {
+                Self::receiver_type_matches_any(receiver, &["Tokenizer", "tokenizers::Tokenizer"])
+            }
             MetadataFreeReceiverClass::ExternalAssociated => Self::is_external_associated_receiver(receiver),
         }
     }
@@ -541,7 +623,7 @@ impl<'a> IrEmitter<'a> {
 
     /// Return whether a metadata-free receiver is eligible for std::io-style compatibility borrowing.
     fn receiver_allows_io_method_fallback(receiver: &TypedExpr) -> bool {
-        !Self::expr_is_type_like(receiver)
+        !Self::expr_is_type_like(receiver) && !Self::receiver_type_matches_any(receiver, &["BytesIO", "_BytesIO"])
     }
 
     /// Return whether an external Rust trait-style associated call needs `&mut` for its first argument.
@@ -1046,6 +1128,20 @@ impl<'a> IrEmitter<'a> {
         // This is needed for external Rust types like `Uuid`, `Instant`, `HashMap`, and also for
         // Incan-generated impl methods called in a "static" style (e.g. `User.from_json(...)`).
         if let IrExprKind::Var { name, .. } = &receiver.kind {
+            if name == "T"
+                && method == "sum"
+                && args.len() == 1
+                && matches!(
+                    receiver.kind,
+                    IrExprKind::Var {
+                        ref_kind: VarRefKind::TypeName,
+                        ..
+                    }
+                )
+                && matches!(args[0].expr.kind, IrExprKind::Var { ref name, .. } if name == "self")
+            {
+                return Ok(quote! { T::sum(self) });
+            }
             // Rewrite `Type.method(...)` to `Type::method(...)` only when we have explicit metadata that this is
             // a type-like identifier (type name or external import placeholder).
             //

@@ -12,8 +12,9 @@ use semver::Version;
 
 use super::wire::{RawLibraryExports, RawLibraryManifest};
 use super::{
-    EnumExport, EnumValueExport, EnumValueTypeExport, LIBRARY_MANIFEST_FORMAT, LibraryManifestError, ParamExport,
-    ParamKindExport, PartialExport, RUST_ABI_SCHEMA_VERSION, VocabProviderManifest,
+    COMPILED_PROVIDER_METADATA_SCHEMA_VERSION, CompiledProviderMetadata, EnumExport, EnumValueExport,
+    EnumValueTypeExport, LIBRARY_MANIFEST_FORMAT, LibraryManifestError, ParamExport, ParamKindExport, PartialExport,
+    ProviderCargoDependencySource, RUST_ABI_SCHEMA_VERSION, VocabProviderManifest,
 };
 use crate::frontend::api_metadata::CHECKED_API_METADATA_SCHEMA_VERSION;
 use crate::frontend::contract_metadata::CONTRACT_METADATA_SCHEMA_VERSION;
@@ -86,6 +87,237 @@ fn validate_contract_metadata(raw: &RawLibraryManifest) -> Result<(), LibraryMan
                 )));
             }
         }
+    }
+    validate_compiled_provider_metadata(&raw.contract_metadata.provider)?;
+    Ok(())
+}
+
+/// Validate generic compiled-provider metadata before any compiler stage trusts its feature projection or backend map.
+fn validate_compiled_provider_metadata(metadata: &CompiledProviderMetadata) -> Result<(), LibraryManifestError> {
+    if metadata.schema_version != COMPILED_PROVIDER_METADATA_SCHEMA_VERSION {
+        return Err(LibraryManifestError::Invalid(format!(
+            "contract_metadata.provider.schema_version {} is unsupported (expected {})",
+            metadata.schema_version, COMPILED_PROVIDER_METADATA_SCHEMA_VERSION
+        )));
+    }
+    for feature in metadata.public_features.keys() {
+        validate_provider_identifier("public feature", feature)?;
+    }
+    for active in &metadata.active_features {
+        if !metadata.public_features.contains_key(active) {
+            return Err(LibraryManifestError::Invalid(format!(
+                "contract_metadata.provider.active_features contains undeclared feature `{active}`"
+            )));
+        }
+    }
+    let mut provider_dependencies = HashSet::new();
+    for dependency in &metadata.provider_dependencies {
+        validate_provider_identifier("provider dependency", &dependency.dependency_key)?;
+        if !provider_dependencies.insert(dependency.dependency_key.as_str()) {
+            return Err(LibraryManifestError::Invalid(format!(
+                "contract_metadata.provider.provider_dependencies contains duplicate dependency key `{}`",
+                dependency.dependency_key
+            )));
+        }
+        if dependency.provider_name.trim().is_empty() {
+            return Err(LibraryManifestError::Invalid(format!(
+                "provider dependency `{}` has an empty provider name",
+                dependency.dependency_key
+            )));
+        }
+        if dependency.provider_version.trim().is_empty() {
+            return Err(LibraryManifestError::Invalid(format!(
+                "provider dependency `{}` has an empty provider version",
+                dependency.dependency_key
+            )));
+        }
+        validate_provider_artifact_digest(&dependency.dependency_key, &dependency.artifact_digest)?;
+        validate_provider_dependency_artifact_path(&dependency.dependency_key, &dependency.relative_artifact_path)?;
+        for feature in &dependency.requested_features {
+            validate_provider_identifier("dependency feature", feature)?;
+        }
+    }
+    for (feature, declaration) in &metadata.public_features {
+        for included in &declaration.includes {
+            if !metadata.public_features.contains_key(included) {
+                return Err(LibraryManifestError::Invalid(format!(
+                    "provider feature `{feature}` includes undeclared feature `{included}`"
+                )));
+            }
+        }
+        for dependency in &declaration.optional_dependencies {
+            validate_provider_identifier("optional dependency", dependency)?;
+        }
+        for (dependency, features) in &declaration.dependency_features {
+            validate_provider_identifier("dependency", dependency)?;
+            for dependency_feature in features {
+                validate_provider_identifier("dependency feature", dependency_feature)?;
+            }
+        }
+        for component in &declaration.required_sdk_components {
+            validate_provider_identifier("SDK component", component)?;
+        }
+    }
+
+    let mut claims = HashSet::new();
+    for claim in &metadata.namespace_claims {
+        for segment in &claim.module_path {
+            validate_provider_identifier("module segment", segment)?;
+        }
+        validate_required_features(metadata, &claim.required_features, "namespace claim")?;
+        if !claims.insert((claim.module_path.clone(), claim.required_features.clone())) {
+            return Err(LibraryManifestError::Invalid(format!(
+                "contract_metadata.provider.namespace_claims contains duplicate module `{}`",
+                claim.module_path.join(".")
+            )));
+        }
+    }
+    for requirement in &metadata.fact_requirements {
+        if requirement.identity.trim().is_empty() {
+            return Err(LibraryManifestError::Invalid(
+                "contract_metadata.provider.fact_requirements contains an empty identity".to_string(),
+            ));
+        }
+        validate_required_features(metadata, &requirement.required_features, &requirement.identity)?;
+    }
+    for component in &metadata.required_sdk_components {
+        validate_provider_identifier("SDK component", component)?;
+    }
+
+    let mut facet_ids = HashSet::new();
+    for facet in &metadata.implementation_facets {
+        validate_provider_identifier("implementation facet", &facet.id)?;
+        if !facet_ids.insert(facet.id.as_str()) {
+            return Err(LibraryManifestError::Invalid(format!(
+                "contract_metadata.provider.implementation_facets contains duplicate id `{}`",
+                facet.id
+            )));
+        }
+        validate_required_features(metadata, &facet.required_features, &facet.id)?;
+        for module in &facet.required_modules {
+            for segment in module {
+                validate_provider_identifier("module segment", segment)?;
+            }
+        }
+        for (crate_name, features) in &facet.cargo_features {
+            validate_provider_identifier("Cargo dependency", crate_name)?;
+            for feature in features {
+                validate_provider_identifier("Cargo feature", feature)?;
+            }
+        }
+        for dependency in &facet.cargo_dependencies {
+            validate_provider_identifier("Cargo dependency", &dependency.crate_name)?;
+            if dependency.version.as_deref().is_some_and(str::is_empty) {
+                return Err(LibraryManifestError::Invalid(format!(
+                    "implementation facet `{}` has an empty Cargo version for `{}`",
+                    facet.id, dependency.crate_name
+                )));
+            }
+            for feature in &dependency.features {
+                validate_provider_identifier("Cargo feature", feature)?;
+            }
+            match &dependency.source {
+                ProviderCargoDependencySource::Registry if dependency.version.is_none() => {
+                    return Err(LibraryManifestError::Invalid(format!(
+                        "implementation facet `{}` registry dependency `{}` has no version",
+                        facet.id, dependency.crate_name
+                    )));
+                }
+                ProviderCargoDependencySource::Toolchain { relative_path } => {
+                    let path = Path::new(relative_path);
+                    if path.is_absolute() || path.components().any(|component| component == Component::ParentDir) {
+                        return Err(LibraryManifestError::Invalid(format!(
+                            "implementation facet `{}` toolchain dependency `{}` has non-relocatable path `{relative_path}`",
+                            facet.id, dependency.crate_name
+                        )));
+                    }
+                }
+                ProviderCargoDependencySource::Registry => {}
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Validate the exact SHA-256 identity emitted by the compiled-provider artifact hasher.
+fn validate_provider_artifact_digest(dependency_key: &str, digest: &str) -> Result<(), LibraryManifestError> {
+    let Some(hex) = digest.strip_prefix("sha256:") else {
+        return Err(LibraryManifestError::Invalid(format!(
+            "provider dependency `{dependency_key}` artifact digest must start with `sha256:`"
+        )));
+    };
+    if hex.len() != 64 || !hex.chars().all(|character| character.is_ascii_hexdigit()) {
+        return Err(LibraryManifestError::Invalid(format!(
+            "provider dependency `{dependency_key}` artifact digest must contain 64 hexadecimal characters"
+        )));
+    }
+    Ok(())
+}
+
+/// Validate one portable artifact-root-relative path while allowing a normalized leading parent traversal.
+///
+/// Ordinary path dependencies can be sibling providers inside one relocatable distribution tree. Their artifact path
+/// therefore needs leading `..` components, unlike provider-owned files that must remain inside one artifact root.
+fn validate_provider_dependency_artifact_path(
+    dependency_key: &str,
+    relative_path: &str,
+) -> Result<(), LibraryManifestError> {
+    let path = Path::new(relative_path);
+    if relative_path.trim().is_empty() || path.is_absolute() || relative_path.contains('\\') {
+        return Err(LibraryManifestError::Invalid(format!(
+            "provider dependency `{dependency_key}` artifact path `{relative_path}` must be a portable relative path"
+        )));
+    }
+    let mut saw_normal = false;
+    for component in path.components() {
+        match component {
+            Component::ParentDir if !saw_normal => {}
+            Component::Normal(_) => saw_normal = true,
+            Component::ParentDir | Component::CurDir | Component::RootDir | Component::Prefix(_) => {
+                return Err(LibraryManifestError::Invalid(format!(
+                    "provider dependency `{dependency_key}` artifact path `{relative_path}` must be normalized"
+                )));
+            }
+        }
+    }
+    if !saw_normal {
+        return Err(LibraryManifestError::Invalid(format!(
+            "provider dependency `{dependency_key}` artifact path `{relative_path}` must name an artifact directory"
+        )));
+    }
+    Ok(())
+}
+
+/// Validate that every positive predicate references a feature declared by this provider.
+fn validate_required_features(
+    metadata: &CompiledProviderMetadata,
+    required_features: &std::collections::BTreeSet<String>,
+    owner: &str,
+) -> Result<(), LibraryManifestError> {
+    for feature in required_features {
+        if !metadata.public_features.contains_key(feature) {
+            return Err(LibraryManifestError::Invalid(format!(
+                "provider fact `{owner}` requires undeclared feature `{feature}`"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Validate identifiers persisted in provider metadata independently of authoring syntax.
+fn validate_provider_identifier(kind: &str, value: &str) -> Result<(), LibraryManifestError> {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return Err(LibraryManifestError::Invalid(format!(
+            "provider {kind} cannot be empty"
+        )));
+    };
+    if !(first.is_ascii_alphabetic() || first == '_')
+        || chars.any(|ch| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '-'))
+    {
+        return Err(LibraryManifestError::Invalid(format!(
+            "provider {kind} `{value}` must use ASCII letters, digits, underscores, or hyphens"
+        )));
     }
     Ok(())
 }

@@ -2434,7 +2434,7 @@ def _ordinal_slot_count(key_count: int) -> int:
     return slots
 
 
-def _ordinal_hash(data: bytes) -> int:
+pub def _ordinal_hash(data: bytes) -> int:
     """
     Hash canonical key bytes into the non-negative lookup domain.
     """

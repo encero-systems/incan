@@ -53,6 +53,7 @@ pub enum KeywordId {
     Yield,
     Pass,
     Assert,
+    When,
 
     // Definitions / declarations
     Def,
@@ -301,6 +302,15 @@ pub const KEYWORDS: &[KeywordDescriptor] = &[
         RFC::_018,
         Since(0, 3),
         Stability::Draft,
+    ),
+    info_contextual_binding(
+        KeywordId::When,
+        "when",
+        KeywordCategory::ControlFlow,
+        &[KeywordUsage::Statement],
+        RFC::_114,
+        Since(0, 5),
+        Stability::Stable,
     ),
     // Definitions / declarations
     info_with_aliases(

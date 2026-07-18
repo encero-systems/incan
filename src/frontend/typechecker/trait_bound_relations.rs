@@ -625,10 +625,11 @@ impl TypeChecker {
         seen_newtypes: &mut HashSet<String>,
     ) -> Option<bool> {
         match ty {
-            ResolvedType::Unknown
-            | ResolvedType::TypeVar(_)
-            | ResolvedType::RustPath(_)
-            | ResolvedType::CallSiteInfer => Some(true),
+            ResolvedType::Unknown | ResolvedType::TypeVar(_) | ResolvedType::CallSiteInfer => Some(true),
+            // A Rust-backed value has no source-owned `TryFrom[str]` contract. Treating it as provisionally
+            // supported causes the compiler to synthesize an impl with an unsatisfied Rust backing bound when a
+            // source newtype wraps a host type (for example Tokio synchronization primitives).
+            ResolvedType::RustPath(_) => Some(false),
             ResolvedType::Int => Some(trait_capabilities::supports_type(capability, TraitCapabilityType::Int)),
             ResolvedType::Float => Some(trait_capabilities::supports_type(
                 capability,
@@ -667,18 +668,32 @@ impl TypeChecker {
                     TraitCapabilityType::ValueEnum,
                 ))
             }
-            ResolvedType::Named(type_name) if capability.id == TraitCapabilityId::StringTryFrom => Some(
-                self.nominal_type_explicitly_adopts_temporary_capability(type_name, &[], capability)
-                    || self
-                        .newtype_satisfies_string_try_from(type_name, &[], capability, seen_newtypes)
-                        .unwrap_or(false),
-            ),
-            ResolvedType::Generic(type_name, type_args) if capability.id == TraitCapabilityId::StringTryFrom => Some(
-                self.nominal_type_explicitly_adopts_temporary_capability(type_name, type_args, capability)
-                    || self
-                        .newtype_satisfies_string_try_from(type_name, type_args, capability, seen_newtypes)
-                        .unwrap_or(false),
-            ),
+            ResolvedType::Named(type_name)
+                if matches!(
+                    capability.id,
+                    TraitCapabilityId::StringTryFrom | TraitCapabilityId::IteratorSum
+                ) =>
+            {
+                Some(
+                    self.nominal_type_explicitly_adopts_temporary_capability(type_name, &[], capability)
+                        || self
+                            .newtype_satisfies_string_try_from(type_name, &[], capability, seen_newtypes)
+                            .unwrap_or(false),
+                )
+            }
+            ResolvedType::Generic(type_name, type_args)
+                if matches!(
+                    capability.id,
+                    TraitCapabilityId::StringTryFrom | TraitCapabilityId::IteratorSum
+                ) =>
+            {
+                Some(
+                    self.nominal_type_explicitly_adopts_temporary_capability(type_name, type_args, capability)
+                        || self
+                            .newtype_satisfies_string_try_from(type_name, type_args, capability, seen_newtypes)
+                            .unwrap_or(false),
+                )
+            }
             ResolvedType::FrozenStr
             | ResolvedType::FrozenBytes
             | ResolvedType::Unit

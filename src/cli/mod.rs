@@ -42,17 +42,21 @@ pub mod test_runner;
 use std::env;
 use std::fmt;
 use std::io::{self, IsTerminal};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
 
 use crate::manifest::ProjectManifest;
-use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
+use crate::provider::FeatureSelection;
+use crate::workspace::{ResolvedWorkspaceScope, WorkspaceGraph, WorkspaceMember, WorkspaceScopeRequest};
+use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use commands::build_report::{BuildReportFormat, BuildReportOptions, RustInspectionFormat};
 use commands::codegraph::CodegraphInspectionFormat;
 use commands::common::{CargoPolicy, CargoPolicyCliFlags};
 use commands::diagnostics::DiagnosticOutputFormat;
 use commands::lifecycle::{EnvOutputFormat, VersionBumpArg};
+use commands::provider_inspect::ProviderInspectionFormat;
 use commands::tools::{ToolsDoctorFormat, ToolsMetadataFormat, ToolsModelMetadataFormat};
+use commands::workspace::WorkspaceInspectFormat;
 
 // ============================================================================
 // CLI Error handling
@@ -173,6 +177,48 @@ pub enum ColorMode {
     Never,
 }
 
+/// Incan package-feature selection shared by compilation commands.
+///
+/// These flags select package-owned semantic features. They are intentionally separate from the explicitly prefixed
+/// Cargo feature flags, which remain private backend controls.
+#[derive(Args, Debug, Clone, Default, PartialEq, Eq)]
+pub struct PackageFeatureCliFlags {
+    /// Incan package features to enable (comma-separated)
+    #[arg(long = "features", value_delimiter = ',', value_name = "FEATURE")]
+    features: Vec<String>,
+    /// Disable the Incan package's default features
+    #[arg(long = "no-default-features")]
+    no_default_features: bool,
+    /// Enable every Incan package feature
+    #[arg(long = "all-features")]
+    all_features: bool,
+}
+
+impl From<PackageFeatureCliFlags> for FeatureSelection {
+    fn from(flags: PackageFeatureCliFlags) -> Self {
+        Self {
+            requested: flags.features.into_iter().collect(),
+            no_default_features: flags.no_default_features,
+            all_features: flags.all_features,
+        }
+    }
+}
+
+/// Command-local SDK profile selection shared by compilation and inspection commands.
+#[derive(Args, Debug, Clone, Default, PartialEq, Eq)]
+pub struct SdkProfileCliFlags {
+    /// Replace the project's SDK profile for this invocation without changing explicit additions or exclusions
+    #[arg(long = "sdk-profile", value_name = "PROFILE")]
+    sdk_profile: Option<String>,
+}
+
+impl SdkProfileCliFlags {
+    /// Return the command-local SDK profile override without changing persistent project selection.
+    fn profile(&self) -> Option<&str> {
+        self.sdk_profile.as_deref()
+    }
+}
+
 #[derive(Subcommand, Debug)]
 pub enum Command {
     /// Compile to Rust and build executable
@@ -186,6 +232,12 @@ pub enum Command {
         /// Output directory (default: `target/incan/<name>`)
         #[arg(value_name = "OUTPUT_DIR")]
         output_dir: Option<PathBuf>,
+        /// Select Incan package features for this compilation
+        #[command(flatten)]
+        package_features: PackageFeatureCliFlags,
+        /// Select a non-persistent SDK profile for this compilation
+        #[command(flatten)]
+        sdk_profile: SdkProfileCliFlags,
         /// Require up-to-date incan.lock and pass --locked to Cargo
         #[arg(long)]
         locked: bool,
@@ -229,6 +281,12 @@ pub enum Command {
         /// Write the build report to this path instead of stdout
         #[arg(long = "report-output", value_name = "PATH", requires = "report")]
         report_output: Option<PathBuf>,
+        /// Select every member in the active workspace
+        #[arg(long, conflicts_with = "members")]
+        workspace: bool,
+        /// Select one workspace member by name or root-relative path; may be repeated
+        #[arg(long = "member", value_name = "NAME_OR_PATH", conflicts_with = "workspace")]
+        members: Vec<String>,
         /// Extra arguments forwarded to Cargo after `--`
         #[arg(last = true)]
         cargo_passthrough: Vec<String>,
@@ -237,11 +295,23 @@ pub enum Command {
     /// Type check a file or project entrypoint
     Check {
         /// File or project entrypoint to check
-        #[arg(value_name = "PATH")]
+        #[arg(value_name = "PATH", default_value = ".")]
         path: PathBuf,
         /// Output format
         #[arg(long = "format", value_enum, default_value = "text")]
         format: DiagnosticOutputFormat,
+        /// Select Incan package features for this check
+        #[command(flatten)]
+        package_features: PackageFeatureCliFlags,
+        /// Select a non-persistent SDK profile for this check
+        #[command(flatten)]
+        sdk_profile: SdkProfileCliFlags,
+        /// Select every member in the active workspace
+        #[arg(long, conflicts_with = "members")]
+        workspace: bool,
+        /// Select one workspace member by name or root-relative path; may be repeated
+        #[arg(long = "member", value_name = "NAME_OR_PATH", conflicts_with = "workspace")]
+        members: Vec<String>,
     },
 
     /// Explain a diagnostic code
@@ -262,6 +332,12 @@ pub enum Command {
         /// Run inline source code
         #[arg(short = 'c', long = "command", value_name = "CODE")]
         command: Option<String>,
+        /// Select Incan package features for this compilation
+        #[command(flatten)]
+        package_features: PackageFeatureCliFlags,
+        /// Select a non-persistent SDK profile for this compilation
+        #[command(flatten)]
+        sdk_profile: SdkProfileCliFlags,
         /// Require up-to-date incan.lock and pass --locked to Cargo
         #[arg(long)]
         locked: bool,
@@ -295,6 +371,12 @@ pub enum Command {
         /// Build and run with Cargo release profile (optimized, slower cold-start builds)
         #[arg(long)]
         release: bool,
+        /// Select every member in the active workspace (only valid when it resolves to one member)
+        #[arg(long, conflicts_with = "members")]
+        workspace: bool,
+        /// Select one workspace member by name or root-relative path
+        #[arg(long = "member", value_name = "NAME_OR_PATH", conflicts_with = "workspace")]
+        members: Vec<String>,
         /// Extra arguments forwarded to Cargo after `--`
         #[arg(last = true)]
         cargo_passthrough: Vec<String>,
@@ -311,6 +393,12 @@ pub enum Command {
         /// Show diff of formatting changes
         #[arg(long)]
         diff: bool,
+        /// Select every member in the active workspace
+        #[arg(long, conflicts_with = "members")]
+        workspace: bool,
+        /// Select one workspace member by name or root-relative path; may be repeated
+        #[arg(long = "member", value_name = "NAME_OR_PATH", conflicts_with = "workspace")]
+        members: Vec<String>,
     },
 
     /// Update the project version in incan.toml
@@ -330,12 +418,24 @@ pub enum Command {
         /// Project root containing incan.toml
         #[arg(long = "project", value_name = "PATH")]
         project: Option<PathBuf>,
+        /// Select every member in the active workspace (only valid when it resolves to one member)
+        #[arg(long, conflicts_with_all = ["members", "project"])]
+        workspace: bool,
+        /// Select one workspace member by name or root-relative path
+        #[arg(long = "member", value_name = "NAME_OR_PATH", conflicts_with_all = ["workspace", "project"])]
+        members: Vec<String>,
     },
 
     /// Run named project environment scripts
     Env {
         #[command(subcommand)]
         command: EnvCommand,
+    },
+
+    /// Inspect the validated RFC 077 workspace graph and selected command scope
+    Workspace {
+        #[command(subcommand)]
+        command: WorkspaceCommand,
     },
 
     /// Inspect local toolchain and editor integration state
@@ -355,6 +455,12 @@ pub enum Command {
         /// Path to test file or directory
         #[arg(value_name = "PATH", default_value = ".")]
         path: PathBuf,
+        /// Select Incan package features for collection and generated test batches
+        #[command(flatten)]
+        package_features: PackageFeatureCliFlags,
+        /// Select a non-persistent SDK profile for collection and generated test batches
+        #[command(flatten)]
+        sdk_profile: SdkProfileCliFlags,
         /// Verbose output
         #[arg(short, long)]
         verbose: bool,
@@ -439,6 +545,12 @@ pub enum Command {
         /// Enable all Cargo features
         #[arg(long = "cargo-all-features")]
         cargo_all_features: bool,
+        /// Select every member in the active workspace
+        #[arg(long, conflicts_with = "members")]
+        workspace: bool,
+        /// Select one workspace member by name or root-relative path; may be repeated
+        #[arg(long = "member", value_name = "NAME_OR_PATH", conflicts_with = "workspace")]
+        members: Vec<String>,
         /// Extra arguments forwarded to Cargo after `--`
         #[arg(last = true)]
         cargo_passthrough: Vec<String>,
@@ -505,6 +617,12 @@ pub enum Command {
         /// Entry file used to resolve inline dependencies
         #[arg(value_name = "FILE")]
         file: Option<PathBuf>,
+        /// Select Incan package features for the locked graph
+        #[command(flatten)]
+        package_features: PackageFeatureCliFlags,
+        /// Select a non-persistent SDK profile for the locked graph
+        #[command(flatten)]
+        sdk_profile: SdkProfileCliFlags,
         /// Cargo features to enable (comma-separated)
         #[arg(long = "cargo-features", value_delimiter = ',')]
         cargo_features: Vec<String>,
@@ -542,6 +660,40 @@ pub enum InspectCommand {
         /// Emit partial graph records and diagnostics for broken source
         #[arg(long = "allow-errors")]
         allow_errors: bool,
+        /// Select Incan package features for this graph projection
+        #[command(flatten)]
+        package_features: PackageFeatureCliFlags,
+        /// Select a non-persistent SDK profile for this graph projection
+        #[command(flatten)]
+        sdk_profile: SdkProfileCliFlags,
+    },
+    /// Inspect active SDK components and compiled providers
+    Providers {
+        /// Source file or project directory whose provider projection should be inspected
+        #[arg(value_name = "PATH", default_value = ".")]
+        path: PathBuf,
+        /// Output format
+        #[arg(long = "format", value_enum, default_value = "text")]
+        format: ProviderInspectionFormat,
+        #[command(flatten)]
+        package_features: PackageFeatureCliFlags,
+        /// Select a non-persistent SDK profile for this provider projection
+        #[command(flatten)]
+        sdk_profile: SdkProfileCliFlags,
+    },
+    /// Inspect public package-feature roots, closure, edges, and conditioned facts
+    Features {
+        /// Source file or project directory whose feature projection should be inspected
+        #[arg(value_name = "PATH", default_value = ".")]
+        path: PathBuf,
+        /// Output format
+        #[arg(long = "format", value_enum, default_value = "text")]
+        format: ProviderInspectionFormat,
+        #[command(flatten)]
+        package_features: PackageFeatureCliFlags,
+        /// Select a non-persistent SDK profile for this feature projection
+        #[command(flatten)]
+        sdk_profile: SdkProfileCliFlags,
     },
 }
 
@@ -582,6 +734,23 @@ pub enum EnvCommand {
         /// Project root containing incan.toml
         #[arg(long = "project", value_name = "PATH")]
         project: Option<PathBuf>,
+    },
+}
+
+/// Workspace-management commands.
+#[derive(Subcommand, Debug)]
+pub enum WorkspaceCommand {
+    /// Report the active workspace graph and resolved member scope
+    Inspect {
+        /// Output format
+        #[arg(long = "format", value_enum, default_value = "text")]
+        format: WorkspaceInspectFormat,
+        /// Select every member in the active workspace
+        #[arg(long, conflicts_with = "members")]
+        workspace: bool,
+        /// Select one member by name or root-relative path; may be repeated
+        #[arg(long = "member", value_name = "NAME_OR_PATH", conflicts_with = "workspace")]
+        members: Vec<String>,
     },
 }
 
@@ -690,6 +859,8 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             file,
             lib_mode,
             output_dir,
+            package_features,
+            sdk_profile,
             locked,
             offline,
             no_offline,
@@ -704,41 +875,57 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             release: _,
             report,
             report_output,
+            workspace,
+            members,
             cargo_passthrough,
-        }) => {
-            let out = output_dir.map(|p| p.to_string_lossy().to_string());
-            let report_options = BuildReportOptions {
-                format: report,
-                output_path: report_output,
-            };
-            let cargo_policy = CargoPolicy::from_cli_and_env(
-                CargoPolicyCliFlags {
-                    offline,
-                    no_offline,
-                    locked,
-                    no_locked,
-                    frozen,
-                    no_frozen,
+        }) => execute_build(
+            BuildCommandRequest {
+                file,
+                lib_mode,
+                output_dir: output_dir.map(|path| path.to_string_lossy().to_string()),
+                options: commands::build::BuildCommandOptions {
+                    cargo_policy: CargoPolicy::from_cli_and_env(
+                        CargoPolicyCliFlags {
+                            offline,
+                            no_offline,
+                            locked,
+                            no_locked,
+                            frozen,
+                            no_frozen,
+                        },
+                        cargo_args,
+                        cargo_passthrough,
+                    ),
+                    package_features: package_features.into(),
+                    sdk_profile: sdk_profile.sdk_profile,
+                    cargo_features,
+                    cargo_no_default_features,
+                    cargo_all_features,
+                    generated_cargo_target_dir,
                 },
-                cargo_args,
-                cargo_passthrough,
-            );
-            let build_options = commands::build::BuildCommandOptions {
-                cargo_policy,
-                cargo_features,
-                cargo_no_default_features,
-                cargo_all_features,
-                generated_cargo_target_dir,
-            };
-            if lib_mode {
-                let file_arg = file.as_ref().map(|p| p.to_string_lossy().to_string());
-                commands::build_library(file_arg.as_deref(), out.as_ref(), build_options, report_options)
-            } else {
-                let file = resolve_build_entry_file(file)?;
-                commands::build_file(&file.to_string_lossy(), out.as_ref(), build_options, report_options)
-            }
-        }
-        Some(Command::Check { path, format }) => commands::check_path(&path, format),
+                report_options: BuildReportOptions {
+                    format: report,
+                    output_path: report_output,
+                },
+            },
+            workspace,
+            members,
+        ),
+        Some(Command::Check {
+            path,
+            format,
+            package_features,
+            sdk_profile,
+            workspace,
+            members,
+        }) => execute_check(
+            path,
+            format,
+            package_features.into(),
+            sdk_profile.sdk_profile,
+            workspace,
+            members,
+        ),
         Some(Command::Explain { code, format }) => commands::explain_diagnostic(&code, format),
         Some(Command::Inspect { command }) => match command {
             InspectCommand::Rust { path, lib_mode, format } => commands::inspect_rust(&path, lib_mode, format),
@@ -746,11 +933,33 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 path,
                 format,
                 allow_errors,
-            } => commands::inspect_codegraph(&path, format, allow_errors),
+                package_features,
+                sdk_profile,
+            } => commands::inspect_codegraph(
+                &path,
+                format,
+                allow_errors,
+                &package_features.into(),
+                sdk_profile.profile(),
+            ),
+            InspectCommand::Providers {
+                path,
+                format,
+                package_features,
+                sdk_profile,
+            } => commands::inspect_providers(&path, format, &package_features.into(), sdk_profile.profile()),
+            InspectCommand::Features {
+                path,
+                format,
+                package_features,
+                sdk_profile,
+            } => commands::inspect_features(&path, format, &package_features.into(), sdk_profile.profile()),
         },
         Some(Command::Run {
             file,
             command,
+            package_features,
+            sdk_profile,
             locked,
             offline,
             no_offline,
@@ -762,8 +971,10 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             cargo_no_default_features,
             cargo_all_features,
             release,
+            workspace,
+            members,
             cargo_passthrough,
-        }) => execute_run(
+        }) => execute_workspace_run(
             RunInput { file, code: command },
             RunOptions {
                 cargo_policy: CargoPolicy::from_cli_and_env(
@@ -778,15 +989,27 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                     cargo_args,
                     cargo_passthrough,
                 ),
+                package_features: package_features.into(),
+                sdk_profile: sdk_profile.sdk_profile,
                 cargo_features,
                 cargo_no_default_features,
                 cargo_all_features,
                 release,
             },
+            workspace,
+            members,
         ),
-        Some(Command::Fmt { path, check, diff }) => commands::format_files(&path.to_string_lossy(), check, diff),
+        Some(Command::Fmt {
+            path,
+            check,
+            diff,
+            workspace,
+            members,
+        }) => execute_format(path, check, diff, workspace, members),
         Some(Command::Test {
             path,
+            package_features,
+            sdk_profile,
             verbose,
             stop_on_fail,
             slow,
@@ -815,57 +1038,71 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             cargo_features,
             cargo_no_default_features,
             cargo_all_features,
+            workspace,
+            members,
             cargo_passthrough,
-        }) => test_runner::run_tests(test_runner::TestRunConfig {
-            path: &path.to_string_lossy(),
-            verbose,
-            stop_on_fail,
-            include_slow: slow,
-            filter: filter.as_deref(),
-            marker_expr: marker_expr.as_deref(),
-            strict_markers,
-            jobs,
-            test_features,
-            timeout: timeout.as_deref(),
-            no_capture,
-            use_color,
-            fail_on_empty,
-            list_only,
-            report_format,
-            junit_path,
-            durations,
-            shuffle,
-            seed,
-            run_xfail,
-            cargo_policy: CargoPolicy::from_cli_and_env(
-                CargoPolicyCliFlags {
-                    offline,
-                    no_offline,
-                    locked,
-                    no_locked,
-                    frozen,
-                    no_frozen,
-                },
-                cargo_args,
-                cargo_passthrough,
-            ),
-            cargo_features,
-            cargo_no_default_features,
-            cargo_all_features,
-        }),
+        }) => execute_tests(
+            TestCommandOptions {
+                path,
+                verbose,
+                stop_on_fail,
+                include_slow: slow,
+                filter,
+                marker_expr,
+                strict_markers,
+                jobs,
+                test_features,
+                timeout,
+                no_capture,
+                use_color,
+                fail_on_empty,
+                list_only,
+                report_format,
+                junit_path,
+                durations,
+                shuffle,
+                seed,
+                run_xfail,
+                package_features: package_features.into(),
+                sdk_profile: sdk_profile.sdk_profile,
+                cargo_policy: CargoPolicy::from_cli_and_env(
+                    CargoPolicyCliFlags {
+                        offline,
+                        no_offline,
+                        locked,
+                        no_locked,
+                        frozen,
+                        no_frozen,
+                    },
+                    cargo_args,
+                    cargo_passthrough,
+                ),
+                cargo_features,
+                cargo_no_default_features,
+                cargo_all_features,
+            },
+            workspace,
+            members,
+        ),
         Some(Command::Version {
             bump,
             set,
             dry_run,
             keep_prerelease,
             project,
-        }) => commands::version_project(commands::lifecycle::VersionCommandOptions {
-            bump,
-            set,
-            dry_run,
-            keep_prerelease,
-            project,
-        }),
+            workspace,
+            members,
+        }) => execute_workspace_version(
+            commands::lifecycle::VersionCommandOptions {
+                bump,
+                set,
+                dry_run,
+                keep_prerelease,
+                project,
+            },
+            workspace,
+            members,
+        ),
         Some(Command::Env { command }) => match command {
             EnvCommand::List { format, project } => commands::env_list(format, project.as_deref()),
             EnvCommand::Show { env, format, project } => commands::env_show(env.as_deref(), format, project.as_deref()),
@@ -876,6 +1113,13 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 args,
                 project,
             } => commands::env_run(&env, &script, dry_run, &args, project.as_deref()),
+        },
+        Some(Command::Workspace { command }) => match command {
+            WorkspaceCommand::Inspect {
+                format,
+                workspace,
+                members,
+            } => commands::workspace_inspect(format, workspace, members),
         },
         Some(Command::Tools { command }) => match command {
             ToolsCommand::Doctor { format } => commands::tools_doctor(format),
@@ -928,11 +1172,15 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
         ),
         Some(Command::Lock {
             file,
+            package_features,
+            sdk_profile,
             cargo_features,
             cargo_no_default_features,
             cargo_all_features,
         }) => commands::lock_project(
             file.as_ref(),
+            &package_features.into(),
+            sdk_profile.profile(),
             cargo_features,
             cargo_no_default_features,
             cargo_all_features,
@@ -947,6 +1195,561 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             }
         }
     }
+}
+
+/// Resolve the active RFC 077 scope once for a command, retaining compiler-owned selection identity after graph
+/// discovery has finished. Commands without workspace selectors preserve their historical single-project behavior
+/// when discovery finds no containing workspace.
+fn resolve_workspace_command_scope(
+    select_workspace: bool,
+    member_selectors: &[String],
+) -> CliResult<Option<ResolvedWorkspaceScope>> {
+    let current_dir = env::current_dir()
+        .map_err(|error| CliError::failure(format!("failed to determine current directory: {error}")))?;
+    let workspace = WorkspaceGraph::discover(&current_dir).map_err(|error| CliError::failure(error.to_string()))?;
+    let Some(workspace) = workspace else {
+        if select_workspace || !member_selectors.is_empty() {
+            return Err(CliError::failure(
+                "--workspace and --member require an active RFC 077 workspace",
+            ));
+        }
+        return Ok(None);
+    };
+    let selection = workspace
+        .resolve_scope(WorkspaceScopeRequest::new(
+            &current_dir,
+            select_workspace,
+            member_selectors,
+        ))
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    Ok(Some(selection.to_owned_scope()))
+}
+
+/// Owned build inputs that can be applied once per compiler-selected workspace member.
+struct BuildCommandRequest {
+    file: Option<PathBuf>,
+    lib_mode: bool,
+    output_dir: Option<String>,
+    options: commands::build::BuildCommandOptions,
+    report_options: BuildReportOptions,
+}
+
+impl BuildCommandRequest {
+    /// Preserve the existing single-project build behavior when workspace discovery is inactive.
+    fn run_single(self) -> CliResult<ExitCode> {
+        if self.lib_mode {
+            let file_arg = self.file.as_ref().map(|path| path.to_string_lossy().to_string());
+            return commands::build_library(
+                file_arg.as_deref(),
+                self.output_dir.as_ref(),
+                self.options,
+                self.report_options,
+            );
+        }
+        let file = resolve_build_entry_file(self.file)?;
+        commands::build_file(
+            &file.to_string_lossy(),
+            self.output_dir.as_ref(),
+            self.options,
+            self.report_options,
+        )
+    }
+}
+
+/// Fan out builds after resolving the exact RFC 077 member set, producing one aggregate report when JSON is requested.
+fn execute_build(
+    request: BuildCommandRequest,
+    select_workspace: bool,
+    member_selectors: Vec<String>,
+) -> CliResult<ExitCode> {
+    let Some(scope) = resolve_workspace_command_scope(select_workspace, &member_selectors)? else {
+        return request.run_single();
+    };
+    if !scope.is_single_member() && request.output_dir.is_some() {
+        return Err(CliError::failure(
+            "an explicit OUTPUT_DIR requires exactly one workspace member; select one with --member <name-or-path>",
+        ));
+    }
+
+    let mut results = Vec::new();
+    let mut failures = Vec::new();
+    for member in scope.members() {
+        if request.report_options.enabled() {
+            eprintln!("workspace member {}: {}", member.name(), member.root().display());
+        } else {
+            println!("workspace member {}: {}", member.name(), member.root().display());
+        }
+
+        let target = if request.lib_mode {
+            match request.file.as_ref() {
+                Some(path) => workspace_member_relative_path(path, member.root()),
+                None => Ok(member.root().to_path_buf()),
+            }
+        } else {
+            match request.file.as_ref() {
+                Some(path) => workspace_member_relative_path(path, member.root()),
+                None => workspace_member_main_script_target(member, "build"),
+            }
+        };
+        let target = match target {
+            Ok(target) => target,
+            Err(error) => {
+                failures.push(member.name().to_string());
+                results.push(serde_json::json!({
+                    "member": {
+                        "name": member.name(),
+                        "root": member.root().display().to_string(),
+                    },
+                    "ok": false,
+                    "error": error.message,
+                }));
+                continue;
+            }
+        };
+
+        let report = if request.lib_mode {
+            commands::build::build_library_report(
+                Some(target.to_string_lossy().as_ref()),
+                request.output_dir.as_ref(),
+                request.options.clone(),
+                &request.report_options,
+            )
+        } else {
+            commands::build::build_file_report(
+                target.to_string_lossy().as_ref(),
+                request.output_dir.as_ref(),
+                request.options.clone(),
+                &request.report_options,
+            )
+        };
+        match report {
+            Ok(report) => {
+                let report = report.with_workspace_context(commands::build_report::BuildWorkspaceContext {
+                    root: scope.workspace_root().display().to_string(),
+                    scope_origin: scope.origin().as_str().to_string(),
+                    member_name: member.name().to_string(),
+                    member_root: member.root().display().to_string(),
+                });
+                results.push(serde_json::json!({
+                    "member": {
+                        "name": member.name(),
+                        "root": member.root().display().to_string(),
+                    },
+                    "ok": true,
+                    "report": report,
+                }));
+            }
+            Err(error) => {
+                if !request.report_options.enabled() && !error.message.is_empty() {
+                    eprintln!("{}", error.message);
+                }
+                failures.push(member.name().to_string());
+                results.push(serde_json::json!({
+                    "member": {
+                        "name": member.name(),
+                        "root": member.root().display().to_string(),
+                    },
+                    "ok": false,
+                    "error": error.message,
+                }));
+            }
+        }
+    }
+
+    let aggregate = serde_json::json!({
+        "schema_version": "incan.workspace.build.v1",
+        "workspace": {
+            "root": scope.workspace_root().display().to_string(),
+            "selected_scope": {
+                "origin": scope.origin().as_str(),
+                "members": scope.members().map(|member| serde_json::json!({
+                    "name": member.name(),
+                    "root": member.root().display().to_string(),
+                })).collect::<Vec<_>>(),
+            },
+        },
+        "ok": failures.is_empty(),
+        "results": results,
+    });
+    commands::build_report::emit_workspace_build_report(&aggregate, &request.report_options)?;
+
+    if failures.is_empty() {
+        Ok(ExitCode::SUCCESS)
+    } else {
+        Err(CliError::new("", ExitCode::FAILURE))
+    }
+}
+
+struct WorkspaceCheckMemberOutcome {
+    member: WorkspaceMember,
+    target: Option<PathBuf>,
+    report: Option<commands::diagnostics::DiagnosticReport>,
+    error: Option<String>,
+}
+
+/// Run `incan check` across the compiler-selected workspace scope, preserving a single JSON document for tooling.
+fn execute_check(
+    path: PathBuf,
+    format: DiagnosticOutputFormat,
+    package_features: FeatureSelection,
+    sdk_profile: Option<String>,
+    select_workspace: bool,
+    member_selectors: Vec<String>,
+) -> CliResult<ExitCode> {
+    let Some(scope) = resolve_workspace_command_scope(select_workspace, &member_selectors)? else {
+        return commands::check_path_with_selections(&path, format, &package_features, sdk_profile.as_deref());
+    };
+
+    let mut outcomes = Vec::new();
+    for member in scope.members() {
+        let target = match workspace_member_check_target(&path, member) {
+            Ok(target) => target,
+            Err(error) => {
+                outcomes.push(WorkspaceCheckMemberOutcome {
+                    member: member.clone(),
+                    target: None,
+                    report: None,
+                    error: Some(error.message),
+                });
+                continue;
+            }
+        };
+        match commands::diagnostics::check_path_report_with_selections(
+            &target,
+            &package_features,
+            sdk_profile.as_deref(),
+        ) {
+            Ok(report) => outcomes.push(WorkspaceCheckMemberOutcome {
+                member: member.clone(),
+                target: Some(target),
+                report: Some(report),
+                error: None,
+            }),
+            Err(error) => outcomes.push(WorkspaceCheckMemberOutcome {
+                member: member.clone(),
+                target: Some(target),
+                report: None,
+                error: Some(error.message),
+            }),
+        }
+    }
+
+    let ok = outcomes
+        .iter()
+        .all(|outcome| outcome.error.is_none() && outcome.report.as_ref().is_some_and(|report| report.ok()));
+
+    match format {
+        DiagnosticOutputFormat::Text => {
+            for outcome in &outcomes {
+                let target = outcome
+                    .target
+                    .as_ref()
+                    .map(|target| target.display().to_string())
+                    .unwrap_or_else(|| "<unresolved>".to_string());
+                println!("workspace member {}: {target}", outcome.member.name());
+                if let Some(report) = &outcome.report {
+                    if report.ok() {
+                        println!("✓ Type check passed!");
+                    } else {
+                        eprint!(
+                            "{}",
+                            report
+                                .human_message()
+                                .unwrap_or("type check failed without diagnostics\n")
+                        );
+                    }
+                }
+                if let Some(error) = &outcome.error {
+                    eprintln!("{error}");
+                }
+            }
+        }
+        DiagnosticOutputFormat::Json => {
+            let results = outcomes
+                .iter()
+                .map(|outcome| {
+                    let mut result = serde_json::json!({
+                        "member": {
+                            "name": outcome.member.name(),
+                            "root": outcome.member.root().display().to_string(),
+                        },
+                        "target": outcome.target.as_ref().map(|target| target.display().to_string()),
+                    });
+                    if let Some(object) = result.as_object_mut() {
+                        if let Some(report) = &outcome.report {
+                            object.insert("report".to_string(), serde_json::json!(report));
+                        }
+                        if let Some(error) = &outcome.error {
+                            object.insert("ok".to_string(), serde_json::Value::Bool(false));
+                            object.insert("error".to_string(), serde_json::Value::String(error.clone()));
+                        }
+                    }
+                    result
+                })
+                .collect::<Vec<_>>();
+            let report = serde_json::json!({
+                "schema_version": "incan.workspace.check.v1",
+                "workspace": {
+                    "root": scope.workspace_root().display().to_string(),
+                    "selected_scope": {
+                        "origin": scope.origin().as_str(),
+                        "members": scope.members().map(|member| serde_json::json!({
+                            "name": member.name(),
+                            "root": member.root().display().to_string(),
+                        })).collect::<Vec<_>>(),
+                    },
+                },
+                "ok": ok,
+                "results": results,
+            });
+            let rendered = serde_json::to_string_pretty(&report)
+                .map_err(|error| CliError::failure(format!("failed to serialize workspace check report: {error}")))?;
+            println!("{rendered}");
+        }
+    }
+
+    if ok {
+        Ok(ExitCode::SUCCESS)
+    } else {
+        Err(CliError::new("", ExitCode::FAILURE))
+    }
+}
+
+/// Resolve one member's check target. An omitted path means the member's configured `main` script, never the
+/// workspace root, so a virtual workspace cannot accidentally compile a non-member directory.
+fn workspace_member_check_target(path: &Path, member: &WorkspaceMember) -> CliResult<PathBuf> {
+    if path != Path::new(".") {
+        return workspace_member_relative_path(path, member.root());
+    }
+    workspace_member_main_script_target(member, "check")
+}
+
+/// Resolve a member's configured `main` script without treating a virtual workspace root as a project entrypoint.
+fn workspace_member_main_script_target(member: &WorkspaceMember, command_name: &str) -> CliResult<PathBuf> {
+    let manifest = commands::common::discover_effective_project_manifest(member.root())?.ok_or_else(|| {
+        CliError::failure(format!(
+            "workspace member `{}` has no project manifest available for `incan {command_name}`",
+            member.name()
+        ))
+    })?;
+    let main = manifest
+        .project
+        .as_ref()
+        .and_then(|project| project.scripts.get("main"))
+        .ok_or_else(|| {
+            CliError::failure(format!(
+                "workspace member `{}` has no [project.scripts].main; pass a member-relative PATH to `incan {command_name}`",
+                member.name()
+            ))
+        })?;
+    Ok(manifest.project_root().join(main))
+}
+
+/// Owned test command inputs that can be replayed once for each validated workspace member.
+struct TestCommandOptions {
+    path: PathBuf,
+    verbose: bool,
+    stop_on_fail: bool,
+    include_slow: bool,
+    filter: Option<String>,
+    marker_expr: Option<String>,
+    strict_markers: bool,
+    jobs: usize,
+    test_features: Vec<String>,
+    timeout: Option<String>,
+    no_capture: bool,
+    use_color: bool,
+    fail_on_empty: bool,
+    list_only: bool,
+    report_format: test_runner::TestOutputFormat,
+    junit_path: Option<PathBuf>,
+    durations: Option<usize>,
+    shuffle: bool,
+    seed: Option<u64>,
+    run_xfail: bool,
+    package_features: FeatureSelection,
+    sdk_profile: Option<String>,
+    cargo_policy: CargoPolicy,
+    cargo_features: Vec<String>,
+    cargo_no_default_features: bool,
+    cargo_all_features: bool,
+}
+
+impl TestCommandOptions {
+    /// Run one member-local test batch without asking the runner to rediscover workspace topology.
+    fn run_for(
+        &self,
+        path: &Path,
+        workspace_context: Option<test_runner::WorkspaceTestContext>,
+    ) -> CliResult<ExitCode> {
+        let path = path.to_string_lossy();
+        test_runner::run_tests(test_runner::TestRunConfig {
+            path: &path,
+            verbose: self.verbose,
+            stop_on_fail: self.stop_on_fail,
+            include_slow: self.include_slow,
+            filter: self.filter.as_deref(),
+            marker_expr: self.marker_expr.as_deref(),
+            strict_markers: self.strict_markers,
+            jobs: self.jobs,
+            test_features: self.test_features.clone(),
+            package_features: self.package_features.clone(),
+            sdk_profile: self.sdk_profile.clone(),
+            timeout: self.timeout.as_deref(),
+            no_capture: self.no_capture,
+            use_color: self.use_color,
+            fail_on_empty: self.fail_on_empty,
+            list_only: self.list_only,
+            report_format: self.report_format,
+            junit_path: self.junit_path.clone(),
+            durations: self.durations,
+            shuffle: self.shuffle,
+            seed: self.seed,
+            run_xfail: self.run_xfail,
+            cargo_policy: self.cargo_policy.clone(),
+            cargo_features: self.cargo_features.clone(),
+            cargo_no_default_features: self.cargo_no_default_features,
+            cargo_all_features: self.cargo_all_features,
+            workspace_context,
+        })
+    }
+}
+
+/// Fan out test batches only after compiler-owned workspace scope selection has completed.
+fn execute_tests(
+    options: TestCommandOptions,
+    select_workspace: bool,
+    member_selectors: Vec<String>,
+) -> CliResult<ExitCode> {
+    let Some(scope) = resolve_workspace_command_scope(select_workspace, &member_selectors)? else {
+        return options.run_for(&options.path, None);
+    };
+    if !scope.is_single_member() && options.junit_path.is_some() {
+        return Err(CliError::failure(
+            "--junit requires exactly one workspace member; select one with --member <name-or-path>",
+        ));
+    }
+
+    if options.report_format == test_runner::TestOutputFormat::Json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "schema_version": "incan.test.v1",
+                "event": "workspace_scope",
+                "workspace": {
+                    "root": scope.workspace_root().display().to_string(),
+                    "selected_scope": {
+                        "origin": scope.origin().as_str(),
+                        "members": scope.members().map(|member| serde_json::json!({
+                            "name": member.name(),
+                            "root": member.root().display().to_string(),
+                        })).collect::<Vec<_>>(),
+                    },
+                },
+            })
+        );
+    }
+
+    let mut failures = Vec::new();
+    for member in scope.members() {
+        let target = match workspace_member_relative_path(&options.path, member.root()) {
+            Ok(target) => target,
+            Err(error) => {
+                failures.push(format!("{}: {}", member.name(), error.message));
+                continue;
+            }
+        };
+        if options.report_format == test_runner::TestOutputFormat::Console {
+            println!("workspace member {}: {}", member.name(), target.display());
+        }
+        let workspace_context = test_runner::WorkspaceTestContext {
+            workspace_root: scope.workspace_root().to_path_buf(),
+            scope_origin: scope.origin().as_str().to_string(),
+            member_name: member.name().to_string(),
+            member_root: member.root().to_path_buf(),
+        };
+        if let Err(error) = options.run_for(&target, Some(workspace_context)) {
+            if options.report_format == test_runner::TestOutputFormat::Json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "schema_version": "incan.test.v1",
+                        "event": "workspace_member_error",
+                        "workspace": {
+                            "root": scope.workspace_root().display().to_string(),
+                            "scope_origin": scope.origin().as_str(),
+                            "member": {
+                                "name": member.name(),
+                                "root": member.root().display().to_string(),
+                            },
+                        },
+                        "error": error.message,
+                    })
+                );
+            } else if !error.message.is_empty() {
+                eprintln!("{}", error.message);
+            }
+            failures.push(member.name().to_string());
+        }
+    }
+
+    if failures.is_empty() {
+        Ok(ExitCode::SUCCESS)
+    } else {
+        Err(CliError::new("", ExitCode::FAILURE))
+    }
+}
+
+/// Apply `incan fmt` to the deterministic RFC 077 member scope when a workspace is active.
+fn execute_format(
+    path: PathBuf,
+    check: bool,
+    diff: bool,
+    select_workspace: bool,
+    member_selectors: Vec<String>,
+) -> CliResult<ExitCode> {
+    let Some(scope) = resolve_workspace_command_scope(select_workspace, &member_selectors)? else {
+        return commands::format_files(&path.to_string_lossy(), check, diff);
+    };
+    let mut failures = Vec::new();
+    for member in scope.members() {
+        let target = workspace_member_relative_path(&path, member.root())?;
+        println!("workspace member {}: {}", member.name(), target.display());
+        if let Err(error) = commands::format_files(&target.to_string_lossy(), check, diff) {
+            let message = if error.message.is_empty() {
+                "formatting failed".to_string()
+            } else {
+                error.message
+            };
+            failures.push(format!("{}: {message}", member.name()));
+        }
+    }
+    if failures.is_empty() {
+        Ok(ExitCode::SUCCESS)
+    } else {
+        Err(CliError::failure(format!(
+            "workspace formatting failed\n{}",
+            failures.join("\n")
+        )))
+    }
+}
+
+/// Resolve a formatting path against one selected member without allowing a multi-member command to escape scope.
+fn workspace_member_relative_path(path: &Path, member_root: &Path) -> CliResult<PathBuf> {
+    if path == Path::new(".") {
+        return Ok(member_root.to_path_buf());
+    }
+    if path.is_absolute() {
+        if path.starts_with(member_root) {
+            return Ok(path.to_path_buf());
+        }
+        return Err(CliError::failure(format!(
+            "format path {} is outside selected workspace member {}",
+            path.display(),
+            member_root.display()
+        )));
+    }
+    Ok(member_root.join(path))
 }
 
 /// Render top-level CLI help text.
@@ -967,6 +1770,8 @@ struct RunInput {
 
 struct RunOptions {
     cargo_policy: CargoPolicy,
+    package_features: FeatureSelection,
+    sdk_profile: Option<String>,
     cargo_features: Vec<String>,
     cargo_no_default_features: bool,
     cargo_all_features: bool,
@@ -1010,6 +1815,56 @@ fn resolve_run_entry_file(file: Option<PathBuf>) -> CliResult<PathBuf> {
 }
 
 /// Handle the `run` subcommand with its various forms.
+/// Resolve RFC 077 scope before delegating a file-backed run to the existing single-project pipeline.
+fn execute_workspace_run(
+    input: RunInput,
+    opts: RunOptions,
+    select_workspace: bool,
+    member_selectors: Vec<String>,
+) -> CliResult<ExitCode> {
+    if input.code.is_some() && (select_workspace || !member_selectors.is_empty()) {
+        return Err(CliError::failure(
+            "incan run -c/--command cannot select a workspace member; pass a member source file instead",
+        ));
+    }
+    if input.code.is_some() {
+        return execute_run(input, opts);
+    }
+    let Some(scope) = resolve_workspace_command_scope(select_workspace, &member_selectors)? else {
+        return execute_run(input, opts);
+    };
+    let member = scope
+        .require_single_member("incan run")
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    let file = match input.file {
+        Some(path) => workspace_member_relative_path(&path, member.root())?,
+        None => workspace_member_main_script_target(member, "run")?,
+    };
+    execute_run(
+        RunInput {
+            file: Some(file),
+            code: None,
+        },
+        opts,
+    )
+}
+
+/// Resolve a single RFC 077 member before mutating its project version.
+fn execute_workspace_version(
+    mut options: commands::lifecycle::VersionCommandOptions,
+    select_workspace: bool,
+    member_selectors: Vec<String>,
+) -> CliResult<ExitCode> {
+    let Some(scope) = resolve_workspace_command_scope(select_workspace, &member_selectors)? else {
+        return commands::version_project(options);
+    };
+    let member = scope
+        .require_single_member("incan version")
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    options.project = Some(member.root().to_path_buf());
+    commands::version_project(options)
+}
+
 /// Compile and execute one run request.
 fn execute_run(input: RunInput, opts: RunOptions) -> CliResult<ExitCode> {
     // ---- Context: inline source execution (`incan run -c ...`) ----
@@ -1020,6 +1875,8 @@ fn execute_run(input: RunInput, opts: RunOptions) -> CliResult<ExitCode> {
         commands::run_inline_source(
             &code,
             opts.cargo_policy.clone(),
+            opts.package_features.clone(),
+            opts.sdk_profile.clone(),
             opts.cargo_features.clone(),
             opts.cargo_no_default_features,
             opts.cargo_all_features,
@@ -1031,6 +1888,8 @@ fn execute_run(input: RunInput, opts: RunOptions) -> CliResult<ExitCode> {
         commands::run_file(
             &file.to_string_lossy(),
             opts.cargo_policy,
+            opts.package_features,
+            opts.sdk_profile,
             opts.cargo_features,
             opts.cargo_no_default_features,
             opts.cargo_all_features,
@@ -1195,6 +2054,35 @@ mod tests {
     }
 
     #[test]
+    fn test_cli_keeps_incan_and_cargo_feature_flags_separate() -> Result<(), clap::Error> {
+        let cli = parse_cli([
+            "incan",
+            "build",
+            "test.incn",
+            "--features",
+            "json,http",
+            "--no-default-features",
+            "--cargo-features",
+            "serde,tokio",
+        ])?;
+        let Some(Command::Build {
+            package_features,
+            cargo_features,
+            cargo_no_default_features,
+            ..
+        }) = cli.command
+        else {
+            return Err(expected_command("build"));
+        };
+        assert_eq!(package_features.features, ["json", "http"]);
+        assert!(package_features.no_default_features);
+        assert!(!package_features.all_features);
+        assert_eq!(cargo_features, ["serde", "tokio"]);
+        assert!(!cargo_no_default_features);
+        Ok(())
+    }
+
+    #[test]
     fn test_cli_parse_build_generated_cargo_target_dir() -> Result<(), clap::Error> {
         let cli = parse_cli([
             "incan",
@@ -1343,6 +2231,17 @@ mod tests {
             return Err(expected_command("fmt"));
         };
         assert!(check);
+        Ok(())
+    }
+
+    #[test]
+    fn test_cli_parse_fmt_workspace_member_selection() -> Result<(), clap::Error> {
+        let cli = parse_cli(["incan", "fmt", "--member", "alpha", "--member", "packages/zebra"])?;
+        let Some(Command::Fmt { workspace, members, .. }) = cli.command else {
+            return Err(expected_command("fmt"));
+        };
+        assert!(!workspace);
+        assert_eq!(members, vec!["alpha", "packages/zebra"]);
         Ok(())
     }
 
@@ -1507,6 +2406,68 @@ mod tests {
         };
         assert_eq!(path, std::path::PathBuf::from("src/lib.incn"));
         assert_eq!(format, ToolsMetadataFormat::Markdown);
+        Ok(())
+    }
+
+    #[test]
+    fn test_cli_parse_workspace_inspect_scope_selectors() -> Result<(), clap::Error> {
+        let cli = parse_cli([
+            "incan",
+            "workspace",
+            "inspect",
+            "--format",
+            "json",
+            "--member",
+            "alpha",
+            "--member",
+            "packages/zebra",
+        ])?;
+        let Some(Command::Workspace {
+            command:
+                WorkspaceCommand::Inspect {
+                    format,
+                    workspace,
+                    members,
+                },
+        }) = cli.command
+        else {
+            return Err(expected_command("workspace inspect"));
+        };
+        assert_eq!(format, WorkspaceInspectFormat::Json);
+        assert!(!workspace);
+        assert_eq!(members, vec!["alpha", "packages/zebra"]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_cli_parse_workspace_selectors_for_supported_commands() -> Result<(), clap::Error> {
+        let build = parse_cli(["incan", "build", "--workspace", "--report", "json"])?;
+        let Some(Command::Build { workspace, members, .. }) = build.command else {
+            return Err(expected_command("build"));
+        };
+        assert!(workspace);
+        assert!(members.is_empty());
+
+        let check = parse_cli(["incan", "check", "--member", "alpha"])?;
+        let Some(Command::Check { workspace, members, .. }) = check.command else {
+            return Err(expected_command("check"));
+        };
+        assert!(!workspace);
+        assert_eq!(members, vec!["alpha"]);
+
+        let run = parse_cli(["incan", "run", "--member", "packages/demo"])?;
+        let Some(Command::Run { workspace, members, .. }) = run.command else {
+            return Err(expected_command("run"));
+        };
+        assert!(!workspace);
+        assert_eq!(members, vec!["packages/demo"]);
+
+        let version = parse_cli(["incan", "version", "patch", "--member", "alpha"])?;
+        let Some(Command::Version { workspace, members, .. }) = version.command else {
+            return Err(expected_command("version"));
+        };
+        assert!(!workspace);
+        assert_eq!(members, vec!["alpha"]);
         Ok(())
     }
 

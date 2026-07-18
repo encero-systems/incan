@@ -326,6 +326,17 @@ impl<'a> IrEmitter<'a> {
         let is_pub_library_import = matches!(origin, IrImportOrigin::PubLibrary { .. });
         let is_stdlib = Self::is_incan_source_stdlib_import(origin, qualifier, path);
 
+        let is_non_rust_stdlib_emission_path = !matches!(qualifier, IrImportQualifier::None)
+            && path.first().map(String::as_str) == Some(stdlib::INCAN_STD_NAMESPACE);
+        if is_non_rust_stdlib_emission_path {
+            let mut tokens = vec![quote! { crate }];
+            for seg in path {
+                let ident = Self::rust_ident(seg);
+                tokens.push(quote! { #ident });
+            }
+            return tokens;
+        }
+
         if is_stdlib {
             let mut tokens = vec![quote! { crate }];
             let std_namespace = Self::rust_ident(stdlib::INCAN_STD_NAMESPACE);

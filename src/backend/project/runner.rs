@@ -3,11 +3,26 @@
 //! Provides [`ProjectGenerator::build`], [`ProjectGenerator::run`], and [`ProjectGenerator::run_with_cwd`] along with
 //! their result types.
 
+use std::env;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use super::generator::{ProjectGenerator, RunProfile};
+
+/// Remove process-environment entries that Cargo and Rust build scripts cannot represent as Unicode.
+///
+/// Incan programs may intentionally inspect a non-Unicode environment value through `std.environ`. Cargo's build
+/// script support, however, exposes the environment through Unicode-only APIs and can panic before compilation when
+/// such a value is inherited. Generated binaries retain their original environment; only compiler-owned Cargo child
+/// processes receive this sanitized view.
+pub(crate) fn sanitize_cargo_environment(command: &mut Command) {
+    for (key, value) in env::vars_os() {
+        if key.to_str().is_none() || value.to_str().is_none() {
+            command.env_remove(key);
+        }
+    }
+}
 
 impl ProjectGenerator {
     /// Whether `incan run` must invoke Cargo before executing the generated binary.
@@ -60,6 +75,7 @@ impl ProjectGenerator {
     pub fn build(&self) -> io::Result<BuildResult> {
         let cargo_target_dir = self.cargo_target_dir();
         let mut command = Command::new("cargo");
+        sanitize_cargo_environment(&mut command);
         command.arg("build").arg("--release");
         for flag in &self.cargo_policy_flags {
             command.arg(flag);
@@ -111,6 +127,7 @@ impl ProjectGenerator {
                 self.run_profile_label()
             );
             let mut build_command = Command::new("cargo");
+            sanitize_cargo_environment(&mut build_command);
             build_command.arg("build");
             for arg in self.run_profile_build_args() {
                 build_command.arg(arg);

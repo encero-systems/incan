@@ -3,12 +3,11 @@
 //! The typechecker and stdlib define the user-facing protocol surface, and this module keeps codegen aligned with that
 //! surface by constructing the adapter models from `std.derives.collection`.
 //!
-//! Terminal methods still lower here because generated Rust needs concrete loops over the Incan `Iterator.__next__`
-//! trait method. Checked-newtype `sum` also stays compiler-supported so the backend can unwrap to the primitive
-//! carrier, accumulate from the primitive zero value, and reconstruct through the selected checked constructor.
+//! Terminal methods lower here when generated Rust needs concrete loops over the Incan `Iterator.__next__` trait
+//! method. `Iterator.sum()` is the exception: it dispatches to the source-owned `Sum[T]` default implementation.
 
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
+use quote::quote;
 
 use crate::backend::ir::emit::{EmitError, IrEmitter};
 use crate::backend::ir::expr::{IrExprKind, IteratorMethodKind, TypedExpr};
@@ -150,7 +149,13 @@ pub(super) fn emit_iterator_method(
             let callback = emit_arg(emitter, args, 0)?.unwrap_or_else(|| quote! { drop });
             Ok(emit_for_each(r, callback))
         }
-        IteratorMethodKind::Sum => Ok(emit_sum(emitter, receiver, r)),
+        IteratorMethodKind::Sum => {
+            emitter.iterator_sum_used.replace(true);
+            Ok(quote! {{
+                let mut __incan_iterator_sum = #r;
+                crate::__incan_std::derives::collection::Iterator::sum(&mut __incan_iterator_sum)
+            }})
+        }
     }
 }
 
@@ -350,134 +355,4 @@ fn emit_count_arg(emitter: &IrEmitter<'_>, args: &[TypedExpr]) -> Result<TokenSt
         IrExprKind::Int(value) => quote! { #value },
         _ => quote! { (#emitted) as i64 },
     })
-}
-
-/// Emit `.sum()` for primitive numeric iterators and newtypes over primitive numeric values.
-///
-/// The loop consumes the Incan iterator protocol directly. For newtypes, generated code unwraps to the underlying
-/// carrier, sums that carrier, then reconstructs the newtype. Checked newtypes intentionally route through the selected
-/// checked constructor so an invalid empty-iterator zero or invalid accumulated value fails at runtime.
-fn emit_sum(emitter: &IrEmitter<'_>, receiver: &TypedExpr, r: &TokenStream) -> TokenStream {
-    let Some(item_ty) = iterator_element_type(&receiver.ty) else {
-        return emit_primitive_sum_loop(r, quote! { i64 }, quote! { 0i64 });
-    };
-    if let Some((newtype_name, underlying_ty)) = newtype_sum_underlying(emitter, item_ty) {
-        let sum_ty = emitter.emit_type(underlying_ty);
-        let zero = sum_zero_for_type(underlying_ty);
-        return emit_newtype_sum_loop(emitter, r, newtype_name, sum_ty, zero);
-    }
-    let sum_ty = emitter.emit_type(item_ty);
-    let zero = sum_zero_for_type(item_ty);
-    emit_primitive_sum_loop(r, sum_ty, zero)
-}
-
-/// Return the primitive zero literal used to seed an RFC 088 `.sum()` loop.
-fn sum_zero_for_type(ty: &IrType) -> TokenStream {
-    match ty {
-        IrType::Float => quote! { 0.0f64 },
-        _ => quote! { 0i64 },
-    }
-}
-
-/// Emit `.sum()` for primitive numeric item types.
-fn emit_primitive_sum_loop(receiver: &TokenStream, sum_ty: TokenStream, zero: TokenStream) -> TokenStream {
-    let next = next_call(&quote! { __incan_iter });
-    quote! {{
-        let mut __incan_iter = #receiver;
-        let mut __incan_sum: #sum_ty = #zero;
-        loop {
-            match #next {
-                Some(__incan_item) => __incan_sum += __incan_item,
-                None => break __incan_sum,
-            }
-        }
-    }}
-}
-
-/// Emit `.sum()` for newtype item types by summing the carrier and reconstructing the wrapper.
-fn emit_newtype_sum_loop(
-    emitter: &IrEmitter<'_>,
-    receiver: &TokenStream,
-    newtype_name: &str,
-    sum_ty: TokenStream,
-    zero: TokenStream,
-) -> TokenStream {
-    let next = next_call(&quote! { __incan_iter });
-    let reconstructed = emit_newtype_from_underlying_sum(emitter, newtype_name, quote! { __incan_sum });
-    quote! {{
-        let mut __incan_iter = #receiver;
-        let mut __incan_sum: #sum_ty = #zero;
-        loop {
-            match #next {
-                Some(__incan_item) => __incan_sum += __incan_item.0,
-                None => break #reconstructed,
-            }
-        }
-    }}
-}
-
-/// Return a newtype's primitive summation carrier when the item type is supported by RFC 088 `.sum()`.
-fn newtype_sum_underlying<'a>(emitter: &'a IrEmitter<'_>, item_ty: &'a IrType) -> Option<(&'a str, &'a IrType)> {
-    let name = match item_ty {
-        IrType::Struct(name) | IrType::NamedGeneric(name, _) => name.as_str(),
-        _ => return None,
-    };
-    let underlying = emitter.struct_field_types.get(&(name.to_string(), "0".to_string()))?;
-    if matches!(underlying, IrType::Int | IrType::Float) {
-        Some((name, underlying))
-    } else {
-        None
-    }
-}
-
-/// Reconstruct a newtype after summing its primitive carrier.
-///
-/// Unchecked tuple newtypes are emitted as direct tuple-struct construction. Checked newtypes go through the
-/// constructor chosen during lowering so runtime validation remains the single source of truth.
-fn emit_newtype_from_underlying_sum(
-    emitter: &IrEmitter<'_>,
-    newtype_name: &str,
-    underlying_sum: TokenStream,
-) -> TokenStream {
-    let newtype_path = emit_path_ident(newtype_name);
-    if let Some(ctor) = emitter
-        .newtype_construction
-        .get(newtype_name)
-        .and_then(|plan| plan.checked_constructor.as_ref())
-    {
-        let ctor_ident = format_ident!("{}", ctor);
-        let message = format!("validated newtype construction failed: {newtype_name}::{ctor}");
-        return quote! {
-            match #newtype_path :: #ctor_ident(#underlying_sum) {
-                Ok(__incan_newtype_value) => __incan_newtype_value,
-                Err(_) => panic!(#message),
-            }
-        };
-    }
-    quote! { #newtype_path(#underlying_sum) }
-}
-
-/// Emit a possibly qualified Rust path as identifiers instead of a string.
-fn emit_path_ident(path: &str) -> TokenStream {
-    if !path.contains("::") {
-        let ident = format_ident!("{}", path);
-        return quote! { #ident };
-    }
-    let mut segments = path.split("::").filter(|segment| !segment.is_empty()).map(|segment| {
-        let ident = format_ident!("{}", segment);
-        quote! { #ident }
-    });
-    let Some(first) = segments.next() else {
-        return quote! { _ };
-    };
-    segments.fold(first, |acc, segment| quote! { #acc :: #segment })
-}
-
-/// Return the element type for a receiver that is statically typed as `Iterator[T]`.
-fn iterator_element_type(receiver_ty: &IrType) -> Option<&IrType> {
-    let receiver_ty = receiver_type_for_iterator_dispatch(receiver_ty);
-    match receiver_ty {
-        IrType::NamedGeneric(name, args) if is_iterator_protocol_type_name(name) => args.first(),
-        _ => None,
-    }
 }

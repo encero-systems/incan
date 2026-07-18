@@ -83,6 +83,7 @@ const DIRECT_GENERATED_PATH_SUPPORTS: &[GeneratedPathSupport] = &[GeneratedPathS
     generated_module: "__incan_std.derives.collection",
     required_items: &[
         "Iterator",
+        "Sum",
         "ListIterator",
         "MapIterator",
         "FilterIterator",

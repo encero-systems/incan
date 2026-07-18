@@ -1,0 +1,19 @@
+"""Issue #880: string literal closure results must materialize owned Incan strings."""
+
+from std.json import JsonValue
+
+def parse(source: str) -> Result[JsonValue, str]:
+    return JsonValue.parse(source).map_err((_error) => "malformed_json")
+
+def parse_formatted(source: str) -> Result[JsonValue, str]:
+    return JsonValue.parse(source).map_err((_error) => f"malformed_json")
+
+def preserve_error[T](value: T) -> Result[int, T]:
+    return Err(value).map_err((_error) => value)
+
+def main() -> None:
+    formatted = parse_formatted("{")
+    preserved = preserve_error("original")
+    match parse("{"):
+        Ok(_) => println("unexpected")
+        Err(error) => println(error)

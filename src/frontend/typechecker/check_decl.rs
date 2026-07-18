@@ -8,8 +8,7 @@ use crate::frontend::resolved_type_subst::{
 };
 use crate::frontend::symbols::*;
 use crate::frontend::testing_markers::{
-    TestingFixtureMarkerArgs, TestingMarkerSemantics, load_testing_marker_semantics,
-    resolve_testing_fixture_marker_args,
+    TestingFixtureMarkerArgs, TestingMarkerSemantics, resolve_testing_fixture_marker_args,
 };
 use crate::frontend::typechecker::helpers::{collection_type_id, dict_ty, list_ty};
 
@@ -217,13 +216,12 @@ impl TypeChecker {
         let Some(span) = declarations_may_contain_testing_fixture(&program.declarations, &self.import_aliases) else {
             return;
         };
-        let semantics = match load_testing_marker_semantics() {
-            Ok(semantics) => semantics,
-            Err(err) => {
-                self.errors
-                    .push(errors::invalid_std_testing_marker_metadata(&err.to_string(), span));
-                return;
-            }
+        let Some(semantics) = self.testing_marker_semantics.clone() else {
+            self.errors.push(errors::invalid_std_testing_marker_metadata(
+                "the active std.testing provider did not supply checked marker metadata",
+                span,
+            ));
+            return;
         };
         self.collect_testing_fixture_names_from_decls(&program.declarations, &semantics);
     }
@@ -263,14 +261,14 @@ impl TypeChecker {
             return None;
         }
 
-        match load_testing_marker_semantics() {
-            Ok(semantics) => resolve_testing_fixture_marker_args(decorators, &self.import_aliases, &semantics),
-            Err(err) => {
-                self.errors
-                    .push(errors::invalid_std_testing_marker_metadata(&err.to_string(), span));
-                None
-            }
-        }
+        let Some(semantics) = self.testing_marker_semantics.as_ref() else {
+            self.errors.push(errors::invalid_std_testing_marker_metadata(
+                "the active std.testing provider did not supply checked marker metadata",
+                span,
+            ));
+            return None;
+        };
+        resolve_testing_fixture_marker_args(decorators, &self.import_aliases, semantics)
     }
 
     /// Enforce source-language ordering and default rules for `*args` / `**kwargs` declarations.

@@ -194,7 +194,10 @@ impl Formatter {
         let mut prev_decl: Option<Declaration> = None;
         let mut idx = 0usize;
 
-        if let Some(Declaration::Docstring(doc)) = program.declarations.first().map(|decl| &decl.node) {
+        if let Some(first_declaration) = program.declarations.first()
+            && first_declaration.required_features.is_empty()
+            && let Declaration::Docstring(doc) = &first_declaration.node
+        {
             self.format_docstring(doc);
             prev_decl = Some(Declaration::Docstring(doc.clone()));
             first = false;
@@ -212,6 +215,41 @@ impl Formatter {
         }
 
         while idx < program.declarations.len() {
+            let required_features = program.declarations[idx].required_features.clone();
+            if !required_features.is_empty() {
+                let group_end = program.declarations[idx..]
+                    .iter()
+                    .position(|declaration| declaration.required_features != required_features)
+                    .map(|offset| idx + offset)
+                    .unwrap_or(program.declarations.len());
+                let first_decl = program.declarations[idx].node.clone();
+                if !first {
+                    let extra_newlines = prev_decl
+                        .as_ref()
+                        .map(|prev| self.top_level_spacing(prev, &first_decl))
+                        .unwrap_or_else(|| usize::from(program.rust_module_path.is_some()));
+                    self.writer.blank_lines(extra_newlines);
+                }
+                self.format_feature_condition_header(&required_features);
+                self.writer.indent();
+                let mut inner_idx = idx;
+                let mut inner_prev: Option<Declaration> = None;
+                while inner_idx < group_end {
+                    let (decl, consumed) = self.coalesce_top_level_decl(&program.declarations, inner_idx);
+                    if let Some(previous) = inner_prev.as_ref() {
+                        self.writer.blank_lines(self.top_level_spacing(previous, &decl));
+                    }
+                    self.format_declaration(&decl);
+                    inner_prev = Some(decl);
+                    inner_idx += consumed;
+                }
+                self.writer.dedent();
+                prev_decl = inner_prev;
+                first = false;
+                idx = group_end;
+                continue;
+            }
+
             let (decl, consumed) = self.coalesce_top_level_decl(&program.declarations, idx);
             if !first {
                 let extra_newlines = prev_decl
@@ -234,15 +272,30 @@ impl Formatter {
         }
     }
 
+    /// Write the normalized positive conjunction that owns a feature-conditioned declaration group.
+    pub(super) fn format_feature_condition_header(&mut self, required_features: &[String]) {
+        self.writer.write("when ");
+        for (index, feature) in required_features.iter().enumerate() {
+            if index > 0 {
+                self.writer.write(" and ");
+            }
+            self.writer.write("feature(\"");
+            self.writer.write(feature);
+            self.writer.write("\")");
+        }
+        self.writer.writeln(":");
+    }
+
     /// Coalesce adjacent compatible top-level imports for cleaner Black-style output.
     ///
     /// Today this merges contiguous `from rust::... import ...` declarations that share the same
     /// crate/path/version/features, so repeated imports from one Rust module format as one import block instead of many
     /// visually noisy lines.
     fn coalesce_top_level_decl(&self, decls: &[Spanned<Declaration>], start: usize) -> (Declaration, usize) {
-        let Some(base_decl) = decls.get(start).map(|d| &d.node) else {
+        let Some(base_spanned) = decls.get(start) else {
             return (Declaration::Docstring(String::new()), 1);
         };
+        let base_decl = &base_spanned.node;
 
         let Declaration::Import(base_import) = base_decl else {
             return (base_decl.clone(), 1);
@@ -261,7 +314,11 @@ impl Formatter {
         let mut merged_items = base_items.clone();
         let mut consumed = 1usize;
         let mut cursor = start + 1;
-        while let Some(next_decl) = decls.get(cursor).map(|d| &d.node) {
+        while let Some(next_spanned) = decls.get(cursor) {
+            if next_spanned.required_features != base_spanned.required_features {
+                break;
+            }
+            let next_decl = &next_spanned.node;
             let Declaration::Import(next_import) = next_decl else {
                 break;
             };

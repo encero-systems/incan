@@ -29,6 +29,33 @@ pub fn unknown_stdlib_module(module: &str, span: Span) -> CompileError {
         .with_hint("To import from the Rust standard library, use: `from rust::std::... import ...`")
 }
 
+/// A known SDK provider owns this module, but the project did not enable its component.
+pub fn sdk_component_disabled(module: &str, component: &str, span: Span) -> CompileError {
+    CompileError::new(
+        format!(
+            "`{module}` is provided by SDK component `{component}`, but that component is disabled for this project"
+        ),
+        span,
+    )
+    .with_stable_code("INCAN-I0101")
+    .with_hint(format!(
+        "Add `{component}` to `[sdk].components` or select a profile that includes it"
+    ))
+}
+
+/// A project-enabled SDK component is known but absent from the active installation.
+pub fn sdk_component_unavailable(module: &str, component: &str, sdk_identity: &str, span: Span) -> CompileError {
+    CompileError::new(
+        format!("`{module}` requires SDK component `{component}`, but that component is unavailable"),
+        span,
+    )
+    .with_stable_code("INCAN-I0102")
+    .with_note(format!("Active SDK: {sdk_identity}"))
+    .with_hint(format!(
+        "Install an SDK distribution containing `{component}`; compilation will not download it automatically"
+    ))
+}
+
 /// Import path `std.<module>` is known, but the requested item is not part of that stdlib module's public surface.
 pub fn stdlib_import_not_exported(name: &str, module: &str, span: Span) -> CompileError {
     CompileError::new(
@@ -216,6 +243,71 @@ pub fn pub_library_symbol_not_exported(
 
     CompileError::new(format!("`{symbol}` is not exported by `pub::{library}`"), span)
         .with_hint(format!("Available exports from `pub::{library}`: {exports}"))
+}
+
+/// A known `pub::` export exists only behind package features that are not active for this dependency projection.
+pub fn pub_library_symbol_requires_features(
+    symbol: &str,
+    library: &str,
+    required_feature_sets: &[Vec<String>],
+    span: Span,
+) -> CompileError {
+    let mut alternatives = required_feature_sets.to_vec();
+    for features in &mut alternatives {
+        features.sort();
+        features.dedup();
+    }
+    alternatives.sort();
+    alternatives.dedup();
+
+    let (message, remedy) = if let [features] = alternatives.as_slice() {
+        let rendered = features
+            .iter()
+            .map(|feature| format!("`{feature}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let manifest_features = render_manifest_feature_set(features);
+        (
+            format!("`{symbol}` from `pub::{library}` requires disabled package feature(s): {rendered}"),
+            format!("Add `features = {manifest_features}` to dependency `{library}` in `incan.toml`"),
+        )
+    } else {
+        let rendered = alternatives
+            .iter()
+            .map(|features| {
+                features
+                    .iter()
+                    .map(|feature| format!("`{feature}`"))
+                    .collect::<Vec<_>>()
+                    .join(" + ")
+            })
+            .collect::<Vec<_>>()
+            .join(" or ");
+        let manifest_sets = alternatives
+            .iter()
+            .map(|features| format!("`features = {}`", render_manifest_feature_set(features)))
+            .collect::<Vec<_>>()
+            .join(" or ");
+        (
+            format!("`{symbol}` from `pub::{library}` requires one disabled package feature set: {rendered}"),
+            format!("Enable one of {manifest_sets} on dependency `{library}` in `incan.toml`"),
+        )
+    };
+
+    CompileError::new(message, span)
+        .with_stable_code("INCAN-I0103")
+        .with_hint(remedy)
+        .with_hint("Incan package features are selected in the dependency declaration, not with Cargo feature flags")
+}
+
+/// Render one deterministic Incan dependency feature array for a diagnostic remedy.
+fn render_manifest_feature_set(features: &[String]) -> String {
+    let values = features
+        .iter()
+        .map(|feature| format!("\"{feature}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{values}]")
 }
 
 /// A `pub::` import binding collides with an already-defined local/imported symbol.

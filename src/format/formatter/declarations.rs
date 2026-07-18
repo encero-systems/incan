@@ -120,8 +120,26 @@ impl Formatter {
         self.writer.write(&test_module.name);
         self.writer.writeln(":");
         self.writer.indent();
-        for decl in &test_module.body {
-            self.format_declaration(&decl.node);
+        let mut index = 0usize;
+        while index < test_module.body.len() {
+            let required_features = &test_module.body[index].required_features;
+            if required_features.is_empty() {
+                self.format_declaration(&test_module.body[index].node);
+                index += 1;
+                continue;
+            }
+            let group_end = test_module.body[index..]
+                .iter()
+                .position(|declaration| declaration.required_features != *required_features)
+                .map(|offset| index + offset)
+                .unwrap_or(test_module.body.len());
+            self.format_feature_condition_header(required_features);
+            self.writer.indent();
+            for declaration in &test_module.body[index..group_end] {
+                self.format_declaration(&declaration.node);
+            }
+            self.writer.dedent();
+            index = group_end;
         }
         if test_module.body.is_empty() {
             self.writer.writeln("pass");

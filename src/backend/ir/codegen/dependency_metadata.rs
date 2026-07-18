@@ -8,7 +8,11 @@ use crate::frontend::ast::{self, Declaration, Expr, ImportKind, ImportPath, Prog
 use crate::frontend::decorator_resolution;
 use crate::frontend::module::canonicalize_source_module_segments;
 use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
-use incan_core::lang::{generated_support, stdlib, surface::result_methods};
+use incan_core::lang::{
+    generated_support, stdlib,
+    surface::result_methods,
+    traits::{self as core_traits, TraitId},
+};
 
 /// Collect field-alias metadata for exported models.
 pub(super) fn collect_model_field_aliases(
@@ -61,6 +65,15 @@ fn generated_module_path_for_source_import(path: &ImportPath, current_module_pat
     }
 
     Some(segments)
+}
+
+/// Convert a dependency's source path into the Rust module path used by generated reachability metadata.
+fn generated_module_path_for_dependency(path_segments: &[String]) -> Vec<String> {
+    let mut segments = canonicalize_source_module_segments(path_segments);
+    if segments.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT) {
+        segments[0] = stdlib::INCAN_STD_NAMESPACE.to_string();
+    }
+    segments
 }
 
 /// True when a dependency module should keep its public API even if the main module does not import every item.
@@ -504,6 +517,145 @@ fn record_serde_json_trait_support_items(
     }
 }
 
+/// Collect declaration names referenced by one source type annotation.
+///
+/// Dependency emission prunes declarations that are not reachable from an import. A retained trait's public
+/// signature is itself a reachability root: Rust cannot compile the trait if one of its same-module trait bounds or
+/// parameter types was pruned. Keep this syntactic collection deliberately local to the defining module; imported
+/// modules are already represented as independent dependency entries.
+fn collect_type_signature_references(ty: &ast::Type, names: &mut HashSet<String>) {
+    match ty {
+        ast::Type::Simple(name) => {
+            names.insert(name.clone());
+        }
+        ast::Type::Generic(name, args) => {
+            names.insert(name.clone());
+            for arg in args {
+                collect_type_signature_references(&arg.node, names);
+            }
+        }
+        ast::Type::Function(params, return_type) => {
+            for param in params {
+                collect_type_signature_references(&param.node, names);
+            }
+            collect_type_signature_references(&return_type.node, names);
+        }
+        ast::Type::Ref(inner) | ast::Type::RefMut(inner) => {
+            collect_type_signature_references(&inner.node, names);
+        }
+        ast::Type::Tuple(elements) => {
+            for element in elements {
+                collect_type_signature_references(&element.node, names);
+            }
+        }
+        ast::Type::Qualified(_)
+        | ast::Type::ConstrainedPrimitive(_, _)
+        | ast::Type::IntLiteral(_)
+        | ast::Type::Unit
+        | ast::Type::SelfType
+        | ast::Type::Infer => {}
+    }
+}
+
+/// Collect trait names referenced by one source trait bound.
+fn collect_trait_bound_signature_references(bound: &ast::TraitBound, names: &mut HashSet<String>) {
+    names.insert(bound.name.clone());
+    for arg in &bound.type_args {
+        collect_type_signature_references(&arg.node, names);
+    }
+}
+
+/// Collect same-module declarations required to emit one trait's public surface.
+///
+/// Most dependencies come directly from source signatures. `Iterator.sum()` is the one temporary exception: its source
+/// body is ordinary Incan, but the backend currently supplies its per-method `T: Sum[T]` Rust bound because Incan has
+/// no syntax for a bound on an existing trait type parameter. Keep `Sum` alongside the retained `Iterator` declaration
+/// until that source-level bound can be represented and lowered without this bridge.
+fn trait_emission_references(trait_decl: &ast::TraitDecl) -> HashSet<String> {
+    let mut names = HashSet::new();
+    for type_param in &trait_decl.type_params {
+        for bound in &type_param.bounds {
+            collect_trait_bound_signature_references(bound, &mut names);
+        }
+    }
+    for bound in &trait_decl.traits {
+        collect_trait_bound_signature_references(&bound.node, &mut names);
+    }
+    for property in &trait_decl.properties {
+        collect_type_signature_references(&property.node.return_type.node, &mut names);
+    }
+    for method in &trait_decl.methods {
+        for type_param in &method.node.type_params {
+            for bound in &type_param.bounds {
+                collect_trait_bound_signature_references(bound, &mut names);
+            }
+        }
+        if let Some(bound) = &method.node.trait_target {
+            collect_trait_bound_signature_references(&bound.node, &mut names);
+        }
+        for param in &method.node.params {
+            collect_type_signature_references(&param.node.ty.node, &mut names);
+        }
+        collect_type_signature_references(&method.node.return_type.node, &mut names);
+    }
+    if trait_decl.name == core_traits::as_str(TraitId::Iterator)
+        && trait_decl
+            .methods
+            .iter()
+            .any(|method| method.node.name == "sum" && method.node.body.is_some())
+    {
+        names.insert(core_traits::as_str(TraitId::Sum).to_string());
+    }
+    names
+}
+
+/// Extend selected trait declarations with the local trait declarations needed to emit their public surface.
+///
+/// This fixed-point closure is needed because an initial import can retain `Sum[T]` while its `sum` method refers to
+/// `Iterator[T]`. Both source declarations must be emitted together, regardless of whether the importing program
+/// happens to call an iterator method.
+fn retain_same_module_trait_signature_dependencies(
+    reachable: &mut HashMap<Vec<String>, HashSet<String>>,
+    dependency_modules: &[(&str, &Program, Option<Vec<String>>)],
+) {
+    loop {
+        let mut additions = Vec::new();
+        for (module_name, program, path_segments) in dependency_modules {
+            let source_module_path = path_segments
+                .clone()
+                .unwrap_or_else(|| vec![(*module_name).to_string()]);
+            let module_path = generated_module_path_for_dependency(&source_module_path);
+            let Some(selected) = reachable.get(&module_path) else {
+                continue;
+            };
+            let declared_traits = program
+                .declarations
+                .iter()
+                .filter_map(|decl| match &decl.node {
+                    Declaration::Trait(trait_decl) => Some((trait_decl.name.as_str(), trait_decl)),
+                    _ => None,
+                })
+                .collect::<HashMap<_, _>>();
+            for selected_name in selected {
+                let Some(trait_decl) = declared_traits.get(selected_name.as_str()) else {
+                    continue;
+                };
+                for reference in trait_emission_references(trait_decl) {
+                    if declared_traits.contains_key(reference.as_str()) && !selected.contains(&reference) {
+                        additions.push((module_path.clone(), reference));
+                    }
+                }
+            }
+        }
+        if additions.is_empty() {
+            return;
+        }
+        for (module_path, name) in additions {
+            reachable.entry(module_path).or_default().insert(name);
+        }
+    }
+}
+
 /// Collect dependency-module declarations that must remain reachable from externally visible roots such as imports,
 /// ambient logging, and web route registration.
 pub(super) fn collect_externally_reachable_items_by_module(
@@ -621,7 +773,92 @@ pub(super) fn collect_externally_reachable_items_by_module(
         let module_path = path_segments.clone().unwrap_or_else(|| vec![(*name).to_string()]);
         record_imports(&mut reachable, program, &module_path, &module_paths);
     }
+    retain_same_module_trait_signature_dependencies(&mut reachable, dependency_modules);
     reachable
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(source: &str) -> Program {
+        let tokens =
+            crate::frontend::lexer::lex(source).unwrap_or_else(|errors| panic!("fixture should lex: {errors:?}"));
+        crate::frontend::parser::parse(&tokens).unwrap_or_else(|errors| panic!("fixture should parse: {errors:?}"))
+    }
+
+    #[test]
+    fn selected_trait_keeps_same_module_trait_used_by_its_signature() {
+        let iterator = core_traits::as_str(TraitId::Iterator);
+        let sum = core_traits::as_str(TraitId::Sum);
+        let main = parse(&format!("from std.derives.collection import {sum}\n"));
+        let collection = parse(&format!(
+            r#"
+pub trait {iterator}[T]:
+    def __next__(mut self) -> Option[T]: ...
+
+pub trait {sum}[T]:
+    @classmethod
+    def sum(cls, items: {iterator}[T]) -> Self: ...
+"#,
+        ));
+        let reachable = collect_externally_reachable_items_by_module(
+            &main,
+            &[(
+                "collection",
+                &collection,
+                Some(vec!["std".to_string(), "derives".to_string(), "collection".to_string()]),
+            )],
+        );
+        let collection_path = vec![
+            "__incan_std".to_string(),
+            "derives".to_string(),
+            "collection".to_string(),
+        ];
+        let Some(selected) = reachable.get(&collection_path) else {
+            panic!("collection should be reachable");
+        };
+        assert!(selected.contains(sum));
+        assert!(selected.contains(iterator));
+    }
+
+    #[test]
+    fn selected_iterator_keeps_sum_used_by_source_owned_default() {
+        let iterator = core_traits::as_str(TraitId::Iterator);
+        let sum = core_traits::as_str(TraitId::Sum);
+        let main = parse(&format!("from std.derives.collection import {iterator}\n"));
+        let collection = parse(&format!(
+            r#"
+pub trait {iterator}[T]:
+    def __next__(mut self) -> Option[T]: ...
+
+    def sum(mut self) -> T:
+        return T.sum(self)
+
+pub trait {sum}[T]:
+    @classmethod
+    def sum(cls, items: {iterator}[T]) -> Self: ...
+"#,
+        ));
+        let reachable = collect_externally_reachable_items_by_module(
+            &main,
+            &[(
+                "collection",
+                &collection,
+                Some(vec!["std".to_string(), "derives".to_string(), "collection".to_string()]),
+            )],
+        );
+        let collection_path = vec![
+            "__incan_std".to_string(),
+            "derives".to_string(),
+            "collection".to_string(),
+        ];
+        let Some(selected) = reachable.get(&collection_path) else {
+            panic!("collection should be reachable");
+        };
+        assert!(selected.contains(iterator));
+        assert!(selected.contains(sum));
+    }
 }
 
 /// Dependency symbol facts gathered during codegen setup and reused by module emission.

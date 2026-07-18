@@ -43,11 +43,11 @@ use super::types::IrType;
 use super::{FunctionReexport, FunctionSignature, IrProgram, Mutability};
 use crate::frontend::ast;
 use crate::frontend::decorator_resolution;
-use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::symbols::ResolvedType;
 use crate::frontend::symbols::{CallableParam, NewtypePrimitiveConstraint};
 use crate::frontend::typechecker::TypeCheckInfo;
 use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
+use crate::provider::ProviderPlan;
 use decl::callable_docstring;
 use incan_core::lang::conventions;
 use incan_core::lang::decorators::{self, DecoratorId};
@@ -122,8 +122,8 @@ pub struct AstLowering {
     pub(super) iterator_adopter_names: HashSet<String>,
     /// Optional typechecker output used to drive lowering (avoid heuristics).
     pub(super) type_info: Option<TypeCheckInfo>,
-    /// Public dependency manifests used to rehydrate callable defaults across `pub::` boundaries.
-    pub(super) library_manifest_index: Option<Arc<LibraryManifestIndex>>,
+    /// Shared provider and feature projection used to rehydrate compiled dependency metadata.
+    pub(super) provider_plan: Option<Arc<ProviderPlan>>,
     /// Newtype construction plans used by calls and generated bridges.
     ///
     /// Production lowering consumes typechecker-approved plans. Direct AST-lowering tests may use the conservative
@@ -150,6 +150,11 @@ pub struct AstLowering {
     ///
     /// While in a non-linear context, lowering avoids last-use moves.
     pub(super) non_linear_context_depth: usize,
+    /// Closure parameters that may move on their final read at the closure body's entry depth.
+    ///
+    /// Captures remain non-consuming because a closure can run repeatedly. Parameters are freshly owned by each
+    /// invocation, but nested non-linear contexts inside the closure must still suppress syntactic last-use moves.
+    pub(super) closure_param_scopes: Vec<(usize, HashSet<String>)>,
     /// Import alias map for decorator/derive passthrough resolution.
     pub(super) import_aliases: HashMap<String, Vec<String>>,
     /// Direct Rust import aliases mapped to Rust path segments.
@@ -266,13 +271,14 @@ impl AstLowering {
             active_trait_default_function_paths: Vec::new(),
             iterator_adopter_names: HashSet::new(),
             type_info: None,
-            library_manifest_index: None,
+            provider_plan: None,
             newtype_construction: HashMap::new(),
             current_impl_type: None,
             current_classmethod_constructor: None,
             struct_field_aliases: HashMap::new(),
             remaining_ident_reads: Vec::new(),
             non_linear_context_depth: 0,
+            closure_param_scopes: Vec::new(),
             import_aliases: HashMap::new(),
             rust_import_aliases: HashMap::new(),
             callable_param_scopes: Vec::new(),
@@ -299,9 +305,9 @@ impl AstLowering {
         self.stdlib_cache = cache;
     }
 
-    /// Provide public dependency manifests for lowering metadata-backed call signatures.
-    pub fn set_library_manifest_index(&mut self, index: Option<Arc<LibraryManifestIndex>>) {
-        self.library_manifest_index = index;
+    /// Provide the immutable provider plan for metadata-backed lowering.
+    pub fn set_provider_plan(&mut self, plan: Option<Arc<ProviderPlan>>) {
+        self.provider_plan = plan;
     }
 
     /// Lower one typechecker-resolved callable surface into IR parameters, attaching an already-planned default
@@ -981,7 +987,10 @@ impl AstLowering {
         let is_last_use_here = self.consume_ident_read(name);
 
         let is_mutable = self.mutable_vars.get(name).copied().unwrap_or(false);
-        if self.non_linear_context_depth > 0 || is_mutable || !is_last_use_here {
+        let closure_param_can_move = self.closure_param_scopes.last().is_some_and(|(entry_depth, params)| {
+            *entry_depth == self.non_linear_context_depth && params.contains(name)
+        });
+        if (self.non_linear_context_depth > 0 && !closure_param_can_move) || is_mutable || !is_last_use_here {
             return VarAccess::Read;
         }
 

@@ -7,3 +7,83 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+/// Clone trait - Provides explicit copying via .clone()
+/// Python equivalent: __copy__, __deepcopy__
+///
+/// Clone is automatically derived for all models and classes.
+///
+/// Example:
+///
+/// ```ignore
+/// model User:
+///     name: str
+///     scores: List[int]
+///
+/// user1 = User(name="Alice", scores=[100, 95])
+/// user2 = user1.clone()  # Deep copy
+///
+/// user2.name="Bob"
+/// println(user1.name)  # Still "Alice"
+/// ```
+pub trait Clone {
+    fn clone(&self) -> Self;
+}
+/// Copy trait - Enables implicit copying (marker trait)
+///
+/// Copy is a MARKER TRAIT — it has no methods.
+/// It tells the compiler "this type can be copied *implicitly* on assignment."
+///
+/// Example:
+///
+/// ```ignore
+/// @derive(Copy)
+/// model Point:
+///     x: int
+///     y: int
+///
+/// p1 = Point(x=10, y=20)
+/// p2 = p1  # Implicit copy! Both p1 and p2 are valid
+///
+/// println(p1.x)  # 10 - p1 still accessible
+/// ```
+///
+/// Restrictions:
+/// - Copy can only be used on types where ALL fields are also Copy
+/// - Types containing str, List, Dict CANNOT be Copy (they manage heap memory)
+/// - Only use Copy for small value types
+///
+/// Note: Copy requires Clone (automatically included).
+pub trait Copy {}
+/// Default trait - Enables creating instances with default values
+/// Python equivalent: __init__ with default arguments
+///
+/// When derived, creates an instance with default values for each field type:
+/// - int → 0
+/// - float → 0.0
+/// - str → ""
+/// - bool → false
+/// - Option[T] → None
+/// - List[T] → []
+///
+/// Example:
+///
+/// ```ignore
+/// @derive(Default)
+/// model Config:
+///     host: str
+///     port: int
+///     debug: bool
+///
+/// config = Config.default()
+/// println(config.host)   # ""
+/// println(config.port)   # 0
+/// println(config.debug)  # false
+/// ```
+///
+/// Note: Default cannot be derived for types with fields that have no sensible default
+/// (e.g., custom types without their own Default).
+pub trait Default {
+    fn default() -> Self
+    where
+        Self: Sized;
+}

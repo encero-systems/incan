@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use crate::frontend::ast::{
     AliasDecl, ClassDecl, Declaration, DictEntry, EnumDecl, Expr, FunctionDecl, ImportDecl, ImportItem, ImportKind,
     ListEntry, Literal, ModelDecl, NewtypeDecl, PartialDecl, Program, Span, Spanned, TraitBound, TraitDecl,
-    TypeAliasDecl, TypeParam, Visibility,
+    TypeAliasDecl, TypeParam, UnaryOp, Visibility,
 };
 use crate::frontend::decorator_resolution;
 use crate::frontend::module::canonicalize_source_module_segments;
@@ -93,6 +93,7 @@ pub struct CheckedField {
     pub name: String,
     pub ty: ResolvedType,
     pub has_default: bool,
+    pub default: Option<CheckedParamDefault>,
     pub alias: Option<String>,
     pub description: Option<String>,
 }
@@ -840,6 +841,15 @@ fn checked_preset_value(expr: &Expr, context: DefaultPathContext<'_>) -> Checked
 fn checked_param_default(expr: &Spanned<Expr>, context: DefaultPathContext<'_>) -> CheckedParamDefault {
     match &expr.node {
         Expr::Literal(literal) => checked_param_default_literal(literal),
+        Expr::Unary(UnaryOp::Neg, value) => match &value.node {
+            Expr::Literal(Literal::Int(value)) => value
+                .value
+                .checked_neg()
+                .map(CheckedParamDefault::Int)
+                .unwrap_or(CheckedParamDefault::Unsupported),
+            Expr::Literal(Literal::Float(value)) => CheckedParamDefault::Float(-value.value),
+            _ => CheckedParamDefault::Unsupported,
+        },
         Expr::Ident(name) => CheckedParamDefault::ConstRef(context.canonical_value_path(vec![name.clone()])),
         Expr::Field(base, field) => {
             let mut path = checked_preset_path(&base.node);
@@ -1095,7 +1105,7 @@ fn checked_model_export(model: &ModelDecl, checker: &TypeChecker) -> Option<Chec
         traits: sorted_vec(traits.to_vec()),
         trait_adoptions: sorted_type_bounds(map_type_bound_infos(trait_adoptions)),
         derives: sorted_vec(derives.to_vec()),
-        fields: map_fields(fields, field_order),
+        fields: map_fields(fields, field_order, &model.fields, checker),
         methods: map_method_overloads_with_defaults(method_overloads, &model.methods, checker),
     })
 }
@@ -1124,7 +1134,7 @@ fn checked_class_export(class: &ClassDecl, checker: &TypeChecker) -> Option<Chec
         traits: sorted_vec(traits.to_vec()),
         trait_adoptions: sorted_type_bounds(map_type_bound_infos(trait_adoptions)),
         derives: sorted_vec(derives.to_vec()),
-        fields: map_fields(fields, field_order),
+        fields: map_fields(fields, field_order, &class.fields, checker),
         methods: map_method_overloads_with_defaults(method_overloads, &class.methods, checker),
     })
 }
@@ -1325,7 +1335,25 @@ fn type_args_sort_key(args: &[ResolvedType]) -> String {
 ///
 /// Dependency manifests use this order to reconstruct constructor and partial surfaces. Any fields missing from the
 /// recorded source order are appended lexically so generated metadata remains deterministic.
-fn map_fields(fields: &HashMap<String, FieldInfo>, field_order: &[String]) -> Vec<CheckedField> {
+fn map_fields(
+    fields: &HashMap<String, FieldInfo>,
+    field_order: &[String],
+    source_fields: &[Spanned<crate::frontend::ast::FieldDecl>],
+    checker: &TypeChecker,
+) -> Vec<CheckedField> {
+    let defaults = source_fields
+        .iter()
+        .map(|field| {
+            (
+                field.node.name.as_str(),
+                field
+                    .node
+                    .default
+                    .as_ref()
+                    .map(|default| checked_param_default(default, DefaultPathContext::for_checker(checker))),
+            )
+        })
+        .collect::<HashMap<_, _>>();
     let mut used = std::collections::HashSet::new();
     let mut entries = Vec::with_capacity(fields.len());
     for name in field_order {
@@ -1335,6 +1363,7 @@ fn map_fields(fields: &HashMap<String, FieldInfo>, field_order: &[String]) -> Ve
                 name: name.clone(),
                 ty: info.ty.clone(),
                 has_default: info.has_default,
+                default: defaults.get(name.as_str()).cloned().flatten(),
                 alias: info.alias.clone(),
                 description: info.description.clone(),
             });
@@ -1349,6 +1378,7 @@ fn map_fields(fields: &HashMap<String, FieldInfo>, field_order: &[String]) -> Ve
         name: name.clone(),
         ty: info.ty.clone(),
         has_default: info.has_default,
+        default: defaults.get(name.as_str()).cloned().flatten(),
         alias: info.alias.clone(),
         description: info.description.clone(),
     }));

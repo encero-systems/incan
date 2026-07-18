@@ -19,7 +19,7 @@ Keep `orchestrate-parallel-work` generic. Use this skill as the opinionated wrap
 - For milestone, RFC-wide, or compiler-boundary work, define the acceptance contract before implementation starts. The contract should name required boundary parity coverage, downstream acceptance lanes, docs/generated-reference gates, performance/progress gates, and any criteria that must be satisfied before an RC or publish step.
 - For language or stdlib work that is meant to be implemented in Incan, dogfood Incan rather than creating a thin `.incn` facade over a custom Rust backend. Direct `from rust::` imports of existing crates/primitives are acceptable when the `.incn` module still owns the behavior; bespoke `incan_stdlib::feature` Rust modules that hide the feature logic are not acceptable unless the maintainer explicitly asks for that backend boundary.
 - Do not let workers assume Incan cannot express something. Before choosing Rust/backend fallback or narrowing a design, workers must inspect current `.incn` precedents, parser/typechecker/codegen tests, or run a small probe and record the specific capability evidence.
-- Every implementation must land in a fresh worktree rooted under `/Users/danny/Development/encero/tmp` so VS Code picks it up; do not implement in `/tmp` or in the main repo checkout.
+- Every implementation must land in a fresh worktree rooted under `WORKTREE_ROOT` so VS Code picks it up; do not implement in the system `/tmp` or in the main repo checkout.
 - Treat each slice as a managed work packet with durable state on disk, not as a chat thread that has to remember its own scope.
 - Treat loop identity as durable state too. A resumed loop must prove that persisted state matches the current user request before using it to choose work.
 - Treat cross-repo consumer work as a verification lane unless the user explicitly puts that repository's implementation work in scope.
@@ -137,7 +137,18 @@ After confirming scope, write the loop identity into `STATE_ROOT/overview.md` be
 
 ### 2. Pick the execution backend
 
-Default to Codex subagents plus git worktrees under `/Users/danny/Development/encero/tmp`.
+Default to Codex subagents plus git worktrees under `WORKTREE_ROOT`.
+
+Resolve `WORKTREE_ROOT` once at the start of the loop and record the absolute path in `STATE_ROOT/overview.md`. Use an explicit `RALPH_WORKTREE_ROOT` when the workspace provides one; otherwise derive a portable shared `tmp/` directory from Git's common directory:
+
+```sh
+COMMON_GIT_DIR="$(git rev-parse --path-format=absolute --git-common-dir)"
+WORKSPACE_ROOT="$(dirname "$(dirname "$COMMON_GIT_DIR")")"
+WORKTREE_ROOT="${RALPH_WORKTREE_ROOT:-$WORKSPACE_ROOT/tmp}"
+mkdir -p "$WORKTREE_ROOT"
+```
+
+`git-common-dir` keeps the default stable when the loop runs from a linked worktree.
 
 If the user explicitly wants OpenCode:
 
@@ -154,7 +165,7 @@ Use `start-work` once at the orchestration boundary to resolve issue/RFC context
 
 Do not mechanically run `start-work` inside every worker unless each worker owns a distinct issue or RFC. The important requirement is a clean worktree plus resolved context, not duplicated branch ceremony.
 
-Create the worktree root first if it does not exist: `/Users/danny/Development/encero/tmp`.
+Create `WORKTREE_ROOT` first if it does not exist.
 
 Create:
 
@@ -185,7 +196,7 @@ Use these files deliberately:
 
 Base all worker worktrees from the same resolved starting point unless there is a deliberate dependency chain.
 
-For non-decomposed work, the single-agent implementation still belongs in a fresh worktree under `/Users/danny/Development/encero/tmp`; "keep the work local" does not mean "edit the primary checkout directly."
+For non-decomposed work, the single-agent implementation still belongs in a fresh worktree under `WORKTREE_ROOT`; "keep the work local" does not mean "edit the primary checkout directly."
 
 Before spawning workers, identify:
 
@@ -210,7 +221,7 @@ Do not treat RFC edits or release notes alone as sufficient user documentation.
 
 Before spawning workers, decide whether the task actually decomposes cleanly. If it does not, keep the work local and continue as a single-agent Ralph loop.
 
-When it does decompose, hand off to `orchestrate-parallel-work` for slice definition, ownership, and worktree isolation under `/Users/danny/Development/encero/tmp`.
+When it does decompose, hand off to `orchestrate-parallel-work` for slice definition, ownership, and worktree isolation under `WORKTREE_ROOT`.
 
 If the task came from an RFC:
 
@@ -272,7 +283,7 @@ The orchestrator should maintain `slices.json` with entries like:
     "repo": "encero-systems/incan",
     "scope_role": "implementation",
     "owner": "<worker name or id>",
-    "worktree": "/Users/danny/Development/encero/tmp/...",
+    "worktree": "<WORKTREE_ROOT>/...",
     "status": "doing",
     "next_action": "Implement T2"
   }
@@ -291,7 +302,7 @@ Each worker must own a non-overlapping slice with:
 - owned files or directories
 - explicit non-goals
 - forbidden repositories or paths
-- dedicated worktree path under `/Users/danny/Development/encero/tmp`
+- dedicated worktree path under `WORKTREE_ROOT`
 - dedicated slice folder under `STATE_ROOT/<slice-id>/`
 - verification command
 - expected result format
@@ -475,7 +486,7 @@ Do not recurse `ralph-loop` indefinitely. A child loop is a phase owner, not ano
 - [ ] Backend choice was explicit
 - [ ] RFC lifecycle state and implementation plan/checklist were confirmed before coding started
 - [ ] Every implementation worker had a clean worktree and non-overlapping ownership
-- [ ] Every implementation worktree lived under `/Users/danny/Development/encero/tmp`
+- [ ] Every implementation worktree lived under the resolved `WORKTREE_ROOT`
 - [ ] Every slice had a durable folder under `STATE_ROOT/<slice-id>/`
 - [ ] The orchestrator maintained `STATE_ROOT/slices.json`
 - [ ] Every `slices.json` entry has `loop_id`, `repo`, and `scope_role`

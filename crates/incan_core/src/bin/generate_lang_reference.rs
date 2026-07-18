@@ -250,7 +250,14 @@ fn render_features_detail_section(out: &mut String) {
         if !feature.canonical_forms.is_empty() {
             out.push_str("Canonical forms:\n\n");
             for form in feature.canonical_forms {
-                out.push_str(&format!("- `{}`\n", form.replace('`', "\\`")));
+                if form.contains('\n') {
+                    out.push('\n');
+                    out.push_str("```text\n");
+                    out.push_str(form);
+                    out.push_str("\n```\n\n");
+                } else {
+                    out.push_str(&format!("- `{}`\n", form.replace('`', "\\`")));
+                }
             }
             out.push('\n');
         }

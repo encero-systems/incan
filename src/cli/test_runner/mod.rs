@@ -9,7 +9,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::cli::commands::common::CargoPolicy;
 use crate::cli::{CliError, CliResult, ExitCode};
-use crate::manifest::ProjectManifest;
+use crate::provider::FeatureSelection;
 
 mod discovery;
 mod execution;
@@ -22,11 +22,12 @@ pub(crate) use module_graph::collect_source_modules_for_test;
 pub use reporter::{ConsoleReporter, TestReporter};
 pub use types::{
     DiscoveryResult, FixtureInfo, FixtureScope, ParametrizeCall, ParametrizeCase, TestInfo, TestMarker,
-    TestOutputFormat, TestResult, TestRunConfig, TestSummary,
+    TestOutputFormat, TestResult, TestRunConfig, TestSummary, WorkspaceTestContext,
 };
 
 use discovery::{
-    CollectionEvalContext, discover_tests_and_fixtures_with_context, get_autouse_fixtures, parse_duration_literal,
+    CollectionEvalContext, discover_test_files_with_selections, discover_tests_and_fixtures_with_context,
+    get_autouse_fixtures, parse_duration_literal,
 };
 use execution::{TestExecutionOptions, run_file_tests_batch};
 use reporter::{print_test_result, style};
@@ -203,7 +204,7 @@ fn enforce_test_path_toolchain_constraint(path: &Path) -> CliResult<()> {
     } else {
         path
     };
-    if let Some(manifest) = ProjectManifest::discover(start).map_err(|error| CliError::failure(error.to_string()))? {
+    if let Some(manifest) = crate::cli::commands::common::discover_effective_project_manifest(start)? {
         crate::cli::commands::common::enforce_project_toolchain_constraint(&manifest)?;
     }
     Ok(())
@@ -307,7 +308,12 @@ fn marker_names(test: &TestInfo) -> BTreeSet<String> {
 }
 
 /// Emit one JSON Lines result record for a test case.
-fn emit_json_result(test: &TestInfo, result: &TestResult, root: &Path) {
+fn emit_json_result(
+    test: &TestInfo,
+    result: &TestResult,
+    root: &Path,
+    workspace_context: Option<&WorkspaceTestContext>,
+) {
     let mut record = serde_json::json!({
         "schema_version": "incan.test.v1",
         "test_id": stable_test_id(test, root),
@@ -331,6 +337,19 @@ fn emit_json_result(test: &TestInfo, result: &TestResult, root: &Path) {
                 obj.insert("reason".to_string(), serde_json::Value::String(reason.clone()));
             }
             TestResult::Passed(_) | TestResult::XPassed(_) => {}
+        }
+        if let Some(workspace) = workspace_context {
+            obj.insert(
+                "workspace".to_string(),
+                serde_json::json!({
+                    "root": workspace.workspace_root.display().to_string(),
+                    "scope_origin": workspace.scope_origin,
+                    "member": {
+                        "name": workspace.member_name,
+                        "root": workspace.member_root.display().to_string(),
+                    },
+                }),
+            );
         }
     }
     println!("{record}");
@@ -695,6 +714,8 @@ fn run_execution_unit(
     unit: &ExecutionUnit,
     prep_cache: &mut execution::TestPrepCache,
     cargo_policy: &CargoPolicy,
+    package_features: &FeatureSelection,
+    sdk_profile_override: Option<&str>,
     cargo_features: &[String],
     cargo_no_default_features: bool,
     cargo_all_features: bool,
@@ -708,6 +729,8 @@ fn run_execution_unit(
         &unit.conftest_files_by_file,
         prep_cache,
         cargo_policy,
+        package_features,
+        sdk_profile_override,
         cargo_features,
         cargo_no_default_features,
         cargo_all_features,
@@ -927,6 +950,8 @@ fn run_scheduled_execution_units(
     units: Vec<ExecutionUnit>,
     jobs: usize,
     cargo_policy: CargoPolicy,
+    package_features: FeatureSelection,
+    sdk_profile: Option<String>,
     cargo_features: &[String],
     cargo_no_default_features: bool,
     cargo_all_features: bool,
@@ -943,6 +968,8 @@ fn run_scheduled_execution_units(
                 unit,
                 &mut prep_cache,
                 &cargo_policy,
+                &package_features,
+                sdk_profile.as_deref(),
                 cargo_features,
                 cargo_no_default_features,
                 cargo_all_features,
@@ -984,6 +1011,8 @@ fn run_scheduled_execution_units(
             let sender = sender.clone();
             let cargo_features = cargo_features.to_vec();
             let cargo_policy = cargo_policy.clone();
+            let package_features = package_features.clone();
+            let sdk_profile = sdk_profile.clone();
             active.push(ActiveUnit {
                 index: unit.index,
                 file_paths: unit.file_paths.clone(),
@@ -998,6 +1027,8 @@ fn run_scheduled_execution_units(
                     &unit,
                     &mut prep_cache,
                     &cargo_policy,
+                    &package_features,
+                    sdk_profile.as_deref(),
                     &cargo_features,
                     cargo_no_default_features,
                     cargo_all_features,
@@ -1049,12 +1080,15 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
         strict_markers,
         jobs,
         test_features,
+        package_features,
+        sdk_profile,
         timeout,
         no_capture,
         cargo_policy,
         cargo_features,
         cargo_no_default_features,
         cargo_all_features,
+        workspace_context,
     } = config;
 
     let start_time = Instant::now();
@@ -1063,7 +1097,7 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
     let path = Path::new(path);
     enforce_test_path_toolchain_constraint(path)?;
     let stable_id_root = stable_id_root(path);
-    let test_files = discover_test_files(path);
+    let test_files = discover_test_files_with_selections(path, &package_features, sdk_profile.as_deref());
     let eval_context = CollectionEvalContext::new(test_features.into_iter().collect());
 
     if test_files.is_empty() {
@@ -1091,6 +1125,8 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
                 &inherited_marks,
                 &inherited_known_markers,
                 &eval_context,
+                &package_features,
+                sdk_profile.as_deref(),
             ) {
                 Ok(result) => {
                     inherited_marks = result.default_marks.clone();
@@ -1114,6 +1150,8 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
             &inherited_marks,
             &inherited_known_markers,
             &eval_context,
+            &package_features,
+            sdk_profile.as_deref(),
         ) {
             Ok(result) => {
                 for marker in result.known_markers {
@@ -1284,6 +1322,8 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
         units,
         jobs,
         cargo_policy,
+        package_features,
+        sdk_profile,
         &cargo_features,
         cargo_no_default_features,
         cargo_all_features,
@@ -1361,7 +1401,7 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
         if report_format == TestOutputFormat::Console {
             print_test_result(&test, &result, verbose, use_color);
         } else {
-            emit_json_result(&test, &result, &stable_id_root);
+            emit_json_result(&test, &result, &stable_id_root, workspace_context.as_ref());
         }
         results.push((test, result));
     }
@@ -1428,22 +1468,33 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
             style(centered_eq_banner(&summary_label), summary_color, use_color)
         );
     } else {
-        println!(
-            "{}",
-            serde_json::json!({
-                "schema_version": "incan.test.v1",
-                "summary": {
-                    "total": results.len(),
-                    "passed": passed,
-                    "failed": failed,
-                    "skipped": skipped,
-                    "xfailed": xfailed,
-                    "xpassed": xpassed,
-                    "duration_ms": total_time.as_millis(),
-                    "shuffle_seed": shuffle_seed,
-                }
-            })
-        );
+        let mut record = serde_json::json!({
+            "schema_version": "incan.test.v1",
+            "summary": {
+                "total": results.len(),
+                "passed": passed,
+                "failed": failed,
+                "skipped": skipped,
+                "xfailed": xfailed,
+                "xpassed": xpassed,
+                "duration_ms": total_time.as_millis(),
+                "shuffle_seed": shuffle_seed,
+            }
+        });
+        if let (Some(object), Some(workspace)) = (record.as_object_mut(), workspace_context.as_ref()) {
+            object.insert(
+                "workspace".to_string(),
+                serde_json::json!({
+                    "root": workspace.workspace_root.display().to_string(),
+                    "scope_origin": workspace.scope_origin,
+                    "member": {
+                        "name": workspace.member_name,
+                        "root": workspace.member_root.display().to_string(),
+                    },
+                }),
+            );
+        }
+        println!("{record}");
     }
 
     if failed > 0 || xpassed > 0 {

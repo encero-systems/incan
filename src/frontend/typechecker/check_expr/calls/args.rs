@@ -327,7 +327,7 @@ impl TypeChecker {
                 CallArg::Named(name, _) => {
                     if let Some(first_span) = named_seen.insert(name.as_str(), arg_span) {
                         self.errors
-                            .push(errors::duplicate_call_argument(callee, name, first_span));
+                            .push(errors::duplicate_call_argument(callee, name, first_span, arg_span));
                     }
 
                     if let Some((normal_idx, (_, param))) = normal_params
@@ -335,9 +335,9 @@ impl TypeChecker {
                         .enumerate()
                         .find(|(_, (_, param))| param.name() == Some(name.as_str()))
                     {
-                        if normal_bound_spans[normal_idx].is_some() {
+                        if let Some(first_span) = normal_bound_spans[normal_idx] {
                             self.errors
-                                .push(errors::duplicate_call_argument(callee, name, arg_span));
+                                .push(errors::duplicate_call_argument(callee, name, first_span, arg_span));
                             continue;
                         }
                         normal_bound_spans[normal_idx] = Some(arg_span);
@@ -377,7 +377,7 @@ impl TypeChecker {
                             if let Some(name) = Self::static_string_key(key) {
                                 if let Some(first_span) = named_seen.insert(name, key.span) {
                                     self.errors
-                                        .push(errors::duplicate_call_argument(callee, name, first_span));
+                                        .push(errors::duplicate_call_argument(callee, name, first_span, key.span));
                                 }
 
                                 if let Some((normal_idx, (_, param))) = normal_params
@@ -385,9 +385,9 @@ impl TypeChecker {
                                     .enumerate()
                                     .find(|(_, (_, param))| param.name() == Some(name))
                                 {
-                                    if normal_bound_spans[normal_idx].is_some() {
+                                    if let Some(first_span) = normal_bound_spans[normal_idx] {
                                         self.errors
-                                            .push(errors::duplicate_call_argument(callee, name, key.span));
+                                            .push(errors::duplicate_call_argument(callee, name, first_span, key.span));
                                         continue;
                                     }
                                     normal_bound_spans[normal_idx] = Some(value.span);

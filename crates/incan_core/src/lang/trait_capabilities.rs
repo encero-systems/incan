@@ -11,6 +11,7 @@ use crate::lang::types::numerics::{self, NumericFamily, NumericTypeId};
 pub enum TraitCapabilityId {
     StringTryFrom,
     StableOrdinalKey,
+    IteratorSum,
 }
 
 /// Source type categories that can participate in temporary trait-owned capability bridges.
@@ -31,6 +32,7 @@ pub enum TraitCapabilityType {
 pub enum TraitCapabilityTypeSet {
     StringConversions,
     DeterministicOrdinalKeys,
+    PrimitiveIteratorSums,
 }
 
 /// Concrete trait arguments required before a capability bridge applies.
@@ -99,8 +101,24 @@ pub const STABLE_ORDINAL_KEY_CAPABILITY: TraitCapabilityInfo = TraitCapabilityIn
     }),
 };
 
+/// Temporary bridge for the source-owned `std.derives.collection.Sum[T]` contract.
+pub const ITERATOR_SUM_CAPABILITY: TraitCapabilityInfo = TraitCapabilityInfo {
+    id: TraitCapabilityId::IteratorSum,
+    module_path: &["std", "derives", "collection"],
+    trait_name: "Sum",
+    required_methods: &["sum"],
+    required_type_args: &[],
+    import_trigger_items: &["Iterator", "Sum"],
+    type_set: TraitCapabilityTypeSet::PrimitiveIteratorSums,
+    bridge_hooks: None,
+};
+
 /// Registry of source-authored trait contracts with temporary capability bridges.
-pub const TRAIT_CAPABILITIES: &[TraitCapabilityInfo] = &[STRING_TRY_FROM_CAPABILITY, STABLE_ORDINAL_KEY_CAPABILITY];
+pub const TRAIT_CAPABILITIES: &[TraitCapabilityInfo] = &[
+    STRING_TRY_FROM_CAPABILITY,
+    STABLE_ORDINAL_KEY_CAPABILITY,
+    ITERATOR_SUM_CAPABILITY,
+];
 
 /// Return the temporary `std.traits.convert.TryFrom[str]` capability bridge.
 pub fn string_try_from() -> &'static TraitCapabilityInfo {
@@ -110,6 +128,11 @@ pub fn string_try_from() -> &'static TraitCapabilityInfo {
 /// Return the temporary `std.collections.OrdinalKey` capability bridge.
 pub fn stable_ordinal_key() -> &'static TraitCapabilityInfo {
     &STABLE_ORDINAL_KEY_CAPABILITY
+}
+
+/// Return the temporary `std.derives.collection.Sum[T]` capability bridge.
+pub fn iterator_sum() -> &'static TraitCapabilityInfo {
+    &ITERATOR_SUM_CAPABILITY
 }
 
 /// Return the registry entry for a trait path, if it has a temporary capability bridge.
@@ -165,5 +188,8 @@ pub fn supports_type(info: &TraitCapabilityInfo, ty: TraitCapabilityType) -> boo
                     )
             }
         },
+        TraitCapabilityTypeSet::PrimitiveIteratorSums => {
+            matches!(ty, TraitCapabilityType::Int | TraitCapabilityType::Float)
+        }
     }
 }

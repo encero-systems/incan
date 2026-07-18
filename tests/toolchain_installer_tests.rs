@@ -97,13 +97,22 @@ fn write_fixture_archive(root: &Path) -> Result<(PathBuf, String), Box<dyn std::
         bin.join("incan-lsp"),
         "#!/usr/bin/env sh\nprintf 'incan-lsp fixture\\n'\n",
     )?;
-    let stdlib = payload.join("stdlib");
-    fs::create_dir_all(&stdlib)?;
-    fs::write(stdlib.join("testing.incn"), "# fixture std.testing source\n")?;
+    let sdk = payload.join("share/incan/sdk");
+    fs::create_dir_all(&sdk)?;
+    fs::write(
+        sdk.join("sdk-inventory.json"),
+        "{\"schema_version\":1,\"sdk_id\":\"fixture\",\"sdk_version\":\"0.5.0\",\"compiler_requirement\":\">=0.5.0,<0.6.0\",\"components\":{},\"profiles\":{}}\n",
+    )?;
     let crates = payload.join("crates");
     fs::create_dir_all(&crates)?;
     fs::write(crates.join("Cargo.toml"), "[workspace]\nmembers = []\n")?;
-    for support_crate in ["incan_core", "incan_derive", "incan_stdlib", "incan_web_macros"] {
+    for support_crate in [
+        "incan_core",
+        "incan_derive",
+        "incan_stdlib",
+        "incan_vocab",
+        "incan_web_macros",
+    ] {
         let crate_dir = crates.join(support_crate);
         fs::create_dir_all(&crate_dir)?;
         fs::write(
@@ -184,6 +193,68 @@ fn write_fixture_toolchain_commands(root: &Path) -> Result<(PathBuf, PathBuf), B
     Ok((incan, incan_lsp))
 }
 
+fn write_fixture_sdk_provider_seed(root: &Path, profile: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let seed = root.join(format!("fixture-sdk-provider-seed-{profile}"));
+    let components = [
+        "stdlib-core",
+        "stdlib-system",
+        "stdlib-codecs",
+        "stdlib-compression",
+        "stdlib-data",
+        "stdlib-async",
+        "stdlib-observability",
+        "stdlib-web",
+        "stdlib-testing",
+    ];
+    let mut inventory_components = serde_json::Map::new();
+    fs::create_dir_all(&seed)?;
+    fs::write(seed.join("Cargo.lock"), "version = 4\n")?;
+    for component in components {
+        let available = profile != "minimal" || component == "stdlib-core";
+        let provider_name = component.replace('-', "_");
+        if available {
+            let component_dir = seed.join("components").join(component);
+            fs::create_dir_all(component_dir.join("src"))?;
+            fs::write(
+                component_dir.join(format!("{provider_name}.incnlib")),
+                format!("{{\"name\":\"{provider_name}\",\"manifest_format\":2}}\n"),
+            )?;
+            fs::write(
+                component_dir.join("Cargo.toml"),
+                format!("[package]\nname = \"{provider_name}\"\nversion = \"0.5.0\"\n[lib]\npath = \"src/lib.rs\"\n"),
+            )?;
+            fs::write(component_dir.join("src/lib.rs"), "pub fn fixture() {}\n")?;
+        }
+        inventory_components.insert(
+            component.to_string(),
+            serde_json::json!({
+                "version": "0.5.0",
+                "mandatory": component == "stdlib-core",
+                "available": available,
+                "dependencies": [],
+                "providers": []
+            }),
+        );
+    }
+    let inventory = serde_json::json!({
+        "schema_version": 1,
+        "sdk_id": "incan-fixture",
+        "sdk_version": "0.5.0",
+        "compiler_requirement": ">=0.5.0-dev.6,<0.6.0",
+        "components": inventory_components,
+        "profiles": {
+            "minimal": ["stdlib-core"],
+            "default": components,
+            "full": components
+        }
+    });
+    fs::write(
+        seed.join("sdk-inventory.json"),
+        format!("{}\n", serde_json::to_string_pretty(&inventory)?),
+    )?;
+    Ok(seed)
+}
+
 const NPM_PLATFORM_TARGETS: [(&str, &str, &str, &str); 3] = [
     ("x86_64-unknown-linux-gnu", "@incan/toolchain-linux-x64", "linux", "x64"),
     ("x86_64-apple-darwin", "@incan/toolchain-darwin-x64", "darwin", "x64"),
@@ -229,12 +300,25 @@ fn package_fixture_archive(
     incan: &Path,
     incan_lsp: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    package_fixture_archive_with_profile(root, target, incan, incan_lsp, "full")
+}
+
+fn package_fixture_archive_with_profile(
+    root: &Path,
+    target: &str,
+    incan: &Path,
+    incan_lsp: &Path,
+    profile: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let seed = write_fixture_sdk_provider_seed(root, profile)?;
     let output = Command::new("bash")
         .arg(toolchain_package_archive_script())
         .arg(target)
         .args(["--out-dir", root.to_str().ok_or("output path is not UTF-8")?])
         .env("INCAN_BIN", incan)
         .env("INCAN_LSP_BIN", incan_lsp)
+        .env("INCAN_SDK_PROVIDER_SEED_DIR", seed)
+        .env("INCAN_SDK_DISTRIBUTION_PROFILE", profile)
         .current_dir(repo_root())
         .output()?;
 
@@ -263,6 +347,19 @@ fn sha256_sidecar_path(archive: &Path) -> PathBuf {
         "{}.sha256",
         archive.file_name().and_then(|name| name.to_str()).unwrap_or_default()
     ))
+}
+
+fn profile_evidence_path(archive: &Path) -> PathBuf {
+    archive.with_file_name(format!(
+        "{}.profile.json",
+        archive.file_name().and_then(|name| name.to_str()).unwrap_or_default()
+    ))
+}
+
+fn read_profile_evidence(archive: &Path) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    Ok(serde_json::from_str(&fs::read_to_string(profile_evidence_path(
+        archive,
+    ))?)?)
 }
 
 fn write_manifest(root: &Path, archive: &Path, checksum: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
@@ -327,7 +424,11 @@ fn write_manifest(root: &Path, archive: &Path, checksum: &str) -> Result<PathBuf
 fn assert_toolchain_install(incan_home: &Path, bin_dir: &Path) {
     assert!(incan_home.join("toolchains/0.4.0-test/bin/incan").exists());
     assert!(incan_home.join("toolchains/0.4.0-test/bin/incan-lsp").exists());
-    assert!(incan_home.join("toolchains/0.4.0-test/stdlib/testing.incn").exists());
+    assert!(
+        incan_home
+            .join("toolchains/0.4.0-test/share/incan/sdk/sdk-inventory.json")
+            .exists()
+    );
     assert!(incan_home.join("toolchains/0.4.0-test/crates/Cargo.toml").exists());
     assert!(
         incan_home
@@ -358,19 +459,160 @@ fn toolchain_archive_packager_writes_archive_checksum_and_release_metadata() -> 
         fs::read_to_string(sha256_sidecar_path(&archive))?.trim(),
         sha256_hex(&archive)?
     );
+    let evidence = read_profile_evidence(&archive)?;
+    assert_eq!(evidence["sdk_profile"], serde_json::json!("full"));
+    assert_eq!(evidence["sdk_component_count"], serde_json::json!(9));
+    assert_eq!(evidence["archive_bytes"].as_u64(), Some(fs::metadata(&archive)?.len()));
+    assert!(evidence["sdk_payload_bytes"].as_u64().is_some_and(|bytes| bytes > 0));
 
     let listing = Command::new("tar").arg("-tzf").arg(&archive).output()?;
     assert!(listing.status.success(), "tar listing failed");
     let listing = String::from_utf8_lossy(&listing.stdout);
     assert!(listing.contains("bin/incan"));
     assert!(listing.contains("bin/incan-lsp"));
-    assert!(listing.contains("stdlib/testing.incn"));
-    assert!(listing.contains("stdlib/prelude.incn"));
+    assert!(
+        !listing.lines().any(|path| path.starts_with("./stdlib/")),
+        "toolchain archive must not publish legacy top-level stdlib source:\n{listing}"
+    );
+    assert!(
+        !listing
+            .lines()
+            .any(|path| path.starts_with("./crates/incan_stdlib/stdlib/")),
+        "toolchain archive must not publish provider-owned stdlib source:\n{listing}"
+    );
+    assert!(
+        !listing.lines().any(|path| path.contains(".cargo-target")),
+        "toolchain archive must not publish Cargo build intermediates:\n{listing}"
+    );
+    assert!(
+        !listing.lines().any(|path| path.contains("/target/incan_lock/")),
+        "toolchain archive must not publish compiler inspection scratch state:\n{listing}"
+    );
+    assert!(listing.contains("share/incan/sdk/sdk-inventory.json"));
+    assert!(listing.contains("share/incan/sdk/Cargo.lock"));
+    for component in [
+        "stdlib-core",
+        "stdlib-system",
+        "stdlib-codecs",
+        "stdlib-compression",
+        "stdlib-data",
+        "stdlib-async",
+        "stdlib-observability",
+        "stdlib-web",
+        "stdlib-testing",
+    ] {
+        assert!(
+            listing.contains(&format!("share/incan/sdk/components/{component}/Cargo.toml")),
+            "toolchain archive is missing SDK component {component}:\n{listing}"
+        );
+        assert!(
+            listing.contains(&format!("share/incan/sdk/components/{component}/src/lib.rs")),
+            "toolchain archive is missing generated Rust for SDK component {component}:\n{listing}"
+        );
+        assert!(
+            !listing.contains(&format!("share/incan/sdk/components/{component}/Cargo.lock")),
+            "SDK component {component} duplicates the shared lockfile:\n{listing}"
+        );
+    }
     assert!(listing.contains("crates/Cargo.toml"));
+    assert!(listing.contains("crates/Cargo.lock"));
     assert!(listing.contains("crates/incan_core/Cargo.toml"));
     assert!(listing.contains("crates/incan_derive/Cargo.toml"));
     assert!(listing.contains("crates/incan_stdlib/Cargo.toml"));
+    assert!(listing.contains("crates/incan_vocab/Cargo.toml"));
     assert!(listing.contains("crates/incan_web_macros/Cargo.toml"));
+
+    let extracted = tmp.path().join("extracted-toolchain");
+    fs::create_dir_all(&extracted)?;
+    let extract = Command::new("tar")
+        .args(["-xzf"])
+        .arg(&archive)
+        .args(["-C"])
+        .arg(&extracted)
+        .status()?;
+    assert!(extract.success(), "toolchain archive extraction failed");
+    let metadata = Command::new("cargo")
+        .args(["metadata", "--no-deps", "--format-version", "1", "--manifest-path"])
+        .arg(extracted.join("crates/Cargo.toml"))
+        .env("CARGO_NET_OFFLINE", "true")
+        .output()?;
+    assert!(
+        metadata.status.success(),
+        "packaged support-crate workspace is invalid:\n{}",
+        String::from_utf8_lossy(&metadata.stderr)
+    );
+    Ok(())
+}
+
+#[test]
+fn minimal_sdk_archive_physically_excludes_non_profile_components() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let out_dir = tmp.path().join("minimal-toolchain");
+    let (incan, incan_lsp) = write_fixture_toolchain_commands(tmp.path())?;
+
+    package_fixture_archive_with_profile(&out_dir, "x86_64-unknown-linux-gnu", &incan, &incan_lsp, "minimal")?;
+
+    let release = fs::read_to_string(out_dir.join("toolchain-release.txt"))?;
+    let archive = out_dir.join(format!("incan-{}-x86_64-unknown-linux-gnu.tar.gz", release.trim()));
+    let evidence = read_profile_evidence(&archive)?;
+    assert_eq!(evidence["sdk_profile"], serde_json::json!("minimal"));
+    assert_eq!(evidence["sdk_component_count"], serde_json::json!(1));
+    assert!(evidence["sdk_payload_bytes"].as_u64().is_some_and(|bytes| bytes > 0));
+    let listing = Command::new("tar").arg("-tzf").arg(&archive).output()?;
+    assert!(listing.status.success(), "minimal archive listing failed");
+    let listing = String::from_utf8_lossy(&listing.stdout);
+    assert!(listing.contains("share/incan/sdk/components/stdlib-core/"));
+    for component in [
+        "stdlib-system",
+        "stdlib-codecs",
+        "stdlib-compression",
+        "stdlib-data",
+        "stdlib-async",
+        "stdlib-observability",
+        "stdlib-web",
+        "stdlib-testing",
+    ] {
+        assert!(
+            !listing.contains(&format!("share/incan/sdk/components/{component}/")),
+            "minimal archive unexpectedly contains {component}:\n{listing}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn default_sdk_archive_contains_every_default_profile_component() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let out_dir = tmp.path().join("default-toolchain");
+    let (incan, incan_lsp) = write_fixture_toolchain_commands(tmp.path())?;
+
+    package_fixture_archive_with_profile(&out_dir, "x86_64-unknown-linux-gnu", &incan, &incan_lsp, "default")?;
+
+    let release = fs::read_to_string(out_dir.join("toolchain-release.txt"))?;
+    let archive = out_dir.join(format!("incan-{}-x86_64-unknown-linux-gnu.tar.gz", release.trim()));
+    let evidence = read_profile_evidence(&archive)?;
+    assert_eq!(evidence["sdk_profile"], serde_json::json!("default"));
+    assert_eq!(evidence["sdk_component_count"], serde_json::json!(9));
+    assert!(evidence["sdk_payload_bytes"].as_u64().is_some_and(|bytes| bytes > 0));
+    let listing = Command::new("tar").arg("-tzf").arg(&archive).output()?;
+    assert!(listing.status.success(), "default archive listing failed");
+    let listing = String::from_utf8_lossy(&listing.stdout);
+    for component in [
+        "stdlib-core",
+        "stdlib-system",
+        "stdlib-codecs",
+        "stdlib-compression",
+        "stdlib-data",
+        "stdlib-async",
+        "stdlib-observability",
+        "stdlib-web",
+        "stdlib-testing",
+    ] {
+        assert!(
+            listing.contains(&format!("share/incan/sdk/components/{component}/")),
+            "default archive is missing {component}:\n{listing}"
+        );
+    }
     Ok(())
 }
 
@@ -418,7 +660,7 @@ fn toolchain_release_assets_are_prepared_by_central_manifest_script() -> Result<
     assert!(dist.join("toolchain-manifest.schema.v1.json").exists());
     let formula = fs::read_to_string(dist.join("incan.rb"))?;
     assert!(formula.contains("def staged_binary(name)"));
-    assert!(formula.contains("could not find stdlib/testing.incn in archive"));
+    assert!(formula.contains("could not find SDK provider inventory in archive"));
     assert!(formula.contains("libexec.install Dir[\"*\"]"));
     assert!(formula.contains("bin.write_exec_script libexec/\"bin/incan\""));
     assert!(formula.contains("bin.write_exec_script libexec/\"bin/incan-lsp\""));
@@ -512,7 +754,11 @@ fn package_prepare_scripts_stage_versions_and_shared_installer() -> Result<(), B
         assert_eq!(platform_package["cpu"], serde_json::json!([cpu]));
         assert!(platform_dir.join("toolchain/bin/incan").exists());
         assert!(platform_dir.join("toolchain/bin/incan-lsp").exists());
-        assert!(platform_dir.join("toolchain/stdlib/testing.incn").exists());
+        assert!(
+            platform_dir
+                .join("toolchain/share/incan/sdk/sdk-inventory.json")
+                .exists()
+        );
         assert!(platform_dir.join("toolchain/crates/Cargo.toml").exists());
     }
     assert!(fs::read_to_string(dist.join("_npm-package/README.md"))?.contains("https://incan.io"));
@@ -881,12 +1127,12 @@ fn homebrew_formula_is_rendered_from_the_toolchain_manifest() -> Result<(), Box<
     assert!(formula.contains("def staged_file_sample"));
     assert!(formula.contains("incan_bin = staged_binary(\"incan\")"));
     assert!(formula.contains("incan_lsp_bin = staged_binary(\"incan-lsp\")"));
-    assert!(formula.contains("stdlib_dir = Pathname.new(\"stdlib\")"));
+    assert!(formula.contains("sdk_inventory = Pathname.new(\"share/incan/sdk/sdk-inventory.json\")"));
     assert!(formula.contains(
         r#"odie "could not find incan binary in archive; staged files: #{staged_file_sample}" if incan_bin.nil?"#
     ));
     assert!(formula.contains(
-        r#"odie "could not find stdlib/testing.incn in archive; staged files: #{staged_file_sample}" unless (stdlib_dir/"testing.incn").exist?"#
+        r#"odie "could not find SDK provider inventory in archive; staged files: #{staged_file_sample}" unless sdk_inventory.exist?"#
     ));
     assert!(formula.contains("libexec.install Dir[\"*\"]"));
     assert!(formula.contains("bin.write_exec_script libexec/\"bin/incan\""));

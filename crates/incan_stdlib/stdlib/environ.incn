@@ -104,10 +104,10 @@ pub class EnvironError with Error:
 
         Args:
             key: Requested environment key.
-            target: Concise source type name expected by the typed read.
+            target: Redacted description of the conversion target expected by the typed read.
 
         Returns:
-            Redacted parse or validation error that names the key and target but not the observed value.
+            Redacted parse or validation error that names the key and target description but not the observed value.
         """
         return EnvironError.from_kind(
             EnvironErrorKind.InvalidValue,
@@ -135,7 +135,7 @@ def _get_raw(key: str) -> Result[str, EnvironErrorKind]:
     Returns:
         `Ok(value)` for a present Unicode value, or `Err(kind)` with a stable `EnvironErrorKind`.
         The non-Unicode error payload is discarded without being formatted, so observed environment values never
-        appear in an error. Unknown future categories map to `EnvironErrorKind.Other`.
+        appear in an error. `EnvironErrorKind.Other` remains reserved for future host mappings.
     """
     if len(key) == 0 or key.contains("=") or key.contains("\0"):
         return Err(EnvironErrorKind.InvalidKey)
@@ -144,7 +144,6 @@ def _get_raw(key: str) -> Result[str, EnvironErrorKind]:
         Ok(value) => return Ok(value)
         Err(VarError.NotPresent) => return Err(EnvironErrorKind.Missing)
         Err(VarError.NotUnicode(_)) => return Err(EnvironErrorKind.NotUnicode)
-        Err(_) => return Err(EnvironErrorKind.Other)
 
 
 pub def get(key: str) -> Result[str, EnvironError]:
@@ -209,7 +208,7 @@ pub def get_as[T with TryFrom[str]](key: str) -> Result[Option[T], EnvironError]
         Ok(value) =>
             match T.try_from(value):
                 Ok(parsed) => return Ok(Some(parsed))
-                Err(_) => return Err(EnvironError.invalid_value(key, T.__class_name__()))
+                Err(_) => return Err(EnvironError.invalid_value(key, "the requested type"))
         Err(error) =>
             if error.kind() == EnvironErrorKind.Missing:
                 return Ok(None)

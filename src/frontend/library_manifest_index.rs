@@ -61,6 +61,17 @@ pub struct LibraryArtifactMetadata {
     pub cargo_toml_path: PathBuf,
     /// Path to generated crate entrypoint (`src/lib.rs`).
     pub crate_lib_path: PathBuf,
+    /// Whether this entry names a complete generated artifact or source-derived parser metadata only.
+    pub kind: LibraryArtifactKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Physical state represented by one loaded dependency entry.
+pub enum LibraryArtifactKind {
+    /// A validated `.incnlib` manifest and generated Rust crate are present.
+    Materialized,
+    /// Only source-derived syntax metadata is available for parser-only tooling such as formatting.
+    ParserSource,
 }
 
 #[derive(Debug, Clone)]
@@ -136,11 +147,22 @@ impl LibraryManifestIndex {
 
     /// Load index entries for all library dependencies declared in a project manifest.
     pub fn from_project_manifest(manifest: &ProjectManifest) -> Self {
+        Self::from_project_manifest_dependencies(manifest, manifest.library_dependencies().keys().map(String::as_str))
+    }
+
+    /// Load index entries only for the active Incan dependency keys selected by the package-feature graph.
+    pub fn from_project_manifest_dependencies<'a>(
+        manifest: &ProjectManifest,
+        dependency_keys: impl IntoIterator<Item = &'a str>,
+    ) -> Self {
         let mut entries = HashMap::new();
 
-        for (library_name, spec) in manifest.library_dependencies() {
+        for library_name in dependency_keys {
+            let Some(spec) = manifest.library_dependencies().get(library_name) else {
+                continue;
+            };
             let entry = load_library_manifest_entry(library_name, &spec.path);
-            entries.insert(library_name.clone(), entry);
+            entries.insert(library_name.to_string(), entry);
         }
 
         Self { entries }
@@ -156,6 +178,26 @@ impl LibraryManifestIndex {
         let mut names: Vec<String> = self.entries.keys().cloned().collect();
         names.sort();
         names
+    }
+
+    /// Iterate over successfully loaded dependency entries in deterministic dependency-key order.
+    ///
+    /// Provider-plan construction uses this as the ordinary-library half of the shared compiled-provider catalog. The
+    /// index retains failed entries separately so existing source-anchored `pub::` diagnostics can still explain an
+    /// unreadable or missing dependency artifact.
+    pub fn loaded_entries(&self) -> impl Iterator<Item = (&str, &LibraryManifest, &LibraryArtifactMetadata)> {
+        let mut entries = self
+            .entries
+            .iter()
+            .filter_map(|(dependency_key, entry)| match entry {
+                LibraryManifestIndexEntry::Loaded { manifest, metadata } => {
+                    Some((dependency_key.as_str(), manifest.as_ref(), metadata))
+                }
+                LibraryManifestIndexEntry::Failed(_) => None,
+            })
+            .collect::<Vec<_>>();
+        entries.sort_by(|left, right| left.0.cmp(right.0));
+        entries.into_iter()
     }
 
     /// Return metadata for a loaded dependency artifact.
@@ -200,7 +242,9 @@ impl LibraryManifestIndex {
             let LibraryManifestIndexEntry::Loaded { metadata, .. } = entry else {
                 continue;
             };
-            dependencies.push(metadata.to_dependency_spec());
+            if metadata.kind == LibraryArtifactKind::Materialized {
+                dependencies.push(metadata.to_dependency_spec());
+            }
         }
         dependencies
     }
@@ -442,8 +486,20 @@ fn normalize_keyword_registration(
     })
 }
 
+/// Load and validate one ordinary dependency artifact discovered from its source or installed package root.
 fn load_library_manifest_entry(dependency_key: &str, dependency_root: &Path) -> LibraryManifestIndexEntry {
     let crate_root = dependency_crate_root(dependency_root);
+    load_library_manifest_entry_from_crate_root(dependency_key, &crate_root)
+}
+
+/// Load one transitive compiled-provider dependency from its artifact-root-relative location.
+pub(crate) fn load_provider_dependency_artifact(dependency_key: &str, crate_root: &Path) -> LibraryManifestIndexEntry {
+    load_library_manifest_entry_from_crate_root(dependency_key, crate_root)
+}
+
+/// Load and validate one dependency manifest from an exact generated provider crate root.
+fn load_library_manifest_entry_from_crate_root(dependency_key: &str, crate_root: &Path) -> LibraryManifestIndexEntry {
+    let crate_root = fs::canonicalize(crate_root).unwrap_or_else(|_| crate_root.to_path_buf());
     let manifest_path = match resolve_manifest_path(&crate_root, dependency_key) {
         Ok(path) => path,
         Err(failure) => return LibraryManifestIndexEntry::Failed(failure),
@@ -689,6 +745,27 @@ impl LibraryArtifactMetadata {
             cargo_toml_path: crate_root.join("Cargo.toml"),
             crate_lib_path: crate_root.join(LIBRARY_CRATE_LIB_RS),
             crate_root,
+            kind: LibraryArtifactKind::Materialized,
+        }
+    }
+
+    /// Build source-derived metadata for parser-only tooling without claiming that a generated crate exists.
+    pub fn for_parser_source(
+        dependency_key: impl Into<String>,
+        manifest_name: impl Into<String>,
+        project_root: impl Into<PathBuf>,
+    ) -> Self {
+        let dependency_key = dependency_key.into();
+        let manifest_name = manifest_name.into();
+        let crate_root = project_root.into().join(LIBRARY_ARTIFACT_DIR);
+        Self {
+            manifest_path: crate_root.join(format!("{manifest_name}.incnlib")),
+            cargo_toml_path: crate_root.join("Cargo.toml"),
+            crate_lib_path: crate_root.join(LIBRARY_CRATE_LIB_RS),
+            dependency_key,
+            manifest_name,
+            crate_root,
+            kind: LibraryArtifactKind::ParserSource,
         }
     }
 
@@ -704,7 +781,8 @@ impl LibraryArtifactMetadata {
         Self::from_manifest_path(dependency_key, manifest_name, manifest_path, crate_root)
     }
 
-    fn to_dependency_spec(&self) -> DependencySpec {
+    /// Convert this verified artifact location into the Cargo dependency used by generated consumers.
+    pub(crate) fn to_dependency_spec(&self) -> DependencySpec {
         DependencySpec {
             crate_name: self.dependency_key.clone(),
             version: None,
@@ -772,6 +850,7 @@ mylib = { path = "deps/mylib" }
         let parsed = ProjectManifest::from_str(manifest_content, &consumer_manifest_path)?;
 
         let index = LibraryManifestIndex::from_project_manifest(&parsed);
+        let canonical_artifact_root = std::fs::canonicalize(&dep_artifact_root)?;
         let entry = index.get("mylib").ok_or("missing mylib index entry")?;
         match entry {
             LibraryManifestIndexEntry::Loaded { manifest, metadata } => {
@@ -779,7 +858,7 @@ mylib = { path = "deps/mylib" }
                 assert_eq!(manifest.version, "0.1.0");
                 assert_eq!(metadata.dependency_key, "mylib");
                 assert_eq!(metadata.manifest_name, "mylib");
-                assert_eq!(metadata.crate_root, dep_artifact_root);
+                assert_eq!(metadata.crate_root, canonical_artifact_root);
             }
             LibraryManifestIndexEntry::Failed(failure) => {
                 return Err(format!("expected loaded manifest, got failure: {}", failure.message).into());
