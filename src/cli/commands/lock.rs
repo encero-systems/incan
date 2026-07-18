@@ -380,17 +380,17 @@ pub(crate) fn resolve_lock_payload(request: LockResolutionRequest<'_>) -> CliRes
         && let Some(workspace) =
             WorkspaceGraph::discover(manifest.project_root()).map_err(|error| CliError::failure(error.to_string()))?
     {
-        return resolve_workspace_lock_payload(
-            &workspace,
-            resolved,
-            project_requirements,
+        return resolve_workspace_lock_payload(WorkspaceLockResolutionRequest {
+            workspace: &workspace,
+            caller_resolved: resolved,
+            caller_requirements: project_requirements,
             cargo_features,
             cargo_policy,
-            package_features.unwrap_or(&default_package_features),
+            package_features: package_features.unwrap_or(&default_package_features),
             sdk_profile_override,
             #[cfg(feature = "rust_inspect")]
-            rust_inspect_query_paths,
-        );
+            caller_rust_inspect_query_paths: rust_inspect_query_paths,
+        });
     }
     let project_context = if let Some(manifest) = manifest {
         collect_project_lock_context(
@@ -499,16 +499,30 @@ pub(crate) fn resolve_lock_payload(request: LockResolutionRequest<'_>) -> CliRes
 ///
 /// The member that triggered this call is deliberately absent from the path calculation: a workspace lock is built
 /// from every member context and lives only at the workspace root.
-fn resolve_workspace_lock_payload(
-    workspace: &WorkspaceGraph,
-    caller_resolved: &ResolvedDependencies,
-    caller_requirements: &ProjectRequirements,
-    cargo_features: &CargoFeatureSelection,
-    cargo_policy: &CargoPolicy,
-    package_features: &FeatureSelection,
-    sdk_profile_override: Option<&str>,
-    #[cfg(feature = "rust_inspect")] caller_rust_inspect_query_paths: &[String],
-) -> CliResult<Option<String>> {
+struct WorkspaceLockResolutionRequest<'a> {
+    workspace: &'a WorkspaceGraph,
+    caller_resolved: &'a ResolvedDependencies,
+    caller_requirements: &'a ProjectRequirements,
+    cargo_features: &'a CargoFeatureSelection,
+    cargo_policy: &'a CargoPolicy,
+    package_features: &'a FeatureSelection,
+    sdk_profile_override: Option<&'a str>,
+    #[cfg(feature = "rust_inspect")]
+    caller_rust_inspect_query_paths: &'a [String],
+}
+
+fn resolve_workspace_lock_payload(request: WorkspaceLockResolutionRequest<'_>) -> CliResult<Option<String>> {
+    let WorkspaceLockResolutionRequest {
+        workspace,
+        caller_resolved,
+        caller_requirements,
+        cargo_features,
+        cargo_policy,
+        package_features,
+        sdk_profile_override,
+        #[cfg(feature = "rust_inspect")]
+        caller_rust_inspect_query_paths,
+    } = request;
     let context =
         collect_workspace_lock_context(workspace, None, cargo_features, package_features, sdk_profile_override)?;
     let mut resolved = merge_workspace_resolved_dependencies(&context.resolved, caller_resolved)?;
