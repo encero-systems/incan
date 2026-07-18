@@ -1,6 +1,6 @@
 # RFC 114: Compiled providers, SDK components, and package features
 
-- **Status:** In Progress
+- **Status:** Implemented
 - **Created:** 2026-07-17
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -17,7 +17,7 @@
 - **Issue:** #544
 - **RFC PR:** [#839](https://github.com/encero-systems/incan/pull/839)
 - **Written against:** v0.5
-- **Shipped in:** —
+- **Shipped in:** v0.5
 
 ## Summary
 
@@ -565,27 +565,27 @@ Provider construction may use one staging workspace, but the published artifacts
 - Verify unknown, disabled, unavailable, corrupt, incompatible, conflicting, feature-gated, locked, offline, relocated, and concurrent-publication behavior on macOS and Linux.
 - Update feature inventory, CLI and manifest references, RFC links, rustdocs, v0.5 release notes, development version, installed-SDK smoke coverage, artifact-size evidence, and an InQL consumer lane before the RFC becomes Implemented.
 
-## Progress Checklist
+## Implementation log
 
-- [ ] Shared provider identity, provenance, namespace-claim, checked-fact, implementation-facet, and provider-plan models are implemented.
-- [ ] `LibraryManifestIndex` and `CompilationSession` consume the generic provider plan without a stdlib-only semantic side channel.
-- [ ] Reserved namespace authority and duplicate canonical module claims are validated before typechecking.
-- [ ] Relocatable SDK inventory discovery and integrity validation are implemented.
-- [ ] `[sdk]` profile, component additions, exclusions, dependencies, mandatory membership, and availability are resolved and locked.
-- [ ] The nine stdlib components are independently published and physically excludable from SDK profile packages.
-- [ ] Shared content-addressed cache publication, reuse, locking, relocation, and compact offline seed behavior are verified.
-- [ ] Compact and expanded package-feature declarations normalize into one typed graph.
-- [ ] Optional Incan dependencies, dependency feature requests, defaults, and CLI feature flags resolve additively across the package graph.
-- [ ] Feature cycles, unknown references, inactive dependency edges, and unsupported combinations have source-anchored diagnostics.
-- [ ] Compilation-unit `when feature(...)` blocks and positive conjunctions parse, format, project, and diagnose correctly.
-- [ ] Feature requirements project imports, reexports, declarations, registry facts, documentation facts, component requirements, and implementation facets consistently.
-- [ ] Cargo and other backend switches are derived privately from provider implementation facets.
-- [ ] `.incnlib`, generated Rust, locks, reports, and inspection preserve feature, component, integrity, relocation, and provenance facts.
-- [ ] Build, run, library, package, test-batch, LSP, diagnostics, codegraph, docs, and generated-project routes share provider and feature semantics.
-- [ ] Direct import, facade/reexport, package consumer, generated Rust, rust-metadata, locked, offline, and installed-SDK regressions pass.
-- [ ] Minimal, default, and full profile packaging proves excluded payload and dependency behavior with measured size evidence.
-- [ ] CLI, manifest, artifact, feature, component, generated-reference, rustdoc, and v0.5 release documentation are complete.
-- [ ] InQL consumer verification, macOS and Linux release lanes, development-version bump, and full repository gates pass.
+- [x] Shared provider identity, provenance, namespace-claim, checked-fact, implementation-facet, and provider-plan models are implemented.
+- [x] `LibraryManifestIndex` and `CompilationSession` consume the generic provider plan without a stdlib-only semantic side channel.
+- [x] Reserved namespace authority and duplicate canonical module claims are validated before typechecking.
+- [x] Relocatable SDK inventory discovery and integrity validation are implemented.
+- [x] `[sdk]` profile, component additions, exclusions, dependencies, mandatory membership, and availability are resolved and locked.
+- [x] The nine stdlib components are independently published and physically excludable from SDK profile packages.
+- [x] Shared content-addressed cache publication, reuse, locking, relocation, and compact offline seed behavior are verified.
+- [x] Compact and expanded package-feature declarations normalize into one typed graph.
+- [x] Optional Incan dependencies, dependency feature requests, defaults, and CLI feature flags resolve additively across the package graph.
+- [x] Feature cycles, unknown references, inactive dependency edges, and unsupported combinations have source-anchored diagnostics.
+- [x] Compilation-unit `when feature(...)` blocks and positive conjunctions parse, format, project, and diagnose correctly.
+- [x] Feature requirements project imports, reexports, declarations, registry facts, documentation facts, component requirements, and implementation facets consistently.
+- [x] Cargo and other backend switches are derived privately from provider implementation facets.
+- [x] `.incnlib`, generated Rust, locks, reports, and inspection preserve feature, component, integrity, relocation, and provenance facts.
+- [x] Build, run, library, package, test-batch, LSP, diagnostics, codegraph, docs, and generated-project routes share provider and feature semantics.
+- [x] Direct import, facade/reexport, package consumer, generated Rust, rust-metadata, locked, offline, and installed-SDK regressions pass.
+- [x] Minimal, default, and full profile packaging proves excluded payload and dependency behavior with measured size evidence.
+- [x] CLI, manifest, artifact, feature, component, generated-reference, rustdoc, and v0.5 release documentation are complete.
+- [x] InQL consumer verification, macOS and Linux release lanes, development-version bump, and full repository gates pass.
 
 ## Inspectability and tooling surface
 
