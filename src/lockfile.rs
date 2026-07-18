@@ -379,8 +379,11 @@ fn backend_requirement_name(requirement: &BackendImplementationRequirement) -> S
 
 /// Render a project-relative path when possible so semantic lock fingerprints survive relocation.
 fn portable_project_path(project_root: &Path, path: &Path) -> String {
-    path.strip_prefix(project_root)
-        .unwrap_or(path)
+    let normalized_root = fs::canonicalize(project_root).unwrap_or_else(|_| project_root.to_path_buf());
+    let normalized_path = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    normalized_path
+        .strip_prefix(&normalized_root)
+        .unwrap_or(&normalized_path)
         .to_string_lossy()
         .replace('\\', "/")
 }
@@ -718,6 +721,14 @@ mod tests {
         let first = compute_deps_fingerprint(&deps, &[], &selection, None);
         let second = compute_deps_fingerprint(&deps_reordered, &[], &selection, None);
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn portable_project_path_normalizes_relative_and_absolute_roots() -> TestResult {
+        let current_dir = std::env::current_dir()?;
+
+        assert_eq!(portable_project_path(Path::new("."), &current_dir), "");
+        Ok(())
     }
 
     #[test]

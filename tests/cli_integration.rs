@@ -4377,6 +4377,29 @@ edition = "2021"
 }
 
 #[test]
+fn run_generated_lock_is_accepted_by_test_locked() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let _main_path = write_minimal_project(tmp.path(), "cli_run_then_locked_test", "")?;
+    let tests_dir = tmp.path().join("tests");
+    fs::create_dir_all(&tests_dir)?;
+    fs::write(
+        tests_dir.join("test_main.incn"),
+        r#"from std.testing import assert_eq
+
+def test_answer() -> None:
+  assert_eq(6 * 7, 42)
+"#,
+    )?;
+
+    let run_output = run_incan(tmp.path(), &["run"])?;
+    assert_success(&run_output, "incan run that generates the project lock");
+
+    let test_output = run_incan(tmp.path(), &["test", "--locked"])?;
+    assert_success(&test_output, "incan test --locked after incan run");
+    Ok(())
+}
+
+#[test]
 fn run_accepts_generic_rust_param_scenarios_share_one_generated_project() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(
