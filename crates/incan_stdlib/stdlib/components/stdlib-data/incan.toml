@@ -11,4 +11,4 @@ incan_stdlib = { path = "../../..", features = ["ordinal"] }
 
 [sdk]
 profile = "minimal"
-components = ["stdlib-system", "stdlib-codecs"]
+components = ["stdlib-system"]

@@ -2,6 +2,9 @@
 
 import collections
 import graph
+import hash._core
+import hash._streaming
+import hash.prelude
 import json
 import math
 import uuid

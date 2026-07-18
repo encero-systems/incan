@@ -408,8 +408,8 @@ The v0.5 standard-library source graph is grouped into eight component artifacts
 | --- | --- | --- | --- |
 | `stdlib-core` | `std.prelude`, `std.result`, `std.traits.*`, `std.derives.*`, `std.this`, `std.reflection` | — | mandatory, `minimal`, `default`, `full` |
 | `stdlib-system` | `std.environ`, `std.io`, `std.fs.*`, `std.tempfile` | `stdlib-core` | `default`, `full` |
-| `stdlib-codecs` | `std.encoding.*`, `std.checksum`, `std.hash.*`, `std.compression.*` | `stdlib-core`, `stdlib-system` | `default`, `full` |
-| `stdlib-data` | `std.collections`, `std.graph`, `std.math`, `std.datetime.*`, `std.uuid`, `std.regex.*`, `std.json`, `std.serde.*` | `stdlib-core`, `stdlib-system` | `default`, `full` |
+| `stdlib-codecs` | `std.encoding.*`, `std.checksum`, `std.compression.*` | `stdlib-core`, `stdlib-system` | `default`, `full` |
+| `stdlib-data` | `std.collections`, `std.graph`, `std.hash.*`, `std.math`, `std.datetime.*`, `std.uuid`, `std.regex.*`, `std.json`, `std.serde.*` | `stdlib-core`, `stdlib-system` | `default`, `full` |
 | `stdlib-async` | `std.async.*` | `stdlib-core` | `default`, `full` |
 | `stdlib-observability` | `std.logging`, `std.telemetry.*` | `stdlib-core`, `stdlib-data` | `default`, `full` |
 | `stdlib-web` | `std.web.*` | `stdlib-core`, `stdlib-data`, `stdlib-async` | `default`, `full` |
@@ -419,9 +419,7 @@ The v0.5 standard-library source graph is grouped into eight component artifacts
 
 The v0.5 `default` and `full` profiles intentionally contain the same stable standard-library modules to preserve source compatibility while the component system lands. They are distinct profile identities because later releases may keep the compatibility-oriented default smaller than the complete stable official set. The lock records expanded membership, so that future policy change is explicit rather than silently inherited.
 
-The initial dependency edges describe the intended public provider graph rather than freezing every current source-level coupling. In particular, `std.collections` currently reaches through the broad hashing surface for one ordinal-hash operation, while UUID reaches into public hashing for implementation algorithms. Those uses must become private implementation requirements or narrower provider-owned helpers before the logical split is considered honest; selecting `stdlib-data` must not enable the complete public codecs component solely because of those implementation details. The same rule prevents solving accidental edges by moving every transitive module into `stdlib-core`.
-
-The v0.5 publisher therefore records `stdlib-codecs` as a private build dependency of `stdlib-data`. It makes the checked codecs provider artifact available while the data provider is compiled and preserves that relocatable artifact edge as a private implementation dependency. It does not add `stdlib-codecs` to the public component dependency closure, so disabling the codecs component still makes `std.hash.*`, `std.encoding.*`, `std.checksum`, and `std.compression.*` unavailable to consumer source. This is a transitional physical dependency, not permission for data to duplicate hashing implementations or call the backend crates directly.
+The initial dependency edges describe the intended public provider graph rather than freezing every historical source grouping. `std.collections` uses ordinal hashing and UUID versions 3 and 5 use the public hashing algorithms, so `std.hash.*` belongs to `stdlib-data` with those consumers. This keeps the Incan-authored reuse honest without linking the compression-heavy codecs artifact into every data consumer. Disabling `stdlib-codecs` therefore leaves hashing available through `stdlib-data` while `std.encoding.*`, `std.checksum`, and `std.compression.*` remain unavailable.
 
 Component boundaries are allowed to change while the language and SDK compatibility contract remains explicitly pre-stable, provided the SDK release changes and locks expose the expanded graph. Public import paths, declaration identities, and compatibility promises remain the stable user surface. Once component compatibility is declared stable, moving a module between components requires ordinary compatibility and migration policy even when its `std.*` path stays unchanged, because project exclusions and installation profiles may depend on component identity.
 

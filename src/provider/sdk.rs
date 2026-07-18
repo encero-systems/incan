@@ -1150,7 +1150,7 @@ exclude-components = ["stdlib-data"]
     }
 
     #[test]
-    fn source_catalog_keeps_publisher_build_dependencies_out_of_public_component_expansion() -> TestResult {
+    fn source_catalog_assigns_hashing_to_data_without_a_private_codecs_edge() -> TestResult {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("crates/incan_stdlib/stdlib")
             .join(SDK_SOURCE_CATALOG_FILE);
@@ -1160,22 +1160,14 @@ exclude-components = ["stdlib-data"]
             .get("stdlib-data")
             .ok_or("missing stdlib-data source component")?;
 
-        assert!(data.build_dependencies.contains("stdlib-codecs"));
+        assert!(data.build_dependencies.is_empty());
         assert!(!data.dependencies.contains("stdlib-codecs"));
-        let order = catalog
-            .publication_order()
-            .into_iter()
-            .map(|component| component.id.as_str())
-            .collect::<Vec<_>>();
-        let codecs_position = order
-            .iter()
-            .position(|component| *component == "stdlib-codecs")
-            .ok_or("missing stdlib-codecs publication")?;
-        let data_position = order
-            .iter()
-            .position(|component| *component == "stdlib-data")
-            .ok_or("missing stdlib-data publication")?;
-        assert!(codecs_position < data_position);
+        assert!(data.namespace_roots.contains("hash"));
+        let codecs = catalog
+            .components
+            .get("stdlib-codecs")
+            .ok_or("missing stdlib-codecs source component")?;
+        assert!(!codecs.namespace_roots.contains("hash"));
         Ok(())
     }
 

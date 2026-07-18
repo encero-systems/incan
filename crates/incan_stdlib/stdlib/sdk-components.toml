@@ -40,13 +40,12 @@ namespace-roots = ["environ", "io", "tempfile", "fs"]
 [components.stdlib-codecs]
 project = "components/stdlib-codecs"
 dependencies = ["stdlib-core", "stdlib-system"]
-namespace-roots = ["checksum", "compression", "encoding", "hash"]
+namespace-roots = ["checksum", "compression", "encoding"]
 
 [components.stdlib-data]
 project = "components/stdlib-data"
 dependencies = ["stdlib-core", "stdlib-system"]
-build-dependencies = ["stdlib-codecs"]
-namespace-roots = ["collections", "graph", "json", "math", "uuid", "datetime", "regex", "serde"]
+namespace-roots = ["collections", "graph", "hash", "json", "math", "uuid", "datetime", "regex", "serde"]
 
 [components.stdlib-async]
 project = "components/stdlib-async"

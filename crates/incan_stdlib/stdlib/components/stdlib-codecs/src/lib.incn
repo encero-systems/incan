@@ -1,4 +1,4 @@
-"""Compiled provider entrypoint for Incan encoding, checksum, hashing, and compression support."""
+"""Compiled provider entrypoint for Incan encoding, checksum, and compression support."""
 
 import checksum
 import compression._auto
@@ -20,6 +20,3 @@ import encoding.base85
 import encoding.bech32
 import encoding.hex
 import encoding.prelude
-import hash._core
-import hash._streaming
-import hash.prelude

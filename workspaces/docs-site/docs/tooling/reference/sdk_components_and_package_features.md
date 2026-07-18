@@ -30,8 +30,8 @@ The v0.5 SDK defines these standard-library components:
 | --- | --- | --- |
 | `stdlib-core` | Prelude, result, reflection, derives, traits, and compiler-required standard contracts. | None; mandatory. |
 | `stdlib-system` | Environment, I/O, temporary files, and filesystem APIs. | `stdlib-core` |
-| `stdlib-codecs` | Checksums, compression, encoding, and hashing. | `stdlib-core`, `stdlib-system` |
-| `stdlib-data` | Collections, graph, JSON, math, UUID, datetime, regex, and serialization support. | `stdlib-core`, `stdlib-system` |
+| `stdlib-codecs` | Checksums, compression, and encoding. | `stdlib-core`, `stdlib-system` |
+| `stdlib-data` | Collections, graph, hashing, JSON, math, UUID, datetime, regex, and serialization support. | `stdlib-core`, `stdlib-system` |
 | `stdlib-async` | Async runtime-facing standard APIs. | `stdlib-core` |
 | `stdlib-observability` | Logging and telemetry data surfaces. | `stdlib-core`, `stdlib-data` |
 | `stdlib-web` | Web APIs. | `stdlib-core`, `stdlib-data`, `stdlib-async` |
@@ -41,7 +41,7 @@ The v0.5 SDK defines these standard-library components:
 
 Project selection starts with the profile, adds explicit components, expands dependencies, and then validates exclusions. The command-local `--sdk-profile` override replaces only the base profile for that invocation; explicit project additions and exclusions still apply.
 
-Publisher-only build dependencies are separate from this public closure. In v0.5, `stdlib-data` links the checked `stdlib-codecs` provider privately so Incan-authored collection and UUID implementations can reuse `std.hash` without making the codecs modules importable when that component is disabled. Provider inspection reports this physical edge as a private implementation dependency rather than a component-enablement reason.
+Hashing belongs to `stdlib-data` because collections and UUID reuse it directly. This keeps those implementations Incan-authored without making data consumers link the compression dependencies owned by `stdlib-codecs`.
 
 ## Package-feature resolution
 

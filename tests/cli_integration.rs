@@ -513,12 +513,11 @@ def test_artifact_path() -> None:
 }
 
 #[test]
-fn data_component_builds_with_private_codecs_without_enabling_public_codec_imports()
--> Result<(), Box<dyn std::error::Error>> {
+fn data_component_owns_hashing_without_linking_the_codecs_provider() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(
         tmp.path(),
-        "data_component_private_codecs",
+        "data_component_hashing",
         "\n\n[sdk]\nprofile = \"minimal\"\ncomponents = [\"stdlib-data\"]\n",
     )?;
     fs::write(
@@ -536,10 +535,10 @@ def main() -> None:
     assert_success(&build, "data-only SDK component generated-Rust build");
 
     let cargo_toml = fs::read_to_string(output_dir.join("Cargo.toml"))?;
+    assert!(cargo_toml.contains("[dependencies.incan_stdlib_data]"));
     assert!(
-        cargo_toml.contains("[dependencies.incan_stdlib_data]")
-            && !cargo_toml.contains("[dependencies.incan_stdlib_codecs]"),
-        "private publisher dependencies must not become direct consumer component selections:\n{cargo_toml}"
+        !cargo_toml.contains("[dependencies.incan_stdlib_codecs]"),
+        "the data provider must not link compression dependencies through the codecs provider:\n{cargo_toml}"
     );
     assert!(
         !output_dir.join("src/__incan_std").exists(),
@@ -562,19 +561,35 @@ def main() -> None:
             hash_probe.to_str().ok_or("hash probe path was not valid UTF-8")?,
         ],
     )?;
-    assert_failure(&probe, "public std.hash import with codecs disabled");
+    assert_success(&probe, "public std.hash import from the enabled data component");
+
+    let compression_probe = tmp.path().join("src/compression_probe.incn");
+    fs::write(
+        &compression_probe,
+        r#"from std.compression import gzip
+
+def main() -> None:
+  pass
+"#,
+    )?;
+    let compression = run_incan(
+        tmp.path(),
+        &[
+            "check",
+            compression_probe
+                .to_str()
+                .ok_or("compression probe path was not valid UTF-8")?,
+        ],
+    )?;
+    assert_failure(&compression, "public std.compression import with codecs disabled");
     let diagnostic = format!(
         "{}\n{}",
-        String::from_utf8_lossy(&probe.stdout),
-        String::from_utf8_lossy(&probe.stderr)
+        String::from_utf8_lossy(&compression.stdout),
+        String::from_utf8_lossy(&compression.stderr)
     );
     assert!(
         diagnostic.contains("stdlib-codecs") && diagnostic.contains("disabled"),
         "disabled public codec imports must identify the component selection remedy:\n{diagnostic}"
-    );
-    assert!(
-        !diagnostic.contains("hash/_streaming.incn") && !diagnostic.contains("stdlib/hash"),
-        "disabled provider source must not be materialized into the consumer diagnostic cascade:\n{diagnostic}"
     );
     Ok(())
 }
