@@ -50,10 +50,10 @@ use super::common::collect_rust_inspect_query_paths;
 use super::common::{
     CargoPolicy, INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, ProjectRequirements, build_source_map, cargo_command_flags,
     collect_modules_with_feature_selection, collect_project_requirements, collect_rust_dependency_uses,
-    enforce_project_toolchain_constraint, extend_requirements_with_provider_plan, format_dependency_error,
-    imported_module_deps_for_with_index, merge_project_requirement_dependencies, module_key_index,
-    prepare_or_discover_sdk_inventory, provider_used_module_paths, resolve_project_root, resolve_source_root,
-    typecheck_modules_with_import_graph, validate_output_dir,
+    discover_effective_project_manifest, enforce_project_toolchain_constraint, extend_requirements_with_provider_plan,
+    format_dependency_error, imported_module_deps_for_with_index, merge_project_requirement_dependencies,
+    module_key_index, prepare_or_discover_sdk_inventory, provider_used_module_paths, resolve_project_root,
+    resolve_source_root, typecheck_modules_with_import_graph, validate_output_dir,
 };
 use super::lock::{
     GeneratedLibraryDependencyPreheatRequest, LockResolutionRequest, resolve_lock_payload,
@@ -780,7 +780,7 @@ fn prepare_project_with_options(
     };
     let path = normalized_file_path.as_path();
     let inferred_project_root = resolve_project_root(path);
-    let manifest = ProjectManifest::discover(&inferred_project_root).map_err(|e| CliError::failure(e.to_string()))?;
+    let manifest = discover_effective_project_manifest(&inferred_project_root)?;
     if let Some(manifest) = manifest.as_ref() {
         enforce_project_toolchain_constraint(manifest)?;
     }
@@ -1102,6 +1102,18 @@ pub fn build_file(
     options: BuildCommandOptions,
     report_options: BuildReportOptions,
 ) -> CliResult<ExitCode> {
+    let report = build_file_report(file_path, output_dir, options, &report_options)?;
+    emit_build_report(&report, &report_options)?;
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Build one executable project and retain its completed report for workspace-level aggregation.
+pub(crate) fn build_file_report(
+    file_path: &str,
+    output_dir: Option<&String>,
+    options: BuildCommandOptions,
+    report_options: &BuildReportOptions,
+) -> CliResult<crate::cli::commands::build_report::BuildReport> {
     let total_start = Instant::now();
     let prepare_start = Instant::now();
     let generated_cargo_target_dir = options.effective_generated_cargo_target_dir();
@@ -1122,19 +1134,19 @@ pub fn build_file(
     let prepare_ms = elapsed_ms(prepare_start);
 
     print_build_progress(
-        &report_options,
+        report_options,
         format!("Generated Rust project in: {}", prepared.out_dir),
     );
-    print_build_progress(&report_options, "Building...");
+    print_build_progress(report_options, "Building...");
 
     let cargo_start = Instant::now();
     match prepared.generator.build() {
         Ok(result) => {
             let cargo_build_ms = elapsed_ms(cargo_start);
             if result.success {
-                print_build_progress(&report_options, "✓ Build successful!");
+                print_build_progress(report_options, "✓ Build successful!");
                 print_build_progress(
-                    &report_options,
+                    report_options,
                     format!("Binary: {}", prepared.generator.binary_path().display()),
                 );
                 let mut report_draft = prepared.report.clone();
@@ -1146,8 +1158,7 @@ pub fn build_file(
                     ("cargo_build".to_string(), cargo_build_ms),
                     ("total".to_string(), elapsed_ms(total_start)),
                 ]));
-                emit_build_report(&report, &report_options)?;
-                Ok(ExitCode::SUCCESS)
+                Ok(report)
             } else {
                 if let Some(wrapped) =
                     format_rust_extern_wrapped_diagnostics(&result.stderr, &prepared.rust_extern_contexts)
@@ -1182,7 +1193,7 @@ fn prepare_library_project(
     let mut timings_ms = BTreeMap::new();
     let source_load_start = Instant::now();
     let project_root = resolve_library_project_root(file_path)?;
-    let Some(manifest) = ProjectManifest::discover(&project_root).map_err(|e| CliError::failure(e.to_string()))? else {
+    let Some(manifest) = discover_effective_project_manifest(&project_root)? else {
         return Err(CliError::failure(
             "No incan.toml found for `incan build --lib` (run `incan init` first)",
         ));
@@ -2331,6 +2342,18 @@ pub fn build_library(
     options: BuildCommandOptions,
     report_options: BuildReportOptions,
 ) -> CliResult<ExitCode> {
+    let report = build_library_report(file_path, output_dir, options, &report_options)?;
+    emit_build_report(&report, &report_options)?;
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Build one library project and retain its completed report for workspace-level aggregation.
+pub(crate) fn build_library_report(
+    file_path: Option<&str>,
+    output_dir: Option<&String>,
+    options: BuildCommandOptions,
+    report_options: &BuildReportOptions,
+) -> CliResult<crate::cli::commands::build_report::BuildReport> {
     let total_start = Instant::now();
     let generated_cargo_target_dir = options.effective_generated_cargo_target_dir();
     let mut prepared = prepare_library_project(
@@ -2348,16 +2371,15 @@ pub fn build_library(
 
     if artifact_only {
         write_library_manifest_artifacts(&mut prepared)?;
-        print_build_progress(&report_options, "✓ Library dependency artifact prepared!");
+        print_build_progress(report_options, "✓ Library dependency artifact prepared!");
         print_build_progress(
-            &report_options,
+            report_options,
             format!("Generated manifest: {}", prepared.manifest_path.display()),
         );
         let mut timings_ms = prepared.timings_ms.clone();
         timings_ms.insert("total".to_string(), elapsed_ms(total_start));
         let report = prepared.report.finish(timings_ms);
-        emit_build_report(&report, &report_options)?;
-        return Ok(ExitCode::SUCCESS);
+        return Ok(report);
     }
 
     let preheat_start = Instant::now();
@@ -2406,22 +2428,20 @@ pub fn build_library(
 
     write_library_manifest_artifacts(&mut prepared)?;
 
-    print_build_progress(&report_options, "✓ Library build successful!");
+    print_build_progress(report_options, "✓ Library build successful!");
     print_build_progress(
-        &report_options,
+        report_options,
         format!("Generated Rust crate in: {}", prepared.out_dir.display()),
     );
     print_build_progress(
-        &report_options,
+        report_options,
         format!("Generated manifest: {}", prepared.manifest_path.display()),
     );
 
     prepared.timings_ms.insert("cargo_build".to_string(), cargo_build_ms);
     prepared.timings_ms.insert("total".to_string(), elapsed_ms(total_start));
     let report = prepared.report.finish(prepared.timings_ms);
-    emit_build_report(&report, &report_options)?;
-
-    Ok(ExitCode::SUCCESS)
+    Ok(report)
 }
 
 /// Generate and inspect the current Rust backend output without running Cargo.

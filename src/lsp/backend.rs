@@ -17,7 +17,9 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
-use crate::cli::commands::common::{CompilationSession, collect_project_requirements};
+use crate::cli::commands::common::{
+    CompilationSession, collect_project_requirements, discover_effective_project_manifest,
+};
 #[cfg(feature = "rust_inspect")]
 use crate::cli::commands::common::{
     build_source_map, collect_inline_rust_imports, collect_rust_inspect_query_paths, ensure_rust_inspect_workspace,
@@ -5288,8 +5290,8 @@ fn collect_lsp_contract_model_bundles(path: &Path) -> std::result::Result<Vec<Ca
     } else {
         absolute.parent().unwrap_or(Path::new("."))
     };
-    let manifest = ProjectManifest::discover(start_dir)
-        .map_err(|error| error.to_string())?
+    let manifest = discover_effective_project_manifest(start_dir)
+        .map_err(|error| error.message)?
         .ok_or_else(|| {
             format!(
                 "model emit requires a project manifest, bundle JSON, or `.incnlib` artifact: {}",

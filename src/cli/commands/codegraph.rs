@@ -41,8 +41,8 @@ use crate::provider::{
 use crate::version::INCAN_VERSION;
 
 use super::common::{
-    CliDiagnosticFailure, CompilationSession, collect_modules_detailed_with_selections, read_source,
-    resolve_project_root, typecheck_modules_with_import_graph_info,
+    CliDiagnosticFailure, CompilationSession, collect_modules_detailed_with_selections,
+    discover_effective_project_manifest, read_source, resolve_project_root, typecheck_modules_with_import_graph_info,
 };
 
 /// Output format for `incan inspect codegraph`.
@@ -352,7 +352,7 @@ fn should_skip_directory(path: &Path) -> bool {
 /// metadata exports.
 fn package_identity(path: &Path) -> CliResult<Option<CodegraphPackage>> {
     let project_root = resolve_project_root(path);
-    let manifest = ProjectManifest::discover(&project_root)
+    let manifest = discover_effective_project_manifest(&project_root)
         .map_err(|error| CliError::failure(format!("failed to load project manifest: {error}")))?;
     Ok(manifest.map(|manifest| CodegraphPackage {
         name: manifest.project.as_ref().and_then(|project| project.name.clone()),

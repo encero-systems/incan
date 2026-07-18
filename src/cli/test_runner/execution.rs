@@ -2934,20 +2934,6 @@ pub(super) fn run_file_tests_batch(
     }
     let source = source_parts.join("\n");
 
-    let manifest = match ProjectManifest::discover(first.file_path.parent().unwrap_or_else(|| Path::new("."))) {
-        Ok(manifest) => manifest,
-        Err(err) => {
-            return tests
-                .iter()
-                .map(|t| {
-                    (
-                        t.clone(),
-                        TestResult::Failed(start.elapsed(), format!("Manifest error: {}", err)),
-                    )
-                })
-                .collect();
-        }
-    };
     let compilation_session = match common::CompilationSession::discover_with_selections(
         &first.file_path,
         package_features,
@@ -2961,6 +2947,7 @@ pub(super) fn run_file_tests_batch(
                 .collect();
         }
     };
+    let manifest = compilation_session.manifest.clone();
     let testing_marker_semantics = match compilation_session.testing_marker_semantics() {
         Ok(semantics) => semantics,
         Err(error) => {

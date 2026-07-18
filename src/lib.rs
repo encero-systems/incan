@@ -34,6 +34,7 @@ pub mod rust_inspect;
 pub(crate) mod semantics_registry;
 pub(crate) mod toolchain_layout;
 pub mod version;
+pub mod workspace;
 
 pub use frontend::ast;
 pub use frontend::diagnostics;
