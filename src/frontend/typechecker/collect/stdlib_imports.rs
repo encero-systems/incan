@@ -12,6 +12,7 @@ use crate::frontend::api_metadata::{
 };
 use crate::frontend::ast::*;
 use crate::frontend::diagnostics::errors;
+use crate::frontend::library_exports::{CheckedParamDefault, CheckedParamDefaultArg, CheckedParamDefaultCallSignature};
 use crate::frontend::library_manifest_index::{LibraryManifestFailureKind, LibraryManifestIndexEntry};
 use crate::frontend::module::{ExportedSymbol, canonicalize_source_module_segments};
 use crate::frontend::symbols::*;
@@ -2126,7 +2127,7 @@ impl TypeChecker {
             traits: export.traits.clone(),
             trait_adoptions: Self::trait_adoptions_from_manifest(&export.traits, &export.trait_adoptions),
             derives: export.derives.clone(),
-            fields: self.fields_from_manifest(&export.fields),
+            fields: self.fields_from_manifest(&export.name, &export.fields, false),
             field_order: export.fields.iter().map(|field| field.name.clone()).collect(),
             properties: std::collections::HashMap::new(),
             method_overloads,
@@ -2145,13 +2146,144 @@ impl TypeChecker {
             traits: export.traits.clone(),
             trait_adoptions: Self::trait_adoptions_from_manifest(&export.traits, &export.trait_adoptions),
             derives: export.derives.clone(),
-            fields: self.fields_from_manifest(&export.fields),
+            fields: self.fields_from_manifest(
+                &export.name,
+                &export.fields,
+                export.fields.iter().any(|field| {
+                    matches!(
+                        field.visibility,
+                        crate::library_manifest::FieldVisibilityExport::Private
+                    )
+                }),
+            ),
+            field_defaults: Box::new(
+                export
+                    .fields
+                    .iter()
+                    .filter_map(|field| {
+                        field.default.as_ref().and_then(|default| {
+                            Self::manifest_param_default_expr(default, Span::default())
+                                .map(|expr| (field.name.clone(), expr))
+                        })
+                    })
+                    .collect(),
+            ),
+            field_default_metadata: export
+                .fields
+                .iter()
+                .filter_map(|field| {
+                    field.default.as_ref().map_or_else(
+                        || {
+                            field
+                                .has_default
+                                .then(|| (field.name.clone(), CheckedParamDefault::Unsupported))
+                        },
+                        |default| Some((field.name.clone(), self.checked_param_default_from_manifest(default))),
+                    )
+                })
+                .collect(),
             field_order: export.fields.iter().map(|field| field.name.clone()).collect(),
             properties: std::collections::HashMap::new(),
             method_overloads,
             methods,
             method_aliases: Self::method_aliases_from_manifest(&export.methods),
         }
+    }
+
+    /// Preserve a compiled-library field default in the checked export vocabulary without reparsing or rebasing it.
+    fn checked_param_default_from_manifest(&self, default: &ParamDefaultExport) -> CheckedParamDefault {
+        match default {
+            ParamDefaultExport::Int(value) => CheckedParamDefault::Int(*value),
+            ParamDefaultExport::Float(value) => value
+                .parse::<f64>()
+                .map(CheckedParamDefault::Float)
+                .unwrap_or(CheckedParamDefault::Unsupported),
+            ParamDefaultExport::Bool(value) => CheckedParamDefault::Bool(*value),
+            ParamDefaultExport::String(value) => CheckedParamDefault::String(value.clone()),
+            ParamDefaultExport::Bytes(value) => CheckedParamDefault::Bytes(value.clone()),
+            ParamDefaultExport::None => CheckedParamDefault::None,
+            ParamDefaultExport::List(values) => CheckedParamDefault::List(
+                values
+                    .iter()
+                    .map(|value| self.checked_param_default_from_manifest(value))
+                    .collect(),
+            ),
+            ParamDefaultExport::Dict(entries) => CheckedParamDefault::Dict(
+                entries
+                    .iter()
+                    .map(|entry| {
+                        (
+                            self.checked_param_default_from_manifest(&entry.key),
+                            self.checked_param_default_from_manifest(&entry.value),
+                        )
+                    })
+                    .collect(),
+            ),
+            ParamDefaultExport::ConstRef(path) => CheckedParamDefault::ConstRef(path.clone()),
+            ParamDefaultExport::Call { path, args, signature } => CheckedParamDefault::Call {
+                path: path.clone(),
+                args: args
+                    .iter()
+                    .map(|arg| CheckedParamDefaultArg {
+                        name: arg.name.clone(),
+                        value: self.checked_param_default_from_manifest(&arg.value),
+                    })
+                    .collect(),
+                signature: signature.as_ref().map(|signature| CheckedParamDefaultCallSignature {
+                    params: self.params_from_manifest(&signature.params),
+                    return_type: resolved_type_from_manifest_type_ref(&signature.return_type),
+                }),
+            },
+            ParamDefaultExport::Unsupported => CheckedParamDefault::Unsupported,
+        }
+    }
+
+    /// Rebuild a manifest-safe field default as synthetic source metadata for inherited constructor exports.
+    fn manifest_param_default_expr(default: &ParamDefaultExport, span: Span) -> Option<Spanned<Expr>> {
+        let expr = match default {
+            ParamDefaultExport::Int(value) => Expr::Literal(Literal::Int(IntLiteral::synthetic(*value))),
+            ParamDefaultExport::Float(value) => Expr::Literal(Literal::Float(FloatLiteral {
+                value: value.parse().ok()?,
+                repr: value.clone(),
+            })),
+            ParamDefaultExport::Bool(value) => Expr::Literal(Literal::Bool(*value)),
+            ParamDefaultExport::String(value) => Expr::Literal(Literal::String(value.clone())),
+            ParamDefaultExport::Bytes(value) => Expr::Literal(Literal::Bytes(value.clone())),
+            ParamDefaultExport::None => Expr::Literal(Literal::None),
+            ParamDefaultExport::List(values) => Expr::List(
+                values
+                    .iter()
+                    .map(|value| Self::manifest_param_default_expr(value, span).map(ListEntry::Element))
+                    .collect::<Option<Vec<_>>>()?,
+            ),
+            ParamDefaultExport::Dict(entries) => Expr::Dict(
+                entries
+                    .iter()
+                    .map(|entry| {
+                        Some(DictEntry::Pair(
+                            Self::manifest_param_default_expr(&entry.key, span)?,
+                            Self::manifest_param_default_expr(&entry.value, span)?,
+                        ))
+                    })
+                    .collect::<Option<Vec<_>>>()?,
+            ),
+            ParamDefaultExport::ConstRef(path) => Self::manifest_const_ref_expr(path, span)?.node,
+            ParamDefaultExport::Call { path, args, .. } => Expr::Call(
+                Box::new(Self::manifest_const_ref_expr(path, span)?),
+                Vec::new(),
+                args.iter()
+                    .map(|arg| {
+                        let value = Self::manifest_param_default_expr(&arg.value, span)?;
+                        Some(match &arg.name {
+                            Some(name) => CallArg::Named(name.clone(), value),
+                            None => CallArg::Positional(value),
+                        })
+                    })
+                    .collect::<Option<Vec<_>>>()?,
+            ),
+            ParamDefaultExport::Unsupported => return None,
+        };
+        Some(Spanned::new(expr, span))
     }
 
     /// Convert one manifest trait export into semantic trait metadata.
@@ -2453,7 +2585,12 @@ impl TypeChecker {
     }
 
     /// Convert exported manifest fields into semantic field metadata for imported-library typechecking.
-    fn fields_from_manifest(&self, fields: &[FieldExport]) -> std::collections::HashMap<String, FieldInfo> {
+    fn fields_from_manifest(
+        &self,
+        owner: &str,
+        fields: &[FieldExport],
+        uses_provider_constructor_bridge: bool,
+    ) -> std::collections::HashMap<String, FieldInfo> {
         fields
             .iter()
             .map(|field| {
@@ -2461,9 +2598,23 @@ impl TypeChecker {
                     field.name.clone(),
                     FieldInfo {
                         ty: resolved_type_from_manifest_type_ref(&field.ty),
-                        visibility: crate::frontend::ast::Visibility::Public,
-                        owner: None,
-                        has_default: field.has_default,
+                        visibility: match field.visibility {
+                            crate::library_manifest::FieldVisibilityExport::Private => {
+                                crate::frontend::ast::Visibility::Private
+                            }
+                            crate::library_manifest::FieldVisibilityExport::Public => {
+                                crate::frontend::ast::Visibility::Public
+                            }
+                        },
+                        owner: Some(owner.to_string()),
+                        has_default: if uses_provider_constructor_bridge {
+                            field.has_default
+                        } else {
+                            field
+                                .default
+                                .as_ref()
+                                .is_some_and(ParamDefaultExport::is_materializable)
+                        },
                         alias: field.alias.clone(),
                         description: field.description.clone(),
                     },

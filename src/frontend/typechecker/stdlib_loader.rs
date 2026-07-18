@@ -1024,6 +1024,20 @@ fn extract_type_signatures(program: &ast::Program) -> Vec<(String, TypeInfo)> {
                         trait_adoptions: trait_adoption_infos_from_bounds(&class.traits, &tp_names, &stdlib_imports),
                         derives: Vec::new(),
                         fields: extract_field_signatures(&class.name, &class.fields, &tp_names, &rust_imports),
+                        field_defaults: Box::new(
+                            class
+                                .fields
+                                .iter()
+                                .filter_map(|field| {
+                                    field
+                                        .node
+                                        .default
+                                        .as_ref()
+                                        .map(|default| (field.node.name.clone(), default.clone()))
+                                })
+                                .collect(),
+                        ),
+                        field_default_metadata: HashMap::new(),
                         field_order: class.fields.iter().map(|field| field.node.name.clone()).collect(),
                         properties: std::collections::HashMap::new(),
                         method_overloads,

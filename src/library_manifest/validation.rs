@@ -13,21 +13,61 @@ use semver::Version;
 use super::wire::{RawLibraryExports, RawLibraryManifest};
 use super::{
     COMPILED_PROVIDER_METADATA_SCHEMA_VERSION, CompiledProviderMetadata, EnumExport, EnumValueExport,
-    EnumValueTypeExport, LIBRARY_MANIFEST_FORMAT, LibraryManifestError, ParamExport, ParamKindExport, PartialExport,
-    ProviderCargoDependencySource, RUST_ABI_SCHEMA_VERSION, VocabProviderManifest,
+    EnumValueTypeExport, FieldVisibilityExport, LIBRARY_MANIFEST_FORMAT, LibraryManifestError, ParamExport,
+    ParamKindExport, PartialExport, ProviderCargoDependencySource, RUST_ABI_SCHEMA_VERSION, VocabProviderManifest,
 };
-use crate::frontend::api_metadata::CHECKED_API_METADATA_SCHEMA_VERSION;
+use crate::frontend::api_metadata::{ApiDeclaration, CHECKED_API_METADATA_SCHEMA_VERSION};
 use crate::frontend::contract_metadata::CONTRACT_METADATA_SCHEMA_VERSION;
 
 /// Validate one raw manifest payload before it is written or decoded into the semantic model.
 pub(super) fn validate_raw_manifest(raw: &RawLibraryManifest) -> Result<(), LibraryManifestError> {
     validate_manifest_version(raw)?;
+    validate_field_visibilities(raw)?;
     validate_callable_param_exports(&raw.exports)?;
     validate_value_enum_exports(&raw.exports)?;
     validate_contract_metadata(raw)?;
     validate_rust_abi(raw)?;
     validate_vocab_payload(raw)?;
     validate_soft_keyword_activations(raw)?;
+    Ok(())
+}
+
+/// Reject field-visibility states that the current source language cannot author or enforce.
+fn validate_field_visibilities(raw: &RawLibraryManifest) -> Result<(), LibraryManifestError> {
+    for model in &raw.exports.models {
+        reject_private_fields(&format!("model `{}`", model.name), &model.fields)?;
+    }
+    if let Some(api) = &raw.contract_metadata.api {
+        for module in &api.modules {
+            for declaration in &module.declarations {
+                match declaration {
+                    ApiDeclaration::Model(model) => {
+                        reject_private_fields(&format!("API model `{}`", model.name), &model.fields)?;
+                    }
+                    ApiDeclaration::Trait(trait_decl) => {
+                        reject_private_fields(
+                            &format!("API trait `{}` required", trait_decl.name),
+                            &trait_decl.requires,
+                        )?;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Reject private fields on one manifest surface that currently supports public fields only.
+fn reject_private_fields(owner: &str, fields: &[super::FieldExport]) -> Result<(), LibraryManifestError> {
+    for field in fields {
+        if matches!(field.visibility, FieldVisibilityExport::Private) {
+            return Err(LibraryManifestError::Invalid(format!(
+                "{owner} field `{}` cannot be private in a library manifest",
+                field.name
+            )));
+        }
+    }
     Ok(())
 }
 

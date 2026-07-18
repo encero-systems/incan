@@ -584,6 +584,19 @@ pub struct ClassInfo {
     pub trait_adoptions: Vec<TypeBoundInfo>,
     pub derives: Vec<String>,
     pub fields: HashMap<String, FieldInfo>,
+    /// Constructor defaults keyed by field name, including inherited fields.
+    ///
+    /// Keeping these with the ordered class metadata lets compiled-library exports preserve the same constructor ABI
+    /// as source lowering instead of trying to recover inherited defaults from the child's own AST fields.
+    /// Boxed because default expressions are AST-heavy metadata and should not inflate every `SymbolKind` variant.
+    pub field_defaults: Box<HashMap<String, crate::frontend::ast::Spanned<crate::frontend::ast::Expr>>>,
+    /// Canonical defaults inherited from compiled-library parents.
+    ///
+    /// Synthetic AST is still retained for ordinary typechecking, but it cannot preserve a manifest call's checked
+    /// signature or distinguish an already-canonical provider path from a child module's local path. This sidecar
+    /// keeps the original checked metadata intact when a local child is exported again, including an `Unsupported`
+    /// sentinel that preserves provider-owned default optionality when the expression cannot cross the manifest.
+    pub field_default_metadata: HashMap<String, crate::frontend::library_exports::CheckedParamDefault>,
     pub field_order: Vec<String>,
     pub properties: HashMap<String, PropertyInfo>,
     pub methods: HashMap<String, MethodInfo>,

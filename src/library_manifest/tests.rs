@@ -1,5 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::frontend::api_metadata::{
+    ApiDeclaration, ApiModel, ApiTrait, CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadata,
+    CheckedApiMetadataPackage, SourceAnchor, SourceSpan,
+};
+
 use super::*;
 
 #[test]
@@ -57,6 +62,230 @@ fn manifest_io_round_trip_preserves_recursive_types_and_bounds() -> Result<(), B
     let loaded = LibraryManifest::read_from_path(&path)?;
 
     assert_eq!(loaded, manifest);
+    Ok(())
+}
+
+#[test]
+fn manifest_io_preserves_private_class_field_visibility_issue883() -> Result<(), Box<dyn std::error::Error>> {
+    let checked_class = crate::frontend::library_exports::CheckedClassExport {
+        name: "Vault".to_string(),
+        type_params: Vec::new(),
+        extends: None,
+        traits: Vec::new(),
+        trait_adoptions: Vec::new(),
+        derives: Vec::new(),
+        fields: vec![
+            crate::frontend::library_exports::CheckedField {
+                name: "secret".to_string(),
+                ty: crate::frontend::symbols::ResolvedType::Str,
+                visibility: crate::frontend::ast::Visibility::Private,
+                has_default: false,
+                default: None,
+                alias: None,
+                description: None,
+            },
+            crate::frontend::library_exports::CheckedField {
+                name: "label".to_string(),
+                ty: crate::frontend::symbols::ResolvedType::Str,
+                visibility: crate::frontend::ast::Visibility::Public,
+                has_default: false,
+                default: None,
+                alias: None,
+                description: None,
+            },
+        ],
+        methods: Vec::new(),
+    };
+    let manifest = LibraryManifest::from_checked_exports(
+        "sealed_class_lib",
+        "0.1.0",
+        &[crate::frontend::library_exports::CheckedNamedExport {
+            name: "Vault".to_string(),
+            identity: crate::frontend::library_exports::CheckedExportIdentity::direct(vec!["Vault".to_string()]),
+            kind: crate::frontend::library_exports::CheckedExportKind::Class(checked_class),
+        }],
+    );
+
+    let tmp = tempfile::tempdir()?;
+    let path = tmp.path().join("sealed_class_lib.incnlib");
+    manifest.write_to_path(&path)?;
+    let content = std::fs::read_to_string(&path)?;
+    let loaded = LibraryManifest::read_from_path(&path)?;
+
+    assert!(
+        content.contains(r#""visibility": "private""#),
+        "expected private visibility in manifest:\n{content}"
+    );
+    assert!(
+        !content.contains(r#""visibility": "public""#),
+        "public visibility should retain the compact legacy representation:\n{content}"
+    );
+    assert_eq!(loaded, manifest);
+    assert_eq!(
+        loaded.exports.classes[0].fields[0].visibility,
+        FieldVisibilityExport::Private
+    );
+    assert_eq!(
+        loaded.exports.classes[0].fields[1].visibility,
+        FieldVisibilityExport::Public
+    );
+    Ok(())
+}
+
+#[test]
+fn legacy_manifest_fields_without_visibility_remain_public_issue883() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("legacy_class_lib", "0.1.0");
+    manifest.exports.classes.push(ClassExport {
+        name: "Legacy".to_string(),
+        type_params: Vec::new(),
+        extends: None,
+        traits: Vec::new(),
+        trait_adoptions: Vec::new(),
+        derives: Vec::new(),
+        fields: vec![FieldExport {
+            name: "value".to_string(),
+            ty: TypeRef::Named {
+                name: "str".to_string(),
+            },
+            visibility: FieldVisibilityExport::Public,
+            has_default: false,
+            default: None,
+            alias: None,
+            description: None,
+        }],
+        methods: Vec::new(),
+    });
+
+    let tmp = tempfile::tempdir()?;
+    let path = tmp.path().join("legacy_class_lib.incnlib");
+    manifest.write_to_path(&path)?;
+    let content = std::fs::read_to_string(&path)?;
+    assert!(
+        !content.contains("visibility"),
+        "legacy-compatible public field should omit visibility"
+    );
+
+    let loaded = LibraryManifest::from_json_str(&content)?;
+    assert_eq!(
+        loaded.exports.classes[0].fields[0].visibility,
+        FieldVisibilityExport::Public
+    );
+    Ok(())
+}
+
+#[test]
+fn manifest_rejects_unsupported_private_model_field_visibility_issue883() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("private_model_lib", "0.1.0");
+    manifest.exports.models.push(ModelExport {
+        name: "Record".to_string(),
+        type_params: Vec::new(),
+        traits: Vec::new(),
+        trait_adoptions: Vec::new(),
+        derives: Vec::new(),
+        fields: vec![FieldExport {
+            name: "secret".to_string(),
+            ty: TypeRef::Named {
+                name: "str".to_string(),
+            },
+            visibility: FieldVisibilityExport::Private,
+            has_default: false,
+            default: None,
+            alias: None,
+            description: None,
+        }],
+        methods: Vec::new(),
+    });
+
+    let tmp = tempfile::tempdir()?;
+    let error = manifest.write_to_path(&tmp.path().join("private_model_lib.incnlib"));
+    assert!(
+        matches!(error, Err(LibraryManifestError::Invalid(ref message)) if message.contains("model `Record` field `secret` cannot be private")),
+        "expected unsupported private model field visibility to fail validation, got: {error:?}"
+    );
+    Ok(())
+}
+
+fn private_api_field_issue883() -> FieldExport {
+    FieldExport {
+        name: "secret".to_string(),
+        ty: TypeRef::Named {
+            name: "str".to_string(),
+        },
+        visibility: FieldVisibilityExport::Private,
+        has_default: false,
+        default: None,
+        alias: None,
+        description: None,
+    }
+}
+
+fn api_anchor_issue883(name: &str) -> SourceAnchor {
+    SourceAnchor {
+        id: format!("private_api.{name}"),
+        span: SourceSpan { start: 0, end: 1 },
+    }
+}
+
+fn manifest_with_api_declaration_issue883(declaration: ApiDeclaration) -> LibraryManifest {
+    let mut manifest = LibraryManifest::new("private_api_lib", "0.1.0");
+    manifest.contract_metadata.api = Some(CheckedApiMetadataPackage {
+        schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+        package: None,
+        modules: vec![CheckedApiMetadata {
+            schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+            module_path: vec!["private_api".to_string()],
+            declarations: vec![declaration],
+        }],
+    });
+    manifest
+}
+
+#[test]
+fn manifest_rejects_private_model_field_in_embedded_api_metadata_issue883() -> Result<(), Box<dyn std::error::Error>> {
+    let manifest = manifest_with_api_declaration_issue883(ApiDeclaration::Model(ApiModel {
+        name: "Record".to_string(),
+        anchor: api_anchor_issue883("Record"),
+        docstring: None,
+        docstring_sections: None,
+        decorators: Vec::new(),
+        type_params: Vec::new(),
+        traits: Vec::new(),
+        trait_adoptions: Vec::new(),
+        derives: Vec::new(),
+        fields: vec![private_api_field_issue883()],
+        methods: Vec::new(),
+    }));
+
+    let tmp = tempfile::tempdir()?;
+    let error = manifest.write_to_path(&tmp.path().join("private_api_model.incnlib"));
+    assert!(
+        matches!(error, Err(LibraryManifestError::Invalid(ref message)) if message.contains("API model `Record` field `secret` cannot be private")),
+        "expected embedded private API model field to fail validation, got: {error:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn manifest_rejects_private_trait_requirement_in_embedded_api_metadata_issue883()
+-> Result<(), Box<dyn std::error::Error>> {
+    let manifest = manifest_with_api_declaration_issue883(ApiDeclaration::Trait(ApiTrait {
+        name: "RequiresSecret".to_string(),
+        anchor: api_anchor_issue883("RequiresSecret"),
+        docstring: None,
+        docstring_sections: None,
+        decorators: Vec::new(),
+        type_params: Vec::new(),
+        supertraits: Vec::new(),
+        requires: vec![private_api_field_issue883()],
+        methods: Vec::new(),
+    }));
+
+    let tmp = tempfile::tempdir()?;
+    let error = manifest.write_to_path(&tmp.path().join("private_api_trait.incnlib"));
+    assert!(
+        matches!(error, Err(LibraryManifestError::Invalid(ref message)) if message.contains("API trait `RequiresSecret` required field `secret` cannot be private")),
+        "expected embedded private API trait requirement to fail validation, got: {error:?}"
+    );
     Ok(())
 }
 

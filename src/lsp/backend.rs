@@ -48,8 +48,8 @@ use crate::frontend::symbols::{FunctionInfo, ResolvedType, SymbolKind as Fronten
 use crate::frontend::typechecker::stdlib_loader::{StdlibAstCache, StdlibFunctionLspMetadata};
 use crate::frontend::{lexer, parser, typechecker};
 use crate::library_manifest::{
-    EnumValueExport, EnumValueTypeExport, FieldExport, ParamExport, ParamKindExport, ReceiverExport, TypeBoundExport,
-    TypeParamExport, TypeRef,
+    EnumValueExport, EnumValueTypeExport, FieldExport, FieldVisibilityExport, ParamExport, ParamKindExport,
+    ReceiverExport, TypeBoundExport, TypeParamExport, TypeRef,
 };
 #[cfg(feature = "rust_inspect")]
 use crate::lockfile::CargoFeatureSelection;
@@ -1338,6 +1338,35 @@ pub model Order:
     }
 
     #[test]
+    fn checked_api_previews_preserve_private_class_field_visibility_issue883() -> Result<(), String> {
+        let source = r#"
+pub class Vault:
+    secret: str
+    pub label: str
+"#;
+        let (ast, metadata) = checked_metadata_for(source)?;
+        let previews = api_metadata_previews(&ast, &metadata);
+        let secret_offset = source
+            .find("secret")
+            .ok_or_else(|| "expected private field in fixture".to_string())?;
+        let secret_preview = api_metadata_preview_at_offset(&previews, secret_offset)
+            .ok_or_else(|| "expected checked private field preview".to_string())?;
+        assert!(
+            secret_preview
+                .markdown
+                .contains("*checked API metadata: private field*"),
+            "expected private field metadata preview, got:\n{}",
+            secret_preview.markdown
+        );
+        assert!(
+            secret_preview.markdown.contains("field Vault.secret: str"),
+            "expected private field signature in preview, got:\n{}",
+            secret_preview.markdown
+        );
+        Ok(())
+    }
+
+    #[test]
     fn checked_api_previews_skip_private_declarations() -> Result<(), String> {
         let source = r#"
 model Secret:
@@ -2615,7 +2644,7 @@ fn api_static_markdown(static_decl: &ApiStatic) -> String {
     )
 }
 
-/// Format a checked public model/class field preview as hover markdown.
+/// Format a checked field preview on a public model or class as hover markdown.
 fn api_field_markdown(owner: &str, field: &FieldExport) -> String {
     let mut facts = Vec::new();
     if field.has_default {
@@ -2627,9 +2656,13 @@ fn api_field_markdown(owner: &str, field: &FieldExport) -> String {
     if let Some(description) = &field.description {
         facts.push(format!("description: {}", inline_code(description)));
     }
+    let kind = match field.visibility {
+        FieldVisibilityExport::Private => "private field",
+        FieldVisibilityExport::Public => "public field",
+    };
     checked_api_markdown(
         format!("field {}.{}: {}", owner, field.name, format_type_ref(&field.ty)),
-        "public field",
+        kind,
         facts,
     )
 }

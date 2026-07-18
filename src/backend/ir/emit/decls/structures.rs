@@ -146,24 +146,37 @@ impl<'a> IrEmitter<'a> {
                 })
                 .collect();
 
-            let constructor = if !s.fields.is_empty() && self.should_emit_struct_constructor(&s.name) {
-                let param_tokens: Vec<TokenStream> = s
-                    .fields
-                    .iter()
-                    .map(|f| {
-                        let fname = format_ident!("{}", &f.name);
-                        let fty = self.emit_type(&f.ty);
-                        quote! { #fname: #fty }
-                    })
-                    .collect();
-                let field_assigns: Vec<TokenStream> = s
-                    .fields
-                    .iter()
-                    .map(|f| {
-                        let fname = format_ident!("{}", &f.name);
-                        quote! { #fname }
-                    })
-                    .collect();
+            let constructor = if !s.fields.is_empty() && self.should_emit_struct_constructor(s) {
+                let mut param_tokens = Vec::with_capacity(s.fields.len());
+                let mut field_assigns = Vec::with_capacity(s.fields.len());
+                for field in &s.fields {
+                    let field_name = format_ident!("{}", &field.name);
+                    let field_ty = self.emit_type(&field.ty);
+                    if let Some(default) = field.default.as_ref() {
+                        let default = if matches!(field.ty, IrType::String)
+                            && let crate::backend::ir::expr::IrExprKind::BinOp {
+                                op: crate::backend::ir::expr::BinOp::Add,
+                                left,
+                                right,
+                            } = &default.kind
+                            && let Some(static_default) = self.try_emit_static_str_add(left, right)?
+                        {
+                            quote! { #static_default.to_string() }
+                        } else {
+                            self.emit_expr_for_use(
+                                default,
+                                crate::backend::ir::ownership::ValueUseSite::StructField {
+                                    target_ty: Some(&field.ty),
+                                },
+                            )?
+                        };
+                        param_tokens.push(quote! { #field_name: Option<#field_ty> });
+                        field_assigns.push(quote! { #field_name: #field_name.unwrap_or_else(|| #default) });
+                    } else {
+                        param_tokens.push(quote! { #field_name: #field_ty });
+                        field_assigns.push(quote! { #field_name });
+                    }
+                }
 
                 quote! {
                     #[allow(non_snake_case, clippy::too_many_arguments)]
