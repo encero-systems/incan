@@ -3569,18 +3569,17 @@ fn stdlib_public_item_metadata(
 }
 
 /// Render hover markdown for a known public stdlib item.
-fn stdlib_public_item_hover_markdown(item: &StdlibPublicItemMetadata) -> String {
+fn stdlib_public_item_hover_markdown(item: &StdlibPublicItemMetadata, provider_plan: Option<&ProviderPlan>) -> String {
     let module_path = item.module_segments.join(".");
-    let stub_path = item.module_segments.to_vec();
-    let stub_note = stdlib::stdlib_stub_path(&stub_path)
-        .map(|path| format!("\n\n`{path}`"))
+    let source_note = stdlib_navigation_path(&item.module_segments, provider_plan)
+        .map(|path| format!("\n\n`{}`", path.display()))
         .unwrap_or_default();
     format!(
         "```incan\nfrom {module_path} import {}\n```\n\n*{}*\n\n{}{}",
         item.name,
         stdlib_item_kind_label(item.kind),
         item.docs,
-        stub_note
+        source_note
     )
 }
 
@@ -3682,7 +3681,7 @@ fn stdlib_import_item_hover(
                 continue;
             }
             let metadata = stdlib_public_item_metadata(&module.segments, &item.name, provider_plan)?;
-            let mut markdown = stdlib_public_item_hover_markdown(&metadata);
+            let mut markdown = stdlib_public_item_hover_markdown(&metadata, provider_plan);
             if let Some(note) = provider_module_state_note(provider_plan, &module.segments) {
                 markdown.push_str(&format!("\n\n**Provider state:** {note}"));
             }
@@ -3754,12 +3753,31 @@ fn unchecked_lookup_hover(source: &str, value_types: &[ValueTypeFact], ident: &s
     ))
 }
 
-/// Return the LSP source location for a stdlib import path.
-fn stdlib_location_for_path(path: &[String]) -> Option<Location> {
+/// Return the relocatable artifact or legacy source path used for stdlib navigation and hover provenance.
+///
+/// Component-aware SDKs navigate to the exact relocatable checked manifest selected by the shared provider plan. The
+/// legacy source location remains available only when no SDK catalog exists; an installed compiler must never expose
+/// the producer checkout embedded in its compile-time `CARGO_MANIFEST_DIR`.
+fn stdlib_navigation_path(path: &[String], provider_plan: Option<&ProviderPlan>) -> Option<PathBuf> {
+    if let Some(plan) = provider_plan
+        && plan.has_sdk_catalog()
+    {
+        let provider = match plan.resolve_module(path) {
+            ProviderModuleResolution::Active(provider) | ProviderModuleResolution::Disabled(provider) => provider,
+            ProviderModuleResolution::Unavailable(_) | ProviderModuleResolution::Unknown => return None,
+        };
+        return Some(provider.artifact.as_ref()?.manifest_path.clone());
+    }
+
     let stub_rel = stdlib::stdlib_stub_path(path)?;
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let stub_abs = root.join(stub_rel);
-    let uri = Url::from_file_path(stub_abs).ok()?;
+    Some(root.join(stub_rel))
+}
+
+/// Return the LSP navigation location for a stdlib import path.
+fn stdlib_location_for_path(path: &[String], provider_plan: Option<&ProviderPlan>) -> Option<Location> {
+    let navigation_path = stdlib_navigation_path(path, provider_plan)?;
+    let uri = Url::from_file_path(navigation_path).ok()?;
     Some(Location {
         uri,
         range: Range {
@@ -5482,12 +5500,13 @@ impl LanguageServer for IncanLanguageServer {
                 let info = decorators::info_for(id);
                 let canonical = info.canonical;
                 let description = info.description;
-                // If the decorator's owning module has a stdlib stub, show the path
+                // Show the checked provider artifact for component-aware SDKs and the source stub only for legacy
+                // inventoryless sessions.
                 let module_path: Vec<String> = resolved[..resolved.len().saturating_sub(1)].to_vec();
-                let stub_note = stdlib::stdlib_stub_path(&module_path)
-                    .map(|p| format!("\n\n`{}`", p))
+                let source_note = stdlib_navigation_path(&module_path, doc.provider_plan.as_deref())
+                    .map(|path| format!("\n\n`{}`", path.display()))
                     .unwrap_or_default();
-                let markdown = format!("```incan\n@{}\n```\n\n{}{}", canonical, description, stub_note);
+                let markdown = format!("```incan\n@{}\n```\n\n{}{}", canonical, description, source_note);
                 return Ok(Some(Hover {
                     contents: HoverContents::Markup(MarkupContent {
                         kind: MarkupKind::Markdown,
@@ -5510,14 +5529,18 @@ impl LanguageServer for IncanLanguageServer {
                 }));
             }
 
-            // Stdlib import hover: show module path + stub path.
+            // Stdlib import hover: show the module path plus the selected checked artifact or legacy source stub.
             if let Some(path) = find_stdlib_import_path(ast, offset) {
                 let module_path = path.join(".");
-                let stub_path = stdlib::stdlib_stub_path(&path).unwrap_or_default();
-                let mut markdown = if stub_path.is_empty() {
-                    format!("```incan\n{}\n```\n\n*stdlib module*", module_path)
+                let navigation_path = stdlib_navigation_path(&path, doc.provider_plan.as_deref());
+                let mut markdown = if let Some(navigation_path) = navigation_path {
+                    format!(
+                        "```incan\n{}\n```\n\n*stdlib module*\n\n`{}`",
+                        module_path,
+                        navigation_path.display()
+                    )
                 } else {
-                    format!("```incan\n{}\n```\n\n*stdlib module*\n\n`{}`", module_path, stub_path)
+                    format!("```incan\n{}\n```\n\n*stdlib module*", module_path)
                 };
                 if let Some(note) = provider_module_state_note(doc.provider_plan.as_deref(), &path) {
                     markdown.push_str(&format!("\n\n**Provider state:** {note}"));
@@ -5771,15 +5794,15 @@ impl LanguageServer for IncanLanguageServer {
             return Ok(None);
         };
         if let Some(path) = find_stdlib_import_path(ast, offset)
-            && let Some(location) = stdlib_location_for_path(&path)
+            && let Some(location) = stdlib_location_for_path(&path, doc.provider_plan.as_deref())
         {
             return Ok(Some(GotoDefinitionResponse::Scalar(location)));
         }
         let aliases = collect_import_aliases(ast);
-        // Decorator go-to-definition: navigate to the owning module's stdlib stub (if any)
+        // Decorator go-to-definition follows the same provider-backed or legacy source location as module imports.
         if let Some((_id, resolved)) = find_decorator_at_position(ast, offset, &aliases) {
             let module_path: Vec<String> = resolved[..resolved.len().saturating_sub(1)].to_vec();
-            if let Some(location) = stdlib_location_for_path(&module_path) {
+            if let Some(location) = stdlib_location_for_path(&module_path, doc.provider_plan.as_deref()) {
                 return Ok(Some(GotoDefinitionResponse::Scalar(location)));
             }
         }
@@ -6478,19 +6501,24 @@ fn decorator_completions(line_prefix: &str) -> Option<Vec<CompletionItem>> {
 
 #[cfg(test)]
 mod completion_tests {
+    use std::collections::BTreeSet;
+    use std::fs;
+    use std::sync::Arc;
+
     use super::{
         ValueTypeFact, ValueTypeKind, builtin_list_member_completions, builtin_list_repeat_hover,
         declaration_active_for_lsp, inactive_declaration_note_at_offset, stdlib_import_item_completions,
-        stdlib_import_item_hover, stdlib_module_completions, unchecked_lookup_hover, value_type_kind,
+        stdlib_import_item_hover, stdlib_location_for_path, stdlib_module_completions, unchecked_lookup_hover,
+        value_type_kind,
     };
     use crate::frontend::api_metadata::{CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage};
     use crate::frontend::ast::Span;
-    use crate::frontend::library_manifest_index::LibraryManifestIndex;
+    use crate::frontend::library_manifest_index::{LibraryArtifactKind, LibraryArtifactMetadata, LibraryManifestIndex};
     use crate::frontend::symbols::SymbolKind as FrontendSymbolKind;
     use crate::frontend::{lexer, parser};
     use crate::library_manifest::LibraryManifest;
-    use crate::provider::ProviderPlan;
-    use tower_lsp::lsp_types::CompletionItemKind;
+    use crate::provider::{NamespaceAuthority, ProviderIdentity, ProviderPlan, ProviderProvenance, ProviderRecord};
+    use tower_lsp::lsp_types::{CompletionItemKind, Url};
 
     fn parse_source(source: &str) -> Result<crate::frontend::ast::Program, String> {
         let tokens = lexer::lex(source).map_err(|err| format!("lexer failed: {err:?}"))?;
@@ -6590,20 +6618,79 @@ mod completion_tests {
     }
 
     #[test]
+    fn component_aware_stdlib_navigation_targets_the_relocatable_provider_manifest()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let artifact = tempfile::tempdir()?;
+        let manifest_path = artifact.path().join("stdlib-future.incnlib");
+        fs::write(&manifest_path, "{}")?;
+        let manifest = Arc::new(LibraryManifest::new("stdlib-future", "0.5.0"));
+        let provider = ProviderRecord {
+            identity: ProviderIdentity {
+                name: "stdlib-future".to_string(),
+                version: "0.5.0".to_string(),
+                digest: format!("sha256:{}", "0".repeat(64)),
+                feature_projection: BTreeSet::new(),
+            },
+            provenance: ProviderProvenance::Sdk {
+                sdk_identity: "incan@0.5.0".to_string(),
+                component_id: "stdlib-future".to_string(),
+                inventory_path: Some(artifact.path().join("sdk-inventory.json")),
+            },
+            authority: NamespaceAuthority::SdkReserved,
+            namespace_claims: BTreeSet::from([vec!["std".to_string(), "future".to_string()]]),
+            available: true,
+            enabled: true,
+            manifest: Some(manifest),
+            artifact: Some(LibraryArtifactMetadata {
+                dependency_key: "stdlib-future".to_string(),
+                manifest_name: "stdlib-future".to_string(),
+                manifest_path: manifest_path.clone(),
+                crate_root: artifact.path().to_path_buf(),
+                cargo_toml_path: artifact.path().join("Cargo.toml"),
+                crate_lib_path: artifact.path().join("src/lib.rs"),
+                kind: LibraryArtifactKind::Materialized,
+            }),
+            implementation_facets: Vec::new(),
+        };
+        let plan = ProviderPlan::new(LibraryManifestIndex::default(), vec![provider], [])?;
+
+        let location = stdlib_location_for_path(&["std".to_string(), "future".to_string()], Some(&plan))
+            .ok_or("expected provider-backed stdlib location")?;
+
+        assert_eq!(
+            location.uri,
+            Url::from_file_path(&manifest_path).map_err(|_| "invalid manifest path")?
+        );
+        assert_eq!(location.range.start.line, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn component_aware_stdlib_navigation_never_falls_back_to_the_producer_checkout() {
+        let plan =
+            ProviderPlan::for_in_memory_sdk_modules(LibraryManifestIndex::default(), [vec!["future".to_string()]]);
+
+        assert!(
+            stdlib_location_for_path(&["std".to_string(), "future".to_string()], Some(&plan)).is_none(),
+            "a component-aware provider without a materialized artifact must not expose CARGO_MANIFEST_DIR"
+        );
+    }
+
+    #[test]
     fn stdlib_item_completions_use_checked_provider_metadata_without_source_lookup() -> Result<(), String> {
-        let ast = parse_source(
+        let provider_ast = parse_source(
             "pub def greet(name: str) -> str:\n    \"\"\"Return a provider-owned greeting.\"\"\"\n    return name\n",
         )?;
         let mut checker = crate::frontend::typechecker::TypeChecker::new();
         checker
-            .check_program(&ast)
+            .check_program(&provider_ast)
             .map_err(|errors| format!("typecheck failed: {errors:?}"))?;
         let mut manifest = LibraryManifest::new("incan-stdlib-future", "0.5.0");
         manifest.contract_metadata.api = Some(CheckedApiMetadataPackage {
             schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
             package: None,
             modules: vec![crate::frontend::api_metadata::collect_checked_api_metadata(
-                &ast,
+                &provider_ast,
                 &checker,
                 vec!["future".to_string()],
             )],
@@ -6632,6 +6719,23 @@ mod completion_tests {
         assert!(
             docs.contains("Return a provider-owned greeting."),
             "provider docstring was not preserved: {docs}"
+        );
+
+        let consumer_source = "from std.future import greet\n";
+        let consumer_ast = parse_source(consumer_source)?;
+        let start = consumer_source
+            .find("greet")
+            .ok_or_else(|| "expected greet in consumer fixture".to_string())?;
+        let (markdown, span) = stdlib_import_item_hover(&consumer_ast, consumer_source, start, Some(&plan))
+            .ok_or_else(|| "expected provider-backed greet hover".to_string())?;
+        assert_eq!(span, Span::new(start, start + "greet".len()));
+        assert!(
+            markdown.contains("Return a provider-owned greeting."),
+            "provider hover lost checked docs: {markdown}"
+        );
+        assert!(
+            !markdown.contains("crates/incan_stdlib/stdlib") && !markdown.contains(env!("CARGO_MANIFEST_DIR")),
+            "component-aware hover must not expose a producer-checkout path: {markdown}"
         );
         Ok(())
     }
