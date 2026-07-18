@@ -337,6 +337,16 @@ impl IrType {
         Some(format!("__IncanUnion{:016x}", stable_union_hash(key.as_bytes())))
     }
 
+    /// Return the fully qualified Rust pattern path for one anonymous-union variant.
+    pub fn union_variant_path(&self, index: usize) -> Option<String> {
+        let union_name = self.union_type_name()?;
+        let variant = Self::union_variant_name(index);
+        Some(match self {
+            IrType::ExternalUnion { library, .. } => format!("{library}::{union_name}::{variant}"),
+            _ => format!("{union_name}::{variant}"),
+        })
+    }
+
     /// Return the variant name for a normalized union member index.
     pub fn union_variant_name(index: usize) -> String {
         format!("V{index}")

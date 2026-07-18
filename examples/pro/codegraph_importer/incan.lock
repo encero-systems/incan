@@ -3,7 +3,7 @@
 
 [incan]
 format = 1
-incan-version = "0.5.0-dev.5"
+incan-version = "0.5.0-dev.6"
 deps-fingerprint = "sha256:8f2c70825d3378d5b1e2b7f9f88d9d2f25a83bf4ad7e909948119b2845fcad21"
 cargo-features = []
 cargo-no-default-features = false
@@ -17,7 +17,7 @@ version = 4
 
 [[package]]
 name = "codegraph_importer_experiment"
-version = "0.5.0-dev.5"
+version = "0.5.0-dev.6"
 dependencies = [
  "incan_derive",
  "incan_stdlib",
@@ -26,14 +26,14 @@ dependencies = [
 
 [[package]]
 name = "incan_core"
-version = "0.5.0-dev.5"
+version = "0.5.0-dev.6"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "incan_derive"
-version = "0.5.0-dev.5"
+version = "0.5.0-dev.6"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -42,7 +42,7 @@ dependencies = [
 
 [[package]]
 name = "incan_stdlib"
-version = "0.5.0-dev.5"
+version = "0.5.0-dev.6"
 dependencies = [
  "incan_core",
  "incan_derive",

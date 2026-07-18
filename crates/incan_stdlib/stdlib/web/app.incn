@@ -48,11 +48,11 @@ pub class App:
         """
         Start the web server.
 
+        This method blocks until the server is shut down.
+        Compiles to axum::serve() with Tokio runtime.
+
         Args:
             host: Bind address (default: "127.0.0.1")
             port: Port number (default: 8080)
-
-        This method blocks until the server is shut down.
-        Compiles to axum::serve() with Tokio runtime.
         """
         ...

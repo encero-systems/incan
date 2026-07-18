@@ -3,9 +3,7 @@
 //! Call-site explicit generics (`callee[T](...)`, `recv.m[U](...)`) get type-oriented completions and hover
 //! (see `call_site_type_args.rs`, RFC 054).
 
-#[cfg(feature = "rust_inspect")]
-use std::collections::BTreeSet;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -19,11 +17,13 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
-use crate::cli::commands::common::CompilationSession;
+use crate::cli::commands::common::{
+    CompilationSession, collect_project_requirements, discover_effective_project_manifest,
+};
 #[cfg(feature = "rust_inspect")]
 use crate::cli::commands::common::{
-    build_source_map, collect_inline_rust_imports, collect_project_requirements, collect_rust_inspect_query_paths,
-    ensure_rust_inspect_workspace, format_dependency_error, merge_project_requirement_dependencies,
+    build_source_map, collect_inline_rust_imports, collect_rust_inspect_query_paths, ensure_rust_inspect_workspace,
+    extend_requirements_with_provider_plan, format_dependency_error, merge_project_requirement_dependencies,
     prewarm_rust_inspect_workspace,
 };
 use crate::cli::prelude::ParsedModule;
@@ -56,6 +56,7 @@ use crate::lockfile::CargoFeatureSelection;
 use crate::lsp::call_site_type_args;
 use crate::lsp::diagnostics::{compile_error_to_diagnostic_with_phase, position_to_offset, span_to_range};
 use crate::manifest::ProjectManifest;
+use crate::provider::{ProviderModuleResolution, ProviderPlan, ProviderProvenance};
 use incan_core::interop::{RustItemKind, RustModuleChildKind, RustTraitAssoc};
 use incan_core::lang::decorators;
 use incan_core::lang::keywords;
@@ -88,6 +89,10 @@ pub struct DocumentState {
     api_metadata_previews: Vec<ApiMetadataPreview>,
     /// Imported DSL surfaces from loaded `pub::` library manifests, used for scoped symbol LSP affordances.
     library_imported_dsl_surfaces: parser::ImportedLibraryDslSurfaces,
+    /// Project-aware provider state used to explain enabled, disabled, and unavailable SDK modules.
+    provider_plan: Option<Arc<ProviderPlan>>,
+    /// Active root-package features used to keep completion aligned with the compiler's declaration projection.
+    active_features: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -149,7 +154,7 @@ impl IncanLanguageServer {
         // Step 1: Discover shared compilation context.
         let module_path = uri.to_file_path().ok();
         let compilation_session = if let Some(path) = &module_path {
-            match CompilationSession::discover(path) {
+            match CompilationSession::discover_with_feature_selection(path, &Default::default()) {
                 Ok(session) => Some(session),
                 Err(error) => {
                     diagnostics.push(lsp_root_error_diagnostic(error.to_string()));
@@ -183,8 +188,9 @@ impl IncanLanguageServer {
         // In particular, `pub from ... import ...` is only accepted when this path resolves under `src/` (RFC 031 /
         // `incan_syntax` parser). If `uri.to_file_path()` fails, `module_path` is omitted and those rules are
         // skipped during parsing (prefer fixing the client URI scheme / workspace roots).
-        let ast = match if let (Some(session), Some(path)) = (compilation_session.as_ref(), module_path.as_ref()) {
-            session.parse_source(path, source, false)
+        let source_ast = match if let (Some(session), Some(path)) = (compilation_session.as_ref(), module_path.as_ref())
+        {
+            session.parse_source_unprojected(path, source, false)
         } else {
             lexer::lex(source).and_then(|tokens| parser::parse_with_context_and_surfaces(&tokens, None, None, None))
         } {
@@ -200,6 +206,27 @@ impl IncanLanguageServer {
                 }
                 ast
             }
+            Err(errors) => {
+                for error in &errors {
+                    diagnostics.push(compile_error_to_diagnostic_with_phase(
+                        error,
+                        source,
+                        uri,
+                        DiagnosticPhase::Parse,
+                    ));
+                }
+                self.client
+                    .publish_diagnostics(uri.clone(), diagnostics, Some(version))
+                    .await;
+                return;
+            }
+        };
+        let ast = match compilation_session
+            .as_ref()
+            .map(|session| session.project_parsed_program(source_ast.clone()))
+            .unwrap_or_else(|| Ok(source_ast.clone()))
+        {
+            Ok(ast) => ast,
             Err(errors) => {
                 for error in &errors {
                     diagnostics.push(compile_error_to_diagnostic_with_phase(
@@ -245,25 +272,55 @@ impl IncanLanguageServer {
                 }
             }
         }
+
+        // Step 3: Resolve the provider plan once for typechecking, rust-metadata preparation, and document tooling.
+        let mut typecheck_modules = Vec::with_capacity(typecheck_deps.len() + 1);
+        typecheck_modules.push(ParsedModule {
+            name: "lsp_document".to_string(),
+            path_segments: vec!["lsp_document".to_string()],
+            file_path: module_path.clone().unwrap_or_default(),
+            source: source.to_string(),
+            ast: typecheck_ast.clone(),
+        });
+        typecheck_modules.extend(typecheck_deps.iter().cloned());
+        let provider_plan = match compilation_session
+            .as_ref()
+            .map(|session| session.provider_plan_for_modules(&typecheck_modules))
+            .unwrap_or_else(|| Ok(Arc::new(ProviderPlan::default())))
+        {
+            Ok(plan) => plan,
+            Err(error) => {
+                diagnostics.push(lsp_root_error_diagnostic(error.to_string()));
+                self.client
+                    .publish_diagnostics(uri.clone(), diagnostics, Some(version))
+                    .await;
+                return;
+            }
+        };
         #[cfg(feature = "rust_inspect")]
         if let (Some(manifest), Some(path)) = (project_manifest.as_ref(), module_path.as_ref()) {
             let mut metadata_modules = Vec::with_capacity(deps.len() + 1);
             metadata_modules.push(parsed_module_for_lsp_document(path, source, &ast));
             metadata_modules.extend(deps.iter().cloned());
-            rust_inspect_context =
-                match prepare_lsp_rust_inspect_workspace(manifest, &metadata_modules, &library_manifest_index) {
-                    Ok(ctx) => Some(ctx),
-                    Err(err) => {
-                        tracing::warn!("failed to prepare rust-inspect workspace for lsp: {err}");
-                        None
-                    }
-                };
+            rust_inspect_context = match prepare_lsp_rust_inspect_workspace(
+                manifest,
+                &metadata_modules,
+                &library_manifest_index,
+                &provider_plan,
+            ) {
+                Ok(ctx) => Some(ctx),
+                Err(err) => {
+                    tracing::warn!("failed to prepare rust-inspect workspace for lsp: {err}");
+                    None
+                }
+            };
         }
 
-        // Step 3: Type check (with multi-file import resolution)
+        // Step 4: Type check (with multi-file import resolution).
         let mut checker = typechecker::TypeChecker::new();
         checker.set_declared_crate_names(declared_crates);
-        checker.set_library_manifest_index(library_manifest_index.clone());
+        checker.set_provider_plan(Arc::clone(&provider_plan));
+        let document_provider_plan = compilation_session.as_ref().map(|_| Arc::clone(&provider_plan));
         #[cfg(feature = "rust_inspect")]
         if let Some((dir, metadata_query_paths)) = rust_inspect_context {
             spawn_rust_inspect_prewarm(dir.clone(), metadata_query_paths);
@@ -375,7 +432,7 @@ impl IncanLanguageServer {
                 uri.clone(),
                 DocumentState {
                     source: source.to_string(),
-                    ast: Some(ast),
+                    ast: Some(source_ast),
                     version,
                     const_types,
                     value_types,
@@ -383,6 +440,11 @@ impl IncanLanguageServer {
                     rusttype_info,
                     api_metadata_previews,
                     library_imported_dsl_surfaces: library_manifest_index.library_imported_dsl_surfaces(),
+                    provider_plan: document_provider_plan,
+                    active_features: compilation_session
+                        .as_ref()
+                        .map(|session| session.active_features.clone())
+                        .unwrap_or_default(),
                 },
             );
         }
@@ -801,13 +863,17 @@ fn parsed_module_for_lsp_document(path: &Path, source: &str, ast: &Program) -> P
 }
 
 #[cfg(feature = "rust_inspect")]
+/// Resolve the exact Rust-inspection dependency closure from the same provider plan used for document typechecking.
 fn resolved_rust_inspect_dependencies(
     manifest: &ProjectManifest,
     modules: &[ParsedModule],
     library_manifest_index: &LibraryManifestIndex,
+    provider_plan: &ProviderPlan,
 ) -> std::result::Result<ResolvedDependencies, String> {
-    let project_requirements =
+    let mut project_requirements =
         collect_project_requirements(modules, library_manifest_index).map_err(|err| err.to_string())?;
+    extend_requirements_with_provider_plan(&mut project_requirements, provider_plan)
+        .map_err(|error| error.to_string())?;
     let mut inline_imports = Vec::new();
     for module in modules {
         inline_imports.extend(collect_inline_rust_imports(module, false));
@@ -836,6 +902,7 @@ fn prepare_lsp_rust_inspect_workspace(
     manifest: &ProjectManifest,
     modules: &[ParsedModule],
     library_manifest_index: &LibraryManifestIndex,
+    provider_plan: &ProviderPlan,
 ) -> std::result::Result<(PathBuf, Vec<String>), String> {
     let project_name = manifest
         .project
@@ -850,9 +917,11 @@ fn prepare_lsp_rust_inspect_workspace(
         })
         .unwrap_or_else(|| "incan_lsp".to_string());
 
-    let resolved = resolved_rust_inspect_dependencies(manifest, modules, library_manifest_index)?;
-    let project_requirements =
+    let resolved = resolved_rust_inspect_dependencies(manifest, modules, library_manifest_index, provider_plan)?;
+    let mut project_requirements =
         collect_project_requirements(modules, library_manifest_index).map_err(|err| err.to_string())?;
+    extend_requirements_with_provider_plan(&mut project_requirements, provider_plan)
+        .map_err(|error| error.to_string())?;
     let rust_inspect_manifest_dir = ensure_rust_inspect_workspace(
         manifest.project_root(),
         project_name.as_str(),
@@ -874,6 +943,7 @@ mod tests {
     use super::{
         PrewarmQueueEntry, enqueue_prewarm_paths, prepare_lsp_rust_inspect_workspace, take_next_prewarm_batch,
     };
+    use crate::cli::commands::common::CompilationSession;
     use crate::cli::prelude::ParsedModule;
     use crate::frontend::library_manifest_index::LibraryManifestIndex;
     use crate::frontend::{lexer, parser};
@@ -919,6 +989,7 @@ mod tests {
     }
 
     #[test]
+    /// Prove LSP Rust inspection combines inline Rust imports with provider-derived implementation requirements.
     fn lsp_rust_inspect_workspace_includes_resolved_inline_and_stdlib_requirements()
     -> std::result::Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
@@ -943,9 +1014,13 @@ def use_it(x: Serialize) -> None:
             source: source.to_string(),
             ast,
         };
+        std::fs::create_dir_all(tmp.path().join("src"))?;
+        std::fs::write(&module.file_path, source)?;
+        let session = CompilationSession::discover_with_feature_selection(&module.file_path, &Default::default())?;
+        let provider_plan = session.provider_plan_for_modules(std::slice::from_ref(&module))?;
 
         let (out_dir, _query_paths) =
-            prepare_lsp_rust_inspect_workspace(&manifest, &[module], &LibraryManifestIndex::default())
+            prepare_lsp_rust_inspect_workspace(&manifest, &[module], &LibraryManifestIndex::default(), &provider_plan)
                 .map_err(std::io::Error::other)?;
         let cargo_toml = std::fs::read_to_string(out_dir.join("Cargo.toml"))?;
 
@@ -954,8 +1029,8 @@ def use_it(x: Serialize) -> None:
             "expected inline rust import dependency in generated Cargo.toml, got:\n{cargo_toml}"
         );
         assert!(
-            cargo_toml.contains("incan_stdlib") && cargo_toml.contains("json"),
-            "expected stdlib feature propagation in generated Cargo.toml, got:\n{cargo_toml}"
+            cargo_toml.contains("incan_stdlib_data") && cargo_toml.contains("json"),
+            "expected provider implementation facts in generated Cargo.toml, got:\n{cargo_toml}"
         );
         Ok(())
     }
@@ -2975,7 +3050,9 @@ fn classmethod_cls_detail(context: &ClassmethodContext) -> String {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StdlibPublicItemKind {
+    Alias,
     Class,
+    Constant,
     Enum,
     Function,
     Model,
@@ -2995,7 +3072,9 @@ struct StdlibPublicItemMetadata {
 /// Return the prose label used in hover text for a known stdlib item kind.
 fn stdlib_item_kind_label(kind: StdlibPublicItemKind) -> &'static str {
     match kind {
+        StdlibPublicItemKind::Alias => "stdlib alias",
         StdlibPublicItemKind::Class => "stdlib class",
+        StdlibPublicItemKind::Constant => "stdlib constant",
         StdlibPublicItemKind::Enum => "stdlib enum",
         StdlibPublicItemKind::Function => "stdlib function",
         StdlibPublicItemKind::Model => "stdlib model",
@@ -3007,7 +3086,9 @@ fn stdlib_item_kind_label(kind: StdlibPublicItemKind) -> &'static str {
 /// Map stdlib metadata item kinds onto LSP completion item kinds.
 fn stdlib_item_completion_kind(kind: StdlibPublicItemKind) -> CompletionItemKind {
     match kind {
+        StdlibPublicItemKind::Alias => CompletionItemKind::REFERENCE,
         StdlibPublicItemKind::Class => CompletionItemKind::CLASS,
+        StdlibPublicItemKind::Constant => CompletionItemKind::CONSTANT,
         StdlibPublicItemKind::Enum => CompletionItemKind::ENUM,
         StdlibPublicItemKind::Function => CompletionItemKind::FUNCTION,
         StdlibPublicItemKind::Model => CompletionItemKind::STRUCT,
@@ -3026,8 +3107,24 @@ fn stdlib_text_segments_match(actual: &[&str], expected: &[&str]) -> bool {
     actual.len() == expected.len() && actual.iter().zip(expected).all(|(a, e)| a == e)
 }
 
-/// Load public stdlib item metadata for one module from the stdlib source cache.
-fn stdlib_public_items_for_module(module_segments: &[String]) -> Vec<StdlibPublicItemMetadata> {
+/// Load public standard-library item metadata from the checked provider artifact when one owns this module.
+///
+/// Installed component-aware SDKs deliberately omit provider source. Their LSP surface must therefore come from the
+/// same checked API metadata used by compilation. The source cache remains only for legacy inventory-less toolchains.
+fn stdlib_public_items_for_module(
+    module_segments: &[String],
+    provider_plan: Option<&ProviderPlan>,
+) -> Vec<StdlibPublicItemMetadata> {
+    if let Some(plan) = provider_plan
+        && plan.has_sdk_catalog()
+    {
+        return checked_provider_public_items_for_module(module_segments, plan);
+    }
+    legacy_stdlib_public_items_for_module(module_segments)
+}
+
+/// Load public stdlib item metadata for one module from the legacy source cache.
+fn legacy_stdlib_public_items_for_module(module_segments: &[String]) -> Vec<StdlibPublicItemMetadata> {
     let mut cache = StdlibAstCache::new();
     let metadata = cache.lsp_metadata(module_segments);
     let mut items = Vec::new();
@@ -3086,6 +3183,249 @@ fn stdlib_public_items_for_module(module_segments: &[String]) -> Vec<StdlibPubli
     }
     items.sort_by(|left, right| left.name.cmp(&right.name));
     items
+}
+
+/// Project one compiled SDK provider's checked public API into completion and hover metadata.
+fn checked_provider_public_items_for_module(
+    module_segments: &[String],
+    provider_plan: &ProviderPlan,
+) -> Vec<StdlibPublicItemMetadata> {
+    let provider = match provider_plan.resolve_module(module_segments) {
+        ProviderModuleResolution::Active(provider) | ProviderModuleResolution::Disabled(provider) => provider,
+        ProviderModuleResolution::Unavailable(_) | ProviderModuleResolution::Unknown => return Vec::new(),
+    };
+    let Some(api) = provider
+        .manifest
+        .as_deref()
+        .and_then(|manifest| manifest.contract_metadata.api.as_ref())
+    else {
+        return Vec::new();
+    };
+    let relative_module = module_segments
+        .strip_prefix(&[stdlib::STDLIB_ROOT.to_string()])
+        .unwrap_or(module_segments);
+    let Some(module) = api
+        .modules
+        .iter()
+        .find(|module| module.module_path == relative_module || module.module_path == module_segments)
+    else {
+        return Vec::new();
+    };
+
+    let mut items = Vec::new();
+    let mut callables = std::collections::BTreeMap::<String, Vec<(String, Option<String>)>>::new();
+    for declaration in &module.declarations {
+        match declaration {
+            ApiDeclaration::Function(function) => push_checked_callable(
+                &mut callables,
+                &function.name,
+                &function.type_params,
+                &function.params,
+                &function.return_type,
+                function.is_async,
+                function.docstring.as_deref(),
+            ),
+            ApiDeclaration::Partial(partial) => push_checked_callable(
+                &mut callables,
+                &partial.name,
+                &partial.type_params,
+                &partial.params,
+                &partial.return_type,
+                partial.is_async,
+                None,
+            ),
+            ApiDeclaration::Alias(alias) => {
+                if let Some(function) = &alias.projected_function {
+                    push_checked_callable(
+                        &mut callables,
+                        &alias.name,
+                        &function.callable.type_params,
+                        &function.callable.params,
+                        &function.callable.return_type,
+                        function.callable.is_async,
+                        None,
+                    );
+                } else {
+                    items.push(checked_provider_item(
+                        module_segments,
+                        &alias.name,
+                        StdlibPublicItemKind::Alias,
+                        format!("alias {} = {}", alias.name, alias.target_path.join(".")),
+                        None,
+                    ));
+                }
+            }
+            ApiDeclaration::Model(model) => items.push(checked_provider_type_item(
+                module_segments,
+                &model.name,
+                StdlibPublicItemKind::Model,
+                model.docstring.as_deref(),
+            )),
+            ApiDeclaration::Class(class) => items.push(checked_provider_type_item(
+                module_segments,
+                &class.name,
+                StdlibPublicItemKind::Class,
+                class.docstring.as_deref(),
+            )),
+            ApiDeclaration::Trait(trait_decl) => items.push(checked_provider_type_item(
+                module_segments,
+                &trait_decl.name,
+                StdlibPublicItemKind::Trait,
+                trait_decl.docstring.as_deref(),
+            )),
+            ApiDeclaration::Enum(enum_decl) => items.push(checked_provider_type_item(
+                module_segments,
+                &enum_decl.name,
+                StdlibPublicItemKind::Enum,
+                enum_decl.docstring.as_deref(),
+            )),
+            ApiDeclaration::Newtype(newtype) => items.push(checked_provider_type_item(
+                module_segments,
+                &newtype.name,
+                StdlibPublicItemKind::Type,
+                newtype.docstring.as_deref(),
+            )),
+            ApiDeclaration::TypeAlias(alias) => items.push(checked_provider_item(
+                module_segments,
+                &alias.name,
+                StdlibPublicItemKind::Type,
+                format!(
+                    "type {}{} = {}",
+                    alias.name,
+                    format_type_params(&alias.type_alias.type_params),
+                    format_type_ref(&alias.type_alias.target)
+                ),
+                None,
+            )),
+            ApiDeclaration::Const(constant) => items.push(checked_provider_item(
+                module_segments,
+                &constant.name,
+                StdlibPublicItemKind::Constant,
+                format!("const {}: {}", constant.name, format_type_ref(&constant.ty)),
+                None,
+            )),
+            ApiDeclaration::Static(value) => items.push(checked_provider_item(
+                module_segments,
+                &value.name,
+                StdlibPublicItemKind::Constant,
+                format!("static {}: {}", value.name, format_type_ref(&value.ty)),
+                None,
+            )),
+        }
+    }
+
+    for (name, overloads) in callables {
+        let signatures = overloads
+            .iter()
+            .map(|(signature, _)| signature.clone())
+            .collect::<Vec<_>>();
+        let detail = match signatures.as_slice() {
+            [signature] => signature.clone(),
+            _ => format!("{name}: {} stdlib function overloads", signatures.len()),
+        };
+        let docs = checked_callable_docs(&signatures, &overloads);
+        items.push(checked_provider_item(
+            module_segments,
+            &name,
+            StdlibPublicItemKind::Function,
+            detail,
+            Some(&docs),
+        ));
+    }
+    items.sort_by(|left, right| left.name.cmp(&right.name).then_with(|| left.detail.cmp(&right.detail)));
+    items
+}
+
+/// Add one checked callable projection to its overload group.
+fn push_checked_callable(
+    callables: &mut std::collections::BTreeMap<String, Vec<(String, Option<String>)>>,
+    name: &str,
+    type_params: &[TypeParamExport],
+    params: &[ParamExport],
+    return_type: &TypeRef,
+    is_async: bool,
+    docstring: Option<&str>,
+) {
+    let prefix = if is_async { "async def" } else { "def" };
+    let signature = format!(
+        "{prefix} {name}{}({}) -> {}",
+        format_type_params(type_params),
+        format_params(params),
+        format_type_ref(return_type)
+    );
+    callables
+        .entry(name.to_string())
+        .or_default()
+        .push((signature, docstring.map(str::to_string)));
+}
+
+/// Render checked callable documentation without reopening provider source.
+fn checked_callable_docs(signatures: &[String], overloads: &[(String, Option<String>)]) -> String {
+    let mut has_docstring = false;
+    let sections = overloads
+        .iter()
+        .map(|(signature, docstring)| {
+            let mut section = format!("```incan\n{signature}\n```");
+            if let Some(docstring) = docstring
+                .as_deref()
+                .map(str::trim)
+                .filter(|docstring| !docstring.is_empty())
+            {
+                has_docstring = true;
+                section.push_str("\n\n");
+                section.push_str(docstring);
+            }
+            section
+        })
+        .collect::<Vec<_>>();
+    if has_docstring {
+        sections.join("\n\n---\n\n")
+    } else {
+        format!(
+            "{}\n\nPublic stdlib function exported by this compiled provider.",
+            signatures
+                .iter()
+                .map(|signature| format!("```incan\n{signature}\n```"))
+                .collect::<Vec<_>>()
+                .join("\n\n---\n\n")
+        )
+    }
+}
+
+/// Construct one provider-backed type-like LSP item.
+fn checked_provider_type_item(
+    module_segments: &[String],
+    name: &str,
+    kind: StdlibPublicItemKind,
+    docstring: Option<&str>,
+) -> StdlibPublicItemMetadata {
+    checked_provider_item(module_segments, name, kind, stdlib_type_detail(name, kind), docstring)
+}
+
+/// Construct one provider-backed LSP item with checked metadata or a truthful generic description.
+fn checked_provider_item(
+    module_segments: &[String],
+    name: &str,
+    kind: StdlibPublicItemKind,
+    detail: String,
+    docs: Option<&str>,
+) -> StdlibPublicItemMetadata {
+    let docs = docs.map(str::trim).filter(|docs| !docs.is_empty()).map_or_else(
+        || {
+            format!(
+                "Public {} exported by this compiled provider.",
+                stdlib_item_kind_label(kind)
+            )
+        },
+        str::to_string,
+    );
+    StdlibPublicItemMetadata {
+        module_segments: module_segments.to_vec(),
+        name: name.to_string(),
+        kind,
+        detail,
+        docs,
+    }
 }
 
 /// Render every stdlib overload with the docstring from its matching source declaration.
@@ -3218,30 +3558,109 @@ fn stdlib_type_docs(docstring: Option<String>, kind: StdlibPublicItemKind) -> St
 }
 
 /// Look up LSP metadata for a public item exported by a stdlib module.
-fn stdlib_public_item_metadata(module_segments: &[String], name: &str) -> Option<StdlibPublicItemMetadata> {
-    stdlib_public_items_for_module(module_segments)
+fn stdlib_public_item_metadata(
+    module_segments: &[String],
+    name: &str,
+    provider_plan: Option<&ProviderPlan>,
+) -> Option<StdlibPublicItemMetadata> {
+    stdlib_public_items_for_module(module_segments, provider_plan)
         .into_iter()
         .find(|item| stdlib_segments_match(module_segments, &item.module_segments) && item.name == name)
 }
 
 /// Render hover markdown for a known public stdlib item.
-fn stdlib_public_item_hover_markdown(item: &StdlibPublicItemMetadata) -> String {
+fn stdlib_public_item_hover_markdown(item: &StdlibPublicItemMetadata, provider_plan: Option<&ProviderPlan>) -> String {
     let module_path = item.module_segments.join(".");
-    let stub_path = item.module_segments.to_vec();
-    let stub_note = stdlib::stdlib_stub_path(&stub_path)
-        .map(|path| format!("\n\n`{path}`"))
+    let source_note = stdlib_navigation_path(&item.module_segments, provider_plan)
+        .map(|path| format!("\n\n`{}`", path.display()))
         .unwrap_or_default();
     format!(
         "```incan\nfrom {module_path} import {}\n```\n\n*{}*\n\n{}{}",
         item.name,
         stdlib_item_kind_label(item.kind),
         item.docs,
-        stub_note
+        source_note
     )
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LspProviderModuleState {
+    Legacy,
+    Active(String),
+    Disabled(String),
+    Unavailable(String),
+    CompilerOwned,
+    Unknown,
+}
+
+/// Render the provider owner label used by completion and hover explanations.
+fn provider_component_label(provenance: &ProviderProvenance) -> String {
+    match provenance {
+        ProviderProvenance::Sdk { component_id, .. } => format!("SDK component `{component_id}`"),
+        ProviderProvenance::ProjectDependency { dependency_key, .. } => {
+            format!("package dependency `{dependency_key}`")
+        }
+        ProviderProvenance::Compiler => "compiler-owned provider".to_string(),
+    }
+}
+
+/// Resolve one canonical module to the provider state visible in the current editor session.
+fn lsp_provider_module_state(plan: Option<&ProviderPlan>, module: &[String]) -> LspProviderModuleState {
+    let Some(plan) = plan else {
+        return LspProviderModuleState::Legacy;
+    };
+    match plan.resolve_module(module) {
+        ProviderModuleResolution::Active(provider) => {
+            LspProviderModuleState::Active(provider_component_label(&provider.provenance))
+        }
+        ProviderModuleResolution::Disabled(provider) => {
+            LspProviderModuleState::Disabled(provider_component_label(&provider.provenance))
+        }
+        ProviderModuleResolution::Unavailable(provider) => {
+            LspProviderModuleState::Unavailable(provider_component_label(&provider.provenance))
+        }
+        ProviderModuleResolution::Unknown if stdlib::is_typechecker_only_stdlib(module) => {
+            LspProviderModuleState::CompilerOwned
+        }
+        ProviderModuleResolution::Unknown => LspProviderModuleState::Unknown,
+    }
+}
+
+/// Add provider availability and enablement context to one standard-library completion detail.
+fn provider_module_completion_detail(base: String, state: &LspProviderModuleState) -> Option<String> {
+    match state {
+        LspProviderModuleState::Legacy => Some(base),
+        LspProviderModuleState::Active(provider) => Some(format!("{base} — enabled by {provider}")),
+        LspProviderModuleState::Disabled(provider) => Some(format!("{base} — {provider} is disabled for this project")),
+        LspProviderModuleState::Unavailable(provider) => {
+            Some(format!("{base} — {provider} is unavailable in this SDK installation"))
+        }
+        LspProviderModuleState::CompilerOwned => Some(format!("{base} — compiler-owned symbolic module")),
+        LspProviderModuleState::Unknown => None,
+    }
+}
+
+/// Render the provider-state sentence appended to standard-library hover content.
+fn provider_module_state_note(plan: Option<&ProviderPlan>, module: &[String]) -> Option<String> {
+    match lsp_provider_module_state(plan, module) {
+        LspProviderModuleState::Legacy => None,
+        LspProviderModuleState::Active(provider) => Some(format!("enabled by {provider}.")),
+        LspProviderModuleState::Disabled(provider) => Some(format!("{provider} is disabled for this project.")),
+        LspProviderModuleState::Unavailable(provider) => {
+            Some(format!("{provider} is unavailable in this SDK installation."))
+        }
+        LspProviderModuleState::CompilerOwned => Some("compiler-owned symbolic module.".to_string()),
+        LspProviderModuleState::Unknown => Some("not supplied by the active SDK installation.".to_string()),
+    }
+}
+
 /// Return hover markdown for a known item in a `from std.<module> import ...` declaration.
-fn stdlib_import_item_hover(ast: &Program, source: &str, offset: usize) -> Option<(String, Span)> {
+fn stdlib_import_item_hover(
+    ast: &Program,
+    source: &str,
+    offset: usize,
+    provider_plan: Option<&ProviderPlan>,
+) -> Option<(String, Span)> {
     let (ident, ident_span) = identifier_at_offset(source, offset)?;
     for decl in &ast.declarations {
         let Declaration::Import(import) = &decl.node else {
@@ -3261,8 +3680,12 @@ fn stdlib_import_item_hover(ast: &Program, source: &str, offset: usize) -> Optio
             if ident != local_name && ident != item.name {
                 continue;
             }
-            let metadata = stdlib_public_item_metadata(&module.segments, &item.name)?;
-            return Some((stdlib_public_item_hover_markdown(&metadata), ident_span));
+            let metadata = stdlib_public_item_metadata(&module.segments, &item.name, provider_plan)?;
+            let mut markdown = stdlib_public_item_hover_markdown(&metadata, provider_plan);
+            if let Some(note) = provider_module_state_note(provider_plan, &module.segments) {
+                markdown.push_str(&format!("\n\n**Provider state:** {note}"));
+            }
+            return Some((markdown, ident_span));
         }
     }
     None
@@ -3330,12 +3753,31 @@ fn unchecked_lookup_hover(source: &str, value_types: &[ValueTypeFact], ident: &s
     ))
 }
 
-/// Return the LSP source location for a stdlib import path.
-fn stdlib_location_for_path(path: &[String]) -> Option<Location> {
+/// Return the relocatable artifact or legacy source path used for stdlib navigation and hover provenance.
+///
+/// Component-aware SDKs navigate to the exact relocatable checked manifest selected by the shared provider plan. The
+/// legacy source location remains available only when no SDK catalog exists; an installed compiler must never expose
+/// the producer checkout embedded in its compile-time `CARGO_MANIFEST_DIR`.
+fn stdlib_navigation_path(path: &[String], provider_plan: Option<&ProviderPlan>) -> Option<PathBuf> {
+    if let Some(plan) = provider_plan
+        && plan.has_sdk_catalog()
+    {
+        let provider = match plan.resolve_module(path) {
+            ProviderModuleResolution::Active(provider) | ProviderModuleResolution::Disabled(provider) => provider,
+            ProviderModuleResolution::Unavailable(_) | ProviderModuleResolution::Unknown => return None,
+        };
+        return Some(provider.artifact.as_ref()?.manifest_path.clone());
+    }
+
     let stub_rel = stdlib::stdlib_stub_path(path)?;
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let stub_abs = root.join(stub_rel);
-    let uri = Url::from_file_path(stub_abs).ok()?;
+    Some(root.join(stub_rel))
+}
+
+/// Return the LSP navigation location for a stdlib import path.
+fn stdlib_location_for_path(path: &[String], provider_plan: Option<&ProviderPlan>) -> Option<Location> {
+    let navigation_path = stdlib_navigation_path(path, provider_plan)?;
+    let uri = Url::from_file_path(navigation_path).ok()?;
     Some(Location {
         uri,
         range: Range {
@@ -4866,8 +5308,8 @@ fn collect_lsp_contract_model_bundles(path: &Path) -> std::result::Result<Vec<Ca
     } else {
         absolute.parent().unwrap_or(Path::new("."))
     };
-    let manifest = ProjectManifest::discover(start_dir)
-        .map_err(|error| error.to_string())?
+    let manifest = discover_effective_project_manifest(start_dir)
+        .map_err(|error| error.message)?
         .ok_or_else(|| {
             format!(
                 "model emit requires a project manifest, bundle JSON, or `.incnlib` artifact: {}",
@@ -5058,12 +5500,13 @@ impl LanguageServer for IncanLanguageServer {
                 let info = decorators::info_for(id);
                 let canonical = info.canonical;
                 let description = info.description;
-                // If the decorator's owning module has a stdlib stub, show the path
+                // Show the checked provider artifact for component-aware SDKs and the source stub only for legacy
+                // inventoryless sessions.
                 let module_path: Vec<String> = resolved[..resolved.len().saturating_sub(1)].to_vec();
-                let stub_note = stdlib::stdlib_stub_path(&module_path)
-                    .map(|p| format!("\n\n`{}`", p))
+                let source_note = stdlib_navigation_path(&module_path, doc.provider_plan.as_deref())
+                    .map(|path| format!("\n\n`{}`", path.display()))
                     .unwrap_or_default();
-                let markdown = format!("```incan\n@{}\n```\n\n{}{}", canonical, description, stub_note);
+                let markdown = format!("```incan\n@{}\n```\n\n{}{}", canonical, description, source_note);
                 return Ok(Some(Hover {
                     contents: HoverContents::Markup(MarkupContent {
                         kind: MarkupKind::Markdown,
@@ -5074,7 +5517,9 @@ impl LanguageServer for IncanLanguageServer {
             }
 
             // Stdlib import item hover: show public API details for known stdlib exports.
-            if let Some((markdown, span)) = stdlib_import_item_hover(ast, &doc.source, offset) {
+            if let Some((markdown, span)) =
+                stdlib_import_item_hover(ast, &doc.source, offset, doc.provider_plan.as_deref())
+            {
                 return Ok(Some(Hover {
                     contents: HoverContents::Markup(MarkupContent {
                         kind: MarkupKind::Markdown,
@@ -5084,15 +5529,22 @@ impl LanguageServer for IncanLanguageServer {
                 }));
             }
 
-            // Stdlib import hover: show module path + stub path.
+            // Stdlib import hover: show the module path plus the selected checked artifact or legacy source stub.
             if let Some(path) = find_stdlib_import_path(ast, offset) {
                 let module_path = path.join(".");
-                let stub_path = stdlib::stdlib_stub_path(&path).unwrap_or_default();
-                let markdown = if stub_path.is_empty() {
-                    format!("```incan\n{}\n```\n\n*stdlib module*", module_path)
+                let navigation_path = stdlib_navigation_path(&path, doc.provider_plan.as_deref());
+                let mut markdown = if let Some(navigation_path) = navigation_path {
+                    format!(
+                        "```incan\n{}\n```\n\n*stdlib module*\n\n`{}`",
+                        module_path,
+                        navigation_path.display()
+                    )
                 } else {
-                    format!("```incan\n{}\n```\n\n*stdlib module*\n\n`{}`", module_path, stub_path)
+                    format!("```incan\n{}\n```\n\n*stdlib module*", module_path)
                 };
+                if let Some(note) = provider_module_state_note(doc.provider_plan.as_deref(), &path) {
+                    markdown.push_str(&format!("\n\n**Provider state:** {note}"));
+                }
                 return Ok(Some(Hover {
                     contents: HoverContents::Markup(MarkupContent {
                         kind: MarkupKind::Markdown,
@@ -5237,6 +5689,9 @@ impl LanguageServer for IncanLanguageServer {
             {
                 markdown.push_str(&format!("\n\nunderlying Rust type: `rust::{}`", rust_path));
             }
+            if let Some(note) = inactive_declaration_note_at_offset(ast, info.span.start, &doc.active_features) {
+                markdown.push_str(&format!("\n\n**Package feature state:** {note}"));
+            }
 
             return Ok(Some(Hover {
                 contents: HoverContents::Markup(MarkupContent {
@@ -5288,9 +5743,19 @@ impl LanguageServer for IncanLanguageServer {
             let Some(kind) = lsp_symbol_kind_for_decl(&decl.node) else {
                 continue;
             };
-            let Some((name, detail)) = lsp_document_symbol_name_and_detail(&decl.node, &doc.source) else {
+            let Some((name, mut detail)) = lsp_document_symbol_name_and_detail(&decl.node, &doc.source) else {
                 continue;
             };
+            if !declaration_active_for_lsp(decl, &doc.active_features) {
+                detail.push_str(&format!(
+                    " — inactive; requires {}",
+                    decl.required_features
+                        .iter()
+                        .map(|feature| format!("`{feature}`"))
+                        .collect::<Vec<_>>()
+                        .join(" and ")
+                ));
+            }
             let range = span_to_range(&doc.source, decl.span.start, decl.span.end);
             #[allow(deprecated)]
             let symbol = DocumentSymbol {
@@ -5329,15 +5794,15 @@ impl LanguageServer for IncanLanguageServer {
             return Ok(None);
         };
         if let Some(path) = find_stdlib_import_path(ast, offset)
-            && let Some(location) = stdlib_location_for_path(&path)
+            && let Some(location) = stdlib_location_for_path(&path, doc.provider_plan.as_deref())
         {
             return Ok(Some(GotoDefinitionResponse::Scalar(location)));
         }
         let aliases = collect_import_aliases(ast);
-        // Decorator go-to-definition: navigate to the owning module's stdlib stub (if any)
+        // Decorator go-to-definition follows the same provider-backed or legacy source location as module imports.
         if let Some((_id, resolved)) = find_decorator_at_position(ast, offset, &aliases) {
             let module_path: Vec<String> = resolved[..resolved.len().saturating_sub(1)].to_vec();
-            if let Some(location) = stdlib_location_for_path(&module_path) {
+            if let Some(location) = stdlib_location_for_path(&module_path, doc.provider_plan.as_deref()) {
                 return Ok(Some(GotoDefinitionResponse::Scalar(location)));
             }
         }
@@ -5396,12 +5861,12 @@ impl LanguageServer for IncanLanguageServer {
         let line_prefix = line_text_before_cursor(&doc.source, position);
 
         // ---- Context: stdlib from-import item completions (`from std.collections import ...`) ----
-        if let Some(stdlib_items) = stdlib_import_item_completions(&line_prefix) {
+        if let Some(stdlib_items) = stdlib_import_item_completions(&line_prefix, doc.provider_plan.as_deref()) {
             return Ok(Some(CompletionResponse::Array(stdlib_items)));
         }
 
         // ---- Context: stdlib module completions (`from std.` / `import std::`) ----
-        if let Some(stdlib_items) = stdlib_module_completions(&line_prefix) {
+        if let Some(stdlib_items) = stdlib_module_completions(&line_prefix, doc.provider_plan.as_deref()) {
             return Ok(Some(CompletionResponse::Array(stdlib_items)));
         }
 
@@ -5519,6 +5984,9 @@ impl LanguageServer for IncanLanguageServer {
         // Add symbols from the current document
         if let Some(ast) = &doc.ast {
             for decl in &ast.declarations {
+                if !declaration_active_for_lsp(decl, &doc.active_features) {
+                    continue;
+                }
                 match &decl.node {
                     Declaration::Const(konst) => {
                         push_completion(
@@ -5768,6 +6236,38 @@ impl LanguageServer for IncanLanguageServer {
     }
 }
 
+/// Return whether every positive package-feature condition on a declaration is active in the editor projection.
+fn declaration_active_for_lsp(declaration: &Spanned<Declaration>, active_features: &BTreeSet<String>) -> bool {
+    declaration
+        .required_features
+        .iter()
+        .all(|feature| active_features.contains(feature))
+}
+
+/// Explain the positive feature conjunction hiding the declaration at one source offset.
+fn inactive_declaration_note_at_offset(
+    ast: &Program,
+    offset: usize,
+    active_features: &BTreeSet<String>,
+) -> Option<String> {
+    let declaration = ast
+        .declarations
+        .iter()
+        .find(|declaration| declaration.span.start <= offset && offset <= declaration.span.end)?;
+    if declaration_active_for_lsp(declaration, active_features) {
+        return None;
+    }
+    Some(format!(
+        "inactive; requires {}.",
+        declaration
+            .required_features
+            .iter()
+            .map(|feature| format!("`{feature}`"))
+            .collect::<Vec<_>>()
+            .join(" and ")
+    ))
+}
+
 /// Extract the text of the current line up to (but not including) the cursor position.
 fn line_text_before_cursor(source: &str, position: Position) -> String {
     let lines: Vec<&str> = source.lines().collect();
@@ -5782,7 +6282,10 @@ fn line_text_before_cursor(source: &str, position: Position) -> String {
 
 /// If the cursor is selecting items in a `from std.<module> import ...` statement,
 /// return completions for known public items in that stdlib module.
-fn stdlib_import_item_completions(line_prefix: &str) -> Option<Vec<CompletionItem>> {
+fn stdlib_import_item_completions(
+    line_prefix: &str,
+    provider_plan: Option<&ProviderPlan>,
+) -> Option<Vec<CompletionItem>> {
     let trimmed = line_prefix.trim_start();
     let after_from = trimmed.strip_prefix("from ")?;
     let (module_text, _after_import) = after_from.split_once(" import ")?;
@@ -5794,9 +6297,13 @@ fn stdlib_import_item_completions(line_prefix: &str) -> Option<Vec<CompletionIte
         .iter()
         .map(|segment| (*segment).to_string())
         .collect::<Vec<_>>();
+    let provider_state = lsp_provider_module_state(provider_plan, &module_segments_owned);
+    if provider_state == LspProviderModuleState::Unknown {
+        return None;
+    }
 
     let mut items = Vec::new();
-    for metadata in stdlib_public_items_for_module(&module_segments_owned)
+    for metadata in stdlib_public_items_for_module(&module_segments_owned, provider_plan)
         .into_iter()
         .filter(|item| {
             let expected = item.module_segments.iter().map(String::as_str).collect::<Vec<_>>();
@@ -5806,7 +6313,7 @@ fn stdlib_import_item_completions(line_prefix: &str) -> Option<Vec<CompletionIte
         items.push(CompletionItem {
             label: metadata.name.clone(),
             kind: Some(stdlib_item_completion_kind(metadata.kind)),
-            detail: Some(metadata.detail.clone()),
+            detail: provider_module_completion_detail(metadata.detail.clone(), &provider_state),
             documentation: Some(Documentation::MarkupContent(MarkupContent {
                 kind: MarkupKind::Markdown,
                 value: metadata.docs.clone(),
@@ -5825,7 +6332,7 @@ fn stdlib_import_item_completions(line_prefix: &str) -> Option<Vec<CompletionIte
 
 /// If the cursor is inside a `from std.<...>` or `import std::<...>` context,
 /// return completions for stdlib module names. Returns `None` if not in that context.
-fn stdlib_module_completions(line_prefix: &str) -> Option<Vec<CompletionItem>> {
+fn stdlib_module_completions(line_prefix: &str, provider_plan: Option<&ProviderPlan>) -> Option<Vec<CompletionItem>> {
     let trimmed = line_prefix.trim_start();
 
     // Detect `from std.X.` or `from std.` patterns
@@ -5861,34 +6368,86 @@ fn stdlib_module_completions(line_prefix: &str) -> Option<Vec<CompletionItem>> {
 
     let mut items = Vec::new();
     let mut seen = HashSet::new();
+    let use_legacy_registry = provider_plan.is_none_or(|plan| !plan.has_sdk_catalog());
+    let module_paths = if use_legacy_registry {
+        stdlib::STDLIB_NAMESPACES
+            .iter()
+            .flat_map(|namespace| {
+                let root = vec![stdlib::STDLIB_ROOT.to_string(), namespace.name.to_string()];
+                std::iter::once(root.clone()).chain(namespace.submodules.iter().map(move |submodule| {
+                    let mut module = root.clone();
+                    module.extend(submodule.split('.').map(str::to_string));
+                    module
+                }))
+            })
+            .collect::<Vec<_>>()
+    } else {
+        let mut modules = provider_plan
+            .into_iter()
+            .flat_map(ProviderPlan::records)
+            .flat_map(|provider| provider.namespace_claims.iter().cloned())
+            .filter(|module| module.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT))
+            .collect::<Vec<_>>();
+        modules.extend([
+            vec![stdlib::STDLIB_ROOT.to_string(), "rust".to_string()],
+            vec![stdlib::STDLIB_ROOT.to_string(), stdlib::STDLIB_BUILTINS.to_string()],
+        ]);
+        modules.sort();
+        modules.dedup();
+        modules
+    };
 
     if completed.is_empty() {
-        // Top-level: suggest namespace names (web, testing, async, ...)
-        for ns in stdlib::STDLIB_NAMESPACES {
-            if seen.insert(ns.name.to_string()) {
-                let detail = ns.feature.map(|f| format!("enables {} feature", f));
+        // Top-level: suggest namespace names (web, testing, async, ...).
+        for module_path in &module_paths {
+            let Some(namespace) = module_path.get(1) else {
+                continue;
+            };
+            if seen.insert(namespace.clone()) {
+                let module = vec![stdlib::STDLIB_ROOT.to_string(), namespace.clone()];
+                let state = lsp_provider_module_state(provider_plan, &module);
+                let base_detail = if use_legacy_registry {
+                    stdlib::find_namespace(namespace)
+                        .and_then(|entry| entry.feature)
+                        .map(|feature| format!("enables {feature} feature"))
+                        .unwrap_or_else(|| format!("std.{namespace} module"))
+                } else {
+                    format!("std.{namespace} module")
+                };
+                let Some(detail) = provider_module_completion_detail(base_detail, &state) else {
+                    continue;
+                };
                 items.push(CompletionItem {
-                    label: ns.name.to_string(),
+                    label: namespace.clone(),
                     kind: Some(CompletionItemKind::MODULE),
-                    detail: Some(detail.unwrap_or_else(|| format!("std.{} module", ns.name))),
-                    sort_text: Some(format!("0_{}", ns.name)),
+                    detail: Some(detail),
+                    sort_text: Some(format!("0_{namespace}")),
                     ..Default::default()
                 });
             }
         }
     } else if completed.len() == 1 {
-        // One level deep: suggest submodules of the namespace (e.g. std.async.time)
-        if let Some(ns) = stdlib::find_namespace(completed[0]) {
-            for sub in ns.submodules {
-                if seen.insert(sub.to_string()) {
-                    items.push(CompletionItem {
-                        label: sub.to_string(),
-                        kind: Some(CompletionItemKind::MODULE),
-                        detail: Some(format!("std.{}.{} module", ns.name, sub)),
-                        sort_text: Some(format!("0_{}", sub)),
-                        ..Default::default()
-                    });
-                }
+        // One level deep: suggest every published descendant relative to the namespace root.
+        for module in module_paths.iter().filter(|module| {
+            module.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT)
+                && module.get(1).map(String::as_str) == Some(completed[0])
+                && module.len() > 2
+        }) {
+            let submodule = module[2..].join(".");
+            if seen.insert(submodule.clone()) {
+                let state = lsp_provider_module_state(provider_plan, module);
+                let Some(detail) =
+                    provider_module_completion_detail(format!("std.{}.{} module", completed[0], submodule), &state)
+                else {
+                    continue;
+                };
+                items.push(CompletionItem {
+                    label: submodule.clone(),
+                    kind: Some(CompletionItemKind::MODULE),
+                    detail: Some(detail),
+                    sort_text: Some(format!("0_{submodule}")),
+                    ..Default::default()
+                });
             }
         }
     }
@@ -5942,15 +6501,24 @@ fn decorator_completions(line_prefix: &str) -> Option<Vec<CompletionItem>> {
 
 #[cfg(test)]
 mod completion_tests {
+    use std::collections::BTreeSet;
+    use std::fs;
+    use std::sync::Arc;
+
     use super::{
         ValueTypeFact, ValueTypeKind, builtin_list_member_completions, builtin_list_repeat_hover,
-        stdlib_import_item_completions, stdlib_import_item_hover, stdlib_module_completions, unchecked_lookup_hover,
+        declaration_active_for_lsp, inactive_declaration_note_at_offset, stdlib_import_item_completions,
+        stdlib_import_item_hover, stdlib_location_for_path, stdlib_module_completions, unchecked_lookup_hover,
         value_type_kind,
     };
+    use crate::frontend::api_metadata::{CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage};
     use crate::frontend::ast::Span;
+    use crate::frontend::library_manifest_index::{LibraryArtifactKind, LibraryArtifactMetadata, LibraryManifestIndex};
     use crate::frontend::symbols::SymbolKind as FrontendSymbolKind;
     use crate::frontend::{lexer, parser};
-    use tower_lsp::lsp_types::CompletionItemKind;
+    use crate::library_manifest::LibraryManifest;
+    use crate::provider::{NamespaceAuthority, ProviderIdentity, ProviderPlan, ProviderProvenance, ProviderRecord};
+    use tower_lsp::lsp_types::{CompletionItemKind, Url};
 
     fn parse_source(source: &str) -> Result<crate::frontend::ast::Program, String> {
         let tokens = lexer::lex(source).map_err(|err| format!("lexer failed: {err:?}"))?;
@@ -5984,7 +6552,7 @@ mod completion_tests {
 
     #[test]
     fn stdlib_module_completions_include_std_fs() -> Result<(), String> {
-        let items = stdlib_module_completions("from std.")
+        let items = stdlib_module_completions("from std.", None)
             .ok_or_else(|| "expected stdlib completions for `from std.`".to_string())?;
         assert!(
             items
@@ -5997,7 +6565,7 @@ mod completion_tests {
 
     #[test]
     fn stdlib_module_completions_include_std_environ() -> Result<(), String> {
-        let items = stdlib_module_completions("from std.en")
+        let items = stdlib_module_completions("from std.en", None)
             .ok_or_else(|| "expected stdlib completions for `from std.en`".to_string())?;
         assert!(
             items.iter().any(|item| {
@@ -6011,8 +6579,195 @@ mod completion_tests {
     }
 
     #[test]
+    fn stdlib_module_completions_follow_the_project_provider_plan() -> Result<(), String> {
+        let plan = ProviderPlan::for_in_memory_sdk_modules(
+            LibraryManifestIndex::default(),
+            [
+                vec!["future".to_string()],
+                vec!["future".to_string(), "tools".to_string()],
+            ],
+        );
+        let items = stdlib_module_completions("from std.", Some(&plan))
+            .ok_or_else(|| "expected provider-aware stdlib completions".to_string())?;
+        let future = items
+            .iter()
+            .find(|item| item.label == "future")
+            .ok_or_else(|| format!("expected active std.future completion: {items:?}"))?;
+        assert!(
+            future
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("enabled by SDK component `in-memory-source`")),
+            "expected active provider provenance in completion detail: {future:?}"
+        );
+        assert!(
+            !items.iter().any(|item| item.label == "web"),
+            "provider-aware completion must not advertise an unknown SDK module: {items:?}"
+        );
+        assert!(
+            items.iter().any(|item| item.label == "rust"),
+            "compiler-owned symbolic modules must remain discoverable: {items:?}"
+        );
+        let nested = stdlib_module_completions("from std.future.", Some(&plan))
+            .ok_or_else(|| "expected provider-aware submodule completions".to_string())?;
+        assert!(
+            nested.iter().any(|item| item.label == "tools"),
+            "provider submodules must not require compiler registry entries: {nested:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn component_aware_stdlib_navigation_targets_the_relocatable_provider_manifest()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let artifact = tempfile::tempdir()?;
+        let manifest_path = artifact.path().join("stdlib-future.incnlib");
+        fs::write(&manifest_path, "{}")?;
+        let manifest = Arc::new(LibraryManifest::new("stdlib-future", "0.5.0"));
+        let provider = ProviderRecord {
+            identity: ProviderIdentity {
+                name: "stdlib-future".to_string(),
+                version: "0.5.0".to_string(),
+                digest: format!("sha256:{}", "0".repeat(64)),
+                feature_projection: BTreeSet::new(),
+            },
+            provenance: ProviderProvenance::Sdk {
+                sdk_identity: "incan@0.5.0".to_string(),
+                component_id: "stdlib-future".to_string(),
+                inventory_path: Some(artifact.path().join("sdk-inventory.json")),
+            },
+            authority: NamespaceAuthority::SdkReserved,
+            namespace_claims: BTreeSet::from([vec!["std".to_string(), "future".to_string()]]),
+            available: true,
+            enabled: true,
+            manifest: Some(manifest),
+            artifact: Some(LibraryArtifactMetadata {
+                dependency_key: "stdlib-future".to_string(),
+                manifest_name: "stdlib-future".to_string(),
+                manifest_path: manifest_path.clone(),
+                crate_root: artifact.path().to_path_buf(),
+                cargo_toml_path: artifact.path().join("Cargo.toml"),
+                crate_lib_path: artifact.path().join("src/lib.rs"),
+                kind: LibraryArtifactKind::Materialized,
+            }),
+            implementation_facets: Vec::new(),
+        };
+        let plan = ProviderPlan::new(LibraryManifestIndex::default(), vec![provider], [])?;
+
+        let location = stdlib_location_for_path(&["std".to_string(), "future".to_string()], Some(&plan))
+            .ok_or("expected provider-backed stdlib location")?;
+
+        assert_eq!(
+            location.uri,
+            Url::from_file_path(&manifest_path).map_err(|_| "invalid manifest path")?
+        );
+        assert_eq!(location.range.start.line, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn component_aware_stdlib_navigation_never_falls_back_to_the_producer_checkout() {
+        let plan =
+            ProviderPlan::for_in_memory_sdk_modules(LibraryManifestIndex::default(), [vec!["future".to_string()]]);
+
+        assert!(
+            stdlib_location_for_path(&["std".to_string(), "future".to_string()], Some(&plan)).is_none(),
+            "a component-aware provider without a materialized artifact must not expose CARGO_MANIFEST_DIR"
+        );
+    }
+
+    #[test]
+    fn stdlib_item_completions_use_checked_provider_metadata_without_source_lookup() -> Result<(), String> {
+        let provider_ast = parse_source(
+            "pub def greet(name: str) -> str:\n    \"\"\"Return a provider-owned greeting.\"\"\"\n    return name\n",
+        )?;
+        let mut checker = crate::frontend::typechecker::TypeChecker::new();
+        checker
+            .check_program(&provider_ast)
+            .map_err(|errors| format!("typecheck failed: {errors:?}"))?;
+        let mut manifest = LibraryManifest::new("incan-stdlib-future", "0.5.0");
+        manifest.contract_metadata.api = Some(CheckedApiMetadataPackage {
+            schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+            package: None,
+            modules: vec![crate::frontend::api_metadata::collect_checked_api_metadata(
+                &provider_ast,
+                &checker,
+                vec!["future".to_string()],
+            )],
+        });
+        let plan = ProviderPlan::for_in_memory_sdk_manifest(LibraryManifestIndex::default(), manifest);
+
+        let items = stdlib_import_item_completions("from std.future import gre", Some(&plan))
+            .ok_or_else(|| "expected provider-backed item completions".to_string())?;
+        let greet = items
+            .iter()
+            .find(|item| item.label == "greet")
+            .ok_or_else(|| format!("missing provider-backed `greet` completion: {items:?}"))?;
+        assert_eq!(greet.kind, Some(CompletionItemKind::FUNCTION));
+        assert!(
+            greet
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.starts_with("def greet(name: str) -> str — enabled by SDK component")),
+            "provider-backed signature or provenance was lost: {greet:?}"
+        );
+        let docs = greet
+            .documentation
+            .as_ref()
+            .map(|documentation| format!("{documentation:?}"))
+            .unwrap_or_default();
+        assert!(
+            docs.contains("Return a provider-owned greeting."),
+            "provider docstring was not preserved: {docs}"
+        );
+
+        let consumer_source = "from std.future import greet\n";
+        let consumer_ast = parse_source(consumer_source)?;
+        let start = consumer_source
+            .find("greet")
+            .ok_or_else(|| "expected greet in consumer fixture".to_string())?;
+        let (markdown, span) = stdlib_import_item_hover(&consumer_ast, consumer_source, start, Some(&plan))
+            .ok_or_else(|| "expected provider-backed greet hover".to_string())?;
+        assert_eq!(span, Span::new(start, start + "greet".len()));
+        assert!(
+            markdown.contains("Return a provider-owned greeting."),
+            "provider hover lost checked docs: {markdown}"
+        );
+        assert!(
+            !markdown.contains("crates/incan_stdlib/stdlib") && !markdown.contains(env!("CARGO_MANIFEST_DIR")),
+            "component-aware hover must not expose a producer-checkout path: {markdown}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn declaration_completion_projection_follows_active_package_features() -> Result<(), String> {
+        let ast =
+            parse_source("when feature(\"json\"):\n    const JSON_ENABLED = true\n\nconst ALWAYS_ENABLED = true\n")?;
+        let json_decl = ast
+            .declarations
+            .iter()
+            .find(|decl| !decl.required_features.is_empty())
+            .ok_or_else(|| "expected a feature-conditioned declaration".to_string())?;
+        assert!(!declaration_active_for_lsp(
+            json_decl,
+            &std::collections::BTreeSet::new()
+        ));
+        assert!(declaration_active_for_lsp(
+            json_decl,
+            &std::collections::BTreeSet::from(["json".to_string()])
+        ));
+        assert_eq!(
+            inactive_declaration_note_at_offset(&ast, json_decl.span.start, &std::collections::BTreeSet::new())
+                .as_deref(),
+            Some("inactive; requires `json`.")
+        );
+        Ok(())
+    }
+
+    #[test]
     fn stdlib_collections_import_completions_include_ordinal_map_surface() -> Result<(), String> {
-        let items = stdlib_import_item_completions("from std.collections import Ord")
+        let items = stdlib_import_item_completions("from std.collections import Ord", None)
             .ok_or_else(|| "expected std.collections item completions".to_string())?;
         assert!(
             items.iter().any(|item| {
@@ -6038,7 +6793,7 @@ mod completion_tests {
         let start = source
             .find("OrdinalMap")
             .ok_or_else(|| "expected OrdinalMap in fixture".to_string())?;
-        let (markdown, span) = stdlib_import_item_hover(&ast, source, start)
+        let (markdown, span) = stdlib_import_item_hover(&ast, source, start, None)
             .ok_or_else(|| "expected OrdinalMap import item hover".to_string())?;
         assert_eq!(span, Span::new(start, start + "OrdinalMap".len()));
         assert!(
@@ -6054,7 +6809,7 @@ mod completion_tests {
 
     #[test]
     fn stdlib_environ_completions_cover_the_public_module_surface() -> Result<(), String> {
-        let items = stdlib_import_item_completions("from std.environ import ")
+        let items = stdlib_import_item_completions("from std.environ import ", None)
             .ok_or_else(|| "expected std.environ item completions".to_string())?;
         assert_eq!(items.len(), 6, "expected one completion per public item: {items:?}");
         let completions = items
@@ -6099,8 +6854,8 @@ mod completion_tests {
         let start = source
             .find("get_as")
             .ok_or_else(|| "expected get_as in fixture".to_string())?;
-        let (markdown, span) =
-            stdlib_import_item_hover(&ast, source, start).ok_or_else(|| "expected get_as import hover".to_string())?;
+        let (markdown, span) = stdlib_import_item_hover(&ast, source, start, None)
+            .ok_or_else(|| "expected get_as import hover".to_string())?;
         assert_eq!(span, Span::new(start, start + "get_as".len()));
         assert!(
             markdown.contains("def get_as[T with TryFrom[str]](key: str) -> Result[Option[T], EnvironError]"),
@@ -6134,7 +6889,7 @@ mod completion_tests {
             let source = format!("from std.environ import {name}\n");
             let ast = parse_source(&source)?;
             let start = source.find(name).ok_or_else(|| format!("expected {name} in fixture"))?;
-            let (markdown, span) = stdlib_import_item_hover(&ast, &source, start)
+            let (markdown, span) = stdlib_import_item_hover(&ast, &source, start, None)
                 .ok_or_else(|| format!("expected {name} import hover"))?;
             assert_eq!(span, Span::new(start, start + name.len()));
             assert!(

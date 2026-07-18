@@ -26,6 +26,7 @@ struct StructuredDiagnosticDetails {
     related_spans: Vec<RelatedSpan>,
     expected: Option<String>,
     actual: Option<String>,
+    stable_code: Option<&'static str>,
 }
 
 /// A compile-time error with location information.
@@ -143,6 +144,12 @@ impl CompileError {
         self
     }
 
+    /// Select a narrow catalog code for a diagnostic with a stable public problem class.
+    pub fn with_stable_code(mut self, code: &'static str) -> Self {
+        self.structured_details_mut().stable_code = Some(code);
+        self
+    }
+
     /// Return compiler-owned secondary locations for structured tooling projections.
     pub fn related_spans(&self) -> &[RelatedSpan] {
         self.details
@@ -158,6 +165,11 @@ impl CompileError {
     /// Return the structured actual value or type, when the diagnostic provides one.
     pub fn actual(&self) -> Option<&str> {
         self.details.as_deref().and_then(|details| details.actual.as_deref())
+    }
+
+    /// Return the narrow stable catalog code selected by the diagnostic producer, when present.
+    pub fn stable_code(&self) -> Option<&'static str> {
+        self.details.as_deref().and_then(|details| details.stable_code)
     }
 
     /// Return the optional structured payload, allocating it only for a rich diagnostic.

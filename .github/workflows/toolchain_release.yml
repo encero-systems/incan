@@ -32,6 +32,8 @@ jobs:
         with:
           shared-key: incan-${{ matrix.target }}
           cache-workspace-crates: "true"
+      - name: Build host stdlib artifact builder
+        run: cargo build --locked --release --bin incan
       - name: Build toolchain commands
         run: cargo build --locked --release --features lsp --target "${{ matrix.target }}" --bin incan --bin incan-lsp
       - name: Package archive
@@ -40,6 +42,7 @@ jobs:
           TARGET: ${{ matrix.target }}
           INCAN_BIN: target/${{ matrix.target }}/release/incan
           INCAN_LSP_BIN: target/${{ matrix.target }}/release/incan-lsp
+          INCAN_STDLIB_ARTIFACT_BUILDER_BIN: target/release/incan
         run: workspaces/release/toolchain/package_archive.sh "${TARGET}"
       - uses: actions/upload-artifact@v7.0.1
         with:

@@ -600,7 +600,7 @@ model _UuidBytesWriter:
         return Ok(None)
 
 
-def _discard_written_count(_count: int) -> None:
+pub def _discard_written_count(_count: int) -> None:
     """
     Drop a successful byte count from `BytesIO.write_bytes`.
 

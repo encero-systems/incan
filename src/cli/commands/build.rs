@@ -7,44 +7,57 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 
 use crate::backend::project::generator::GENERATED_CARGO_TARGET_DIR_ENV;
 use crate::backend::{IrCodegen, ProjectGenerator, RunProfile};
 use crate::cli::{CliError, CliResult, ExitCode};
+use crate::compiled_sdk::CompiledSdkModules;
 use crate::dependency_resolver::{ResolvedDependencies, resolve_dependencies, resolve_reachable_dependencies};
 use crate::frontend::api_metadata::{
     CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, CheckedApiPackageIdentity,
     collect_checked_api_metadata, materialize_api_alias_projections, validate_checked_api_docstrings,
 };
-use crate::frontend::ast::{Declaration, Decorator, ImportKind, Span, Spanned};
+use crate::frontend::ast::{Declaration, Decorator, Expr, ImportKind, Literal, Span, Spanned, Statement, Visibility};
 use crate::frontend::contract_metadata::{ContractMetadataPackage, read_project_model_bundles};
 use crate::frontend::library_exports::{CheckedExportKind, CheckedNamedExport, collect_checked_public_exports};
-use crate::frontend::library_manifest_index::LibraryManifestIndex;
-use crate::frontend::module::canonicalize_source_module_segments;
+use crate::frontend::library_manifest_index::{LibraryArtifactKind, LibraryManifestIndex, LibraryManifestIndexEntry};
+use crate::frontend::module::{
+    SourceModuleImportResolution, canonicalize_source_module_segments, resolve_program_source_imports,
+    resolve_source_module_import,
+};
 use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
 use crate::frontend::{diagnostics, typechecker};
-use crate::library_manifest::LibraryManifest;
 #[cfg(feature = "rust_inspect")]
 use crate::library_manifest::LibraryRustAbi;
-use crate::lockfile::CargoFeatureSelection;
+use crate::library_manifest::{
+    CompiledProviderMetadata, LibraryManifest, ProviderCargoDependency, ProviderCargoDependencySource,
+    ProviderDependencyMetadata, ProviderFactKind, ProviderFactRequirement, ProviderImplementationFacet,
+    ProviderModuleClaim, digest_provider_artifact,
+};
+use crate::lockfile::{CargoFeatureSelection, semantic_lock_state};
 use crate::manifest::ProjectManifest;
+use crate::provider::{
+    FeatureSelection, PackageFeatureGraph, PackageFeaturePlan, ProviderPlan, SDK_PROVIDER_BUILD_ENV,
+};
 
 use super::build_report::{
     BuildReportDraft, BuildReportMode, BuildReportOptions, BuildReportProject, RustInspectionFormat, SourceFileReport,
     artifact_report, cargo_report, dependencies_report, emit_build_report, emit_rust_inspection_report,
-    generated_project_report, incan_dependencies_report, interop_report, rust_inspection_report,
+    generated_project_report, incan_dependencies_report, interop_report, rust_inspection_report, semantic_report,
 };
 #[cfg(feature = "rust_inspect")]
 use super::common::collect_rust_inspect_query_paths;
 use super::common::{
     CargoPolicy, INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, ProjectRequirements, build_source_map, cargo_command_flags,
-    collect_modules, collect_project_requirements, collect_rust_dependency_uses, enforce_project_toolchain_constraint,
-    format_dependency_error, imported_module_deps_for_with_index, merge_project_requirement_dependencies,
-    module_key_index, resolve_project_root, typecheck_modules_with_import_graph, validate_output_dir,
+    collect_project_requirements, collect_rust_dependency_uses, discover_effective_project_manifest,
+    enforce_project_toolchain_constraint, extend_requirements_with_provider_plan, format_dependency_error,
+    imported_module_deps_for_with_index, merge_project_requirement_dependencies, module_key_index,
+    resolve_project_root, resolve_source_root, typecheck_modules_with_import_graph, validate_output_dir,
 };
 use super::lock::{
-    GeneratedLibraryDependencyPreheatRequest, LockResolutionRequest, resolve_lock_payload,
+    GeneratedLibraryDependencyPreheatRequest, LockResolutionRequest, resolve_lock_context,
     run_generated_library_dependency_preheat,
 };
 #[cfg(feature = "rust_inspect")]
@@ -84,6 +97,8 @@ struct PreparedProject {
 #[derive(Debug, Clone, Default)]
 pub struct BuildCommandOptions {
     pub cargo_policy: CargoPolicy,
+    pub package_features: FeatureSelection,
+    pub sdk_profile: Option<String>,
     pub cargo_features: Vec<String>,
     pub cargo_no_default_features: bool,
     pub cargo_all_features: bool,
@@ -106,6 +121,7 @@ struct PrepareProjectOptions<'a> {
     output_dir: Option<&'a str>,
     project_name_override: Option<&'a str>,
     generated_cargo_target_dir: Option<&'a Path>,
+    sdk_profile_override: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -119,7 +135,7 @@ struct InlineCommandProject {
 struct PreparedLibraryProject {
     generator: ProjectGenerator,
     project_root: PathBuf,
-    project_name: String,
+    cargo_package_name: String,
     rust_edition: Option<String>,
     out_dir: PathBuf,
     manifest_path: PathBuf,
@@ -719,10 +735,13 @@ impl<'a> LibraryReexportResolver<'a> {
 /// 3. Configure codegen (serde, async, web, etc.)
 /// 4. Add Rust crate dependencies
 /// 5. Generate Rust project files
+#[allow(clippy::too_many_arguments)] // This orchestration boundary mirrors independent CLI feature and Cargo axes.
 fn prepare_project(
     file_path: &str,
     output_dir: Option<&str>,
     cargo_policy: &CargoPolicy,
+    package_features: &FeatureSelection,
+    sdk_profile_override: Option<&str>,
     cargo_features: Vec<String>,
     cargo_no_default_features: bool,
     cargo_all_features: bool,
@@ -733,8 +752,10 @@ fn prepare_project(
             output_dir,
             project_name_override: None,
             generated_cargo_target_dir: None,
+            sdk_profile_override,
         },
         cargo_policy,
+        package_features,
         cargo_features,
         cargo_no_default_features,
         cargo_all_features,
@@ -746,6 +767,7 @@ fn prepare_project_with_options(
     file_path: &str,
     options: PrepareProjectOptions<'_>,
     cargo_policy: &CargoPolicy,
+    package_features: &FeatureSelection,
     cargo_features: Vec<String>,
     cargo_no_default_features: bool,
     cargo_all_features: bool,
@@ -759,13 +781,19 @@ fn prepare_project_with_options(
     };
     let path = normalized_file_path.as_path();
     let inferred_project_root = resolve_project_root(path);
-    let manifest = ProjectManifest::discover(&inferred_project_root).map_err(|e| CliError::failure(e.to_string()))?;
+    let compilation_session = super::common::CompilationSession::discover_with_selections(
+        path,
+        package_features,
+        options.sdk_profile_override,
+    )?;
+    let manifest = compilation_session.manifest.clone();
     if let Some(manifest) = manifest.as_ref() {
         enforce_project_toolchain_constraint(manifest)?;
     }
 
-    let normalized_file_path_str = normalized_file_path.to_string_lossy().to_string();
-    let modules = collect_modules(&normalized_file_path_str)?;
+    let modules =
+        super::common::collect_modules_detailed_with_session(normalized_file_path.clone(), &compilation_session)
+            .map_err(|failure| CliError::failure(failure.render_human()))?;
     let rust_extern_contexts = collect_rust_extern_contexts(&modules);
 
     let Some(main_module) = modules.last() else {
@@ -777,11 +805,26 @@ fn prepare_project_with_options(
         .as_ref()
         .map(|manifest| manifest.project_root().to_path_buf())
         .unwrap_or(inferred_project_root);
-    let library_manifest_index = manifest
-        .as_ref()
-        .map(LibraryManifestIndex::from_project_manifest)
-        .unwrap_or_default();
-    let project_requirements = collect_project_requirements(&modules, &library_manifest_index)?;
+    let package_feature_plan = compilation_session.package_feature_plan.clone();
+    let library_manifest_index = compilation_session.library_manifest_index.clone();
+    let mut project_requirements = collect_project_requirements(&modules, &library_manifest_index)?;
+    let provider_plan = compilation_session.provider_plan_for_modules(&modules)?;
+    let compiled_sdk_modules = CompiledSdkModules::from_provider_plan(&provider_plan);
+    extend_requirements_with_provider_plan(&mut project_requirements, &provider_plan)?;
+    let semantic = semantic_lock_state(
+        &project_root,
+        compilation_session.sdk_inventory.as_deref(),
+        compilation_session.sdk_components.as_ref(),
+        package_feature_plan.as_ref(),
+        &provider_plan,
+    )
+    .map_err(CliError::failure)?;
+    // Artifact-owned stdlib modules resolve from checked metadata and are supplied by its linked Rust crate. Keep
+    // them out of local emission so consumers cannot materialize a second `__incan_std` tree.
+    let emitted_dep_modules: Vec<&ParsedModule> = dep_modules
+        .iter()
+        .filter(|module| !compiled_sdk_modules.contains_emission_path(&module.path_segments))
+        .collect();
 
     // Derive project name (manifest overrides filename)
     let project_name = options
@@ -813,13 +856,24 @@ fn prepare_project_with_options(
     if let Some(m) = manifest.as_ref() {
         codegen.set_declared_crate_names(m.declared_rust_crate_names());
     }
-    codegen.set_library_manifest_index(library_manifest_index.clone());
+    codegen.set_provider_plan(Arc::clone(&provider_plan));
+    for module in dep_modules
+        .iter()
+        .filter(|module| compiled_sdk_modules.contains_emission_path(&module.path_segments))
+    {
+        codegen.add_dependency_symbol_module_with_path_segments(
+            &module.name,
+            &module.ast,
+            module.path_segments.clone(),
+        );
+    }
     // Add user dependency modules
-    for module in dep_modules {
+    for module in &emitted_dep_modules {
         codegen.add_module_with_path_segments(&module.name, &module.ast, module.path_segments.clone());
     }
     // ---- Setup project generator ----
     let mut generator = ProjectGenerator::new(&out_dir, project_name.as_str(), true);
+    generator.set_provider_plan(&provider_plan);
     generator.set_cargo_target_dir_override(options.generated_cargo_target_dir.map(Path::to_path_buf));
     generator.set_stdlib_features(project_requirements.stdlib_features.clone());
     generator.set_include_dev_dependencies(false);
@@ -830,7 +884,7 @@ fn prepare_project_with_options(
     );
 
     let mut inline_imports = collect_rust_dependency_uses(main_module, false);
-    for module in dep_modules {
+    for module in &emitted_dep_modules {
         inline_imports.extend(collect_rust_dependency_uses(module, false));
     }
     // RFC 023: Stdlib modules should not have inline rust imports (they use rust.module() + @rust.extern instead),
@@ -861,22 +915,34 @@ fn prepare_project_with_options(
     let metadata_query_paths: Vec<String> = Vec::new();
 
     // Resolve lock payload before moving deps into generator (borrows resolved)
-    let lock_payload = resolve_lock_payload(LockResolutionRequest {
+    let lock_resolution = resolve_lock_context(LockResolutionRequest {
         project_root: &project_root,
         project_name: project_name.as_str(),
+        entry_file: Some(&normalized_file_path),
         manifest: manifest.as_ref(),
         resolved: &resolved,
         project_requirements: &project_requirements,
         cargo_features: &cargo_features,
         cargo_policy,
+        semantic: Some(&semantic),
+        package_features: Some(package_features),
+        sdk_profile_override: options.sdk_profile_override,
         #[cfg(feature = "rust_inspect")]
         rust_inspect_query_paths: &metadata_query_paths,
     })?;
+    resolved = lock_resolution.resolved;
+    project_requirements = lock_resolution.project_requirements;
+    let lock_payload = lock_resolution.cargo_lock_payload;
+    let cargo_package_name = lock_resolution.cargo_package_name;
+    generator.set_package_name(Some(cargo_package_name.clone()));
+    generator.set_stdlib_features(project_requirements.stdlib_features.clone());
+    generator.set_include_dev_dependencies(lock_payload.is_some());
     #[cfg(feature = "rust_inspect")]
     let rust_inspect_manifest_dir = {
         let rust_inspect_manifest_dir = prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {
             project_root: &project_root,
             project_name: project_name.as_str(),
+            cargo_package_name: &cargo_package_name,
             rust_edition: manifest
                 .as_ref()
                 .and_then(|m| m.build.as_ref().and_then(|b| b.rust_edition.clone())),
@@ -899,7 +965,7 @@ fn prepare_project_with_options(
     typecheck_modules_with_import_graph(
         &modules,
         manifest.as_ref(),
-        &library_manifest_index,
+        &provider_plan,
         #[cfg(feature = "rust_inspect")]
         rust_inspect_manifest_dir.as_deref(),
     )?;
@@ -918,7 +984,7 @@ fn prepare_project_with_options(
         mode: BuildReportMode::Executable,
         profile: "release".to_string(),
         project: manifest_project_report(manifest.as_ref(), project_name.as_str(), &project_root),
-        entrypoint: Some(normalized_file_path_str.clone()),
+        entrypoint: Some(normalized_file_path.to_string_lossy().to_string()),
         library_root: None,
         source_files: source_file_report(&modules),
         generated: generated_project_report(
@@ -932,6 +998,12 @@ fn prepare_project_with_options(
             &rust_dev_dependencies,
             incan_dependencies,
             project_requirements.stdlib_features.clone(),
+        ),
+        semantic: semantic_report(
+            compilation_session.sdk_inventory.as_deref(),
+            compilation_session.sdk_components.as_ref(),
+            package_feature_plan.as_ref(),
+            &provider_plan,
         ),
         cargo: cargo_report(
             cargo_policy,
@@ -953,9 +1025,12 @@ fn prepare_project_with_options(
     generator.set_dev_dependencies(resolved.dev_dependencies);
 
     // ---- Generate Rust project files ----
-    let has_deps = !dep_modules.is_empty();
+    let has_deps = !emitted_dep_modules.is_empty()
+        || dep_modules
+            .iter()
+            .any(|module| compiled_sdk_modules.contains_emission_path(&module.path_segments));
     let project_changed = if has_deps {
-        let module_paths: Vec<Vec<String>> = dep_modules.iter().map(|m| m.path_segments.clone()).collect();
+        let module_paths: Vec<Vec<String>> = emitted_dep_modules.iter().map(|m| m.path_segments.clone()).collect();
         let (main_code, rust_modules) = codegen
             .try_generate_multi_file_nested(&main_module.ast, &module_paths)
             .map_err(|e| CliError::failure(format!("Code generation error: {}", e)))?;
@@ -989,6 +1064,18 @@ pub fn build_file(
     options: BuildCommandOptions,
     report_options: BuildReportOptions,
 ) -> CliResult<ExitCode> {
+    let report = build_file_report(file_path, output_dir, options, &report_options)?;
+    emit_build_report(&report, &report_options)?;
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Build one executable project and retain its completed report for workspace-level aggregation.
+pub(crate) fn build_file_report(
+    file_path: &str,
+    output_dir: Option<&String>,
+    options: BuildCommandOptions,
+    report_options: &BuildReportOptions,
+) -> CliResult<crate::cli::commands::build_report::BuildReport> {
     let total_start = Instant::now();
     let prepare_start = Instant::now();
     let generated_cargo_target_dir = options.effective_generated_cargo_target_dir();
@@ -998,8 +1085,10 @@ pub fn build_file(
             output_dir: output_dir.map(|s| s.as_str()),
             project_name_override: None,
             generated_cargo_target_dir: generated_cargo_target_dir.as_deref(),
+            sdk_profile_override: options.sdk_profile.as_deref(),
         },
         &options.cargo_policy,
+        &options.package_features,
         options.cargo_features,
         options.cargo_no_default_features,
         options.cargo_all_features,
@@ -1007,19 +1096,19 @@ pub fn build_file(
     let prepare_ms = elapsed_ms(prepare_start);
 
     print_build_progress(
-        &report_options,
+        report_options,
         format!("Generated Rust project in: {}", prepared.out_dir),
     );
-    print_build_progress(&report_options, "Building...");
+    print_build_progress(report_options, "Building...");
 
     let cargo_start = Instant::now();
     match prepared.generator.build() {
         Ok(result) => {
             let cargo_build_ms = elapsed_ms(cargo_start);
             if result.success {
-                print_build_progress(&report_options, "✓ Build successful!");
+                print_build_progress(report_options, "✓ Build successful!");
                 print_build_progress(
-                    &report_options,
+                    report_options,
                     format!("Binary: {}", prepared.generator.binary_path().display()),
                 );
                 let mut report_draft = prepared.report.clone();
@@ -1031,8 +1120,7 @@ pub fn build_file(
                     ("cargo_build".to_string(), cargo_build_ms),
                     ("total".to_string(), elapsed_ms(total_start)),
                 ]));
-                emit_build_report(&report, &report_options)?;
-                Ok(ExitCode::SUCCESS)
+                Ok(report)
             } else {
                 if let Some(wrapped) =
                     format_rust_extern_wrapped_diagnostics(&result.stderr, &prepared.rust_extern_contexts)
@@ -1051,9 +1139,13 @@ pub fn build_file(
 }
 
 /// Validate a library project and generate its Rust project without running Cargo.
+#[allow(clippy::too_many_arguments)] // Library preparation receives the same independent CLI selection axes.
 fn prepare_library_project(
     file_path: Option<&str>,
+    output_dir: Option<&str>,
     cargo_policy: CargoPolicy,
+    package_features: &FeatureSelection,
+    sdk_profile_override: Option<&str>,
     cargo_features: Vec<String>,
     cargo_no_default_features: bool,
     cargo_all_features: bool,
@@ -1063,7 +1155,7 @@ fn prepare_library_project(
     let mut timings_ms = BTreeMap::new();
     let source_load_start = Instant::now();
     let project_root = resolve_library_project_root(file_path)?;
-    let Some(manifest) = ProjectManifest::discover(&project_root).map_err(|e| CliError::failure(e.to_string()))? else {
+    let Some(manifest) = discover_effective_project_manifest(&project_root)? else {
         return Err(CliError::failure(
             "No incan.toml found for `incan build --lib` (run `incan init` first)",
         ));
@@ -1071,8 +1163,14 @@ fn prepare_library_project(
     enforce_project_toolchain_constraint(&manifest)?;
 
     let lib_entry = validate_library_entrypoint(&manifest)?;
-    let lib_entry_str = lib_entry.to_string_lossy().to_string();
-    let modules = collect_modules(&lib_entry_str)?;
+    let compilation_session = super::common::CompilationSession::discover_with_selections(
+        &lib_entry,
+        package_features,
+        sdk_profile_override,
+    )?;
+    let modules = super::common::collect_modules_detailed_with_session(lib_entry.clone(), &compilation_session)
+        .map_err(|failure| CliError::failure(failure.render_human()))?;
+    let provider_metadata_modules = collect_unprojected_provider_modules(&lib_entry, &compilation_session)?;
 
     let Some(lib_module) = modules.last() else {
         return Err(CliError::failure("No modules found for library build"));
@@ -1088,15 +1186,36 @@ fn prepare_library_project(
 
     let requirements_start = Instant::now();
     let declared = manifest.declared_rust_crate_names();
-    let library_manifest_index = LibraryManifestIndex::from_project_manifest(&manifest);
-    let project_requirements = collect_project_requirements(&modules, &library_manifest_index)?;
+    let package_feature_plan = compilation_session
+        .package_feature_plan
+        .clone()
+        .ok_or_else(|| CliError::failure("library compilation session is missing its package feature graph"))?;
+    let library_manifest_index = compilation_session.library_manifest_index.clone();
+    let mut project_requirements = collect_project_requirements(&modules, &library_manifest_index)?;
+    let provider_plan = compilation_session.provider_plan_for_modules(&modules)?;
+    let compiled_sdk_modules = CompiledSdkModules::from_provider_plan(&provider_plan);
+    extend_requirements_with_provider_plan(&mut project_requirements, &provider_plan)?;
+    let semantic = semantic_lock_state(
+        &project_root,
+        compilation_session.sdk_inventory.as_deref(),
+        compilation_session.sdk_components.as_ref(),
+        Some(&package_feature_plan),
+        &provider_plan,
+    )
+    .map_err(CliError::failure)?;
     let contract_model_bundles = read_project_model_bundles(&project_root, &manifest.contract_model_bundle_paths())
         .map_err(|error| CliError::failure(error.to_string()))?;
     let rust_extern_contexts = collect_rust_extern_contexts(&modules);
     let dep_modules = &modules[..modules.len() - 1];
+    // Library consumers use the same artifact metadata and linked Rust crate as executable and test-batch consumers;
+    // migrated modules must not be generated into a second local `__incan_std` tree.
+    let emitted_dep_modules: Vec<&ParsedModule> = dep_modules
+        .iter()
+        .filter(|module| !compiled_sdk_modules.contains_emission_path(&module.path_segments))
+        .collect();
 
     let mut inline_imports = collect_rust_dependency_uses(lib_module, false);
-    for module in dep_modules {
+    for module in &emitted_dep_modules {
         inline_imports.extend(collect_rust_dependency_uses(module, false));
     }
     let project_name = manifest
@@ -1140,17 +1259,25 @@ fn prepare_library_project(
     let metadata_query_paths: Vec<String> = Vec::new();
 
     let lock_start = Instant::now();
-    let lock_payload_for_typecheck = resolve_lock_payload(LockResolutionRequest {
+    let lock_resolution = resolve_lock_context(LockResolutionRequest {
         project_root: &project_root,
         project_name: project_name.as_str(),
+        entry_file: Some(&lib_entry),
         manifest: Some(&manifest),
         resolved: &resolved,
         project_requirements: &project_requirements,
         cargo_features: &cargo_features,
         cargo_policy: &cargo_policy,
+        semantic: Some(&semantic),
+        package_features: Some(package_features),
+        sdk_profile_override,
         #[cfg(feature = "rust_inspect")]
         rust_inspect_query_paths: &metadata_query_paths,
     })?;
+    resolved = lock_resolution.resolved;
+    project_requirements = lock_resolution.project_requirements;
+    let lock_payload_for_typecheck = lock_resolution.cargo_lock_payload;
+    let cargo_package_name = lock_resolution.cargo_package_name;
     record_timing(&mut timings_ms, "library_resolve_lock_payload", lock_start);
     let should_preheat_library_dependencies = lock_payload_for_typecheck.is_some()
         && (!resolved.dependencies.is_empty() || !project_requirements.stdlib_features.is_empty());
@@ -1161,6 +1288,7 @@ fn prepare_library_project(
         let rust_inspect_manifest_dir = prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {
             project_root: &project_root,
             project_name: project_name.as_str(),
+            cargo_package_name: &cargo_package_name,
             rust_edition: manifest.build.as_ref().and_then(|build| build.rust_edition.clone()),
             resolved: &resolved,
             project_requirements: &project_requirements,
@@ -1186,11 +1314,17 @@ fn prepare_library_project(
         checker.stdlib_cache = stdlib_cache.clone();
         checker.set_current_module_path(Some(module.path_segments.clone()));
         checker.set_declared_crate_names(declared.clone());
-        checker.set_library_manifest_index(library_manifest_index.clone());
+        checker.set_provider_plan(Arc::clone(&provider_plan));
         #[cfg(feature = "rust_inspect")]
         checker.set_rust_inspect_manifest_dir(rust_inspect_manifest_dir.clone());
 
-        match checker.check_with_imports(&module.ast, &deps_for_module) {
+        // A provider producer checks its complete source package before publishing the public checked facade.
+        let check_result = if provider_plan.bootstrap_sdk_namespace_roots().next().is_some() {
+            checker.check_with_imports_allow_private(&module.ast, &deps_for_module)
+        } else {
+            checker.check_with_imports(&module.ast, &deps_for_module)
+        };
+        match check_result {
             Ok(()) => {
                 for warn in checker.warnings() {
                     eprint!(
@@ -1252,6 +1386,21 @@ fn prepare_library_project(
     }
     record_timing(&mut timings_ms, "library_validate_api_metadata", api_validation_start);
 
+    let out_dir = match output_dir {
+        Some(output_dir) => {
+            validate_output_dir(output_dir)?;
+            let output_dir = PathBuf::from(output_dir);
+            if output_dir.is_absolute() {
+                output_dir
+            } else {
+                project_root.join(output_dir)
+            }
+        }
+        None => project_root.join("target").join("lib"),
+    };
+    std::fs::create_dir_all(&out_dir)
+        .map_err(|error| CliError::failure(format!("failed to create {}: {error}", out_dir.display())))?;
+
     let export_start = Instant::now();
     let selected_exports = LibraryReexportResolver::new(&checked_exports_by_module)
         .resolve(lib_module)
@@ -1291,6 +1440,15 @@ fn prepare_library_project(
         }),
         modules: api_metadata_modules,
     });
+    library_manifest.contract_metadata.provider = compiled_provider_metadata(
+        &manifest,
+        &package_feature_plan,
+        &provider_plan,
+        &library_manifest_index,
+        &out_dir,
+        &provider_metadata_modules,
+        lib_module,
+    )?;
     #[cfg(feature = "rust_inspect")]
     {
         library_manifest.rust_abi = collect_library_rust_abi(&rust_inspect_manifest_dir, &metadata_query_paths)?;
@@ -1308,9 +1466,6 @@ fn prepare_library_project(
     }
     record_timing(&mut timings_ms, "library_collect_vocab_metadata", vocab_start);
 
-    let out_dir = project_root.join("target").join("lib");
-    std::fs::create_dir_all(&out_dir)
-        .map_err(|e| CliError::failure(format!("failed to create {}: {e}", out_dir.display())))?;
     package_desugarer_artifact(&out_dir, pending_desugarer_artifact.as_ref())?;
     let manifest_path = out_dir.join(format!("{project_name}.incnlib"));
 
@@ -1318,19 +1473,31 @@ fn prepare_library_project(
     codegen.set_preserve_dependency_public_items(true);
     codegen.set_stdlib_cache(stdlib_cache);
     codegen.set_declared_crate_names(declared);
-    codegen.set_library_manifest_index(library_manifest_index.clone());
+    codegen.set_provider_plan(Arc::clone(&provider_plan));
     codegen.set_public_ordinal_type_identities(public_ordinal_type_identities(
         lib_module,
         project_name.as_str(),
         &selected_exports,
     ));
-    for module in dep_modules {
+    for module in dep_modules
+        .iter()
+        .filter(|module| compiled_sdk_modules.contains_emission_path(&module.path_segments))
+    {
+        codegen.add_dependency_symbol_module_with_path_segments(
+            &module.name,
+            &module.ast,
+            module.path_segments.clone(),
+        );
+    }
+    for module in &emitted_dep_modules {
         codegen.add_module_with_path_segments(&module.name, &module.ast, module.path_segments.clone());
     }
     let mut generator = ProjectGenerator::new(&out_dir, project_name.as_str(), false);
+    generator.set_package_name(Some(cargo_package_name.clone()));
+    generator.set_provider_plan(&provider_plan);
     generator.set_cargo_target_dir_override(generated_cargo_target_dir.map(Path::to_path_buf));
     generator.set_stdlib_features(project_requirements.stdlib_features.clone());
-    generator.set_include_dev_dependencies(false);
+    generator.set_include_dev_dependencies(lock_payload_for_typecheck.is_some());
     let rust_edition = manifest.build.as_ref().and_then(|build| build.rust_edition.clone());
     generator.set_rust_edition(rust_edition.clone());
     #[cfg(feature = "rust_inspect")]
@@ -1345,7 +1512,7 @@ fn prepare_library_project(
         mode: BuildReportMode::Library,
         profile: "release".to_string(),
         project: manifest_project_report(Some(&manifest), project_name.as_str(), &project_root),
-        entrypoint: Some(lib_entry_str.clone()),
+        entrypoint: Some(lib_entry.to_string_lossy().to_string()),
         library_root: Some(project_root.to_string_lossy().to_string()),
         source_files: source_file_report(&modules),
         generated: generated_project_report(
@@ -1359,6 +1526,12 @@ fn prepare_library_project(
             &rust_dev_dependencies,
             incan_dependencies_report(manifest.library_dependencies().iter().collect()),
             project_requirements.stdlib_features.clone(),
+        ),
+        semantic: semantic_report(
+            compilation_session.sdk_inventory.as_deref(),
+            compilation_session.sdk_components.as_ref(),
+            Some(&package_feature_plan),
+            &provider_plan,
         ),
         cargo: cargo_report(
             &cargo_policy,
@@ -1379,7 +1552,7 @@ fn prepare_library_project(
     generator.set_dev_dependencies(resolved.dev_dependencies);
 
     let codegen_start = Instant::now();
-    if dep_modules.is_empty() {
+    if emitted_dep_modules.is_empty() {
         let rust_code = codegen
             .try_generate(&lib_module.ast)
             .map_err(|e| CliError::failure(format!("Code generation error: {e}")))?;
@@ -1387,7 +1560,10 @@ fn prepare_library_project(
             .generate(&rust_code)
             .map_err(|e| CliError::failure(format!("Error generating project: {e}")))?;
     } else {
-        let module_paths: Vec<Vec<String>> = dep_modules.iter().map(|module| module.path_segments.clone()).collect();
+        let module_paths: Vec<Vec<String>> = emitted_dep_modules
+            .iter()
+            .map(|module| module.path_segments.clone())
+            .collect();
         let (main_code, rust_modules) = codegen
             .try_generate_multi_file_nested(&lib_module.ast, &module_paths)
             .map_err(|e| CliError::failure(format!("Code generation error: {e}")))?;
@@ -1401,7 +1577,7 @@ fn prepare_library_project(
     Ok(PreparedLibraryProject {
         generator,
         project_root,
-        project_name,
+        cargo_package_name,
         rust_edition,
         out_dir,
         manifest_path,
@@ -1416,6 +1592,659 @@ fn prepare_library_project(
         timings_ms,
         report: report_draft,
     })
+}
+
+/// Build transport-stable provider facts from the checked physical artifact projection.
+fn compiled_provider_metadata(
+    manifest: &ProjectManifest,
+    feature_plan: &PackageFeaturePlan,
+    provider_plan: &ProviderPlan,
+    library_manifest_index: &LibraryManifestIndex,
+    artifact_root: &Path,
+    modules: &[ParsedModule],
+    active_library_entrypoint: &ParsedModule,
+) -> CliResult<CompiledProviderMetadata> {
+    let graph = PackageFeatureGraph::from_manifest(manifest).map_err(|error| CliError::failure(error.to_string()))?;
+    let root_features = feature_plan
+        .root_package()
+        .map(|package| &package.features)
+        .ok_or_else(|| CliError::failure("resolved package feature plan is missing its root package"))?;
+    let library_entrypoint = modules
+        .iter()
+        .find(|module| module.file_path == active_library_entrypoint.file_path)
+        .ok_or_else(|| CliError::failure("unprojected provider graph is missing its library entrypoint"))?;
+    let source_root = resolve_source_root(manifest.project_root(), Some(manifest));
+    let module_requirements = provider_module_reachability_requirements(modules, library_entrypoint, &source_root)?;
+    let mut namespace_claims = modules
+        .iter()
+        .filter(|module| {
+            module.file_path != active_library_entrypoint.file_path
+                && !module.path_segments.is_empty()
+                && !module_is_owned_by_dependency_provider(provider_plan, &module.path_segments)
+        })
+        .flat_map(|module| {
+            module_requirements
+                .get(&module.path_segments)
+                .into_iter()
+                .flatten()
+                .map(|required_features| ProviderModuleClaim {
+                    module_path: module.path_segments.clone(),
+                    required_features: required_features.clone(),
+                })
+        })
+        .collect::<Vec<_>>();
+    namespace_claims.sort();
+    namespace_claims.dedup();
+
+    let public_features = graph.provider_metadata();
+    let mut fact_requirements = Vec::new();
+    for module in modules
+        .iter()
+        .filter(|module| !module_is_owned_by_dependency_provider(provider_plan, &module.path_segments))
+    {
+        let requirements = module_requirements.get(&module.path_segments).ok_or_else(|| {
+            CliError::failure(format!(
+                "unprojected provider module `{}` has no reachability predicate from the library entrypoint",
+                module.path_segments.join(".")
+            ))
+        })?;
+        fact_requirements.extend(provider_fact_requirements(module, requirements));
+    }
+    fact_requirements.extend(
+        namespace_claims
+            .iter()
+            .filter(|claim| !claim.required_features.is_empty())
+            .map(|claim| ProviderFactRequirement {
+                kind: ProviderFactKind::Module,
+                identity: claim.module_path.join("."),
+                required_features: claim.required_features.clone(),
+            }),
+    );
+    fact_requirements.extend(public_features.iter().flat_map(|(feature, metadata)| {
+        metadata
+            .required_sdk_components
+            .iter()
+            .map(move |component| ProviderFactRequirement {
+                kind: ProviderFactKind::ComponentRequirement,
+                identity: component.clone(),
+                required_features: BTreeSet::from([feature.clone()]),
+            })
+    }));
+    fact_requirements.sort();
+    fact_requirements.dedup();
+
+    let provider_dependencies =
+        compiled_provider_dependencies(feature_plan, library_manifest_index, provider_plan, artifact_root)?;
+    let implementation_facets = provider_implementation_facets(&namespace_claims);
+    Ok(CompiledProviderMetadata {
+        namespace_claims,
+        public_features,
+        active_features: root_features.active_features.clone(),
+        provider_dependencies,
+        fact_requirements,
+        required_sdk_components: root_features.required_sdk_components.clone(),
+        implementation_facets,
+        ..CompiledProviderMetadata::default()
+    })
+}
+
+/// Freeze the active Incan dependency edges into artifact-owned, relocation-safe provider metadata.
+fn compiled_provider_dependencies(
+    feature_plan: &PackageFeaturePlan,
+    library_manifest_index: &LibraryManifestIndex,
+    provider_plan: &ProviderPlan,
+    artifact_root: &Path,
+) -> CliResult<Vec<ProviderDependencyMetadata>> {
+    let mut dependencies = Vec::new();
+    for edge in feature_plan
+        .edges()
+        .filter(|edge| edge.from.as_path() == feature_plan.root())
+    {
+        let entry = library_manifest_index.get(&edge.dependency_key).ok_or_else(|| {
+            CliError::failure(format!(
+                "active provider dependency `pub::{}` is missing from the checked library manifest index",
+                edge.dependency_key
+            ))
+        })?;
+        let (manifest, metadata) = match entry {
+            LibraryManifestIndexEntry::Loaded { manifest, metadata } => (manifest, metadata),
+            LibraryManifestIndexEntry::Failed(failure) => {
+                return Err(CliError::failure(format!(
+                    "active provider dependency `pub::{}` could not be loaded from {}: {}",
+                    edge.dependency_key,
+                    failure.path.display(),
+                    failure.message
+                )));
+            }
+        };
+        if metadata.kind != LibraryArtifactKind::Materialized {
+            return Err(CliError::failure(format!(
+                "active provider dependency `pub::{}` has parser-only metadata; build its compiled artifact before publishing this provider",
+                edge.dependency_key
+            )));
+        }
+        let artifact_digest = digest_provider_artifact(&metadata.crate_root).map_err(|error| {
+            CliError::failure(format!(
+                "failed to hash provider dependency `pub::{}` artifact {}: {error}",
+                edge.dependency_key,
+                metadata.crate_root.display()
+            ))
+        })?;
+        dependencies.push(ProviderDependencyMetadata {
+            kind: crate::library_manifest::ProviderDependencyKind::PublicPackage,
+            dependency_key: edge.dependency_key.clone(),
+            provider_name: manifest.name.clone(),
+            provider_version: manifest.version.clone(),
+            artifact_digest,
+            relative_artifact_path: relative_provider_artifact_path(artifact_root, &metadata.crate_root)?,
+            requested_features: edge.requested_features.clone(),
+            default_features: edge.default_features,
+            optional: edge.optional,
+        });
+    }
+    for provider in provider_plan.sdk_link_roots() {
+        let Some(metadata) = provider.artifact.as_ref() else {
+            continue;
+        };
+        let artifact_digest = digest_provider_artifact(&metadata.crate_root).map_err(|error| {
+            CliError::failure(format!(
+                "failed to hash private SDK provider dependency `{}` artifact {}: {error}",
+                provider.identity.name,
+                metadata.crate_root.display()
+            ))
+        })?;
+        dependencies.push(ProviderDependencyMetadata {
+            kind: crate::library_manifest::ProviderDependencyKind::PrivateImplementation,
+            dependency_key: metadata.dependency_key.clone(),
+            provider_name: provider.identity.name.clone(),
+            provider_version: provider.identity.version.clone(),
+            artifact_digest,
+            relative_artifact_path: relative_provider_artifact_path(artifact_root, &metadata.crate_root)?,
+            requested_features: provider.identity.feature_projection.clone(),
+            default_features: false,
+            optional: false,
+        });
+    }
+    dependencies.sort();
+    dependencies.dedup();
+    Ok(dependencies)
+}
+
+/// Compute one normalized portable path between two existing provider artifact roots.
+fn relative_provider_artifact_path(from: &Path, to: &Path) -> CliResult<String> {
+    let from = fs::canonicalize(from).map_err(|error| {
+        CliError::failure(format!(
+            "failed to canonicalize provider artifact root {}: {error}",
+            from.display()
+        ))
+    })?;
+    let to = fs::canonicalize(to).map_err(|error| {
+        CliError::failure(format!(
+            "failed to canonicalize dependency artifact root {}: {error}",
+            to.display()
+        ))
+    })?;
+    let from_components = from.components().collect::<Vec<_>>();
+    let to_components = to.components().collect::<Vec<_>>();
+    let common = from_components
+        .iter()
+        .zip(&to_components)
+        .take_while(|(left, right)| left == right)
+        .count();
+    if common == 0 {
+        return Err(CliError::failure(format!(
+            "provider artifact roots {} and {} have no relocatable filesystem ancestor",
+            from.display(),
+            to.display()
+        )));
+    }
+    let mut relative = PathBuf::new();
+    for _ in common..from_components.len() {
+        relative.push("..");
+    }
+    for component in &to_components[common..] {
+        relative.push(component.as_os_str());
+    }
+    let rendered = relative.to_string_lossy().replace('\\', "/");
+    if rendered.is_empty() {
+        return Err(CliError::failure("a provider artifact cannot depend on itself"));
+    }
+    Ok(rendered)
+}
+
+/// Parse the complete local provider graph without dropping inactive feature-conditioned declarations.
+///
+/// The checked API and generated Rust remain specialized to the selected feature projection. This parallel metadata
+/// view preserves the complete positive condition inventory so consumers and inspection can explain inactive facts
+/// without reparsing provider source.
+fn collect_unprojected_provider_modules(
+    library_entrypoint: &Path,
+    session: &super::common::CompilationSession,
+) -> CliResult<Vec<ParsedModule>> {
+    let mut pending = vec![(
+        library_entrypoint.to_path_buf(),
+        "main".to_string(),
+        vec!["main".to_string()],
+    )];
+    let mut processed = HashSet::new();
+    let mut modules = Vec::new();
+
+    while let Some((file_path, module_name, path_segments)) = pending.pop() {
+        let canonical_path = file_path.canonicalize().unwrap_or_else(|_| file_path.clone());
+        if !processed.insert(canonical_path) {
+            continue;
+        }
+        let source = fs::read_to_string(&file_path)
+            .map_err(|error| CliError::failure(format!("failed to read {}: {error}", file_path.display())))?;
+        let ast = session
+            .parse_source_unprojected(&file_path, &source, false)
+            .map_err(|errors| {
+                let rendered = errors
+                    .iter()
+                    .map(|error| diagnostics::format_error(file_path.to_string_lossy().as_ref(), &source, error))
+                    .collect::<String>();
+                CliError::failure(rendered.trim_end())
+            })?;
+        session.validate_parsed_program_features(&ast).map_err(|errors| {
+            let rendered = errors
+                .iter()
+                .map(|error| diagnostics::format_error(file_path.to_string_lossy().as_ref(), &source, error))
+                .collect::<String>();
+            CliError::failure(rendered.trim_end())
+        })?;
+        let base_dir = file_path.parent().unwrap_or(session.source_root.as_path());
+        for resolved in resolve_program_source_imports(&ast, base_dir, Some(&session.source_root)) {
+            if let SourceModuleImportResolution::Local(module) = resolved.resolution {
+                pending.push((module.file_path, module.module_name, module.path_segments));
+            }
+        }
+        modules.push(ParsedModule {
+            name: module_name,
+            path_segments,
+            file_path,
+            source,
+            ast,
+        });
+    }
+
+    Ok(modules)
+}
+
+/// Freeze the source SDK publisher's current Rust-backend mappings into provider-owned artifact facets.
+///
+/// Consumers read these mappings from `.incnlib`; they never rediscover Cargo features or dependencies from a
+/// compiler-side stdlib module inventory. This bootstrap adapter can disappear once provider source can author the
+/// equivalent backend mappings directly.
+fn provider_implementation_facets(namespace_claims: &[ProviderModuleClaim]) -> Vec<ProviderImplementationFacet> {
+    if env::var_os(SDK_PROVIDER_BUILD_ENV).is_none() {
+        return Vec::new();
+    }
+    let roots = namespace_claims
+        .iter()
+        .filter_map(|claim| claim.module_path.first().cloned())
+        .collect::<BTreeSet<_>>();
+    roots
+        .into_iter()
+        .filter_map(|root| {
+            let namespace = incan_core::lang::stdlib::find_namespace(&root)?;
+            let required_modules = namespace_claims
+                .iter()
+                .filter(|claim| claim.module_path.first() == Some(&root))
+                .map(|claim| claim.module_path.clone())
+                .collect();
+            let cargo_features = namespace
+                .feature
+                .map(|feature| {
+                    BTreeMap::from([(
+                        crate::backend::project::INCAN_STDLIB_CRATE_NAME.to_string(),
+                        BTreeSet::from([feature.to_string()]),
+                    )])
+                })
+                .unwrap_or_default();
+            let cargo_dependencies = namespace
+                .extra_crate_deps
+                .iter()
+                .map(|dependency| ProviderCargoDependency {
+                    crate_name: dependency.crate_name.to_string(),
+                    package: incan_core::lang::stdlib::extra_crate_package_alias(dependency.crate_name)
+                        .map(str::to_string),
+                    version: match dependency.source {
+                        incan_core::lang::stdlib::StdlibExtraCrateSource::Version(version) => Some(version.to_string()),
+                        incan_core::lang::stdlib::StdlibExtraCrateSource::Path(_) => None,
+                    },
+                    features: dependency
+                        .features
+                        .iter()
+                        .map(|feature| (*feature).to_string())
+                        .collect(),
+                    default_features: true,
+                    source: match dependency.source {
+                        incan_core::lang::stdlib::StdlibExtraCrateSource::Version(_) => {
+                            ProviderCargoDependencySource::Registry
+                        }
+                        incan_core::lang::stdlib::StdlibExtraCrateSource::Path(relative_path) => {
+                            ProviderCargoDependencySource::Toolchain {
+                                relative_path: relative_path.to_string(),
+                            }
+                        }
+                    },
+                })
+                .collect();
+            Some(ProviderImplementationFacet {
+                id: format!("rust_{root}"),
+                required_modules,
+                required_features: BTreeSet::new(),
+                cargo_features,
+                cargo_dependencies,
+            })
+        })
+        .collect()
+}
+
+/// Return whether an already-linked SDK provider owns this emitted `__incan_std.*` module.
+fn module_is_owned_by_dependency_provider(provider_plan: &ProviderPlan, emission_path: &[String]) -> bool {
+    let prefix = [incan_core::lang::stdlib::INCAN_STD_NAMESPACE.to_string()];
+    let relative = if let Some(relative) = emission_path.strip_prefix(prefix.as_slice()) {
+        relative
+    } else if env::var_os(SDK_PROVIDER_BUILD_ENV).is_some() {
+        emission_path
+    } else {
+        return false;
+    };
+    let mut canonical = vec![incan_core::lang::stdlib::STDLIB_ROOT.to_string()];
+    canonical.extend(relative.iter().cloned());
+    provider_plan.active_sdk_provider_for_module(&canonical).is_some()
+}
+
+/// Derive the positive feature predicates under which every local provider module is reachable from the entrypoint.
+///
+/// Multiple incomparable predicates represent alternative additive paths. A broader predicate subsumes narrower paths,
+/// so an unconditional import collapses every conditional route to the same module. Conditions accumulate across
+/// nested imports instead of being inferred only from the library entrypoint.
+fn provider_module_reachability_requirements(
+    modules: &[ParsedModule],
+    entrypoint: &ParsedModule,
+    source_root: &Path,
+) -> CliResult<BTreeMap<Vec<String>, Vec<BTreeSet<String>>>> {
+    let modules_by_path = modules
+        .iter()
+        .map(|module| (canonical_provider_source_path(&module.file_path), module))
+        .collect::<BTreeMap<_, _>>();
+    let entrypoint_path = canonical_provider_source_path(&entrypoint.file_path);
+    if !modules_by_path.contains_key(&entrypoint_path) {
+        return Err(CliError::failure(
+            "unprojected provider graph does not contain its library entrypoint",
+        ));
+    }
+
+    let mut requirements = BTreeMap::new();
+    insert_provider_feature_predicate(&mut requirements, entrypoint.path_segments.clone(), BTreeSet::new());
+    let mut pending = vec![(entrypoint_path, BTreeSet::new())];
+
+    while let Some((module_path, inherited_features)) = pending.pop() {
+        let Some(module) = modules_by_path.get(&module_path) else {
+            return Err(CliError::failure(format!(
+                "unprojected provider graph lost module {}",
+                module_path.display()
+            )));
+        };
+        let base_dir = module.file_path.parent().unwrap_or(source_root);
+        for declaration in &module.ast.declarations {
+            let Declaration::Import(import) = &declaration.node else {
+                continue;
+            };
+            let SourceModuleImportResolution::Local(target) =
+                resolve_source_module_import(base_dir, Some(source_root), import)
+            else {
+                continue;
+            };
+            let target_path = canonical_provider_source_path(&target.file_path);
+            let Some(target_module) = modules_by_path.get(&target_path) else {
+                return Err(CliError::failure(format!(
+                    "unprojected provider graph is missing imported module `{}` at {}",
+                    target.path_segments.join("."),
+                    target.file_path.display()
+                )));
+            };
+            let mut required_features = inherited_features.clone();
+            required_features.extend(declaration.required_features.iter().cloned());
+            if insert_provider_feature_predicate(
+                &mut requirements,
+                target_module.path_segments.clone(),
+                required_features.clone(),
+            ) {
+                pending.push((target_path, required_features));
+            }
+        }
+    }
+
+    Ok(requirements)
+}
+
+/// Canonicalize source identity when possible while retaining useful fixture paths when it is not.
+fn canonical_provider_source_path(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// Insert one predicate into a deterministic minimal antichain for a provider module.
+fn insert_provider_feature_predicate(
+    requirements: &mut BTreeMap<Vec<String>, Vec<BTreeSet<String>>>,
+    module_path: Vec<String>,
+    candidate: BTreeSet<String>,
+) -> bool {
+    let predicates = requirements.entry(module_path).or_default();
+    if predicates.iter().any(|existing| existing.is_subset(&candidate)) {
+        return false;
+    }
+    predicates.retain(|existing| !candidate.is_subset(existing));
+    predicates.push(candidate);
+    predicates.sort();
+    true
+}
+
+/// Preserve positive feature predicates on checked declarations for inspection and artifact projection.
+fn provider_fact_requirements(
+    module: &ParsedModule,
+    module_requirements: &[BTreeSet<String>],
+) -> Vec<ProviderFactRequirement> {
+    let module_name = module.path_segments.join(".");
+    let mut requirements = Vec::new();
+    for declaration in &module.ast.declarations {
+        let mut combined_requirements = Vec::new();
+        for module_requirement in module_requirements {
+            let mut combined = module_requirement.clone();
+            combined.extend(declaration.required_features.iter().cloned());
+            if !combined.is_empty()
+                && !combined_requirements
+                    .iter()
+                    .any(|existing: &BTreeSet<String>| existing.is_subset(&combined))
+            {
+                combined_requirements.retain(|existing| !combined.is_subset(existing));
+                combined_requirements.push(combined);
+            }
+        }
+        combined_requirements.sort();
+
+        for required_features in combined_requirements {
+            match &declaration.node {
+                Declaration::Import(import) => {
+                    requirements.push(ProviderFactRequirement {
+                        kind: ProviderFactKind::ProviderDependency,
+                        identity: format!("{module_name}::{}", provider_import_identity(&import.kind)),
+                        required_features: required_features.clone(),
+                    });
+                    if import.visibility == Visibility::Public {
+                        let reexported_items = match &import.kind {
+                            ImportKind::From { items, .. } | ImportKind::PubFrom { items, .. } => items.as_slice(),
+                            _ => &[],
+                        };
+                        requirements.extend(reexported_items.iter().map(|item| ProviderFactRequirement {
+                            kind: ProviderFactKind::Export,
+                            identity: format!("{module_name}::{}", item.alias.as_deref().unwrap_or(item.name.as_str())),
+                            required_features: required_features.clone(),
+                        }));
+                    }
+                }
+                Declaration::Docstring(_) => requirements.push(ProviderFactRequirement {
+                    kind: ProviderFactKind::Documentation,
+                    identity: format!("{module_name}::module-docstring"),
+                    required_features,
+                }),
+                Declaration::TestModule(test_module) => {
+                    requirements.push(ProviderFactRequirement {
+                        kind: ProviderFactKind::Export,
+                        identity: format!("{module_name}::{}", test_module.name),
+                        required_features: required_features.clone(),
+                    });
+                    requirements.extend(provider_nested_test_fact_requirements(
+                        &module_name,
+                        &test_module.body,
+                        &required_features,
+                    ));
+                }
+                declaration => {
+                    let Some(name) = provider_declaration_name(declaration) else {
+                        continue;
+                    };
+                    let identity = format!("{module_name}::{name}");
+                    requirements.push(ProviderFactRequirement {
+                        kind: if provider_declaration_is_public(declaration) {
+                            ProviderFactKind::Export
+                        } else {
+                            ProviderFactKind::ImplementationFacet
+                        },
+                        identity: identity.clone(),
+                        required_features: required_features.clone(),
+                    });
+                    if provider_declaration_has_docstring(declaration) {
+                        requirements.push(ProviderFactRequirement {
+                            kind: ProviderFactKind::Documentation,
+                            identity: identity.clone(),
+                            required_features: required_features.clone(),
+                        });
+                    }
+                    if provider_declaration_is_registry_entry(declaration) {
+                        requirements.push(ProviderFactRequirement {
+                            kind: ProviderFactKind::RegistryEntry,
+                            identity,
+                            required_features,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    requirements
+}
+
+/// Preserve nested inline-test predicates together with their enclosing test-module predicate.
+fn provider_nested_test_fact_requirements(
+    module_name: &str,
+    declarations: &[Spanned<Declaration>],
+    parent_features: &BTreeSet<String>,
+) -> Vec<ProviderFactRequirement> {
+    declarations
+        .iter()
+        .filter_map(|declaration| {
+            let name = provider_declaration_name(&declaration.node)?;
+            let mut required_features = parent_features.clone();
+            required_features.extend(declaration.required_features.iter().cloned());
+            Some(ProviderFactRequirement {
+                kind: ProviderFactKind::ImplementationFacet,
+                identity: format!("{module_name}::tests::{name}"),
+                required_features,
+            })
+        })
+        .collect()
+}
+
+/// Render a stable provider-local import identity without depending on source offsets.
+fn provider_import_identity(import: &ImportKind) -> String {
+    match import {
+        ImportKind::Module(path) => format!("import:{}", path.segments.join(".")),
+        ImportKind::From { module, .. } => format!("from:{}", module.segments.join(".")),
+        ImportKind::PubLibrary { library } => format!("import:pub::{library}"),
+        ImportKind::PubFrom { library, .. } => format!("from:pub::{library}"),
+        ImportKind::Python(module) => format!("import:python:{module}"),
+        ImportKind::RustCrate { crate_name, path, .. } => {
+            format!("import:rust::{crate_name}::{}", path.join("::"))
+        }
+        ImportKind::RustFrom { crate_name, path, .. } => {
+            format!("from:rust::{crate_name}::{}", path.join("::"))
+        }
+    }
+}
+
+/// Return one declaration's stable local name.
+fn provider_declaration_name(declaration: &Declaration) -> Option<&str> {
+    match declaration {
+        Declaration::Const(item) => Some(&item.name),
+        Declaration::Static(item) => Some(&item.name),
+        Declaration::Model(item) => Some(&item.name),
+        Declaration::Class(item) => Some(&item.name),
+        Declaration::Trait(item) => Some(&item.name),
+        Declaration::Alias(item) => Some(&item.name),
+        Declaration::Partial(item) => Some(&item.name),
+        Declaration::TypeAlias(item) => Some(&item.name),
+        Declaration::Newtype(item) => Some(&item.name),
+        Declaration::Enum(item) => Some(&item.name),
+        Declaration::Function(item) => Some(&item.name),
+        Declaration::TestModule(item) => Some(&item.name),
+        Declaration::Import(_) | Declaration::Docstring(_) => None,
+    }
+}
+
+/// Return whether one declaration contributes to the package's public checked surface.
+fn provider_declaration_is_public(declaration: &Declaration) -> bool {
+    let visibility = match declaration {
+        Declaration::Const(item) => item.visibility,
+        Declaration::Static(item) => item.visibility,
+        Declaration::Model(item) => item.visibility,
+        Declaration::Class(item) => item.visibility,
+        Declaration::Trait(item) => item.visibility,
+        Declaration::Alias(item) => item.visibility,
+        Declaration::Partial(item) => item.visibility,
+        Declaration::TypeAlias(item) => item.visibility,
+        Declaration::Newtype(item) => item.visibility,
+        Declaration::Enum(item) => item.visibility,
+        Declaration::Function(item) => item.visibility,
+        Declaration::Import(item) => item.visibility,
+        Declaration::TestModule(_) | Declaration::Docstring(_) => Visibility::Private,
+    };
+    matches!(visibility, Visibility::Public)
+}
+
+/// Return whether the declaration owns checked source documentation.
+fn provider_declaration_has_docstring(declaration: &Declaration) -> bool {
+    match declaration {
+        Declaration::Function(item) => item.body.first().is_some_and(|statement| {
+            matches!(
+                &statement.node,
+                Statement::Expr(expression)
+                    if matches!(&expression.node, Expr::Literal(Literal::String(_)))
+            )
+        }),
+        Declaration::Model(item) => item.docstring.is_some(),
+        Declaration::Class(item) => item.docstring.is_some(),
+        Declaration::Trait(item) => item.docstring.is_some(),
+        Declaration::Newtype(item) => item.docstring.is_some(),
+        Declaration::Enum(item) => item.docstring.is_some(),
+        _ => false,
+    }
+}
+
+/// Return whether the declaration is a checked `std.registry` entry described by `@describe`.
+fn provider_declaration_is_registry_entry(declaration: &Declaration) -> bool {
+    let decorators = match declaration {
+        Declaration::Model(item) => &item.decorators,
+        Declaration::Class(item) => &item.decorators,
+        Declaration::Trait(item) => &item.decorators,
+        Declaration::Newtype(item) => &item.decorators,
+        Declaration::Enum(item) => &item.decorators,
+        Declaration::Function(item) => &item.decorators,
+        _ => return false,
+    };
+    decorators.iter().any(|decorator| decorator.node.name == "describe")
 }
 
 /// Write the `.incnlib` manifest and build-report artifact paths for a prepared library project.
@@ -1439,15 +2268,30 @@ fn write_library_manifest_artifacts(prepared: &mut PreparedLibraryProject) -> Cl
 /// Validate RFC 031 library-mode preconditions.
 pub fn build_library(
     file_path: Option<&str>,
-    _output_dir: Option<&String>,
+    output_dir: Option<&String>,
     options: BuildCommandOptions,
     report_options: BuildReportOptions,
 ) -> CliResult<ExitCode> {
+    let report = build_library_report(file_path, output_dir, options, &report_options)?;
+    emit_build_report(&report, &report_options)?;
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Build one library project and retain its completed report for workspace-level aggregation.
+pub(crate) fn build_library_report(
+    file_path: Option<&str>,
+    output_dir: Option<&String>,
+    options: BuildCommandOptions,
+    report_options: &BuildReportOptions,
+) -> CliResult<crate::cli::commands::build_report::BuildReport> {
     let total_start = Instant::now();
     let generated_cargo_target_dir = options.effective_generated_cargo_target_dir();
     let mut prepared = prepare_library_project(
         file_path,
+        output_dir.map(String::as_str),
         options.cargo_policy,
+        &options.package_features,
+        options.sdk_profile.as_deref(),
         options.cargo_features,
         options.cargo_no_default_features,
         options.cargo_all_features,
@@ -1457,16 +2301,15 @@ pub fn build_library(
 
     if artifact_only {
         write_library_manifest_artifacts(&mut prepared)?;
-        print_build_progress(&report_options, "✓ Library dependency artifact prepared!");
+        print_build_progress(report_options, "✓ Library dependency artifact prepared!");
         print_build_progress(
-            &report_options,
+            report_options,
             format!("Generated manifest: {}", prepared.manifest_path.display()),
         );
         let mut timings_ms = prepared.timings_ms.clone();
         timings_ms.insert("total".to_string(), elapsed_ms(total_start));
         let report = prepared.report.finish(timings_ms);
-        emit_build_report(&report, &report_options)?;
-        return Ok(ExitCode::SUCCESS);
+        return Ok(report);
     }
 
     let preheat_start = Instant::now();
@@ -1476,7 +2319,7 @@ pub fn build_library(
         run_generated_library_dependency_preheat(GeneratedLibraryDependencyPreheatRequest {
             project_root: &prepared.project_root,
             lock_dir: &prepared.project_root.join("target").join("incan_lock"),
-            project_name: &prepared.project_name,
+            project_name: &prepared.cargo_package_name,
             rust_edition: prepared.rust_edition.clone(),
             resolved: &prepared.resolved_dependencies,
             project_requirements: &prepared.project_requirements,
@@ -1515,22 +2358,20 @@ pub fn build_library(
 
     write_library_manifest_artifacts(&mut prepared)?;
 
-    print_build_progress(&report_options, "✓ Library build successful!");
+    print_build_progress(report_options, "✓ Library build successful!");
     print_build_progress(
-        &report_options,
+        report_options,
         format!("Generated Rust crate in: {}", prepared.out_dir.display()),
     );
     print_build_progress(
-        &report_options,
+        report_options,
         format!("Generated manifest: {}", prepared.manifest_path.display()),
     );
 
     prepared.timings_ms.insert("cargo_build".to_string(), cargo_build_ms);
     prepared.timings_ms.insert("total".to_string(), elapsed_ms(total_start));
     let report = prepared.report.finish(prepared.timings_ms);
-    emit_build_report(&report, &report_options)?;
-
-    Ok(ExitCode::SUCCESS)
+    Ok(report)
 }
 
 /// Generate and inspect the current Rust backend output without running Cargo.
@@ -1539,7 +2380,10 @@ pub fn inspect_rust(path: &Path, lib_mode: bool, format: RustInspectionFormat) -
     let report = if lib_mode {
         let prepared = prepare_library_project(
             Some(path_arg.as_ref()),
+            None,
             CargoPolicy::default(),
+            &FeatureSelection::default(),
+            None,
             Vec::new(),
             false,
             false,
@@ -1556,6 +2400,8 @@ pub fn inspect_rust(path: &Path, lib_mode: bool, format: RustInspectionFormat) -
             path_arg.as_ref(),
             None,
             &CargoPolicy::default(),
+            &FeatureSelection::default(),
+            None,
             Vec::new(),
             false,
             false,
@@ -1602,9 +2448,12 @@ fn package_desugarer_artifact(out_dir: &Path, artifact: Option<&PendingDesugarer
 }
 
 /// Build and run an Incan file.
+#[allow(clippy::too_many_arguments)] // Public CLI dispatch keeps the parsed command axes explicit at this boundary.
 pub fn run_file(
     file_path: &str,
     cargo_policy: CargoPolicy,
+    package_features: FeatureSelection,
+    sdk_profile: Option<String>,
     cargo_features: Vec<String>,
     cargo_no_default_features: bool,
     cargo_all_features: bool,
@@ -1614,6 +2463,8 @@ pub fn run_file(
         file_path,
         None,
         &cargo_policy,
+        &package_features,
+        sdk_profile.as_deref(),
         cargo_features,
         cargo_no_default_features,
         cargo_all_features,
@@ -1622,9 +2473,12 @@ pub fn run_file(
 }
 
 /// Build and run inline Incan source from `incan run -c`.
+#[allow(clippy::too_many_arguments)] // Inline and file execution intentionally share the explicit CLI contract.
 pub fn run_inline_source(
     source: &str,
     cargo_policy: CargoPolicy,
+    package_features: FeatureSelection,
+    sdk_profile: Option<String>,
     cargo_features: Vec<String>,
     cargo_no_default_features: bool,
     cargo_all_features: bool,
@@ -1645,6 +2499,12 @@ pub fn run_inline_source(
             source_parent.display()
         ))
     })?;
+    let _inline_command_lock = crate::lockfile::acquire_publication_lock(&source_path).map_err(|error| {
+        CliError::failure(format!(
+            "failed to coordinate temporary inline command project {}: {error}",
+            source_parent.display()
+        ))
+    })?;
     fs::write(&source_path, wrapped_source).map_err(|err| {
         CliError::failure(format!(
             "Error writing temporary inline command file {}: {err}",
@@ -1659,8 +2519,10 @@ pub fn run_inline_source(
             output_dir: Some(inline_project.output_dir.as_str()),
             project_name_override: Some(inline_project.project_name.as_str()),
             generated_cargo_target_dir: None,
+            sdk_profile_override: sdk_profile.as_deref(),
         },
         &cargo_policy,
+        &package_features,
         cargo_features,
         cargo_no_default_features,
         cargo_all_features,
@@ -1850,6 +2712,8 @@ mod tests {
             entry_arg,
             Some(output_arg),
             &CargoPolicy::default(),
+            &FeatureSelection::default(),
+            None,
             Vec::new(),
             false,
             false,
@@ -2265,6 +3129,165 @@ mod tests {
             "generated dataset/mod.rs should not reference crate::dataset::r#mod"
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn feature_conditions_are_preserved_for_provider_exports_docs_registries_and_reexports()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source = r#"when feature("catalog"):
+    @describe(summary="Catalog entry")
+    pub def catalog_entry() -> str:
+        """Return the selected catalog entry."""
+        return "catalog"
+
+when feature("widgets"):
+    pub from widgets import Widget
+"#;
+        let tokens = lexer::lex(source).map_err(|errors| format!("lex errors: {errors:?}"))?;
+        let ast = parser::parse_with_module_path(&tokens, Some("project/src/lib.incn"))
+            .map_err(|errors| format!("parse errors: {errors:?}"))?;
+        let module = ParsedModule {
+            name: "main".to_string(),
+            path_segments: vec!["main".to_string()],
+            file_path: PathBuf::from("project/src/lib.incn"),
+            source: source.to_string(),
+            ast,
+        };
+
+        let requirements = provider_fact_requirements(&module, &[BTreeSet::new()]);
+        let catalog_features = BTreeSet::from(["catalog".to_string()]);
+        for kind in [
+            ProviderFactKind::Export,
+            ProviderFactKind::Documentation,
+            ProviderFactKind::RegistryEntry,
+        ] {
+            assert!(requirements.iter().any(|requirement| {
+                requirement.kind == kind
+                    && requirement.identity == "main::catalog_entry"
+                    && requirement.required_features == catalog_features
+            }));
+        }
+        assert!(requirements.iter().any(|requirement| {
+            requirement.kind == ProviderFactKind::ProviderDependency
+                && requirement.identity == "main::from:widgets"
+                && requirement.required_features == BTreeSet::from(["widgets".to_string()])
+        }));
+        assert!(requirements.iter().any(|requirement| {
+            requirement.kind == ProviderFactKind::Export
+                && requirement.identity == "main::Widget"
+                && requirement.required_features == BTreeSet::from(["widgets".to_string()])
+        }));
+        Ok(())
+    }
+
+    #[test]
+    fn provider_module_conditions_preserve_nested_and_alternative_feature_paths()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let source_root = project.path().join("src");
+        fs::create_dir_all(&source_root)?;
+        let entry_path = source_root.join("lib.incn");
+        let nested_path = source_root.join("nested.incn");
+        let leaf_path = source_root.join("leaf.incn");
+        let entry_source = r#"when feature("outer"):
+    from nested import Nested
+
+when feature("alternate"):
+    from leaf import Leaf
+"#;
+        let nested_source = r#"when feature("inner"):
+    from leaf import Leaf
+
+pub model Nested:
+    value: int
+"#;
+        let leaf_source = "pub model Leaf:\n    value: int\n";
+        fs::write(&entry_path, entry_source)?;
+        fs::write(&nested_path, nested_source)?;
+        fs::write(&leaf_path, leaf_source)?;
+
+        let parse_module = |name: &str,
+                            path_segments: Vec<String>,
+                            file_path: PathBuf,
+                            source: &str|
+         -> Result<ParsedModule, Box<dyn std::error::Error>> {
+            let tokens = lexer::lex(source).map_err(|errors| format!("lex errors: {errors:?}"))?;
+            let ast = parser::parse_with_module_path(&tokens, file_path.to_str())
+                .map_err(|errors| format!("parse errors: {errors:?}"))?;
+            Ok(ParsedModule {
+                name: name.to_string(),
+                path_segments,
+                file_path,
+                source: source.to_string(),
+                ast,
+            })
+        };
+        let entry = parse_module("main", vec!["main".to_string()], entry_path, entry_source)?;
+        let nested = parse_module("nested", vec!["nested".to_string()], nested_path, nested_source)?;
+        let leaf = parse_module("leaf", vec!["leaf".to_string()], leaf_path, leaf_source)?;
+        let modules = vec![entry.clone(), nested, leaf.clone()];
+
+        let requirements = provider_module_reachability_requirements(&modules, &entry, &source_root)?;
+        let nested_key = vec!["nested".to_string()];
+        let leaf_key = vec!["leaf".to_string()];
+        assert_eq!(
+            requirements.get(&nested_key),
+            Some(&vec![BTreeSet::from(["outer".to_string()])])
+        );
+        assert_eq!(
+            requirements.get(&leaf_key),
+            Some(&vec![
+                BTreeSet::from(["alternate".to_string()]),
+                BTreeSet::from(["inner".to_string(), "outer".to_string()]),
+            ])
+        );
+
+        let leaf_facts = provider_fact_requirements(
+            &leaf,
+            requirements
+                .get(&leaf_key)
+                .ok_or("leaf reachability should be present")?,
+        );
+        assert!(leaf_facts.iter().any(|fact| {
+            fact.kind == ProviderFactKind::Export
+                && fact.identity == "leaf::Leaf"
+                && fact.required_features == BTreeSet::from(["alternate".to_string()])
+        }));
+        assert!(leaf_facts.iter().any(|fact| {
+            fact.kind == ProviderFactKind::Export
+                && fact.identity == "leaf::Leaf"
+                && fact.required_features == BTreeSet::from(["inner".to_string(), "outer".to_string()])
+        }));
+        Ok(())
+    }
+
+    #[test]
+    fn unprojected_provider_collection_rejects_unknown_features_in_inactive_modules()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let source_root = project.path().join("src");
+        fs::create_dir_all(&source_root)?;
+        fs::write(
+            project.path().join("incan.toml"),
+            "[project]\nname = \"provider_features\"\n\n[project.features]\ndefault = []\nouter = []\n",
+        )?;
+        let entry_path = source_root.join("lib.incn");
+        fs::write(&entry_path, "when feature(\"outer\"):\n    from nested import Nested\n")?;
+        fs::write(
+            source_root.join("nested.incn"),
+            "when feature(\"missing\"):\n    pub model Nested:\n        value: int\n",
+        )?;
+
+        let session = super::super::common::CompilationSession::discover_with_feature_selection(
+            &entry_path,
+            &FeatureSelection::default(),
+        )?;
+        let error = collect_unprojected_provider_modules(&entry_path, &session)
+            .err()
+            .ok_or("unknown feature in inactive provider module should fail collection")?;
+
+        assert!(error.message.contains("Unknown package feature `missing`"));
         Ok(())
     }
 }

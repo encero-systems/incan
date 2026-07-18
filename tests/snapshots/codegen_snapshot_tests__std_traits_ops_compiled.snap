@@ -7,3 +7,293 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+/// Add trait - Enables `a + b` for custom types
+/// Python equivalent: __add__
+///
+/// Example:
+///
+/// ```ignore
+/// model Money with Add[Money, Money]:
+///     cents: int
+///
+///     def __add__(self, other: Money) -> Money:
+///         return Money(cents=self.cents + other.cents)
+///
+/// price = Money(cents=1000)
+/// tax = Money(cents=80)
+/// total = price + tax  # Money(cents=1080)
+/// ```
+pub trait Add<Rhs, Output> {
+    fn __add__(&self, other: Rhs) -> Output;
+}
+/// AddAssign trait - Enables an explicit `a += b` hook for custom types
+/// Python equivalent: __iadd__
+///
+/// Compound assignment first resolves this in-place hook when present, then
+/// falls back to ordinary binary operator assignment (`a = a + b`).
+pub trait AddAssign<Rhs, Output> {
+    fn __iadd__(&self, other: Rhs) -> Output;
+}
+/// Sub trait - Enables `a - b` for custom types
+/// Python equivalent: __sub__
+///
+/// Example:
+///
+/// ```ignore
+/// model Point with Sub[Point, Point]:
+///     x: int
+///     y: int
+///
+///     def __sub__(self, other: Point) -> Point:
+///         return Point(x=self.x - other.x, y=self.y - other.y)
+///
+/// a = Point(x=10, y=20)
+/// b = Point(x=3, y=5)
+/// diff = a - b  # Point(x=7, y=15)
+/// ```
+pub trait Sub<Rhs, Output> {
+    fn __sub__(&self, other: Rhs) -> Output;
+}
+/// SubAssign trait - Enables an explicit `a -= b` hook for custom types
+/// Python equivalent: __isub__
+///
+/// Compound assignment first resolves this in-place hook when present, then
+/// falls back to ordinary binary operator assignment (`a = a - b`).
+pub trait SubAssign<Rhs, Output> {
+    fn __isub__(&self, other: Rhs) -> Output;
+}
+/// Mul trait - Enables `a * b` for custom types
+/// Python equivalent: __mul__
+///
+/// Example:
+///
+/// ```ignore
+/// model Vector with Mul[float, Vector]:
+///     x: float
+///     y: float
+///
+///     def __mul__(self, scalar: float) -> Vector:
+///         return Vector(x=self.x * scalar, y=self.y * scalar)
+///
+/// v = Vector(x=3.0, y=4.0)
+/// scaled = v * 2.0  # Vector(x=6.0, y=8.0)
+/// ```
+pub trait Mul<Rhs, Output> {
+    fn __mul__(&self, other: Rhs) -> Output;
+}
+/// MulAssign trait - Enables an explicit `a *= b` hook for custom types
+/// Python equivalent: __imul__
+///
+/// Compound assignment first resolves this in-place hook when present, then
+/// falls back to ordinary binary operator assignment (`a = a * b`).
+pub trait MulAssign<Rhs, Output> {
+    fn __imul__(&self, other: Rhs) -> Output;
+}
+/// Div trait - Enables `a / b` for custom types
+/// Python equivalent: __truediv__
+///
+/// Example:
+///
+/// ```ignore
+/// model Fraction with Div[Fraction, Fraction]:
+///     num: int
+///     denom: int
+///
+///     def __div__(self, other: Fraction) -> Fraction:
+///         return Fraction(
+///             num = self.num * other.denom,
+///             denom = self.denom * other.num
+///         )
+///
+/// half = Fraction(num=1, denom=2)
+/// quarter = Fraction(num=1, denom=4)
+/// result = half / quarter  # Fraction(num=4, denom=2) = 2
+/// ```
+pub trait Div<Rhs, Output> {
+    fn __div__(&self, other: Rhs) -> Output;
+}
+/// DivAssign trait - Enables an explicit `a /= b` hook for custom types
+/// Python equivalent: __idiv__
+///
+/// Compound assignment first resolves this in-place hook when present, then
+/// falls back to ordinary binary operator assignment (`a = a / b`).
+pub trait DivAssign<Rhs, Output> {
+    fn __idiv__(&self, other: Rhs) -> Output;
+}
+/// FloorDiv trait - Enables `a // b` for custom types
+/// Python equivalent: __floordiv__
+pub trait FloorDiv<Rhs, Output> {
+    fn __floordiv__(&self, other: Rhs) -> Output;
+}
+/// FloorDivAssign trait - Enables an explicit `a //= b` hook for custom types
+/// Python equivalent: __ifloordiv__
+///
+/// Compound assignment first resolves this in-place hook when present, then
+/// falls back to ordinary binary operator assignment (`a = a // b`).
+pub trait FloorDivAssign<Rhs, Output> {
+    fn __ifloordiv__(&self, other: Rhs) -> Output;
+}
+/// Pow trait - Enables `a ** b` for custom types
+/// Python equivalent: __pow__
+pub trait Pow<Rhs, Output> {
+    fn __pow__(&self, other: Rhs) -> Output;
+}
+/// Neg trait - Enables `-a` (unary negation) for custom types
+/// Python equivalent: __neg__
+///
+/// Example:
+///
+/// ```ignore
+/// model Temperature with Neg[Temperature]:
+///     celsius: float
+///
+///     def __neg__(self) -> Temperature:
+///         return Temperature(celsius=-self.celsius)
+///
+/// hot = Temperature(celsius=30.0)
+/// cold = -hot  # Temperature(celsius=-30.0)
+/// ```
+pub trait Neg<Output> {
+    fn __neg__(&self) -> Output;
+}
+/// Not trait - Enables `~a` (bitwise inversion) for custom types
+/// Python equivalent: __invert__
+/// Rust equivalent: std::ops::Not
+pub trait Not<Output> {
+    fn __invert__(&self) -> Output;
+}
+/// Mod trait - Enables `a % b` (modulo) for custom types
+/// Python equivalent: __mod__
+///
+/// Example:
+///
+/// ```ignore
+/// model Clock with Mod[int, Clock]:
+///     hours: int
+///
+///     def __mod__(self, divisor: int) -> Clock:
+///         return Clock(hours=self.hours % divisor)
+///
+/// time = Clock(hours=25)
+/// normalized = time % 24  # Clock(hours=1)
+/// ```
+pub trait Mod<Rhs, Output> {
+    fn __mod__(&self, other: Rhs) -> Output;
+}
+/// ModAssign trait - Enables an explicit `a %= b` hook for custom types
+/// Python equivalent: __imod__
+///
+/// Compound assignment first resolves this in-place hook when present, then
+/// falls back to ordinary binary operator assignment (`a = a % b`).
+pub trait ModAssign<Rhs, Output> {
+    fn __imod__(&self, other: Rhs) -> Output;
+}
+/// Shr trait - Enables `a >> b` for custom types
+/// Python equivalent: __rshift__
+/// Rust equivalent: std::ops::Shr
+pub trait Shr<Rhs, Output> {
+    fn __rshift__(&self, other: Rhs) -> Output;
+}
+/// ShrAssign trait - Enables an explicit `a >>= b` hook for custom types
+/// Python equivalent: __irshift__
+///
+/// Compound assignment first resolves this in-place hook when present, then
+/// falls back to ordinary binary operator assignment (`a = a >> b`).
+pub trait ShrAssign<Rhs, Output> {
+    fn __irshift__(&self, other: Rhs) -> Output;
+}
+/// Shl trait - Enables `a << b` for custom types
+/// Python equivalent: __lshift__
+/// Rust equivalent: std::ops::Shl
+pub trait Shl<Rhs, Output> {
+    fn __lshift__(&self, other: Rhs) -> Output;
+}
+/// ShlAssign trait - Enables an explicit `a <<= b` hook for custom types
+/// Python equivalent: __ilshift__
+///
+/// Compound assignment first resolves this in-place hook when present, then
+/// falls back to ordinary binary operator assignment (`a = a << b`).
+pub trait ShlAssign<Rhs, Output> {
+    fn __ilshift__(&self, other: Rhs) -> Output;
+}
+/// PipeForward trait - Enables `a |> b` for custom types
+/// Python-style equivalent: __pipe_forward__
+pub trait PipeForward<Rhs, Output> {
+    fn __pipe_forward__(&self, other: Rhs) -> Output;
+}
+/// PipeBackward trait - Enables `a <| b` for custom types
+/// Python-style equivalent: __pipe_backward__
+pub trait PipeBackward<Rhs, Output> {
+    fn __pipe_backward__(&self, other: Rhs) -> Output;
+}
+/// BitAnd trait - Enables `a & b` for custom types
+/// Python equivalent: __and__
+/// Rust equivalent: std::ops::BitAnd
+pub trait BitAnd<Rhs, Output> {
+    fn __and__(&self, other: Rhs) -> Output;
+}
+/// BitAndAssign trait - Enables an explicit `a &= b` hook for custom types
+/// Python equivalent: __iand__
+///
+/// Compound assignment first resolves this in-place hook when present, then
+/// falls back to ordinary binary operator assignment (`a = a & b`).
+pub trait BitAndAssign<Rhs, Output> {
+    fn __iand__(&self, other: Rhs) -> Output;
+}
+/// BitOr trait - Enables `a | b` for custom types
+/// Python equivalent: __or__
+/// Rust equivalent: std::ops::BitOr
+pub trait BitOr<Rhs, Output> {
+    fn __or__(&self, other: Rhs) -> Output;
+}
+/// BitOrAssign trait - Enables an explicit `a |= b` hook for custom types
+/// Python equivalent: __ior__
+///
+/// Compound assignment first resolves this in-place hook when present, then
+/// falls back to ordinary binary operator assignment (`a = a | b`).
+pub trait BitOrAssign<Rhs, Output> {
+    fn __ior__(&self, other: Rhs) -> Output;
+}
+/// BitXor trait - Enables `a ^ b` for custom types
+/// Python equivalent: __xor__
+/// Rust equivalent: std::ops::BitXor
+pub trait BitXor<Rhs, Output> {
+    fn __xor__(&self, other: Rhs) -> Output;
+}
+/// BitXorAssign trait - Enables an explicit `a ^= b` hook for custom types
+/// Python equivalent: __ixor__
+///
+/// Compound assignment first resolves this in-place hook when present, then
+/// falls back to ordinary binary operator assignment (`a = a ^ b`).
+pub trait BitXorAssign<Rhs, Output> {
+    fn __ixor__(&self, other: Rhs) -> Output;
+}
+/// MatMul trait - Enables `a @ b` for custom types
+/// Python equivalent: __matmul__
+pub trait MatMul<Rhs, Output> {
+    fn __matmul__(&self, other: Rhs) -> Output;
+}
+/// MatMulAssign trait - Enables an explicit `a @= b` hook for custom types
+/// Python equivalent: __imatmul__
+///
+/// Compound assignment first resolves this in-place hook when present, then
+/// falls back to ordinary binary operator assignment (`a = a @ b`).
+pub trait MatMulAssign<Rhs, Output> {
+    fn __imatmul__(&self, other: Rhs) -> Output;
+}
+/// Compatibility/operator alias for indexed read access.
+///
+/// Prefer std.traits.indexing.Index[Key, Output] in new docs, bounds,
+/// and explicit trait adoption. This alias remains for older operator
+/// vocabulary that names the same __getitem__ hook.
+pub trait GetItem<Key, Output> {
+    fn __getitem__(&self, key: Key) -> Output;
+}
+/// Compatibility/operator alias for indexed write access.
+///
+/// Prefer std.traits.indexing.IndexMut[Key, Value] in new docs, bounds,
+/// and explicit trait adoption. This alias remains for older operator
+/// vocabulary that names the same __setitem__ hook.
+pub trait SetItem<Key, Value> {
+    fn __setitem__(&self, key: Key, value: Value);
+}

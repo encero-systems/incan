@@ -6,11 +6,10 @@ use crate::backend::IrCodegen;
 use crate::cli::{CliError, CliResult, ExitCode};
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::{diagnostics, lexer, parser};
-use crate::manifest::ProjectManifest;
 use std::env;
 use std::path::{Path, PathBuf};
 
-use super::common::{collect_modules, read_source, resolve_project_root};
+use super::common::{collect_modules, discover_effective_project_manifest, read_source, resolve_project_root};
 use super::diagnostics::{DiagnosticOutputFormat, check_path};
 
 /// Lex and display tokens.
@@ -88,7 +87,7 @@ pub fn emit_rust(file_path: &str, strict: bool) -> CliResult<ExitCode> {
             .join(file_path)
     };
     let project_root = resolve_project_root(&normalized_file_path);
-    let manifest = ProjectManifest::discover(&project_root).map_err(|e| CliError::failure(e.to_string()))?;
+    let manifest = discover_effective_project_manifest(&project_root)?;
     if let Some(m) = manifest.as_ref() {
         codegen.set_declared_crate_names(m.declared_rust_crate_names());
     }

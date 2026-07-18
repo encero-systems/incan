@@ -9,7 +9,7 @@ diagnostics need a named callable-object capability.
 """
 
 
-trait Callable0[R]:
+pub trait Callable0[R]:
     """
     Callable trait for zero-argument callables
     Python equivalent: __call__(self) -> R
@@ -34,7 +34,7 @@ trait Callable0[R]:
     def __call__(self) -> R: ...
 
 
-trait Callable1[A, R]:
+pub trait Callable1[A, R]:
     """
     Callable trait for single-argument callables
     Python equivalent: __call__(self, arg) -> R
@@ -58,7 +58,7 @@ trait Callable1[A, R]:
     def __call__(self, arg: A) -> R: ...
 
 
-trait Callable2[A, B, R]:
+pub trait Callable2[A, B, R]:
     """
     Callable trait for two-argument callables
     Python equivalent: __call__(self, a, b) -> R

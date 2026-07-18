@@ -15,6 +15,10 @@ fn run_source_case(source: &str) -> Result<(), Box<dyn std::error::Error>> {
             "INCAN_GENERATED_CARGO_TARGET_DIR",
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/incan_generated_shared_target"),
         )
+        .env(
+            "INCAN_INTERNAL_SDK_PROVIDER_STORE",
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/incan_test_sdk_provider_store"),
+        )
         .output()?;
 
     assert!(

@@ -27,6 +27,75 @@ incan run -c "import this"
 
 Project-level features such as manifest dependencies, version management, and named environments require `incan.toml`.
 
+## Workspaces
+
+An Incan workspace is a bounded collection of ordinary Incan projects. It coordinates which projects are members, their effective shared dependencies, and one root-owned `incan.lock`; it does not turn the repository into one package or make member versions and publication lockstep.
+
+A root that has both `[project]` and `[workspace]` is a **rooted workspace**: the root project is a member without listing `"."`. A root that has only `[workspace]` is **virtual** and must list at least one project member.
+
+```toml title="incan.toml"
+[workspace]
+members = ["packages/*"]
+default-members = ["api", "worker"]
+exclude = ["packages/experimental"]
+
+[workspace.rust-dependencies]
+serde = { version = "1", default-features = false }
+
+[workspace.envs.ci]
+env-vars = { CI = "true" }
+```
+
+Each non-root member has its own `incan.toml` and opts into a shared declaration explicitly:
+
+```toml title="packages/api/incan.toml"
+[project]
+name = "api"
+version = "0.1.0"
+
+[rust-dependencies]
+serde = { workspace = true, features = ["derive"] }
+
+[tool.incan.envs.ci]
+extends = ["workspace:ci"]
+```
+
+The workspace owns dependency identity—version, source, package rename, and default-feature baseline. A member may add Rust features and choose its own `optional` use. Shared declarations are inactive until a member declares `{ workspace = true }`; a member-local `incan.lock` is never authoritative.
+
+### Selecting members
+
+Workspace-aware commands resolve their scope before compiling, testing, formatting, running, or mutating a member:
+
+```bash
+# Current member when invoked below packages/api.
+incan test
+
+# The root's default-members, or every member for a virtual root without defaults.
+incan check --format json
+
+# Every member in deterministic workspace order.
+incan build --workspace --report json
+incan fmt --workspace --check
+
+# One explicitly named or root-relative member.
+incan run --member api
+incan version patch --member packages/worker
+```
+
+`check`, `build`, `test`, and `fmt` fan out across a selected set. Their JSON output includes the workspace root, selection origin, and member attached to each result. `run` and `version` require exactly one member and explain how to choose one when a scope selects several. `incan lock` is always workspace-wide: it resolves every member and writes one canonical root lock regardless of the member that started the command.
+
+Use `incan workspace inspect` to see the validated graph rather than reconstructing membership from directory names:
+
+```bash
+incan workspace inspect
+incan workspace inspect --workspace --format json
+incan workspace inspect --member packages/api --format json
+```
+
+The JSON projection includes members, selection origin, inherited dependency provenance, explicit workspace environment extensions, lock state, stale member-local locks, and currently-unused shared declarations. Workspace capability application remains member-local in this release: cross-member mutation needs a scoped plan and policy evaluation, neither of which is approximated by this foundation.
+
+Workspace lock publication follows the `std.fs` crash-safe recipe internally: publishers coordinate through a stable sibling advisory lock, stage and synchronize complete contents beside the target, atomically replace it, then synchronize the parent directory. This preserves a prior complete root lock or a new complete root lock for cooperative readers; it is not a multi-file workspace transaction.
+
 ## `incan.toml`
 
 `incan.toml` is the project manifest. It is intended to be edited and committed.
@@ -42,6 +111,8 @@ Common sections:
 | `[rust-dependencies]`      | Rust crate dependencies available to production code                                          |
 | `[rust-dev-dependencies]`  | Rust crate dependencies available only to tests                                               |
 | `[tool.incan.envs.<name>]` | Named lifecycle environments for `incan env`                                                  |
+| `[workspace]`              | Explicit multi-project topology, defaults, and exclusions                                     |
+| `[workspace.*]`            | Reusable dependency, environment, policy, and source declarations for workspace members      |
 
 Minimal application manifest:
 

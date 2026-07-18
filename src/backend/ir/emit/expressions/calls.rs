@@ -15,6 +15,7 @@ use super::super::super::types::IrType;
 use super::super::super::{FunctionRegistry, FunctionSignature};
 use super::super::{EmitError, IrEmitter};
 use crate::frontend::ast::ParamKind;
+use crate::provider::SDK_PROVIDER_BUILD_ENV;
 use incan_core::lang::stdlib;
 use incan_core::lang::surface::constructors::{self, ConstructorId};
 
@@ -325,7 +326,10 @@ impl<'a> IrEmitter<'a> {
                 .union_members()
                 .is_some() =>
             {
-                (signature.return_type.clone(), None)
+                (
+                    signature.return_type.clone(),
+                    Self::external_union_qualifier_for_type(&signature.return_type),
+                )
             }
             _ => (expr.ty.clone(), None),
         }
@@ -1217,6 +1221,13 @@ impl<'a> IrEmitter<'a> {
         let Some(function_name) = canonical_path.last() else {
             return Ok(None);
         };
+        let compiling_sdk_provider = std::env::var_os(SDK_PROVIDER_BUILD_ENV).is_some();
+        // Private stdlib helpers are implementation details of the artifact. They remain addressable only while
+        // compiling that artifact itself; consumer code must never acquire a cross-crate path to an underscored
+        // source helper merely because its enclosing module is compiled.
+        let can_link_compiled_stdlib_symbol = compiling_sdk_provider
+            || !function_name.starts_with('_')
+            || stdlib::is_compiled_sdk_provider_support_function(&module_path, function_name);
         let mut segments: Vec<TokenStream> = if module_path.first().map(String::as_str) == Some("incan_stdlib") {
             let mut segments = vec![quote! { incan_stdlib }];
             for seg in module_path.iter().skip(1) {
@@ -1224,8 +1235,29 @@ impl<'a> IrEmitter<'a> {
                 segments.push(quote! { #ident });
             }
             segments
+        } else if module_path.first().map(String::as_str) == Some(stdlib::INCAN_STD_NAMESPACE)
+            && self.is_compiled_sdk_emission_path(&module_path)
+            && can_link_compiled_stdlib_symbol
+        {
+            let namespace = Self::rust_ident(stdlib::INCAN_STD_NAMESPACE);
+            let mut segments = vec![quote! { crate }, quote! { #namespace }];
+            for seg in module_path.iter().skip(1) {
+                let ident = Self::rust_ident(seg);
+                segments.push(quote! { #ident });
+            }
+            segments
+        } else if module_path.first().map(String::as_str) == Some(stdlib::INCAN_STD_NAMESPACE) {
+            let mut segments = vec![quote! { crate }];
+            for seg in module_path.iter().skip(1) {
+                let ident = Self::rust_ident(seg);
+                segments.push(quote! { #ident });
+            }
+            segments
         } else if module_path.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT) {
-            if canonical_path.len() < 3 || !stdlib::is_known_stdlib_module(&module_path) {
+            let compiled_provider_module = module_path
+                .get(1..)
+                .is_some_and(|module| self.is_compiled_sdk_module_path(module));
+            if canonical_path.len() < 3 || !(compiled_provider_module || stdlib::is_known_stdlib_module(&module_path)) {
                 return Ok(None);
             }
             let ns = Self::rust_ident(stdlib::INCAN_STD_NAMESPACE);
@@ -2004,6 +2036,29 @@ mod tests {
             render(tokens),
             "crate::__incan_std::collections::_append_bytes(&mutout,data.clone())"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn emit_canonical_call_accepts_compiled_provider_module_without_legacy_registry_entry()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let registry = FunctionRegistry::new();
+        let mut emitter = IrEmitter::new(&registry);
+        emitter.set_compiled_sdk_module_paths(std::collections::HashSet::from([vec!["artifact_only".to_string()]]));
+        let func = local_arg(
+            "consume",
+            IrType::Function {
+                params: Vec::new(),
+                ret: Box::new(IrType::Unit),
+            },
+        );
+        let path = vec!["std".to_string(), "artifact_only".to_string(), "consume".to_string()];
+
+        let tokens = emitter
+            .emit_call_expr(&func, &[], &[], None, Some(&path))
+            .map_err(|error| std::io::Error::other(format!("compiled provider call should emit: {error:?}")))?;
+
+        assert_eq!(render(tokens), "crate::__incan_std::artifact_only::consume()");
         Ok(())
     }
 

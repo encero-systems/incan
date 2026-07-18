@@ -7,3 +7,47 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+/// Debug trait - Provides debug string representation via {:?} format
+/// Python equivalent: __repr__
+///
+/// Debug is automatically derived for all models and classes.
+///
+/// Example:
+///
+/// ```ignore
+/// @derive(Debug)
+/// model User:
+///     name: str
+///     age: int
+///
+/// user = User(name="Alice", age=30)
+/// println(f"{user:?}")  # User { name: "Alice", age: 30 }
+/// ```
+pub trait Debug {
+    fn __repr__(&self) -> String;
+}
+/// Display trait - Provides user-friendly string representation via {} format
+/// Python equivalent: __str__
+///
+/// Unlike Debug, Display is NOT automatic. Implement __str__ to customize
+/// how your type appears in f-strings and print statements.
+///
+/// Example:
+///
+/// ```ignore
+/// model User:
+///     name: str
+///     email: str
+///
+///     def __str__(self) -> str:
+///         return f"{self.name} <{self.email}>"
+///
+/// user = User(name="Alice", email="alice@example.com")
+/// println(f"{user}")   # Alice <alice@example.com>
+/// println(f"{user:?}") # User { name: "Alice", email: "alice@example.com" }
+/// ```
+///
+/// Without __str__, use {:?} for debug output instead of {}.
+pub trait Display {
+    fn __str__(&self) -> String;
+}

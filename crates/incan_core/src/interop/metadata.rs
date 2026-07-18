@@ -231,8 +231,8 @@ pub const METADATA_FREE_METHOD_BORROW_RULES: &[MetadataFreeMethodBorrowRule] = &
 ];
 
 /// Metadata-free external method signatures used when rust-inspect metadata is unavailable.
-pub const METADATA_FREE_METHOD_SIGNATURE_RULES: &[MetadataFreeMethodSignatureRule] =
-    &[MetadataFreeMethodSignatureRule {
+pub const METADATA_FREE_METHOD_SIGNATURE_RULES: &[MetadataFreeMethodSignatureRule] = &[
+    MetadataFreeMethodSignatureRule {
         receiver_path: "encoding_rs::Encoding",
         method: "for_label",
         params: &[MetadataFreeMethodParamRule {
@@ -242,7 +242,19 @@ pub const METADATA_FREE_METHOD_SIGNATURE_RULES: &[MetadataFreeMethodSignatureRul
         return_type: "Option<&'static encoding_rs::Encoding>",
         is_async: false,
         is_unsafe: false,
-    }];
+    },
+    MetadataFreeMethodSignatureRule {
+        receiver_path: "std::path::Path",
+        method: "new",
+        params: &[MetadataFreeMethodParamRule {
+            name: Some("path"),
+            type_display: "&impl AsRef<std::ffi::OsStr>",
+        }],
+        return_type: "&std::path::Path",
+        is_async: false,
+        is_unsafe: false,
+    },
+];
 
 /// Metadata-free Rust free-function signatures used when rust-inspect cannot inspect sysroot crates.
 ///
@@ -250,6 +262,13 @@ pub const METADATA_FREE_METHOD_SIGNATURE_RULES: &[MetadataFreeMethodSignatureRul
 /// `std` are not always available as ordinary metadata roots. Keep this table to stable std APIs whose signatures are
 /// part of Rust's public contract and whose result shapes matter for Incan source typing.
 pub const METADATA_FREE_FUNCTION_SIGNATURE_RULES: &[MetadataFreeFunctionSignatureRule] = &[
+    MetadataFreeFunctionSignatureRule {
+        path: "std::io::stdin",
+        params: &[],
+        return_type: "std::io::Stdin",
+        is_async: false,
+        is_unsafe: false,
+    },
     MetadataFreeFunctionSignatureRule {
         path: "std::fs::metadata",
         params: &[MetadataFreeFunctionParamRule {
@@ -769,6 +788,37 @@ pub fn rust_source_type_param_has_as_fd_bound(function_source: &str, type_param:
         .any(|(name, bounds)| name.trim() == type_param && has_as_fd_bound(bounds))
 }
 
+/// Preserve a borrowed generic parameter's source trait bounds as an `&impl Trait` metadata display.
+///
+/// Rust-analyzer can erase a source parameter such as `value: &S` into an inferred concrete display. That loses the
+/// borrow boundary Incan must reproduce when calling the API. Source metadata is authoritative here: retain the
+/// borrowed shape and the generic bounds so typechecking records a shared or mutable borrow for code generation.
+#[must_use]
+pub fn rust_source_borrowed_type_param_bound_display(function_source: &str, parameter_type: &str) -> Option<String> {
+    let (is_mut, type_param) = rust_borrowed_simple_type_param(parameter_type)?;
+    let header = rust_source_function_header(function_source)?;
+
+    let bounds = header
+        .generic_params
+        .and_then(|declarations| rust_source_type_param_bounds(declarations, type_param))
+        .or_else(|| {
+            let where_idx = find_top_level_rust_keyword(header.tail, "where")?;
+            rust_source_type_param_bounds(&header.tail[where_idx + "where".len()..], type_param)
+        })?;
+    let bounds = split_top_level_rust_bounds(bounds)
+        .into_iter()
+        .filter(|bound| {
+            let bound = bound.trim();
+            !bound.is_empty() && !bound.starts_with('?')
+        })
+        .collect::<Vec<_>>();
+    if bounds.is_empty() {
+        return None;
+    }
+    let borrow = if is_mut { "&mut " } else { "&" };
+    Some(format!("{borrow}impl {}", bounds.join(" + ")))
+}
+
 struct RustSourceFunctionHeader<'a> {
     generic_params: Option<&'a str>,
     tail: &'a str,
@@ -833,6 +883,34 @@ fn rust_simple_type_param_name(text: &str) -> Option<&str> {
         && trimmed.chars().all(rust_source_ident_char)
         && trimmed.chars().next().is_some_and(|ch| ch.is_ascii_uppercase()))
     .then_some(trimmed)
+}
+
+/// Return mutability plus a generic parameter name from a Rust source borrow such as `&S` or `&'a mut S`.
+fn rust_borrowed_simple_type_param(text: &str) -> Option<(bool, &str)> {
+    let mut text = text.trim().strip_prefix('&')?.trim_start();
+    if text.starts_with('\'') {
+        let end = text.find(char::is_whitespace)?;
+        text = text[end..].trim_start();
+    }
+    let (is_mut, text) = if let Some(rest) = text.strip_prefix("mut")
+        && rest.chars().next().is_none_or(char::is_whitespace)
+    {
+        (true, rest.trim_start())
+    } else {
+        (false, text)
+    };
+    Some((is_mut, rust_simple_type_param_name(text)?))
+}
+
+/// Find the trait-bound text assigned to one generic parameter in an inline or `where` declaration list.
+fn rust_source_type_param_bounds<'a>(declarations: &'a str, type_param: &str) -> Option<&'a str> {
+    for declaration in split_top_level_rust_args(declarations) {
+        let (name, bounds) = declaration.split_once(':')?;
+        if name.trim() == type_param {
+            return Some(bounds);
+        }
+    }
+    None
 }
 
 /// Return whether one top-level bound starts with a callable trait and a parenthesized argument list.
@@ -1347,6 +1425,28 @@ where
     }
 
     #[test]
+    fn rust_source_borrowed_type_param_bound_display_preserves_shared_and_mutable_bounds() {
+        let shared = r#"
+pub fn shared<S: AsRef<OsStr> + ?Sized>(path: &S) {}
+"#;
+        let mutable = r#"
+pub fn mutable<S>(path: &mut S)
+where
+    S: AsMut<[u8]> + Send,
+{}
+"#;
+
+        assert_eq!(
+            rust_source_borrowed_type_param_bound_display(shared, "&S").as_deref(),
+            Some("&impl AsRef<OsStr>")
+        );
+        assert_eq!(
+            rust_source_borrowed_type_param_bound_display(mutable, "&mut S").as_deref(),
+            Some("&mut impl AsMut<[u8]> + Send")
+        );
+    }
+
+    #[test]
     fn rust_source_callable_bound_for_type_param_accepts_qualified_fn_traits() {
         let source = r#"
 pub fn run_qualified<D: std::ops::FnOnce(Data) -> OutputCallbackInfo>(callback: D);
@@ -1396,5 +1496,32 @@ pub fn run_inline<D: FnMut(&mut Data, &OutputCallbackInfo)>(callback: D) {
         assert!(!signature.is_async);
         assert!(!signature.is_unsafe);
         assert!(metadata_free_function_signature("std::fs::remove_file").is_none());
+    }
+
+    #[test]
+    fn metadata_free_method_signature_preserves_path_new_borrow_shape() -> Result<(), String> {
+        let signature = metadata_free_method_signature("std::path::Path", "new")
+            .ok_or_else(|| "std::path::Path::new should have a metadata-free signature".to_string())?;
+
+        assert_eq!(signature.return_type, "&std::path::Path");
+        assert_eq!(signature.params.len(), 1);
+        assert_eq!(signature.params[0].name.as_deref(), Some("path"));
+        assert_eq!(signature.params[0].type_display, "&impl AsRef<std::ffi::OsStr>");
+        assert!(!signature.is_async);
+        assert!(!signature.is_unsafe);
+        Ok(())
+    }
+
+    #[test]
+    fn metadata_free_function_signature_preserves_stdin_receiver_type() -> Result<(), String> {
+        let Some(signature) = metadata_free_function_signature("std::io::stdin") else {
+            return Err("std::io::stdin should have a metadata-free signature".to_string());
+        };
+
+        assert_eq!(signature.return_type, "std::io::Stdin");
+        assert!(signature.params.is_empty());
+        assert!(!signature.is_async);
+        assert!(!signature.is_unsafe);
+        Ok(())
     }
 }

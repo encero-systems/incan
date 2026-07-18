@@ -12,6 +12,7 @@ use crate::errors::{raise, raise_value_error};
 use incan_core::errors::{IncanError, key_not_found_in_dict};
 use incan_core::indexing::normalize_slice_bounds;
 
+#[cfg(feature = "ordinal")]
 pub(crate) mod ordinal_map;
 
 #[inline]
@@ -122,6 +123,7 @@ pub mod __private {
     use super::{IncanError, raise, raise_value_error};
 
     /// Hash canonical `OrdinalKey` bytes into the signed positive hash domain used by `std.collections.OrdinalMap`.
+    #[cfg(feature = "ordinal")]
     #[inline]
     #[must_use]
     pub fn ordinal_key_hash_bytes(data: &[u8]) -> i64 {
@@ -129,6 +131,7 @@ pub mod __private {
     }
 
     /// Return the stable encoding identifier for `str` ordinal keys.
+    #[cfg(feature = "ordinal")]
     #[inline]
     #[must_use]
     pub fn ordinal_key_encoding_str() -> String {
@@ -136,6 +139,7 @@ pub mod __private {
     }
 
     /// Return the stable encoding identifier for `bytes` ordinal keys.
+    #[cfg(feature = "ordinal")]
     #[inline]
     #[must_use]
     pub fn ordinal_key_encoding_bytes() -> String {
@@ -143,6 +147,7 @@ pub mod __private {
     }
 
     /// Return the stable encoding identifier for `bool` ordinal keys.
+    #[cfg(feature = "ordinal")]
     #[inline]
     #[must_use]
     pub fn ordinal_key_encoding_bool() -> String {
@@ -150,6 +155,7 @@ pub mod __private {
     }
 
     /// Return the stable encoding identifier for `Decimal128` ordinal keys.
+    #[cfg(feature = "ordinal")]
     #[inline]
     #[must_use]
     pub fn ordinal_key_encoding_decimal() -> String {
@@ -157,6 +163,7 @@ pub mod __private {
     }
 
     /// Return the stable encoding identifier for signed integer ordinal keys.
+    #[cfg(feature = "ordinal")]
     #[inline]
     #[must_use]
     pub fn ordinal_key_encoding_int(bits: u16) -> String {
@@ -164,6 +171,7 @@ pub mod __private {
     }
 
     /// Return the stable encoding identifier for unsigned integer ordinal keys.
+    #[cfg(feature = "ordinal")]
     #[inline]
     #[must_use]
     pub fn ordinal_key_encoding_uint(bits: u16) -> String {
@@ -171,6 +179,7 @@ pub mod __private {
     }
 
     /// Decode an exact-width little-endian `OrdinalKey` payload.
+    #[cfg(feature = "ordinal")]
     #[inline]
     pub fn ordinal_key_exact_bytes<const N: usize>(data: Vec<u8>, encoding: &str) -> Result<[u8; N], String> {
         if data.len() != N {
@@ -181,12 +190,14 @@ pub mod __private {
     }
 
     /// Decode a UTF-8 string `OrdinalKey` payload.
+    #[cfg(feature = "ordinal")]
     #[inline]
     pub fn ordinal_key_string_from_bytes(data: Vec<u8>) -> Result<String, String> {
         String::from_utf8(data).map_err(|err| err.to_string())
     }
 
     /// Decode a boolean `OrdinalKey` payload.
+    #[cfg(feature = "ordinal")]
     #[inline]
     pub fn ordinal_key_bool_from_bytes(data: Vec<u8>) -> Result<bool, String> {
         if data.len() != 1 {
@@ -206,6 +217,7 @@ pub mod __private {
     }
 
     /// Encode a decimal `OrdinalKey` into its canonical coefficient/scale payload.
+    #[cfg(feature = "ordinal")]
     #[inline]
     #[must_use]
     pub fn ordinal_key_decimal_bytes(value: &crate::num::Decimal128) -> [u8; 17] {
@@ -216,6 +228,7 @@ pub mod __private {
     }
 
     /// Decode a decimal `OrdinalKey` payload.
+    #[cfg(feature = "ordinal")]
     #[inline]
     pub fn ordinal_key_decimal_from_bytes(data: Vec<u8>) -> Result<crate::num::Decimal128, String> {
         let encoding = ordinal_key_encoding_decimal();
@@ -458,6 +471,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "ordinal")]
     fn ordinal_key_encoding_helpers_are_stable() {
         assert_eq!(__private::ordinal_key_encoding_str(), "str:utf8");
         assert_eq!(__private::ordinal_key_encoding_bytes(), "bytes:raw");

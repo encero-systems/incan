@@ -125,7 +125,7 @@ mod tests {
     fn classifies_stdlib_decorator_functions() {
         let context = SurfaceContext::default();
         let feature =
-            context.decorator_feature_for_path(&["std".to_string(), "testing".to_string(), "parametrize".to_string()]);
+            context.decorator_feature_for_path(&["std".to_string(), "future".to_string(), "describe".to_string()]);
         assert_eq!(
             feature,
             Some(SurfaceFeatureKey::Decorator(DecoratorFeature::StdlibDecoratorFunction))

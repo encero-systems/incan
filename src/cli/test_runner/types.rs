@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::provider::FeatureSelection;
+
 use crate::cli::commands::common::CargoPolicy;
 
 /// Output format for `incan test` results.
@@ -163,10 +165,26 @@ pub struct TestRunConfig<'a> {
     pub strict_markers: bool,
     pub jobs: usize,
     pub test_features: Vec<String>,
+    pub package_features: FeatureSelection,
+    pub sdk_profile: Option<String>,
     pub timeout: Option<&'a str>,
     pub no_capture: bool,
     pub cargo_policy: CargoPolicy,
     pub cargo_features: Vec<String>,
     pub cargo_no_default_features: bool,
     pub cargo_all_features: bool,
+    /// Compiler-owned workspace identity attached to every observable test result for a fan-out invocation.
+    pub workspace_context: Option<WorkspaceTestContext>,
+}
+
+/// Member identity supplied by RFC 077 orchestration to a single test-batch run.
+///
+/// The runner does not discover workspaces itself: it only projects this context into JSON Lines test records and
+/// summaries after the CLI has validated scope selection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceTestContext {
+    pub workspace_root: PathBuf,
+    pub scope_origin: String,
+    pub member_name: String,
+    pub member_root: PathBuf,
 }

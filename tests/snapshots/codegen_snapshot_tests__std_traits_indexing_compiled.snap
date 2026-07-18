@@ -7,3 +7,108 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+/// Index trait - Canonical capability name for `obj[key]` read access
+/// Hook: __getitem__(self, key: K) -> V
+///
+/// Example:
+///
+/// ```ignore
+/// model Matrix with Index[Tuple[int, int], float]:
+///     rows: int
+///     cols: int
+///     data: List[float]
+///
+///     def __getitem__(self, key: Tuple[int, int]) -> float:
+///         row, col = key
+///         return self.data[row * self.cols + col]
+///
+/// m = Matrix(rows=2, cols=2, data=[1.0, 2.0, 3.0, 4.0])
+/// println(m[(0, 1)])  # 2.0
+/// ```
+///
+/// Common patterns:
+///
+/// ```ignore
+/// # Dict-like access
+/// model Cache[K, V] with Index[K, Option[V]]:
+///     items: Dict[K, V]
+///
+///     def __getitem__(self, key: K) -> Option[V]:
+///         return self.items.get(key)
+///
+/// # Array wrapper
+/// model SafeArray[T] with Index[int, Option[T]]:
+///     items: List[T]
+///
+///     def __getitem__(self, idx: int) -> Option[T]:
+///         if idx < 0 or idx >= len(self.items):
+///             return None
+///         return Some(self.items[idx])
+/// ```
+pub trait Index<K, V> {
+    fn __getitem__(&self, key: K) -> V;
+}
+/// IndexMut trait - Canonical capability name for `obj[key] = value`
+/// Hook: __setitem__(self, key: K, value: V) -> None
+///
+/// Note: Usually implement both Index and IndexMut together.
+///
+/// Example:
+///
+/// ```ignore
+/// model Grid with Index[Tuple[int, int], int], IndexMut[Tuple[int, int], int]:
+///     width: int
+///     height: int
+///     cells: List[int]
+///
+///     def __getitem__(self, key: Tuple[int, int]) -> int:
+///         x, y = key
+///         return self.cells[y * self.width + x]
+///
+///     def __setitem__(self, key: Tuple[int, int], value: int) -> None:
+///         x, y = key
+///         self.cells[y * self.width + x] = value
+///
+/// grid = Grid(width=3, height=3, cells=[0] * 9)
+/// grid[(1, 1)] = 5  # Set center cell
+/// println(grid[(1, 1)])  # 5
+/// ```
+pub trait IndexMut<K, V> {
+    fn __setitem__(&self, key: K, value: V);
+}
+/// Sliceable trait - Enables Python-style slicing: obj[start:end:step]
+///
+/// Built-in List and str already support slicing. Implement this trait
+/// for custom collection types that should support slice syntax.
+///
+/// Example:
+///
+/// ```ignore
+/// items = [1, 2, 3, 4, 5]
+///
+/// # Basic slicing
+/// first_three = items[0:3]   # [1, 2, 3]
+/// last_two = items[3:]       # [4, 5]
+/// all_but_last = items[:4]   # [1, 2, 3, 4]
+///
+/// # Full slice (copy)
+/// copy = items[:]            # [1, 2, 3, 4, 5]
+///
+/// # With step (every other element)
+/// evens = items[::2]         # [1, 3, 5]
+/// ```
+///
+/// Slice components:
+/// - start: Beginning index (inclusive), defaults to 0
+/// - end: Ending index (exclusive), defaults to length
+/// - step: Step size, defaults to 1
+///
+/// Note: Negative indices are not yet supported.
+pub trait Sliceable<T> {
+    fn __getslice__(
+        &self,
+        start: Option<i64>,
+        end: Option<i64>,
+        step: Option<i64>,
+    ) -> Vec<T>;
+}

@@ -23,6 +23,9 @@ pub mod generator;
 pub mod plan;
 pub mod runner;
 
+/// Cargo dependency key for the toolchain-owned runtime support crate used by generated Rust projects.
+pub(crate) const INCAN_STDLIB_CRATE_NAME: &str = "incan_stdlib";
+
 // Re-export public types so `crate::backend::project::ProjectGenerator` (etc.) still works.
 pub use generator::{ProjectGenerator, RunProfile};
 pub use plan::{CargoCommand, CompilationPlan, ExecutionResult, Executor, PlannedDirectory, PlannedFile};

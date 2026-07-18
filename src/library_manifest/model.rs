@@ -1,3 +1,4 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -7,7 +8,8 @@ use super::type_refs::type_ref_from_resolved;
 use super::validation::validate_raw_manifest;
 use super::wire::RawLibraryManifest;
 use super::{
-    DslSurface, LIBRARY_MANIFEST_FORMAT, RUST_ABI_SCHEMA_VERSION, VocabKeywordRegistration, VocabProviderManifest,
+    COMPILED_PROVIDER_METADATA_SCHEMA_VERSION, DslSurface, LIBRARY_MANIFEST_FORMAT, RUST_ABI_SCHEMA_VERSION,
+    VocabKeywordRegistration, VocabProviderManifest,
 };
 use crate::frontend::api_metadata::CheckedApiMetadataPackage;
 use crate::frontend::contract_metadata::ContractMetadataPackage as ModelContractMetadataPackage;
@@ -172,6 +174,234 @@ pub struct LibraryContractMetadata {
     /// Stable semantic identities for public exports.
     #[serde(default, skip_serializing_if = "LibraryIdentityGraph::is_empty")]
     pub identity_graph: LibraryIdentityGraph,
+    /// Generic compiled-provider facts used by SDK and ordinary package consumers.
+    #[serde(default, skip_serializing_if = "CompiledProviderMetadata::is_empty")]
+    pub provider: CompiledProviderMetadata,
+}
+
+/// Generic backend-neutral provider facts embedded in one checked library artifact.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompiledProviderMetadata {
+    /// Version of this provider metadata payload.
+    #[serde(default = "default_compiled_provider_metadata_schema_version")]
+    pub schema_version: u32,
+    /// Provider-local module claims before the consumer's authorized namespace prefix is applied.
+    #[serde(default)]
+    pub namespace_claims: Vec<ProviderModuleClaim>,
+    /// Public additive package-feature declarations owned by this provider.
+    #[serde(default)]
+    pub public_features: BTreeMap<String, ProviderFeatureMetadata>,
+    /// Feature projection used to build this physical artifact.
+    #[serde(default)]
+    pub active_features: BTreeSet<String>,
+    /// Active Incan provider dependencies captured for this physical feature projection.
+    #[serde(default)]
+    pub provider_dependencies: Vec<ProviderDependencyMetadata>,
+    /// Positive feature requirements attached to checked semantic facts.
+    #[serde(default)]
+    pub fact_requirements: Vec<ProviderFactRequirement>,
+    /// SDK components that must already be enabled while this artifact projection is active.
+    #[serde(default)]
+    pub required_sdk_components: BTreeSet<String>,
+    /// Private backend mappings selected from semantic module and feature use.
+    #[serde(default)]
+    pub implementation_facets: Vec<ProviderImplementationFacet>,
+}
+
+impl Default for CompiledProviderMetadata {
+    fn default() -> Self {
+        Self {
+            schema_version: COMPILED_PROVIDER_METADATA_SCHEMA_VERSION,
+            namespace_claims: Vec::new(),
+            public_features: BTreeMap::new(),
+            active_features: BTreeSet::new(),
+            provider_dependencies: Vec::new(),
+            fact_requirements: Vec::new(),
+            required_sdk_components: BTreeSet::new(),
+            implementation_facets: Vec::new(),
+        }
+    }
+}
+
+impl CompiledProviderMetadata {
+    /// Return whether the manifest has no provider facts beyond the default schema discriminator.
+    pub fn is_empty(&self) -> bool {
+        self.namespace_claims.is_empty()
+            && self.public_features.is_empty()
+            && self.active_features.is_empty()
+            && self.provider_dependencies.is_empty()
+            && self.fact_requirements.is_empty()
+            && self.required_sdk_components.is_empty()
+            && self.implementation_facets.is_empty()
+    }
+}
+
+/// One active Incan provider dependency frozen into a compiled artifact projection.
+///
+/// The path is relative to the containing provider artifact root, so moving the complete declared artifact graph keeps
+/// both semantic resolution and the generated Cargo dependency graph intact. The digest and identity prevent a
+/// relocated path from silently resolving to a different provider.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ProviderDependencyMetadata {
+    /// Whether this dependency contributes a public package namespace or only implements the containing provider.
+    #[serde(default)]
+    pub kind: ProviderDependencyKind,
+    /// Dependency key used by the provider's own `pub::<key>` imports.
+    pub dependency_key: String,
+    /// Published provider name from the dependency's checked `.incnlib` manifest.
+    pub provider_name: String,
+    /// Published provider version from the dependency's checked `.incnlib` manifest.
+    pub provider_version: String,
+    /// Integrity identity of the complete dependency artifact tree.
+    pub artifact_digest: String,
+    /// Dependency artifact root relative to the containing provider artifact root.
+    pub relative_artifact_path: String,
+    /// Public features requested on this active dependency edge.
+    #[serde(default)]
+    pub requested_features: BTreeSet<String>,
+    /// Whether the dependency's conventional `default` feature participates.
+    #[serde(default = "provider_dependency_default_features")]
+    pub default_features: bool,
+    /// Whether a feature-conditioned optional edge activated this dependency.
+    #[serde(default)]
+    pub optional: bool,
+}
+
+/// Semantic visibility of one compiled-provider dependency edge.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderDependencyKind {
+    /// An ordinary Incan package dependency that receives the consumer-granted `pub::<key>` namespace.
+    #[default]
+    PublicPackage,
+    /// A relocatable checked provider artifact linked only to implement the containing provider.
+    PrivateImplementation,
+}
+
+/// Preserve the ordinary dependency default-feature behavior when reading older provider metadata.
+fn provider_dependency_default_features() -> bool {
+    true
+}
+
+/// Return the current provider metadata schema for serde defaults.
+fn default_compiled_provider_metadata_schema_version() -> u32 {
+    COMPILED_PROVIDER_METADATA_SCHEMA_VERSION
+}
+
+/// One provider-local module claim and its positive feature requirements.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ProviderModuleClaim {
+    /// Module path relative to the namespace granted by the consumer or SDK inventory.
+    pub module_path: Vec<String>,
+    /// Features that must all be active before this module participates.
+    #[serde(default)]
+    pub required_features: BTreeSet<String>,
+}
+
+/// Normalized feature edges persisted independently of compact or expanded authoring syntax.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderFeatureMetadata {
+    /// Other features in this provider that become active.
+    #[serde(default)]
+    pub includes: BTreeSet<String>,
+    /// Optional Incan dependencies that become active.
+    #[serde(default)]
+    pub optional_dependencies: BTreeSet<String>,
+    /// Public feature requests grouped by active Incan dependency key.
+    #[serde(default)]
+    pub dependency_features: BTreeMap<String, BTreeSet<String>>,
+    /// SDK components required but never enabled by this feature.
+    #[serde(default)]
+    pub required_sdk_components: BTreeSet<String>,
+}
+
+/// Checked provider fact category used for feature projection and inspection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderFactKind {
+    /// A canonical importable module exists in this projection.
+    Module,
+    /// A checked public declaration or re-export exists in this projection.
+    Export,
+    /// A checked import edge participates in this projection.
+    ProviderDependency,
+    /// A semantic fact requires an SDK component selected by the consumer.
+    ComponentRequirement,
+    /// A checked vocabulary or other parser-owned syntax contribution participates.
+    SoftSyntax,
+    /// A checked `std.registry` entry participates in this projection.
+    RegistryEntry,
+    /// Checked documentation is attached to a declaration in this projection.
+    Documentation,
+    /// A private backend implementation mapping participates in this projection.
+    ImplementationFacet,
+}
+
+/// Positive feature predicate attached to one checked provider fact.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ProviderFactRequirement {
+    /// Kind of checked fact being conditioned.
+    pub kind: ProviderFactKind,
+    /// Stable provider-local semantic identity or canonical metadata key.
+    pub identity: String,
+    /// Features that must all be active.
+    #[serde(default)]
+    pub required_features: BTreeSet<String>,
+}
+
+/// Provider-owned private mapping from semantic use to the current Cargo backend.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderImplementationFacet {
+    /// Stable provider-local facet id.
+    pub id: String,
+    /// Provider-local modules whose use selects this facet.
+    #[serde(default)]
+    pub required_modules: BTreeSet<Vec<String>>,
+    /// Public features whose activation selects this facet.
+    #[serde(default)]
+    pub required_features: BTreeSet<String>,
+    /// Private Cargo features grouped by generated dependency key.
+    #[serde(default)]
+    pub cargo_features: BTreeMap<String, BTreeSet<String>>,
+    /// Current-backend Cargo dependencies selected by this facet.
+    #[serde(default)]
+    pub cargo_dependencies: Vec<ProviderCargoDependency>,
+}
+
+/// Relocatable Cargo dependency metadata owned privately by one provider implementation facet.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ProviderCargoDependency {
+    /// Rust dependency key used by generated code.
+    pub crate_name: String,
+    /// Published Cargo package name when it differs from the dependency key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package: Option<String>,
+    /// Registry version requirement for registry-backed dependencies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    /// Private Cargo features required on this dependency.
+    #[serde(default)]
+    pub features: BTreeSet<String>,
+    /// Whether the dependency's Cargo default features remain enabled.
+    #[serde(default = "provider_cargo_default_features")]
+    pub default_features: bool,
+    /// Relocatable source class interpreted only by the active backend adapter.
+    pub source: ProviderCargoDependencySource,
+}
+
+/// Current-backend dependency source without producer-specific absolute paths.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ProviderCargoDependencySource {
+    /// A dependency resolved from the Cargo registry using `version`.
+    Registry,
+    /// A crate shipped within the active Incan toolchain at this toolchain-root-relative path.
+    Toolchain { relative_path: String },
+}
+
+/// Preserve Cargo's default-feature behavior when reading older private implementation metadata.
+fn provider_cargo_default_features() -> bool {
+    true
 }
 
 /// Serialized schema version for the public export identity graph.
@@ -468,6 +698,9 @@ pub struct FieldExport {
     pub ty: TypeRef,
     /// Whether the field has a declared default value.
     pub has_default: bool,
+    /// Materializable source default used when a consumer constructs this type through the artifact boundary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<ParamDefaultExport>,
     /// Optional field alias published by the library surface.
     pub alias: Option<String>,
     /// Optional human-readable field description.
@@ -1209,7 +1442,7 @@ fn preset_value_from_checked(value: &CheckedPresetValue) -> PresetValueExport {
 
 /// Convert checked parameter defaults into the manifest default-expression vocabulary when consumers can materialize
 /// them.
-fn param_default_from_checked(value: &CheckedParamDefault) -> Option<ParamDefaultExport> {
+pub(crate) fn param_default_from_checked(value: &CheckedParamDefault) -> Option<ParamDefaultExport> {
     match value {
         CheckedParamDefault::Int(value) => Some(ParamDefaultExport::Int(*value)),
         CheckedParamDefault::Float(value) => Some(ParamDefaultExport::Float(value.to_string())),
@@ -1338,11 +1571,13 @@ fn method_from_checked(method: &crate::frontend::library_exports::CheckedMethod)
     }
 }
 
+/// Convert checked field metadata into artifact metadata, including a materializable default when available.
 fn field_from_checked(field: &crate::frontend::library_exports::CheckedField) -> FieldExport {
     FieldExport {
         name: field.name.clone(),
         ty: type_ref_from_resolved(&field.ty),
         has_default: field.has_default,
+        default: field.default.as_ref().and_then(param_default_from_checked),
         alias: field.alias.clone(),
         description: field.description.clone(),
     }

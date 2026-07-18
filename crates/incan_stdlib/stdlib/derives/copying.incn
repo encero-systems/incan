@@ -4,7 +4,7 @@ See docs/derives/copying_default.md for detailed documentation.
 """
 
 
-trait Clone:
+pub trait Clone:
     """
     Clone trait - Provides explicit copying via .clone()
     Python equivalent: __copy__, __deepcopy__
@@ -28,7 +28,7 @@ trait Clone:
     def clone(self) -> Self: ...
 
 
-trait Copy:
+pub trait Copy:
     """
     Copy trait - Enables implicit copying (marker trait)
     
@@ -59,7 +59,7 @@ trait Copy:
     pass
 
 
-trait Default:
+pub trait Default:
     """
     Default trait - Enables creating instances with default values
     Python equivalent: __init__ with default arguments

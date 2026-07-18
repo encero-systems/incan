@@ -20,6 +20,186 @@ pub struct CodegraphPackage {
     pub root_path: Option<String>,
 }
 
+/// Backend-neutral provider, SDK-component, and package-feature context for one project represented in an export.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodegraphSemanticContext {
+    /// Canonical project root whose selection produced this context.
+    pub project_root: String,
+    /// Active SDK and component projection, when the toolchain is component-aware.
+    pub sdk: Option<CodegraphSdkProjection>,
+    /// Public package-feature closures participating in this project graph.
+    pub packages: Vec<CodegraphPackageFeatureProjection>,
+    /// Exact compiled-provider records known to the shared compiler plan.
+    pub providers: Vec<CodegraphProviderProjection>,
+}
+
+/// Active SDK identity and expanded component selection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodegraphSdkProjection {
+    /// Stable SDK identity.
+    pub identity: String,
+    /// Selected release-owned profile name.
+    pub profile: String,
+    /// Every component known to the SDK, including unavailable and disabled components.
+    pub components: Vec<CodegraphSdkComponentProjection>,
+}
+
+/// Availability, enablement, dependencies, and selection provenance for one SDK component.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodegraphSdkComponentProjection {
+    /// Stable component id.
+    pub id: String,
+    /// Component version from the active inventory.
+    pub version: String,
+    /// Whether this installation contains an integrity-checked artifact for the component.
+    pub available: bool,
+    /// Whether project/profile resolution enabled the component.
+    pub enabled: bool,
+    /// Whether the SDK requires the component in every profile.
+    pub mandatory: bool,
+    /// Direct component dependencies.
+    pub dependencies: Vec<String>,
+    /// Reason the component entered the expanded selection, when enabled.
+    pub reason: Option<CodegraphComponentSelectionReason>,
+}
+
+/// Stable reason that one SDK component entered the expanded project selection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "source", rename_all = "snake_case")]
+pub enum CodegraphComponentSelectionReason {
+    /// Component is mandatory for this SDK release.
+    Mandatory,
+    /// Component belongs to the selected SDK profile.
+    Profile(String),
+    /// Project manifest selected the component explicitly.
+    Explicit,
+    /// Another selected component requires this component.
+    Dependency(String),
+}
+
+/// Additive public feature closure for one concrete package root.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodegraphPackageFeatureProjection {
+    /// Declared package name.
+    pub package: String,
+    /// Concrete package root used for path-dependency unification.
+    pub project_root: String,
+    /// Unified active public feature set.
+    pub active_features: Vec<String>,
+    /// Optional Incan dependencies activated by the feature closure.
+    pub active_optional_dependencies: Vec<String>,
+    /// Public feature requests sent to active dependency packages.
+    pub dependency_features: Vec<CodegraphDependencyFeatureProjection>,
+    /// SDK components required by the active package feature projection.
+    pub required_sdk_components: Vec<String>,
+    /// Stable activation provenance for each active feature.
+    pub reasons: Vec<CodegraphFeatureReasonProjection>,
+}
+
+/// Public features requested from one active Incan dependency.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodegraphDependencyFeatureProjection {
+    /// Dependency key from the requesting manifest.
+    pub dependency: String,
+    /// Unified requested feature set.
+    pub features: Vec<String>,
+}
+
+/// Activation provenance for one active public package feature.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodegraphFeatureReasonProjection {
+    /// Active package-owned feature.
+    pub feature: String,
+    /// Every reason that contributed the feature to the additive closure.
+    pub reasons: Vec<CodegraphFeatureActivationReason>,
+}
+
+/// Stable reason that one public feature entered a package projection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "source", rename_all = "snake_case")]
+pub enum CodegraphFeatureActivationReason {
+    /// Conventional package default selected the feature.
+    Default,
+    /// Command or parent request selected the feature explicitly.
+    Requested,
+    /// `--all-features` selected the feature.
+    AllFeatures,
+    /// Another local feature includes this feature.
+    IncludedBy(String),
+    /// A parent package dependency edge requested this feature.
+    DependencyRequest {
+        /// Requesting package name.
+        package: String,
+        /// Dependency key on the requesting package.
+        dependency: String,
+    },
+}
+
+/// Exact provider identity, state, semantic use, implementation closure, artifact, and authority provenance.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodegraphProviderProjection {
+    /// Stable provider identity including version, digest, and feature projection.
+    pub identity: String,
+    /// Provider artifact availability.
+    pub available: bool,
+    /// Provider enablement after component and package-feature resolution.
+    pub enabled: bool,
+    /// Provider participation derived from reached canonical modules.
+    pub participation: CodegraphProviderParticipation,
+    /// Authority chain that introduced the provider.
+    pub provenance: CodegraphProviderProvenance,
+    /// Exact canonical modules claimed by the provider.
+    pub namespace_claims: Vec<Vec<String>>,
+    /// Canonical provider modules reached by this compilation graph.
+    pub used_modules: Vec<Vec<String>>,
+    /// Public feature projection used by this physical artifact.
+    pub active_features: Vec<String>,
+    /// Private implementation facets selected by semantic use.
+    pub implementation_facets: Vec<String>,
+    /// Backend requirements derived from selected facets.
+    pub backend_requirements: Vec<String>,
+    /// Relocatable or installed artifact-manifest location, when available.
+    pub manifest_path: Option<String>,
+}
+
+/// Provider participation state with availability, enablement, and semantic use kept distinct.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CodegraphProviderParticipation {
+    /// Provider artifact is absent from the active installation or artifact store.
+    Unavailable,
+    /// Provider is available but disabled by the selected semantic graph.
+    Disabled,
+    /// Provider is enabled and available but no claimed module is reached.
+    Enabled,
+    /// At least one claimed module is reached by the compilation graph.
+    Used,
+}
+
+/// Authority and source chain that introduced one provider record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CodegraphProviderProvenance {
+    /// Ordinary Incan dependency selected from a project graph.
+    ProjectDependency {
+        /// Dependency key used under `pub::<key>`.
+        dependency_key: String,
+        /// Manifest that declared the dependency.
+        manifest_path: String,
+    },
+    /// Provider authorized by the active SDK inventory.
+    Sdk {
+        /// Active SDK identity.
+        sdk_identity: String,
+        /// SDK component that supplies the provider.
+        component_id: String,
+        /// Inventory file that granted reserved namespace authority, when installed.
+        inventory_path: Option<String>,
+    },
+    /// Compiler-owned symbolic provider without a compiled artifact.
+    Compiler,
+}
+
 /// Export mode recorded in the header.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -99,6 +279,9 @@ pub struct CodegraphHeaderRecord {
     pub languages: Vec<CodegraphLanguage>,
     /// Project identity, when available.
     pub package: Option<CodegraphPackage>,
+    /// Typed semantic contexts that determined provider and feature projection for represented projects.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub semantic_contexts: Vec<CodegraphSemanticContext>,
     /// Whether any emitted record is degraded or diagnostic-backed.
     pub degraded: bool,
 }
@@ -392,6 +575,7 @@ mod tests {
                 root_path: "src/main.incn".to_string(),
                 languages: vec![CodegraphLanguage::Incan],
                 package: None,
+                semantic_contexts: Vec::new(),
                 degraded: false,
             }),
             CodegraphRecord::File(CodegraphFileRecord {

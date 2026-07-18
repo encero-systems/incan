@@ -4,7 +4,7 @@ See docs/derives/comparison.md for detailed documentation.
 """
 
 
-trait Eq:
+pub trait Eq:
     """
     Eq trait - Provides equality comparison (`==` and `!=`)
     Python equivalent: `__eq__`, `__ne__`
@@ -45,7 +45,7 @@ trait Eq:
         return not self.__eq__(other)
 
 
-trait Ord with Eq:
+pub trait Ord with Eq:
     """
     Ord trait - Provides ordering comparison (`<`, `<=`, `>`, `>=`) and sorting
     Python equivalent: `__lt__`, `__le__`, `__gt__`, `__ge__`
@@ -91,7 +91,7 @@ trait Ord with Eq:
         return other.__lt__(self) or self.__eq__(other)
 
 
-trait Hash:
+pub trait Hash:
     """
     Hash trait - Enables use as Dict keys or in Sets
     Python equivalent: `__hash__`

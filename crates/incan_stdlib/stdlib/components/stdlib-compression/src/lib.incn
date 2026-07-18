@@ -1,0 +1,13 @@
+"""Compiled provider entrypoint for Incan compression support."""
+
+import compression._auto
+import compression._core
+import compression.bz2
+import compression.deflate
+import compression.gzip
+import compression.lzma
+import compression.prelude
+import compression.snappy
+import compression.snappy.raw
+import compression.zlib
+import compression.zstd

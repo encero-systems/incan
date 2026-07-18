@@ -77,6 +77,66 @@ mod tests {
         }
     }
 
+    #[test]
+    fn parses_and_projects_compilation_unit_feature_conditions() -> Result<(), Vec<CompileError>> {
+        let program = parse_str(
+            r#"
+when feature("json"):
+    from std.json import JsonValue
+
+    when feature("pretty"):
+        pub def render(value: JsonValue) -> str:
+            return "json"
+
+pub def always() -> str:
+    return "always"
+"#,
+        )?;
+
+        assert_eq!(program.declarations.len(), 3);
+        assert_eq!(program.declarations[0].required_features, ["json"]);
+        assert_eq!(program.declarations[1].required_features, ["json", "pretty"]);
+        assert!(program.declarations[2].required_features.is_empty());
+
+        let json_only = program.projected_for_features(&std::collections::BTreeSet::from(["json".to_string()]));
+        assert_eq!(json_only.declarations.len(), 2);
+        assert!(matches!(json_only.declarations[0].node, Declaration::Import(_)));
+        assert!(matches!(json_only.declarations[1].node, Declaration::Function(_)));
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_non_feature_compile_time_predicates() {
+        let errors = parse_str_err(
+            "when target(\"linux\"):\n    const VALUE = 1\n",
+            "unsupported compile-time predicate should fail",
+        );
+
+        assert!(errors.iter().any(|error| error.message.contains("only `feature")));
+    }
+
+    #[test]
+    fn rejects_invalid_compile_time_feature_names() {
+        let errors = parse_str_err(
+            "when feature(\"dependency/name\"):\n    const VALUE = 1\n",
+            "cross-package feature spelling should fail",
+        );
+
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains("Invalid package feature name"))
+        );
+    }
+
+    #[test]
+    fn keeps_when_contextual_outside_compile_time_headers() -> Result<(), Vec<CompileError>> {
+        let program = parse_str("def identity(when: int) -> int:\n    return when\n")?;
+
+        assert!(matches!(program.declarations[0].node, Declaration::Function(_)));
+        Ok(())
+    }
+
     fn require_enum_decl(decl: &Spanned<Declaration>) -> Result<&EnumDecl, Vec<CompileError>> {
         match &decl.node {
             Declaration::Enum(e) => Ok(e),
@@ -653,7 +713,8 @@ enum Color:
     }
 
     #[test]
-    fn test_parse_block_preserves_single_blank_line_between_if_blocks_ending_in_match() -> Result<(), Vec<CompileError>> {
+    fn test_parse_block_preserves_single_blank_line_between_if_blocks_ending_in_match() -> Result<(), Vec<CompileError>>
+    {
         let source = r#"def f(a: bool, b: bool, result: Result[int, str]) -> None:
     if a:
         match result:
@@ -690,16 +751,10 @@ model Account:
         };
         let type_field = &model.fields[0].node;
         assert_eq!(type_field.metadata.alias.as_deref(), Some("type"));
-        assert_eq!(
-            type_field.metadata.description.as_deref(),
-            Some("Account tier")
-        );
+        assert_eq!(type_field.metadata.description.as_deref(), Some("Account tier"));
         let balance_field = &model.fields[1].node;
         assert_eq!(balance_field.metadata.alias, None);
-        assert_eq!(
-            balance_field.metadata.description.as_deref(),
-            Some("Balance in cents")
-        );
+        assert_eq!(balance_field.metadata.description.as_deref(), Some("Balance in cents"));
         Ok(())
     }
 
@@ -893,7 +948,7 @@ def f(a: Foo) -> int:
         Ok(())
     }
 
-    /// Qualified unit variant patterns parse as `Type::Variant` in the AST (for Rust lowering); surface syntax uses `.`.
+    /// Qualified unit variant patterns parse as `Type::Variant` in the AST for Rust lowering; surface syntax uses `.`.
     #[test]
     fn test_parse_qualified_unit_pattern_stores_double_colon_in_ast() -> Result<(), Vec<CompileError>> {
         let source = r#"
@@ -949,8 +1004,12 @@ def f(kind: Kind) -> int:
         match &arms[0].node.pattern.node {
             Pattern::Or(patterns) => {
                 assert_eq!(patterns.len(), 3);
-                assert!(matches!(&patterns[0].node, Pattern::Constructor(name, args) if name == "Kind::Read" && args.is_empty()));
-                assert!(matches!(&patterns[1].node, Pattern::Constructor(name, args) if name == "Kind::Scan" && args.is_empty()));
+                assert!(
+                    matches!(&patterns[0].node, Pattern::Constructor(name, args) if name == "Kind::Read" && args.is_empty())
+                );
+                assert!(
+                    matches!(&patterns[1].node, Pattern::Constructor(name, args) if name == "Kind::Scan" && args.is_empty())
+                );
                 assert!(matches!(&patterns[2].node, Pattern::Wildcard));
             }
             _ => panic!("Expected pattern alternation"),
@@ -1106,9 +1165,9 @@ def drain(current: Result[int, int]) -> int:
 "#;
         let errors = parse_str_err(source, "`while let` pattern alternation should fail");
         assert!(
-            errors
-                .iter()
-                .any(|err| err.message.contains("Pattern alternation is only supported in match arms and if let patterns")),
+            errors.iter().any(|err| err
+                .message
+                .contains("Pattern alternation is only supported in match arms and if let patterns")),
             "expected `while let` pattern alternation rejection, got: {errors:?}"
         );
     }
@@ -1124,7 +1183,9 @@ def f(opt: Option[int]) -> int:
 "#;
         let errors = parse_str_err(source, "`if let` with else should fail");
         assert!(
-            errors.iter().any(|err| err.message.contains("`if let` does not support `else` branches")),
+            errors
+                .iter()
+                .any(|err| err.message.contains("`if let` does not support `else` branches")),
             "expected `if let` else rejection, got: {errors:?}"
         );
     }
@@ -1211,7 +1272,12 @@ class Service:
                 Declaration::Class(c) => Some(c),
                 _ => None,
             })
-            .ok_or_else(|| vec![CompileError::new("expected class declaration".to_string(), Span::default())])?;
+            .ok_or_else(|| {
+                vec![CompileError::new(
+                    "expected class declaration".to_string(),
+                    Span::default(),
+                )]
+            })?;
         assert_eq!(class.methods[0].node.decorators[0].node.name, "cached");
         Ok(())
     }
@@ -1507,8 +1573,9 @@ trait HasArea:
             "property declarations with parameter lists should fail",
         );
         assert!(
-            errs.iter()
-                .any(|err| err.message.contains("Computed properties do not accept parameter lists")),
+            errs.iter().any(|err| err
+                .message
+                .contains("Computed properties do not accept parameter lists")),
             "expected property parameter diagnostic, got: {errs:?}"
         );
     }
@@ -1520,8 +1587,9 @@ trait HasArea:
             "property declarations with async modifiers should fail",
         );
         assert!(
-            errs.iter()
-                .any(|err| err.message.contains("Declaration modifiers are not supported on properties")),
+            errs.iter().any(|err| err
+                .message
+                .contains("Declaration modifiers are not supported on properties")),
             "expected property modifier diagnostic, got: {errs:?}"
         );
     }
@@ -1704,22 +1772,10 @@ type Sender[T] = rusttype RustSender[T]:
         assert_eq!(nt.rebindings.len(), 1);
         assert_eq!(nt.rebindings[0].node.name, "send_now");
         assert_eq!(nt.interop_edges.len(), 2);
-        assert!(matches!(
-            nt.interop_edges[0].node.direction,
-            InteropDirection::From
-        ));
-        assert!(matches!(
-            nt.interop_edges[0].node.adapter_kind,
-            InteropAdapterKind::Try
-        ));
-        assert!(matches!(
-            nt.interop_edges[1].node.direction,
-            InteropDirection::Into
-        ));
-        assert!(matches!(
-            nt.interop_edges[1].node.adapter_kind,
-            InteropAdapterKind::Via
-        ));
+        assert!(matches!(nt.interop_edges[0].node.direction, InteropDirection::From));
+        assert!(matches!(nt.interop_edges[0].node.adapter_kind, InteropAdapterKind::Try));
+        assert!(matches!(nt.interop_edges[1].node.direction, InteropDirection::Into));
+        assert!(matches!(nt.interop_edges[1].node.adapter_kind, InteropAdapterKind::Via));
         Ok(())
     }
 
@@ -1744,7 +1800,10 @@ type UserId = rusttype i64 with Display, Debug:
         assert_eq!(associated_type.name, "Output");
         assert_eq!(associated_type.trait_target.node.name, "Add");
         assert_eq!(associated_type.trait_target.node.type_args.len(), 1);
-        assert_eq!(require_simple_type(&associated_type.trait_target.node.type_args[0])?, "int");
+        assert_eq!(
+            require_simple_type(&associated_type.trait_target.node.type_args[0])?,
+            "int"
+        );
         assert!(matches!(associated_type.ty.node, Type::Simple(ref name) if name == "UserId"));
 
         assert_eq!(nt.methods.len(), 1);
@@ -1776,9 +1835,9 @@ type UserId = rusttype i64 with Display:
             panic!("method trait target after return type should be rejected");
         };
         assert!(
-            errors
-                .iter()
-                .any(|err| err.message.contains("Method trait target must appear before the return type")),
+            errors.iter().any(|err| err
+                .message
+                .contains("Method trait target must appear before the return type")),
             "expected focused method trait target placement diagnostic, got {errors:?}"
         );
     }
@@ -1825,14 +1884,8 @@ type Email = rusttype RustEmailAddress:
         let program = parse_str(source)?;
         let nt = require_newtype_decl(&program.declarations[0])?;
         assert_eq!(nt.interop_edges.len(), 1);
-        assert!(matches!(
-            nt.interop_edges[0].node.direction,
-            InteropDirection::Into
-        ));
-        assert!(matches!(
-            nt.interop_edges[0].node.adapter_kind,
-            InteropAdapterKind::Try
-        ));
+        assert!(matches!(nt.interop_edges[0].node.direction, InteropDirection::Into));
+        assert!(matches!(nt.interop_edges[0].node.adapter_kind, InteropAdapterKind::Try));
         Ok(())
     }
 
@@ -1853,7 +1906,8 @@ type Email = rusttype RustEmailAddress:
             Ok(_) => Vec::new(),
         };
         assert!(
-            errs.iter().any(|e| e.message.contains("Expected `via` or `try` in interop edge")),
+            errs.iter()
+                .any(|e| e.message.contains("Expected `via` or `try` in interop edge")),
             "expected missing-adapter-kind parser error, got: {errs:?}"
         );
     }
@@ -1875,7 +1929,8 @@ type Email = rusttype RustEmailAddress:
             Ok(_) => Vec::new(),
         };
         assert!(
-            errs.iter().any(|e| e.message.contains("Expected `from` or `into` in interop edge")),
+            errs.iter()
+                .any(|e| e.message.contains("Expected `from` or `into` in interop edge")),
             "expected missing-direction parser error, got: {errs:?}"
         );
     }
@@ -2371,7 +2426,11 @@ def identity(
         let Ok(program) = parse_str(source) else {
             panic!("`import rust.std.time` multi-dot dot-notation should parse successfully with a warning");
         };
-        assert_eq!(program.warnings.len(), 1, "Expected exactly one warning for the leading dot");
+        assert_eq!(
+            program.warnings.len(),
+            1,
+            "Expected exactly one warning for the leading dot"
+        );
         assert!(
             program.warnings[0].message.contains("::"),
             "Expected warning to mention '::' notation; got: {}",
@@ -2403,7 +2462,11 @@ def identity(
         let Ok(program) = parse_str(source) else {
             panic!("`from rust.std.time import ...` multi-dot dot-notation should parse successfully with a warning");
         };
-        assert_eq!(program.warnings.len(), 1, "Expected exactly one warning for the leading dot");
+        assert_eq!(
+            program.warnings.len(),
+            1,
+            "Expected exactly one warning for the leading dot"
+        );
         assert!(
             program.warnings[0].message.contains("::"),
             "Expected warning to mention '::' notation; got: {}",
@@ -2562,7 +2625,8 @@ def identity(
     /// Mixed aliased/non-aliased items work in parenthesized `from rust::` imports.
     #[test]
     fn test_parse_rust_from_import_parenthesized_mixed_aliases() -> Result<(), Vec<CompileError>> {
-        let source = "from rust::polars import (\n    DataFrame,\n    Series as S,\n    LazyFrame as LF,\n    Expr,\n)\n";
+        let source =
+            "from rust::polars import (\n    DataFrame,\n    Series as S,\n    LazyFrame as LF,\n    Expr,\n)\n";
         let program = parse_str(source)?;
         match &program.declarations[0].node {
             Declaration::Import(i) => match &i.kind {
@@ -2592,7 +2656,13 @@ def identity(
         let program = parse_str(source)?;
         match &program.declarations[0].node {
             Declaration::Import(i) => match &i.kind {
-                ImportKind::RustFrom { crate_name, version, features, items, .. } => {
+                ImportKind::RustFrom {
+                    crate_name,
+                    version,
+                    features,
+                    items,
+                    ..
+                } => {
                     assert_eq!(crate_name, "serde_json");
                     assert_eq!(version.as_deref(), Some("1.0"));
                     assert_eq!(features, &["derive".to_string()]);
@@ -2614,7 +2684,12 @@ def identity(
         let program = parse_str(source)?;
         match &program.declarations[0].node {
             Declaration::Import(i) => match &i.kind {
-                ImportKind::RustFrom { crate_name, path, items, .. } => {
+                ImportKind::RustFrom {
+                    crate_name,
+                    path,
+                    items,
+                    ..
+                } => {
                     assert_eq!(crate_name, "substrait");
                     assert_eq!(path, &["proto".to_string(), "type".to_string()]);
                     assert_eq!(items.len(), 2);
@@ -2641,14 +2716,7 @@ def identity(
                     features,
                 } => {
                     assert_eq!(crate_name, "substrait");
-                    assert_eq!(
-                        path,
-                        &[
-                            "proto".to_string(),
-                            "type".to_string(),
-                            "Binary".to_string()
-                        ]
-                    );
+                    assert_eq!(path, &["proto".to_string(), "type".to_string(), "Binary".to_string()]);
                     assert!(version.is_none());
                     assert!(features.is_empty());
                 }
@@ -2666,7 +2734,12 @@ def identity(
         let program = parse_str(source)?;
         match &program.declarations[0].node {
             Declaration::Import(i) => match &i.kind {
-                ImportKind::RustFrom { crate_name, path, items, .. } => {
+                ImportKind::RustFrom {
+                    crate_name,
+                    path,
+                    items,
+                    ..
+                } => {
                     assert_eq!(crate_name, "substrait");
                     assert_eq!(path, &["proto".to_string()]);
                     assert_eq!(items.len(), 1);
@@ -2684,7 +2757,10 @@ def identity(
     fn test_parse_from_import_rejects_keyword_item_name_for_incan_modules() {
         let source = "from db import type\n";
         let result = parse_str(source);
-        assert!(result.is_err(), "expected parse error for keyword import item on Incan from-import");
+        assert!(
+            result.is_err(),
+            "expected parse error for keyword import item on Incan from-import"
+        );
     }
 
     #[test]
@@ -2767,10 +2843,7 @@ def f() -> str:
             match &arm.node.body {
                 MatchBody::Block(stmts) => {
                     assert_eq!(stmts.len(), 1);
-                    assert!(matches!(
-                        stmts[0].node,
-                        Statement::CompoundAssignment(_)
-                    ));
+                    assert!(matches!(stmts[0].node, Statement::CompoundAssignment(_)));
                 }
                 MatchBody::Expr(_) => panic!("Expected inline compound assignment to parse as statement block"),
             }
@@ -2964,7 +3037,10 @@ const PRICE: decimal[10, 2] = 19.99d
         let program = parse_str(source)?;
         let newtype = require_newtype_decl(&program.declarations[0])?;
         let Type::ConstrainedPrimitive(name, constraints) = &newtype.underlying.node else {
-            panic!("Expected constrained primitive type, got: {:?}", newtype.underlying.node);
+            panic!(
+                "Expected constrained primitive type, got: {:?}",
+                newtype.underlying.node
+            );
         };
         assert_eq!(name, "int");
         assert_eq!(constraints.len(), 1);
@@ -2980,7 +3056,10 @@ const PRICE: decimal[10, 2] = 19.99d
         let program = parse_str(source)?;
         let newtype = require_newtype_decl(&program.declarations[0])?;
         let Type::ConstrainedPrimitive(name, constraints) = &newtype.underlying.node else {
-            panic!("Expected constrained primitive type, got: {:?}", newtype.underlying.node);
+            panic!(
+                "Expected constrained primitive type, got: {:?}",
+                newtype.underlying.node
+            );
         };
         assert_eq!(name, "int");
         assert_eq!(constraints.len(), 2);
@@ -2998,7 +3077,10 @@ const PRICE: decimal[10, 2] = 19.99d
         let program = parse_str(source)?;
         let newtype = require_newtype_decl(&program.declarations[0])?;
         let Type::ConstrainedPrimitive(name, constraints) = &newtype.underlying.node else {
-            panic!("Expected constrained primitive type, got: {:?}", newtype.underlying.node);
+            panic!(
+                "Expected constrained primitive type, got: {:?}",
+                newtype.underlying.node
+            );
         };
         assert_eq!(name, "float");
         assert_eq!(constraints.len(), 2);
@@ -3090,7 +3172,11 @@ pub static counter: int = 0
         let Err(errors) = parse_str(source) else {
             panic!("expected parse error");
         };
-        assert!(errors.iter().any(|error| error.message.contains("requires an explicit type annotation")));
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains("requires an explicit type annotation"))
+        );
     }
 
     #[test]
@@ -3099,7 +3185,11 @@ pub static counter: int = 0
         let Err(errors) = parse_str(source) else {
             panic!("expected parse error");
         };
-        assert!(errors.iter().any(|error| error.message.contains("requires an initializer")));
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains("requires an initializer"))
+        );
     }
 
     #[test]
@@ -3112,7 +3202,11 @@ def main() -> int:
         let Err(errors) = parse_str(source) else {
             panic!("expected parse error");
         };
-        assert!(errors.iter().any(|error| error.message.contains("only allowed at module scope")));
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains("only allowed at module scope"))
+        );
     }
 
     #[test]
@@ -3471,7 +3565,8 @@ def main() -> int:
 
     #[test]
     fn test_parse_fstring_expr_span_list_comp_filter_call() -> Result<(), Vec<CompileError>> {
-        let source = "def render(items: List[int]) -> str:\n  return f\"values: {[x for x in items if unknown_pred(x)]}\"\n";
+        let source =
+            "def render(items: List[int]) -> str:\n  return f\"values: {[x for x in items if unknown_pred(x)]}\"\n";
         let program = parse_str(source)?;
 
         let function = match &program.declarations[0].node {
@@ -3670,7 +3765,10 @@ def main() -> int:
         let program = parse_str(source)?;
         let en = require_enum_decl(&program.declarations[0])?;
 
-        assert!(matches!(en.value_type.as_ref().map(|ty| ty.node), Some(ValueEnumType::Str)));
+        assert!(matches!(
+            en.value_type.as_ref().map(|ty| ty.node),
+            Some(ValueEnumType::Str)
+        ));
         assert_eq!(en.variants.len(), 2);
         assert_eq!(en.variant_aliases.len(), 1);
         assert_eq!(en.variants[0].node.name, "Red");
@@ -3694,7 +3792,10 @@ def main() -> int:
         let program = parse_str(source)?;
         let en = require_enum_decl(&program.declarations[0])?;
 
-        assert!(matches!(en.value_type.as_ref().map(|ty| ty.node), Some(ValueEnumType::Int)));
+        assert!(matches!(
+            en.value_type.as_ref().map(|ty| ty.node),
+            Some(ValueEnumType::Int)
+        ));
         assert_eq!(en.variants.len(), 2);
         assert!(matches!(
             en.variants[0].node.value.as_ref().map(|value| &value.node),
@@ -3814,7 +3915,10 @@ enum Env(str) with From[str]:
         let program = parse_str(source)?;
         let en = require_enum_decl(&program.declarations[0])?;
 
-        assert!(matches!(en.value_type.as_ref().map(|ty| ty.node), Some(ValueEnumType::Str)));
+        assert!(matches!(
+            en.value_type.as_ref().map(|ty| ty.node),
+            Some(ValueEnumType::Str)
+        ));
         assert_eq!(en.traits.len(), 1);
         assert_eq!(en.traits[0].node.name, "From");
         assert_eq!(en.traits[0].node.type_args.len(), 1);
@@ -3891,7 +3995,11 @@ enum Env(str) with From[str]:
             panic!("Duplicate rust.module() should fail");
         };
         let has_duplicate_msg = err.iter().any(|e| e.message.contains("Duplicate"));
-        assert!(has_duplicate_msg, "Should report duplicate rust.module(); errors: {:?}", err.iter().map(|e| &e.message).collect::<Vec<_>>());
+        assert!(
+            has_duplicate_msg,
+            "Should report duplicate rust.module(); errors: {:?}",
+            err.iter().map(|e| &e.message).collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -3932,7 +4040,11 @@ enum Env(str) with From[str]:
         let source = "rust.module(\"\")\n\n@rust.extern\ndef bar() -> int:\n    ...\n";
         let result = parse_str(source);
         // Should parse OK; the empty path is caught by the typechecker's path validation.
-        assert!(result.is_ok(), "rust.module with empty string should parse; errors: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "rust.module with empty string should parse; errors: {:?}",
+            result.err()
+        );
     }
 
     // ---- Type alias tests ----
@@ -3987,7 +4099,11 @@ def apply(f: Callable[int, int], x: int) -> int:
         let first_param = &function.params[0].node;
         match &first_param.ty.node {
             Type::Function(params, ret) => {
-                assert_eq!(params.len(), 1, "Callable[int, int] should desugar to one-arg function type");
+                assert_eq!(
+                    params.len(),
+                    1,
+                    "Callable[int, int] should desugar to one-arg function type"
+                );
                 assert!(matches!(params[0].node, Type::Simple(ref name) if name == "int"));
                 assert!(matches!(ret.node, Type::Simple(ref name) if name == "int"));
             }
@@ -4010,7 +4126,10 @@ def invoke(f: Callable[(), int]) -> int:
         let first_param = &function.params[0].node;
         match &first_param.ty.node {
             Type::Function(params, ret) => {
-                assert!(params.is_empty(), "Callable[(), int] should desugar to zero-arg function type");
+                assert!(
+                    params.is_empty(),
+                    "Callable[(), int] should desugar to zero-arg function type"
+                );
                 assert!(matches!(ret.node, Type::Simple(ref name) if name == "int"));
             }
             other => panic!("Expected desugared function type, got: {other:?}"),
@@ -4032,7 +4151,11 @@ def check(f: Callable[(int, str), bool]) -> None:
         let first_param = &function.params[0].node;
         match &first_param.ty.node {
             Type::Function(params, ret) => {
-                assert_eq!(params.len(), 2, "Callable[(int, str), bool] should desugar to two-arg function type");
+                assert_eq!(
+                    params.len(),
+                    2,
+                    "Callable[(int, str), bool] should desugar to two-arg function type"
+                );
                 assert!(matches!(params[0].node, Type::Simple(ref name) if name == "int"));
                 assert!(matches!(params[1].node, Type::Simple(ref name) if name == "str"));
                 assert!(matches!(ret.node, Type::Simple(ref name) if name == "bool"));
@@ -4225,7 +4348,10 @@ def has_name(name: str | None) -> bool:
         // `rust.module("foo"` — missing closing paren should produce a parse error.
         let source = "rust.module(\"foo\"\n\ndef bar() -> int:\n    return 1\n";
         let result = parse_str(source);
-        assert!(result.is_err(), "rust.module with missing closing paren should be an error");
+        assert!(
+            result.is_err(),
+            "rust.module with missing closing paren should be an error"
+        );
     }
 
     #[test]
@@ -4235,7 +4361,10 @@ def has_name(name: str | None) -> bool:
 
         // Without context, async should fail
         let result_no_context = crate::parser::parse(&tokens);
-        assert!(result_no_context.is_err(), "Expected async function without soft keyword context to fail");
+        assert!(
+            result_no_context.is_err(),
+            "Expected async function without soft keyword context to fail"
+        );
 
         // With imported vocab registrations mapping mylib -> async modifier, it should succeed.
         let mut map = std::collections::HashMap::new();
@@ -4256,7 +4385,10 @@ def has_name(name: str | None) -> bool:
         );
 
         let result_with_context = crate::parser::parse_with_context(&tokens, None, Some(&map));
-        assert!(result_with_context.is_ok(), "Expected async function to parse with soft keyword context");
+        assert!(
+            result_with_context.is_ok(),
+            "Expected async function to parse with soft keyword context"
+        );
         Ok(())
     }
 
@@ -4288,10 +4420,7 @@ def has_name(name: str | None) -> bool:
             crate::ast::Declaration::Function(function) => function,
             other => return Err(format!("expected function declaration, got {other:?}").into()),
         };
-        assert!(matches!(
-            function.body[0].node,
-            crate::ast::Statement::VocabBlock(_)
-        ));
+        assert!(matches!(function.body[0].node, crate::ast::Statement::VocabBlock(_)));
         Ok(())
     }
 
@@ -4323,10 +4452,7 @@ def has_name(name: str | None) -> bool:
             crate::ast::Declaration::Function(function) => function,
             other => return Err(format!("expected function declaration, got {other:?}").into()),
         };
-        assert!(matches!(
-            function.body[0].node,
-            crate::ast::Statement::Assignment(_)
-        ));
+        assert!(matches!(function.body[0].node, crate::ast::Statement::Assignment(_)));
         Ok(())
     }
 
@@ -4633,8 +4759,7 @@ def has_name(name: str | None) -> bool:
 
     #[test]
     fn test_expression_desugaring_vocab_block_parses_in_assignment_value() -> Result<(), Box<dyn std::error::Error>> {
-        let source =
-            "import pub::analytics\n\ndef configure() -> None:\n  value = query:\n    FROM orders\n    SELECT:\n      amount as total\n";
+        let source = "import pub::analytics\n\ndef configure() -> None:\n  value = query:\n    FROM orders\n    SELECT:\n      amount as total\n";
         let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
 
         let metadata = incan_vocab::VocabRegistration::new()
@@ -4691,10 +4816,8 @@ def has_name(name: str | None) -> bool:
     }
 
     #[test]
-    fn test_braced_expression_vocab_block_uses_clause_metadata_boundaries()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let source =
-            "import pub::analytics\n\ndef configure() -> None:\n  value = query { FROM orders GROUP BY amount as grouped SELECT total as total }\n";
+    fn test_braced_expression_vocab_block_uses_clause_metadata_boundaries() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "import pub::analytics\n\ndef configure() -> None:\n  value = query { FROM orders GROUP BY amount as grouped SELECT total as total }\n";
         let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
 
         let metadata = incan_vocab::VocabRegistration::new()
@@ -4765,8 +4888,8 @@ def has_name(name: str | None) -> bool:
     }
 
     #[test]
-    fn test_scoped_symbol_descriptor_does_not_change_call_outside_vocab_block()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn test_scoped_symbol_descriptor_does_not_change_call_outside_vocab_block() -> Result<(), Box<dyn std::error::Error>>
+    {
         let source = "import pub::analytics\n\ndef configure() -> None:\n  sum(amount)\n";
         let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
         let keyword_map = std::collections::HashMap::new();
@@ -4777,8 +4900,7 @@ def has_name(name: str | None) -> bool:
                 incan_vocab::DslSurface::on_import("analytics.query")
                     .with_declaration(incan_vocab::DeclarationSurface::named("query"))
                     .with_scoped_symbol(
-                        incan_vocab::ScopedSymbolDescriptor::aggregate("query.sum", "sum")
-                            .in_declaration_body("query"),
+                        incan_vocab::ScopedSymbolDescriptor::aggregate("query.sum", "sum").in_declaration_body("query"),
                     ),
             ],
         );
@@ -4801,7 +4923,8 @@ def has_name(name: str | None) -> bool:
 
     #[test]
     fn test_same_depth_scoped_symbol_ambiguity_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
-        let source = "import pub::analytics\nimport pub::metrics\n\ndef configure() -> None:\n  query:\n    sum(amount)\n";
+        let source =
+            "import pub::analytics\nimport pub::metrics\n\ndef configure() -> None:\n  query:\n    sum(amount)\n";
         let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
 
         let mut keyword_map = std::collections::HashMap::new();
@@ -4854,8 +4977,7 @@ def has_name(name: str | None) -> bool:
 
     #[test]
     fn test_nested_vocab_block_prefers_innermost_scoped_symbol() -> Result<(), Box<dyn std::error::Error>> {
-        let source =
-            "import pub::analytics\n\ndef configure() -> None:\n  query:\n    stage:\n      sum(amount)\n";
+        let source = "import pub::analytics\n\ndef configure() -> None:\n  query:\n    stage:\n      sum(amount)\n";
         let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
 
         let mut keyword_map = std::collections::HashMap::new();
@@ -4880,12 +5002,10 @@ def has_name(name: str | None) -> bool:
                     .with_declaration(incan_vocab::DeclarationSurface::named("query"))
                     .with_declaration(incan_vocab::DeclarationSurface::named("stage").in_block("query"))
                     .with_scoped_symbol(
-                        incan_vocab::ScopedSymbolDescriptor::aggregate("query.sum", "sum")
-                            .in_declaration_body("query"),
+                        incan_vocab::ScopedSymbolDescriptor::aggregate("query.sum", "sum").in_declaration_body("query"),
                     )
                     .with_scoped_symbol(
-                        incan_vocab::ScopedSymbolDescriptor::aggregate("stage.sum", "sum")
-                            .in_declaration_body("stage"),
+                        incan_vocab::ScopedSymbolDescriptor::aggregate("stage.sum", "sum").in_declaration_body("stage"),
                     ),
             ],
         );
@@ -5074,8 +5194,8 @@ def has_name(name: str | None) -> bool:
     }
 
     #[test]
-    fn rfc040_product_probe_query_method_arguments_accept_leading_dot_fields()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn rfc040_product_probe_query_method_arguments_accept_leading_dot_fields() -> Result<(), Box<dyn std::error::Error>>
+    {
         let source = "import pub::querykit\n\ndef configure(orders: Any) -> None:\n  orders.filter(.amount > 100).select(.customer_id)\n";
         let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
 
@@ -5097,8 +5217,9 @@ def has_name(name: str | None) -> bool:
             ],
         );
 
-        let program = crate::parser::parse_with_context_and_surfaces(&tokens, None, Some(&keyword_map), Some(&surface_map))
-            .map_err(|errs| format!("parse errors: {errs:?}"))?;
+        let program =
+            crate::parser::parse_with_context_and_surfaces(&tokens, None, Some(&keyword_map), Some(&surface_map))
+                .map_err(|errs| format!("parse errors: {errs:?}"))?;
         let function = match &program.declarations[1].node {
             crate::ast::Declaration::Function(function) => function,
             other => return Err(format!("expected function declaration, got {other:?}").into()),
@@ -5174,7 +5295,9 @@ def has_name(name: str | None) -> bool:
         let result =
             crate::parser::parse_with_context_and_surfaces(&tokens, None, Some(&keyword_map), Some(&surface_map));
         let errors = result.expect_err("leading-dot path should remain invalid in unregistered calls");
-        let first_error = errors.first().expect("expected at least one unregistered-call diagnostic");
+        let first_error = errors
+            .first()
+            .expect("expected at least one unregistered-call diagnostic");
         assert!(
             first_error
                 .message
@@ -5186,9 +5309,10 @@ def has_name(name: str | None) -> bool:
     }
 
     #[test]
-    fn rfc040_product_probe_route_head_accepts_verb_composition_and_mapping()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let source = "import pub::routekit\n\ndef configure() -> None:\n  route \"/users\":\n    get + post -> users.index\n";
+    fn rfc040_product_probe_route_head_accepts_verb_composition_and_mapping() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let source =
+            "import pub::routekit\n\ndef configure() -> None:\n  route \"/users\":\n    get + post -> users.index\n";
         let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
 
         let mut keyword_map = std::collections::HashMap::new();
@@ -5217,8 +5341,7 @@ def has_name(name: str | None) -> bool:
                         incan_vocab::ScopedSurfaceDescriptor::operator("route.verb", "+")
                             .in_declaration_body("route")
                             .pairwise_chain(),
-                        incan_vocab::ScopedSurfaceDescriptor::operator("route.map", "->")
-                            .in_declaration_body("route"),
+                        incan_vocab::ScopedSurfaceDescriptor::operator("route.map", "->").in_declaration_body("route"),
                     ]),
             ],
         );
@@ -5302,10 +5425,8 @@ def has_name(name: str | None) -> bool:
                             .pairwise_chain(),
                         incan_vocab::ScopedSurfaceDescriptor::operator("flow.fallback", "//")
                             .in_declaration_body("flow"),
-                        incan_vocab::ScopedSurfaceDescriptor::binding("flow.bind", ":=")
-                            .in_declaration_body("flow"),
-                        incan_vocab::ScopedSurfaceDescriptor::operator("flow.shape", "===")
-                            .in_declaration_body("flow"),
+                        incan_vocab::ScopedSurfaceDescriptor::binding("flow.bind", ":=").in_declaration_body("flow"),
+                        incan_vocab::ScopedSurfaceDescriptor::operator("flow.shape", "===").in_declaration_body("flow"),
                     ]),
             ],
         );
@@ -5400,8 +5521,8 @@ def has_name(name: str | None) -> bool:
     }
 
     #[test]
-    fn test_imported_vocab_keyword_can_still_parse_typed_assignment_statement()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn test_imported_vocab_keyword_can_still_parse_typed_assignment_statement() -> Result<(), Box<dyn std::error::Error>>
+    {
         let source = "import pub::routes\n\ndef configure() -> None:\n  route: str = \"/health\"\n";
         let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
 
@@ -5428,10 +5549,7 @@ def has_name(name: str | None) -> bool:
             crate::ast::Declaration::Function(function) => function,
             other => return Err(format!("expected function declaration, got {other:?}").into()),
         };
-        assert!(matches!(
-            function.body[0].node,
-            crate::ast::Statement::Assignment(_)
-        ));
+        assert!(matches!(function.body[0].node, crate::ast::Statement::Assignment(_)));
         Ok(())
     }
 
@@ -5474,16 +5592,14 @@ def has_name(name: str | None) -> bool:
         let crate::ast::Statement::VocabBlock(route_block) = &function.body[0].node else {
             return Err("expected top-level vocab block in function body".into());
         };
-        assert!(matches!(
-            route_block.body[0].node,
-            crate::ast::Statement::VocabBlock(_)
-        ));
+        assert!(matches!(route_block.body[0].node, crate::ast::Statement::VocabBlock(_)));
         Ok(())
     }
 
     #[test]
     fn test_parse_block_context_keyword_surface_as_vocab_block() -> Result<(), Box<dyn std::error::Error>> {
-        let source = "import pub::routes\n\ndef configure() -> None:\n  route \"/home\":\n    middleware auth:\n      pass\n";
+        let source =
+            "import pub::routes\n\ndef configure() -> None:\n  route \"/home\":\n    middleware auth:\n      pass\n";
         let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
 
         let mut map = std::collections::HashMap::new();
@@ -5551,8 +5667,7 @@ def has_name(name: str | None) -> bool:
 
     #[test]
     fn test_parse_list_comprehension_tuple_unpack_binding() {
-        let source =
-            "def names(xs: list[str]) -> list[str]:\n  return [name for idx, name in enumerate(xs)]\n";
+        let source = "def names(xs: list[str]) -> list[str]:\n  return [name for idx, name in enumerate(xs)]\n";
         let program = match parse_str(source) {
             Ok(program) => program,
             Err(errs) => panic!("list comprehension tuple-unpack binding should parse: {errs:?}"),
@@ -5666,10 +5781,18 @@ async def run() -> int:
 
         assert_eq!(race.binding, "value");
         assert_eq!(race.arms.len(), 2);
-        assert!(matches!(&race.arms[0].awaitable.node, Expr::Call(callee, _, _) if matches!(&callee.node, Expr::Ident(name) if name == "fast")));
-        assert!(matches!(&race.arms[0].body, RaceForBody::Expr(body) if matches!(&body.node, Expr::Ident(name) if name == "value")));
-        assert!(matches!(&race.arms[1].awaitable.node, Expr::Call(callee, _, _) if matches!(&callee.node, Expr::Ident(name) if name == "slow")));
-        assert!(matches!(&race.arms[1].body, RaceForBody::Block(stmts) if matches!(&stmts[0].node, Statement::Return(Some(value)) if matches!(&value.node, Expr::Ident(name) if name == "value"))));
+        assert!(
+            matches!(&race.arms[0].awaitable.node, Expr::Call(callee, _, _) if matches!(&callee.node, Expr::Ident(name) if name == "fast"))
+        );
+        assert!(
+            matches!(&race.arms[0].body, RaceForBody::Expr(body) if matches!(&body.node, Expr::Ident(name) if name == "value"))
+        );
+        assert!(
+            matches!(&race.arms[1].awaitable.node, Expr::Call(callee, _, _) if matches!(&callee.node, Expr::Ident(name) if name == "slow"))
+        );
+        assert!(
+            matches!(&race.arms[1].body, RaceForBody::Block(stmts) if matches!(&stmts[0].node, Statement::Return(Some(value)) if matches!(&value.node, Expr::Ident(name) if name == "value")))
+        );
         Ok(())
     }
 
@@ -5936,7 +6059,10 @@ pub JsonRoute = partial web::route(method="GET", content_type="json")
         assert!(matches!(bronze.args[0].value.node, Expr::Literal(Literal::String(ref value)) if value == "bronze"));
 
         let Declaration::Partial(route) = &program.declarations[1].node else {
-            panic!("expected public partial declaration, got {:?}", program.declarations[1].node);
+            panic!(
+                "expected public partial declaration, got {:?}",
+                program.declarations[1].node
+            );
         };
         assert_eq!(route.visibility, Visibility::Public);
         assert_eq!(route.name, "JsonRoute");
