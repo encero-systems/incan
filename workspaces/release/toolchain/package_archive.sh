@@ -157,7 +157,7 @@ prepare_sdk_provider_seed() {
   local staged_stdlib="$package_dir/crates/incan_stdlib/stdlib"
   local probe="$package_dir/.incan-sdk-provider-seed-${target}-$$.incn"
   local path_file="$package_dir/.incan-sdk-provider-seed-${target}-$$.path"
-  printf 'from std.fs.path import Path\n\ndef main() -> None:\n    _ = Path("seed")\n' > "$probe"
+  printf 'from std.result import map\n\ndef main() -> None:\n    pass\n' > "$probe"
   rm -f "$path_file"
   if (
     cd "$package_dir"

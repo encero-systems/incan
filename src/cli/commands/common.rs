@@ -1378,7 +1378,7 @@ impl CompilationSession {
             SdkComponentSelection::from_manifest_with_profile_override(manifest.as_ref(), sdk_profile_override);
         let sdk_components = sdk_inventory
             .as_ref()
-            .map(|inventory| inventory.resolve(&sdk_selection))
+            .map(|inventory| inventory.resolve_catalog(&sdk_selection))
             .transpose()
             .map_err(|error| CliError::failure(error.to_string()))?;
         let bootstrap_sdk_namespace_roots = sdk_provider_bootstrap_namespace_roots(&project_root)?;
@@ -1428,7 +1428,7 @@ impl CompilationSession {
             }
             (Some(inventory), _) => Some(
                 inventory
-                    .resolve(&self.sdk_selection)
+                    .resolve_catalog(&self.sdk_selection)
                     .map_err(|error| CliError::failure(error.to_string()))?,
             ),
             (None, _) => None,
@@ -3801,6 +3801,53 @@ mod tests {
             lock_changed, minimal,
             "distribution profiles must not share provider-store identities"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn restricted_sdk_profile_retains_unavailable_provider_catalog_facts() -> Result<(), Box<dyn std::error::Error>> {
+        let catalog_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("crates/incan_stdlib/stdlib")
+            .join(SDK_SOURCE_CATALOG_FILE);
+        let catalog = SdkSourceCatalog::read_from_path(&catalog_path)?;
+        let tmp = tempfile::tempdir()?;
+        let staging_root = tmp.path().join("sdk");
+        let component_root = staging_root.join("components/stdlib-system");
+        fs::create_dir_all(&component_root)?;
+        let mut inventory = source_catalog_inventory(&catalog, &staging_root);
+        let system = inventory
+            .components
+            .get_mut("stdlib-system")
+            .ok_or("missing stdlib-system component")?;
+        system.available = true;
+        system.providers.push(SdkProviderDescriptor {
+            name: "incan_stdlib_system".to_string(),
+            version: "0.5.0".to_string(),
+            digest: "sha256:fixture".to_string(),
+            namespace_claims: BTreeSet::from([vec!["std".to_string(), "fs".to_string(), "path".to_string()]]),
+            manifest_path: Some(component_root.join("incan_stdlib_system.incnlib")),
+            crate_root: Some(component_root.clone()),
+        });
+
+        restrict_staged_sdk_profile(&catalog, "minimal", &staging_root, &mut inventory)?;
+
+        let system = inventory
+            .components
+            .get("stdlib-system")
+            .ok_or("missing restricted stdlib-system component")?;
+        let provider = system
+            .providers
+            .first()
+            .ok_or("missing unavailable provider descriptor")?;
+        assert!(!system.available);
+        assert!(provider.manifest_path.is_none());
+        assert!(provider.crate_root.is_none());
+        assert!(
+            provider
+                .namespace_claims
+                .contains(&vec!["std".to_string(), "fs".to_string(), "path".to_string(),])
+        );
+        assert!(!component_root.exists());
         Ok(())
     }
 
