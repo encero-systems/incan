@@ -51,4 +51,4 @@ pub use tools::{
 pub use workspace::{WorkspaceInspectFormat, workspace_inspect};
 
 // Crate-internal API (used by test_runner and other CLI modules)
-pub(crate) use lock::{LockResolutionRequest, resolve_lock_payload};
+pub(crate) use lock::{LockResolutionRequest, resolve_lock_context};

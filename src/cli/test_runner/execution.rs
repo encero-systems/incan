@@ -12,7 +12,8 @@ use crate::cli::commands;
 use crate::cli::commands::common::{self, CargoPolicy, ProjectRequirements};
 #[cfg(feature = "rust_inspect")]
 use crate::cli::commands::common::{
-    collect_rust_inspect_query_paths, ensure_rust_inspect_workspace, prewarm_rust_inspect_workspace,
+    collect_rust_inspect_query_paths, ensure_rust_inspect_workspace_with_cargo_package_name,
+    prewarm_rust_inspect_workspace,
 };
 use crate::cli::prelude::ParsedModule;
 use crate::compiled_sdk::CompiledSdkModules;
@@ -931,7 +932,7 @@ pub(super) struct PreparedTestFile {
     pub project_root: PathBuf,
     pub resolved: ResolvedDependencies,
     pub project_requirements: ProjectRequirements,
-    pub project_name: String,
+    pub cargo_package_name: String,
     pub lock_payload: Option<String>,
     #[cfg(feature = "rust_inspect")]
     pub rust_inspect_manifest_dir: PathBuf,
@@ -3289,9 +3290,10 @@ pub(super) fn run_file_tests_batch(
             .unwrap_or_else(|| "incan_test".to_string());
         #[cfg(feature = "rust_inspect")]
         let metadata_query_paths = collect_rust_inspect_query_paths(&lock_dependency_modules);
-        let lock_payload = match commands::resolve_lock_payload(commands::LockResolutionRequest {
+        let lock_resolution = match commands::resolve_lock_context(commands::LockResolutionRequest {
             project_root: &project_root,
             project_name: &project_name,
+            entry_file: Some(&first.file_path),
             manifest: manifest.as_ref(),
             resolved: &lock_resolved,
             project_requirements: &lock_project_requirements,
@@ -3311,24 +3313,26 @@ pub(super) fn run_file_tests_batch(
                     .collect();
             }
         };
+        let lock_payload = lock_resolution.cargo_lock_payload.clone();
 
         #[cfg(feature = "rust_inspect")]
         let rust_inspect_manifest_dir = {
-            let mut rust_inspect_requirements = project_requirements.clone();
+            let mut rust_inspect_requirements = lock_resolution.project_requirements.clone();
             rust_inspect_requirements.stdlib_features = merge_rust_inspect_stdlib_features(
                 prep_cache
                     .prepared_files
                     .values()
                     .map(|prepared| prepared.project_requirements.stdlib_features.as_slice()),
-                &project_requirements.stdlib_features,
+                &lock_resolution.project_requirements.stdlib_features,
             );
-            let rust_inspect_manifest_dir = match ensure_rust_inspect_workspace(
+            let rust_inspect_manifest_dir = match ensure_rust_inspect_workspace_with_cargo_package_name(
                 &project_root,
                 &project_name,
+                &lock_resolution.cargo_package_name,
                 manifest
                     .as_ref()
                     .and_then(|m| m.build.as_ref().and_then(|build| build.rust_edition.clone())),
-                &resolved,
+                &lock_resolution.resolved,
                 &rust_inspect_requirements,
                 lock_payload.clone(),
             ) {
@@ -3349,17 +3353,6 @@ pub(super) fn run_file_tests_batch(
             rust_inspect_manifest_dir
         };
 
-        let use_lock_dependency_context = lock_payload.is_some() && (cargo_policy.locked || cargo_policy.frozen);
-        let cargo_resolved = if use_lock_dependency_context {
-            lock_resolved
-        } else {
-            resolved
-        };
-        let cargo_project_requirements = if use_lock_dependency_context {
-            lock_project_requirements
-        } else {
-            project_requirements
-        };
         let prepared = PreparedTestFile {
             provider_plan,
             ast: runner_ast,
@@ -3367,9 +3360,9 @@ pub(super) fn run_file_tests_batch(
             module_harnesses,
             source_modules,
             project_root,
-            resolved: cargo_resolved,
-            project_requirements: cargo_project_requirements,
-            project_name,
+            resolved: lock_resolution.resolved,
+            project_requirements: lock_resolution.project_requirements,
+            cargo_package_name: lock_resolution.cargo_package_name,
             lock_payload,
             #[cfg(feature = "rust_inspect")]
             rust_inspect_manifest_dir,
@@ -3461,7 +3454,7 @@ pub(super) fn run_file_tests_batch(
 
     let mut generator = ProjectGenerator::new(&temp_dir, &runner_crate_name, false);
     generator.set_provider_plan(&prepared.provider_plan);
-    generator.set_package_name(Some(prepared.project_name.clone()));
+    generator.set_package_name(Some(prepared.cargo_package_name.clone()));
     generator.set_stdlib_features(test_runner_stdlib_features_for_batch(
         &prepared.project_requirements.stdlib_features,
         tests,

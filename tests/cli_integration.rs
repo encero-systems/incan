@@ -781,6 +781,13 @@ itoa = "1"
             && !root.path().join("packages/zebra/incan.lock").exists(),
         "workspace members must not receive authoritative lockfiles"
     );
+    for name in ["alpha", "zebra"] {
+        let build_output = run_incan(&root.path().join("packages").join(name), &["build", "--locked"])?;
+        assert_success(
+            &build_output,
+            &format!("incan build --locked from workspace member {name}"),
+        );
+    }
     Ok(())
 }
 
@@ -4396,16 +4403,20 @@ edition = "2021"
     let default_lock_output = run_incan(tmp.path(), &["lock"])?;
     assert_success(&default_lock_output, "default incan lock");
 
-    let test_after_default_lock = run_incan(tmp.path(), &["test"])?;
-    assert_success(&test_after_default_lock, "incan test after default lock");
-    assert_no_stale_warning(&test_after_default_lock, "incan test after default lock");
+    let test_after_default_lock = run_incan(tmp.path(), &["test", "--locked"])?;
+    assert_success(&test_after_default_lock, "incan test --locked after default lock");
+    assert_no_stale_warning(&test_after_default_lock, "incan test --locked after default lock");
 
     let extra_after_default_lock = run_incan(
         tmp.path(),
-        &["run", extra_path.to_str().ok_or("extra path was not valid UTF-8")?],
+        &[
+            "run",
+            "--locked",
+            extra_path.to_str().ok_or("extra path was not valid UTF-8")?,
+        ],
     )?;
-    assert_success(&extra_after_default_lock, "incan run extra after default lock");
-    assert_no_stale_warning(&extra_after_default_lock, "incan run extra after default lock");
+    assert_success(&extra_after_default_lock, "incan run --locked extra after default lock");
+    assert_no_stale_warning(&extra_after_default_lock, "incan run --locked extra after default lock");
 
     let extra_lock_output = run_incan(
         tmp.path(),
@@ -4415,14 +4426,18 @@ edition = "2021"
 
     let extra_after_extra_lock = run_incan(
         tmp.path(),
-        &["run", extra_path.to_str().ok_or("extra path was not valid UTF-8")?],
+        &[
+            "run",
+            "--locked",
+            extra_path.to_str().ok_or("extra path was not valid UTF-8")?,
+        ],
     )?;
-    assert_success(&extra_after_extra_lock, "incan run extra after extra lock");
-    assert_no_stale_warning(&extra_after_extra_lock, "incan run extra after extra lock");
+    assert_success(&extra_after_extra_lock, "incan run --locked extra after extra lock");
+    assert_no_stale_warning(&extra_after_extra_lock, "incan run --locked extra after extra lock");
 
-    let test_after_extra_lock = run_incan(tmp.path(), &["test"])?;
-    assert_success(&test_after_extra_lock, "incan test after extra lock");
-    assert_no_stale_warning(&test_after_extra_lock, "incan test after extra lock");
+    let test_after_extra_lock = run_incan(tmp.path(), &["test", "--locked"])?;
+    assert_success(&test_after_extra_lock, "incan test --locked after extra lock");
+    assert_no_stale_warning(&test_after_extra_lock, "incan test --locked after extra lock");
 
     Ok(())
 }

@@ -19,6 +19,7 @@ use crate::backend::project::runner::sanitize_cargo_environment;
 use crate::cli::prelude::ParsedModule;
 use crate::cli::{CliError, CliResult, ExitCode};
 use crate::dependency_resolver::{InlineRustImport, ResolvedDependencies, resolve_reachable_dependencies};
+use crate::frontend::ast::{Declaration, ImportKind};
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::{diagnostics, lexer, parser};
 use crate::lockfile::{
@@ -30,22 +31,27 @@ use crate::provider::{
     FeatureSelection, PackageFeaturePlan, ProviderPlan, SDK_PROVIDER_BUILD_ENV, SdkComponentSelection,
 };
 use crate::workspace::WorkspaceGraph;
+use incan_core::lang::stdlib;
 
 use super::common::{
     CargoPolicy, INTERNAL_CARGO_LOCK_PAYLOAD_PATH_ENV, ProjectRequirements, build_source_map, cargo_command_flags,
-    cargo_lockfile_flags, collect_modules, collect_project_requirements, collect_rust_dependency_uses,
-    enforce_project_toolchain_constraint, extend_lock_requirements_with_provider_plan, format_dependency_error,
-    merge_project_requirement_dependencies, merge_project_requirements, merge_resolved_dependencies,
-    prepare_or_discover_sdk_inventory, provider_used_module_paths, resolve_sdk_component_selection,
+    cargo_lockfile_flags, collect_modules_detailed_with_selections, collect_project_requirements,
+    collect_rust_dependency_uses, enforce_project_toolchain_constraint, extend_requirements_with_provider_plan,
+    format_dependency_error, merge_project_requirement_dependencies, prepare_or_discover_sdk_inventory,
+    provider_used_module_paths, resolve_sdk_component_selection,
 };
 #[cfg(feature = "rust_inspect")]
-use super::common::{collect_rust_inspect_query_paths, ensure_rust_inspect_workspace, prewarm_rust_inspect_workspace};
+use super::common::{
+    collect_rust_inspect_query_paths, ensure_rust_inspect_workspace,
+    ensure_rust_inspect_workspace_with_cargo_package_name, prewarm_rust_inspect_workspace,
+};
 
 const LOCK_DEPENDENCY_PREHEAT_FINGERPRINT_FILE: &str = ".incan_dependency_preheat_fingerprint";
 const LOCK_DEPENDENCY_PREHEAT_LOCK_FILE: &str = ".incan_dependency_preheat.lock";
 const LOCK_DEPENDENCY_PREHEAT_STALE_LOCK_SECS: u64 = 30 * 60;
 const LIBRARY_DEPENDENCY_PREHEAT_FINGERPRINT_FILE: &str = ".incan_library_dependency_preheat_fingerprint";
 const LIBRARY_DEPENDENCY_PREHEAT_LOCK_FILE: &str = ".incan_library_dependency_preheat.lock";
+const WORKSPACE_LOCK_CARGO_PACKAGE_NAME: &str = "incan_workspace";
 
 /// Inputs needed to preheat generated-library dependencies into the real generated-library Cargo target domain.
 pub(crate) struct GeneratedLibraryDependencyPreheatRequest<'a> {
@@ -174,7 +180,7 @@ fn lock_workspace(
     let cargo_policy = CargoPolicy::explicit(false, false, false, Vec::new());
     generate_lockfile(
         workspace.root(),
-        "incan_workspace",
+        WORKSPACE_LOCK_CARGO_PACKAGE_NAME,
         rust_edition,
         &context.resolved,
         &context.project_requirements,
@@ -188,15 +194,16 @@ fn lock_workspace(
     Ok(ExitCode::SUCCESS)
 }
 
-/// Resolve the lock payload for a project build.
+/// Resolve the canonical dependency context and lock payload for a project build.
 ///
-/// Returns `None` if no manifest is present (standalone file compilation).
-/// Otherwise, loads the lock file and returns the Cargo.lock payload. Non-strict commands still
-/// generate `incan.lock` on first use, but they do not rewrite an existing stale lockfile as a
-/// side effect of ordinary build or test verification.
+/// Manifest-less standalone builds retain their caller-local dependency context and have no lock payload. A
+/// manifest-backed build receives the same project- or workspace-wide dependency context that owns the lock payload,
+/// so generated Cargo manifests cannot diverge from the embedded Cargo.lock.
 pub(crate) struct LockResolutionRequest<'a> {
     pub project_root: &'a Path,
     pub project_name: &'a str,
+    /// Active source entry, including entries outside `[project.scripts]`, that must participate in the lock context.
+    pub entry_file: Option<&'a Path>,
     pub manifest: Option<&'a ProjectManifest>,
     pub resolved: &'a ResolvedDependencies,
     pub project_requirements: &'a ProjectRequirements,
@@ -209,6 +216,14 @@ pub(crate) struct LockResolutionRequest<'a> {
     pub sdk_profile_override: Option<&'a str>,
     #[cfg(feature = "rust_inspect")]
     pub rust_inspect_query_paths: &'a [String],
+}
+
+/// Cargo inputs that must be consumed together by generated projects.
+pub(crate) struct LockResolution {
+    pub cargo_lock_payload: Option<String>,
+    pub cargo_package_name: String,
+    pub resolved: ResolvedDependencies,
+    pub project_requirements: ProjectRequirements,
 }
 
 /// Read the compiler-owned Cargo.lock payload override used while building an internal artifact.
@@ -241,6 +256,7 @@ pub(crate) struct RustInspectTypecheckRequest<'a> {
 pub(crate) struct RustInspectWorkspaceRequest<'a> {
     pub project_root: &'a Path,
     pub project_name: &'a str,
+    pub cargo_package_name: &'a str,
     pub rust_edition: Option<String>,
     pub resolved: &'a ResolvedDependencies,
     pub project_requirements: &'a ProjectRequirements,
@@ -255,6 +271,7 @@ pub(crate) fn prepare_rust_inspect_workspace(request: RustInspectWorkspaceReques
     let RustInspectWorkspaceRequest {
         project_root,
         project_name,
+        cargo_package_name,
         rust_edition,
         resolved,
         project_requirements,
@@ -266,9 +283,10 @@ pub(crate) fn prepare_rust_inspect_workspace(request: RustInspectWorkspaceReques
         return Ok(None);
     }
 
-    let rust_inspect_manifest_dir = ensure_rust_inspect_workspace(
+    let rust_inspect_manifest_dir = ensure_rust_inspect_workspace_with_cargo_package_name(
         project_root,
         project_name,
+        cargo_package_name,
         rust_edition,
         resolved,
         project_requirements,
@@ -315,9 +333,10 @@ pub(crate) fn prepare_rust_inspect_typecheck_workspace(
         }
     };
     merge_project_requirement_dependencies(&mut resolved, &project_requirements)?;
-    let lock_payload = resolve_lock_payload(LockResolutionRequest {
+    let lock_resolution = resolve_lock_context(LockResolutionRequest {
         project_root,
         project_name,
+        entry_file: modules.last().map(|module| module.file_path.as_path()),
         manifest,
         resolved: &resolved,
         project_requirements: &project_requirements,
@@ -331,24 +350,26 @@ pub(crate) fn prepare_rust_inspect_typecheck_workspace(
     prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {
         project_root,
         project_name,
+        cargo_package_name: &lock_resolution.cargo_package_name,
         rust_edition,
-        resolved: &resolved,
-        project_requirements: &project_requirements,
-        lock_payload,
+        resolved: &lock_resolution.resolved,
+        project_requirements: &lock_resolution.project_requirements,
+        lock_payload: lock_resolution.cargo_lock_payload,
         rust_inspect_query_paths: &metadata_query_paths,
         prepare_when_empty: false,
     })
 }
 
-/// Resolve the embedded Cargo lock payload that generated Cargo projects should reuse.
+/// Resolve the canonical Cargo context that generated projects must consume as one unit.
 ///
-/// Manifest-less single-file builds have no project lockfile, so they return no payload. Project
-/// builds generate `incan.lock` only when it is missing in default mode; stale existing lockfiles
-/// are reused with a warning unless `--locked` or `--frozen` requires a hard failure.
-pub(crate) fn resolve_lock_payload(request: LockResolutionRequest<'_>) -> CliResult<Option<String>> {
+/// Manifest-less single-file builds retain their caller context and have no payload. Project builds generate
+/// `incan.lock` only when it is missing in default mode; stale existing lockfiles are reused with a warning unless
+/// `--locked` or `--frozen` requires a hard failure.
+pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliResult<LockResolution> {
     let LockResolutionRequest {
         project_root,
         project_name,
+        entry_file,
         manifest,
         resolved,
         project_requirements,
@@ -362,7 +383,12 @@ pub(crate) fn resolve_lock_payload(request: LockResolutionRequest<'_>) -> CliRes
     } = request;
 
     if manifest.is_none() {
-        return Ok(None);
+        return Ok(LockResolution {
+            cargo_lock_payload: None,
+            cargo_package_name: project_name.to_string(),
+            resolved: resolved.clone(),
+            project_requirements: project_requirements.clone(),
+        });
     }
 
     if std::env::var_os(SDK_PROVIDER_BUILD_ENV).is_some()
@@ -372,7 +398,12 @@ pub(crate) fn resolve_lock_payload(request: LockResolutionRequest<'_>) -> CliRes
                 .map(PathBuf::from),
         )?
     {
-        return Ok(Some(payload));
+        return Ok(LockResolution {
+            cargo_lock_payload: Some(payload),
+            cargo_package_name: project_name.to_string(),
+            resolved: resolved.clone(),
+            project_requirements: project_requirements.clone(),
+        });
     }
 
     let default_package_features = FeatureSelection::default();
@@ -382,8 +413,7 @@ pub(crate) fn resolve_lock_payload(request: LockResolutionRequest<'_>) -> CliRes
     {
         return resolve_workspace_lock_payload(WorkspaceLockResolutionRequest {
             workspace: &workspace,
-            caller_resolved: resolved,
-            caller_requirements: project_requirements,
+            caller_entry_file: entry_file,
             cargo_features,
             cargo_policy,
             package_features: package_features.unwrap_or(&default_package_features),
@@ -395,7 +425,7 @@ pub(crate) fn resolve_lock_payload(request: LockResolutionRequest<'_>) -> CliRes
     let project_context = if let Some(manifest) = manifest {
         collect_project_lock_context(
             manifest,
-            None,
+            entry_file,
             cargo_features,
             package_features.unwrap_or(&default_package_features),
             sdk_profile_override,
@@ -403,18 +433,11 @@ pub(crate) fn resolve_lock_payload(request: LockResolutionRequest<'_>) -> CliRes
     } else {
         None
     };
-    let lock_inputs = if let Some(context) = project_context.as_ref() {
-        Some((
-            merge_resolved_dependencies(resolved, &context.resolved)?,
-            merge_project_requirements(project_requirements, &context.project_requirements)?,
-        ))
+    let (resolved, project_requirements) = if let Some(context) = project_context.as_ref() {
+        (context.resolved.clone(), context.project_requirements.clone())
     } else {
-        None
+        (resolved.clone(), project_requirements.clone())
     };
-    let (resolved, project_requirements) = lock_inputs
-        .as_ref()
-        .map(|(resolved, requirements)| (resolved, requirements))
-        .unwrap_or((resolved, project_requirements));
     #[cfg(feature = "rust_inspect")]
     let rust_inspect_query_paths = project_context
         .as_ref()
@@ -424,7 +447,7 @@ pub(crate) fn resolve_lock_payload(request: LockResolutionRequest<'_>) -> CliRes
     let lock_path = project_root.join("incan.lock");
     let rust_edition = manifest.and_then(|m| m.build.as_ref().and_then(|b| b.rust_edition.clone()));
     let mut resolved_with_requirements = resolved.clone();
-    merge_project_requirement_dependencies(&mut resolved_with_requirements, project_requirements)?;
+    merge_project_requirement_dependencies(&mut resolved_with_requirements, &project_requirements)?;
     // A manifest-backed lock is project-wide, so its canonical context must win over an entrypoint-local semantic
     // snapshot. The supplied snapshot remains authoritative for manifest-less callers, where no project closure can
     // be rebuilt.
@@ -470,9 +493,19 @@ pub(crate) fn resolve_lock_payload(request: LockResolutionRequest<'_>) -> CliRes
                 "warning: incan.lock is out of date; using the existing lock payload without rewriting it. \
                  Run `incan lock` to refresh it."
             );
-            return Ok(Some(lock.cargo_lock_payload));
+            return Ok(LockResolution {
+                cargo_lock_payload: Some(lock.cargo_lock_payload),
+                cargo_package_name: project_name.to_string(),
+                resolved,
+                project_requirements,
+            });
         }
-        return Ok(Some(lock.cargo_lock_payload));
+        return Ok(LockResolution {
+            cargo_lock_payload: Some(lock.cargo_lock_payload),
+            cargo_package_name: project_name.to_string(),
+            resolved,
+            project_requirements,
+        });
     }
 
     if strict {
@@ -484,7 +517,7 @@ pub(crate) fn resolve_lock_payload(request: LockResolutionRequest<'_>) -> CliRes
         project_name,
         rust_edition,
         &resolved_with_requirements,
-        project_requirements,
+        &project_requirements,
         cargo_features,
         cargo_policy,
         &semantic,
@@ -492,7 +525,12 @@ pub(crate) fn resolve_lock_payload(request: LockResolutionRequest<'_>) -> CliRes
         #[cfg(feature = "rust_inspect")]
         rust_inspect_query_paths,
     )?;
-    Ok(Some(lock.cargo_lock_payload))
+    Ok(LockResolution {
+        cargo_lock_payload: Some(lock.cargo_lock_payload),
+        cargo_package_name: project_name.to_string(),
+        resolved,
+        project_requirements,
+    })
 }
 
 /// Resolve or generate the canonical root lock for a workspace-aware compiler invocation.
@@ -501,8 +539,7 @@ pub(crate) fn resolve_lock_payload(request: LockResolutionRequest<'_>) -> CliRes
 /// from every member context and lives only at the workspace root.
 struct WorkspaceLockResolutionRequest<'a> {
     workspace: &'a WorkspaceGraph,
-    caller_resolved: &'a ResolvedDependencies,
-    caller_requirements: &'a ProjectRequirements,
+    caller_entry_file: Option<&'a Path>,
     cargo_features: &'a CargoFeatureSelection,
     cargo_policy: &'a CargoPolicy,
     package_features: &'a FeatureSelection,
@@ -512,11 +549,10 @@ struct WorkspaceLockResolutionRequest<'a> {
 }
 
 /// Resolve the canonical workspace-root Cargo lock payload from every member plus the caller's backend refinements.
-fn resolve_workspace_lock_payload(request: WorkspaceLockResolutionRequest<'_>) -> CliResult<Option<String>> {
+fn resolve_workspace_lock_payload(request: WorkspaceLockResolutionRequest<'_>) -> CliResult<LockResolution> {
     let WorkspaceLockResolutionRequest {
         workspace,
-        caller_resolved,
-        caller_requirements,
+        caller_entry_file,
         cargo_features,
         cargo_policy,
         package_features,
@@ -524,10 +560,15 @@ fn resolve_workspace_lock_payload(request: WorkspaceLockResolutionRequest<'_>) -
         #[cfg(feature = "rust_inspect")]
         caller_rust_inspect_query_paths,
     } = request;
-    let context =
-        collect_workspace_lock_context(workspace, None, cargo_features, package_features, sdk_profile_override)?;
-    let mut resolved = merge_workspace_resolved_dependencies(&context.resolved, caller_resolved)?;
-    let requirements = merge_workspace_project_requirements(&context.project_requirements, caller_requirements)?;
+    let context = collect_workspace_lock_context(
+        workspace,
+        caller_entry_file,
+        cargo_features,
+        package_features,
+        sdk_profile_override,
+    )?;
+    let mut resolved = context.resolved;
+    let requirements = context.project_requirements;
     merge_project_requirement_dependencies(&mut resolved, &requirements)?;
     let fingerprint = compute_resolved_fingerprint(
         &resolved.dependencies,
@@ -555,11 +596,22 @@ fn resolve_workspace_lock_payload(request: WorkspaceLockResolutionRequest<'_>) -
                 )));
             }
             eprintln!(
-                "warning: workspace incan.lock is out of date; using the existing root lock payload without rewriting it. Run `incan lock` to refresh it."
+                "warning: workspace incan.lock is out of date; using the existing root lock payload without rewriting \
+                 it. Run `incan lock` to refresh it."
             );
-            return Ok(Some(lock.cargo_lock_payload));
+            return Ok(LockResolution {
+                cargo_lock_payload: Some(lock.cargo_lock_payload),
+                cargo_package_name: WORKSPACE_LOCK_CARGO_PACKAGE_NAME.to_string(),
+                resolved,
+                project_requirements: requirements,
+            });
         }
-        return Ok(Some(lock.cargo_lock_payload));
+        return Ok(LockResolution {
+            cargo_lock_payload: Some(lock.cargo_lock_payload),
+            cargo_package_name: WORKSPACE_LOCK_CARGO_PACKAGE_NAME.to_string(),
+            resolved,
+            project_requirements: requirements,
+        });
     }
 
     if strict {
@@ -586,7 +638,7 @@ fn resolve_workspace_lock_payload(request: WorkspaceLockResolutionRequest<'_>) -
         .map_err(|error| CliError::failure(format!("failed to acquire workspace lock publication guard: {error}")))?;
     let lock = generate_lockfile(
         workspace.root(),
-        "incan_workspace",
+        WORKSPACE_LOCK_CARGO_PACKAGE_NAME,
         rust_edition,
         &resolved,
         &requirements,
@@ -597,7 +649,12 @@ fn resolve_workspace_lock_payload(request: WorkspaceLockResolutionRequest<'_>) -
         #[cfg(feature = "rust_inspect")]
         &rust_inspect_query_paths,
     )?;
-    Ok(Some(lock.cargo_lock_payload))
+    Ok(LockResolution {
+        cargo_lock_payload: Some(lock.cargo_lock_payload),
+        cargo_package_name: WORKSPACE_LOCK_CARGO_PACKAGE_NAME.to_string(),
+        resolved,
+        project_requirements: requirements,
+    })
 }
 
 /// Fully collected dependency inputs that define a manifest project's lock freshness surface.
@@ -820,6 +877,36 @@ fn merge_workspace_project_requirements(
 struct TestLockInputs {
     inline_imports: Vec<InlineRustImport>,
     project_requirement_modules: Vec<ParsedModule>,
+    provider_module_groups: Vec<Vec<ParsedModule>>,
+}
+
+/// Include provider imports scoped inside `module tests:` when building the project-wide lock context.
+fn lock_provider_used_module_paths(modules: &[ParsedModule]) -> BTreeSet<Vec<String>> {
+    let mut used = provider_used_module_paths(modules);
+    for module in modules {
+        for declaration in &module.ast.declarations {
+            let Declaration::TestModule(test_module) = &declaration.node else {
+                continue;
+            };
+            for test_declaration in &test_module.body {
+                let Declaration::Import(import) = &test_declaration.node else {
+                    continue;
+                };
+                let path = match &import.kind {
+                    ImportKind::Module(path) | ImportKind::From { module: path, .. }
+                        if path.parent_levels == 0
+                            && !path.is_absolute
+                            && path.segments.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT) =>
+                    {
+                        Some(path.segments.clone())
+                    }
+                    _ => None,
+                };
+                used.extend(path);
+            }
+        }
+    }
+    used
 }
 
 /// Return sorted manifest script entry paths plus an optional explicitly requested entry file.
@@ -862,8 +949,16 @@ fn collect_project_lock_context(
     let library_imported_vocab = library_manifest_index.library_imported_vocab();
     let library_imported_dsl_surfaces = library_manifest_index.library_imported_dsl_surfaces();
     let mut modules = Vec::new();
+    let mut provider_module_groups = Vec::new();
     for entry_path in entry_paths {
-        modules.extend(collect_modules(&entry_path.to_string_lossy())?);
+        let entry_modules = collect_modules_detailed_with_selections(
+            &entry_path.to_string_lossy(),
+            package_features,
+            sdk_profile_override,
+        )
+        .map_err(|failure| CliError::failure(failure.render_human()))?;
+        modules.extend(entry_modules.iter().cloned());
+        provider_module_groups.push(entry_modules);
     }
 
     let sdk_inventory = prepare_or_discover_sdk_inventory()?;
@@ -900,10 +995,21 @@ fn collect_project_lock_context(
         Some(&package_feature_plan),
         sdk_inventory.as_deref(),
         sdk_components.as_ref(),
-        provider_used_module_paths(&project_requirement_modules),
+        lock_provider_used_module_paths(&project_requirement_modules),
     )
     .map_err(|error| CliError::failure(error.to_string()))?;
-    extend_lock_requirements_with_provider_plan(&mut project_requirements, &provider_plan)?;
+    provider_module_groups.extend(test_inputs.provider_module_groups.iter().cloned());
+    for module_group in &provider_module_groups {
+        let entry_provider_plan = ProviderPlan::from_resolved_inputs(
+            library_manifest_index.clone(),
+            Some(&package_feature_plan),
+            sdk_inventory.as_deref(),
+            sdk_components.as_ref(),
+            lock_provider_used_module_paths(module_group),
+        )
+        .map_err(|error| CliError::failure(error.to_string()))?;
+        extend_requirements_with_provider_plan(&mut project_requirements, &entry_provider_plan)?;
+    }
     let semantic = semantic_lock_state(
         manifest.project_root(),
         sdk_inventory.as_deref(),
@@ -1527,6 +1633,7 @@ fn collect_test_lock_inputs(
 ) -> CliResult<TestLockInputs> {
     let mut inline_imports = Vec::new();
     let mut project_requirement_modules = Vec::new();
+    let mut provider_module_groups = Vec::new();
     let test_files = crate::cli::test_runner::discover_test_files(project_root);
     let source_root = project_root.join("src");
 
@@ -1567,7 +1674,6 @@ fn collect_test_lock_inputs(
             ast: ast.clone(),
         };
         inline_imports.extend(collect_rust_dependency_uses(&test_module, true));
-        project_requirement_modules.push(test_module);
 
         let source_modules = crate::cli::test_runner::collect_source_modules_for_test(
             &ast,
@@ -1581,12 +1687,16 @@ fn collect_test_lock_inputs(
         for module in &source_modules {
             inline_imports.extend(collect_rust_dependency_uses(module, false));
         }
-        project_requirement_modules.extend(source_modules);
+        let mut provider_modules = vec![test_module];
+        provider_modules.extend(source_modules);
+        project_requirement_modules.extend(provider_modules.iter().cloned());
+        provider_module_groups.push(provider_modules);
     }
 
     Ok(TestLockInputs {
         inline_imports,
         project_requirement_modules,
+        provider_module_groups,
     })
 }
 

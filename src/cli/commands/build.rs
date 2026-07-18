@@ -57,7 +57,7 @@ use super::common::{
     resolve_project_root, resolve_source_root, typecheck_modules_with_import_graph, validate_output_dir,
 };
 use super::lock::{
-    GeneratedLibraryDependencyPreheatRequest, LockResolutionRequest, resolve_lock_payload,
+    GeneratedLibraryDependencyPreheatRequest, LockResolutionRequest, resolve_lock_context,
     run_generated_library_dependency_preheat,
 };
 #[cfg(feature = "rust_inspect")]
@@ -135,7 +135,7 @@ struct InlineCommandProject {
 struct PreparedLibraryProject {
     generator: ProjectGenerator,
     project_root: PathBuf,
-    project_name: String,
+    cargo_package_name: String,
     rust_edition: Option<String>,
     out_dir: PathBuf,
     manifest_path: PathBuf,
@@ -915,9 +915,10 @@ fn prepare_project_with_options(
     let metadata_query_paths: Vec<String> = Vec::new();
 
     // Resolve lock payload before moving deps into generator (borrows resolved)
-    let lock_payload = resolve_lock_payload(LockResolutionRequest {
+    let lock_resolution = resolve_lock_context(LockResolutionRequest {
         project_root: &project_root,
         project_name: project_name.as_str(),
+        entry_file: Some(&normalized_file_path),
         manifest: manifest.as_ref(),
         resolved: &resolved,
         project_requirements: &project_requirements,
@@ -929,11 +930,19 @@ fn prepare_project_with_options(
         #[cfg(feature = "rust_inspect")]
         rust_inspect_query_paths: &metadata_query_paths,
     })?;
+    resolved = lock_resolution.resolved;
+    project_requirements = lock_resolution.project_requirements;
+    let lock_payload = lock_resolution.cargo_lock_payload;
+    let cargo_package_name = lock_resolution.cargo_package_name;
+    generator.set_package_name(Some(cargo_package_name.clone()));
+    generator.set_stdlib_features(project_requirements.stdlib_features.clone());
+    generator.set_include_dev_dependencies(lock_payload.is_some());
     #[cfg(feature = "rust_inspect")]
     let rust_inspect_manifest_dir = {
         let rust_inspect_manifest_dir = prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {
             project_root: &project_root,
             project_name: project_name.as_str(),
+            cargo_package_name: &cargo_package_name,
             rust_edition: manifest
                 .as_ref()
                 .and_then(|m| m.build.as_ref().and_then(|b| b.rust_edition.clone())),
@@ -1250,9 +1259,10 @@ fn prepare_library_project(
     let metadata_query_paths: Vec<String> = Vec::new();
 
     let lock_start = Instant::now();
-    let lock_payload_for_typecheck = resolve_lock_payload(LockResolutionRequest {
+    let lock_resolution = resolve_lock_context(LockResolutionRequest {
         project_root: &project_root,
         project_name: project_name.as_str(),
+        entry_file: Some(&lib_entry),
         manifest: Some(&manifest),
         resolved: &resolved,
         project_requirements: &project_requirements,
@@ -1264,6 +1274,10 @@ fn prepare_library_project(
         #[cfg(feature = "rust_inspect")]
         rust_inspect_query_paths: &metadata_query_paths,
     })?;
+    resolved = lock_resolution.resolved;
+    project_requirements = lock_resolution.project_requirements;
+    let lock_payload_for_typecheck = lock_resolution.cargo_lock_payload;
+    let cargo_package_name = lock_resolution.cargo_package_name;
     record_timing(&mut timings_ms, "library_resolve_lock_payload", lock_start);
     let should_preheat_library_dependencies = lock_payload_for_typecheck.is_some()
         && (!resolved.dependencies.is_empty() || !project_requirements.stdlib_features.is_empty());
@@ -1274,6 +1288,7 @@ fn prepare_library_project(
         let rust_inspect_manifest_dir = prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {
             project_root: &project_root,
             project_name: project_name.as_str(),
+            cargo_package_name: &cargo_package_name,
             rust_edition: manifest.build.as_ref().and_then(|build| build.rust_edition.clone()),
             resolved: &resolved,
             project_requirements: &project_requirements,
@@ -1478,10 +1493,11 @@ fn prepare_library_project(
         codegen.add_module_with_path_segments(&module.name, &module.ast, module.path_segments.clone());
     }
     let mut generator = ProjectGenerator::new(&out_dir, project_name.as_str(), false);
+    generator.set_package_name(Some(cargo_package_name.clone()));
     generator.set_provider_plan(&provider_plan);
     generator.set_cargo_target_dir_override(generated_cargo_target_dir.map(Path::to_path_buf));
     generator.set_stdlib_features(project_requirements.stdlib_features.clone());
-    generator.set_include_dev_dependencies(false);
+    generator.set_include_dev_dependencies(lock_payload_for_typecheck.is_some());
     let rust_edition = manifest.build.as_ref().and_then(|build| build.rust_edition.clone());
     generator.set_rust_edition(rust_edition.clone());
     #[cfg(feature = "rust_inspect")]
@@ -1561,7 +1577,7 @@ fn prepare_library_project(
     Ok(PreparedLibraryProject {
         generator,
         project_root,
-        project_name,
+        cargo_package_name,
         rust_edition,
         out_dir,
         manifest_path,
@@ -2303,7 +2319,7 @@ pub(crate) fn build_library_report(
         run_generated_library_dependency_preheat(GeneratedLibraryDependencyPreheatRequest {
             project_root: &prepared.project_root,
             lock_dir: &prepared.project_root.join("target").join("incan_lock"),
-            project_name: &prepared.project_name,
+            project_name: &prepared.cargo_package_name,
             rust_edition: prepared.rust_edition.clone(),
             resolved: &prepared.resolved_dependencies,
             project_requirements: &prepared.project_requirements,

@@ -49,6 +49,8 @@ When source imports an enabled provider module, the typechecker reads its declar
 
 Lowering and generated-project construction use the same provider plan. For every used fact, the plan exposes the corresponding private implementation facets and generated artifact. The active backend translates those facets into its own dependencies and switches. In the current Rust backend, that can select features on the shared `incan_stdlib` runtime crate or link another Rust dependency, but those Cargo names are not Incan package API and are not written in application manifests.
 
+Entrypoint-local facts still decide what source is checked and emitted, but a manifest project's backend lock context covers every declared script and test. Any generated Cargo project that embeds that `incan.lock` therefore receives the same project-wide dependency and implementation-feature closure. This keeps Cargo's manifest and lock payload exact under `--locked` without making an unrelated script's modules visible to the active entrypoint. An RFC 077 workspace applies the same rule across all members and gives generated member projects the internal Cargo package identity that owns the canonical root lock.
+
 Because tooling consumes the same plan, hover, navigation, diagnostics, test discovery, build reports, locks, and `incan inspect` describe the same component and feature projection that code generation used. A tool may show inactive syntax for navigation, but it cannot independently make an inactive provider fact typecheck or emit code.
 
 ## Following `std.json` through the flow

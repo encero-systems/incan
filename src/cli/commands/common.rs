@@ -1145,21 +1145,6 @@ pub(crate) fn extend_requirements_with_provider_plan(
     extend_requirements_with_selected_sdk_providers(requirements, provider_plan, &sdk_providers)
 }
 
-/// Add every semantically used SDK provider to the canonical project-wide lock requirements.
-///
-/// Generated projects link only graph roots, but the lock context unions multiple entrypoints. Retaining every used
-/// provider here makes an entrypoint-local root already covered when another entrypoint supplies it transitively.
-pub(crate) fn extend_lock_requirements_with_provider_plan(
-    requirements: &mut ProjectRequirements,
-    provider_plan: &ProviderPlan,
-) -> CliResult<()> {
-    let sdk_providers = provider_plan
-        .used_sdk_records()
-        .map(|provider| provider.identity.stable_key())
-        .collect::<BTreeSet<_>>();
-    extend_requirements_with_selected_sdk_providers(requirements, provider_plan, &sdk_providers)
-}
-
 /// Add ordinary providers and the selected direct SDK provider set to backend requirements.
 fn extend_requirements_with_selected_sdk_providers(
     requirements: &mut ProjectRequirements,
@@ -2182,77 +2167,6 @@ pub(crate) fn merge_project_requirements(
     })
 }
 
-/// Merge resolved dependency requirements from multiple sources.
-pub(crate) fn merge_resolved_dependencies(
-    current: &ResolvedDependencies,
-    extra: &ResolvedDependencies,
-) -> CliResult<ResolvedDependencies> {
-    let mut merged = current.clone();
-    for candidate in &extra.dependencies {
-        merge_resolved_dependency(&mut merged.dependencies, &mut merged.dev_dependencies, candidate, false)?;
-    }
-    for candidate in &extra.dev_dependencies {
-        merge_resolved_dependency(&mut merged.dependencies, &mut merged.dev_dependencies, candidate, true)?;
-    }
-    merged
-        .dependencies
-        .sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
-    merged
-        .dev_dependencies
-        .sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
-    Ok(merged)
-}
-
-/// Merge one resolved dependency requirement into the dependency map.
-fn merge_resolved_dependency(
-    dependencies: &mut Vec<DependencySpec>,
-    dev_dependencies: &mut Vec<DependencySpec>,
-    candidate: &DependencySpec,
-    dev_only: bool,
-) -> CliResult<()> {
-    if let Some(existing) = dependencies.iter().find(|dep| dep.crate_name == candidate.crate_name) {
-        if existing != candidate {
-            return Err(CliError::failure(format!(
-                "dependency `{}` conflicts between resolved dependency contexts",
-                candidate.crate_name
-            )));
-        }
-        return Ok(());
-    }
-
-    if dev_only {
-        if let Some(existing) = dev_dependencies
-            .iter()
-            .find(|dep| dep.crate_name == candidate.crate_name)
-        {
-            if existing != candidate {
-                return Err(CliError::failure(format!(
-                    "dev dependency `{}` conflicts between resolved dependency contexts",
-                    candidate.crate_name
-                )));
-            }
-            return Ok(());
-        }
-        dev_dependencies.push(candidate.clone());
-        return Ok(());
-    }
-
-    if let Some(existing_idx) = dev_dependencies
-        .iter()
-        .position(|dep| dep.crate_name == candidate.crate_name)
-    {
-        if dev_dependencies[existing_idx] != *candidate {
-            return Err(CliError::failure(format!(
-                "dependency `{}` conflicts between dependency and dev-dependency contexts",
-                candidate.crate_name
-            )));
-        }
-        dev_dependencies.remove(existing_idx);
-    }
-    dependencies.push(candidate.clone());
-    Ok(())
-}
-
 #[cfg(feature = "rust_inspect")]
 const RUST_INSPECT_WORKSPACE_FINGERPRINT_FILE: &str = ".incan_rust_inspect_fingerprint";
 
@@ -2368,6 +2282,7 @@ fn hash_dependency_spec_for_rust_inspect(hasher: &mut Sha256, spec: &DependencyS
 #[cfg(feature = "rust_inspect")]
 fn rust_inspect_workspace_fingerprint(
     project_name: &str,
+    cargo_package_name: &str,
     rust_edition: Option<&str>,
     resolved: &ResolvedDependencies,
     stdlib_features: &[String],
@@ -2376,6 +2291,8 @@ fn rust_inspect_workspace_fingerprint(
     let mut hasher = Sha256::new();
     hasher.update(b"incan_rust_inspect_workspace/1\0");
     hasher.update(project_name.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(cargo_package_name.as_bytes());
     hasher.update(b"\0");
     match rust_edition {
         Some(e) => {
@@ -2657,8 +2574,32 @@ pub(crate) fn ensure_rust_inspect_workspace(
     project_requirements: &ProjectRequirements,
     cargo_lock_payload: Option<String>,
 ) -> CliResult<PathBuf> {
+    ensure_rust_inspect_workspace_with_cargo_package_name(
+        project_root,
+        project_name,
+        project_name,
+        rust_edition,
+        resolved,
+        project_requirements,
+        cargo_lock_payload,
+    )
+}
+
+/// Generate a rust-inspect workspace whose Cargo package identity matches the canonical lock owner.
+#[cfg(feature = "rust_inspect")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn ensure_rust_inspect_workspace_with_cargo_package_name(
+    project_root: &Path,
+    project_name: &str,
+    cargo_package_name: &str,
+    rust_edition: Option<String>,
+    resolved: &ResolvedDependencies,
+    project_requirements: &ProjectRequirements,
+    cargo_lock_payload: Option<String>,
+) -> CliResult<PathBuf> {
     let fingerprint = rust_inspect_workspace_fingerprint(
         project_name,
+        cargo_package_name,
         rust_edition.as_deref(),
         resolved,
         &project_requirements.stdlib_features,
@@ -2679,6 +2620,7 @@ pub(crate) fn ensure_rust_inspect_workspace(
     }
 
     let mut generator = ProjectGenerator::new(&rust_inspect_manifest_dir, project_name, true);
+    generator.set_package_name(Some(cargo_package_name.to_string()));
     generator.set_dependencies(resolved.dependencies.clone());
     generator.set_dev_dependencies(resolved.dev_dependencies.clone());
     generator.set_include_dev_dependencies(true);
@@ -4029,18 +3971,6 @@ mod tests {
         Ok(())
     }
 
-    fn registry_dependency(crate_name: &str, version: &str) -> DependencySpec {
-        DependencySpec {
-            crate_name: crate_name.to_string(),
-            version: Some(version.to_string()),
-            features: Vec::new(),
-            default_features: true,
-            source: DependencySource::Registry,
-            optional: false,
-            package: None,
-        }
-    }
-
     fn write_minimal_library_artifact(
         root: &Path,
         dependency_key: &str,
@@ -4083,53 +4013,6 @@ mod tests {
             "stdlib-managed path crates should come from project requirements, not rust.module dependency uses: {imports:?}"
         );
         Ok(())
-    }
-
-    #[test]
-    fn merge_resolved_dependencies_unions_dependency_contexts() -> Result<(), Box<dyn std::error::Error>> {
-        let current = ResolvedDependencies {
-            dependencies: vec![registry_dependency("serde", "1")],
-            dev_dependencies: vec![registry_dependency("tokio", "1")],
-        };
-        let extra = ResolvedDependencies {
-            dependencies: vec![
-                registry_dependency("tokio", "1"),
-                registry_dependency("datafusion", "53"),
-            ],
-            dev_dependencies: Vec::new(),
-        };
-
-        let merged = merge_resolved_dependencies(&current, &extra)?;
-
-        assert_eq!(
-            merged
-                .dependencies
-                .iter()
-                .map(|dependency| dependency.crate_name.as_str())
-                .collect::<Vec<_>>(),
-            vec!["datafusion", "serde", "tokio"]
-        );
-        assert!(merged.dev_dependencies.is_empty());
-        Ok(())
-    }
-
-    #[test]
-    fn merge_resolved_dependencies_rejects_conflicting_contexts() {
-        let current = ResolvedDependencies {
-            dependencies: vec![registry_dependency("serde", "1")],
-            dev_dependencies: Vec::new(),
-        };
-        let extra = ResolvedDependencies {
-            dependencies: vec![registry_dependency("serde", "2")],
-            dev_dependencies: Vec::new(),
-        };
-
-        let error = match merge_resolved_dependencies(&current, &extra) {
-            Ok(merged) => panic!("expected conflict, got merged dependencies: {merged:?}"),
-            Err(error) => error,
-        };
-        assert!(error.message.contains("serde"));
-        assert!(error.message.contains("conflicts"));
     }
 
     #[test]
@@ -5158,6 +5041,7 @@ pub def main() -> int:
         };
         let fp_a = super::rust_inspect_workspace_fingerprint(
             "probe",
+            "probe",
             Some("2021"),
             &resolved,
             &requirements.stdlib_features,
@@ -5165,12 +5049,22 @@ pub def main() -> int:
         );
         let fp_b = super::rust_inspect_workspace_fingerprint(
             "probe",
+            "probe",
+            Some("2021"),
+            &resolved,
+            &requirements.stdlib_features,
+            Some("lock-bytes"),
+        );
+        let workspace_fp = super::rust_inspect_workspace_fingerprint(
+            "probe",
+            "incan_workspace",
             Some("2021"),
             &resolved,
             &requirements.stdlib_features,
             Some("lock-bytes"),
         );
         assert_eq!(fp_a, fp_b);
+        assert_ne!(fp_a, workspace_fp);
         assert!(fp_a.starts_with(super::RUST_INSPECT_WORKSPACE_FINGERPRINT_PREFIX));
     }
 
@@ -5184,12 +5078,14 @@ pub def main() -> int:
         };
         let fp_one = super::rust_inspect_workspace_fingerprint(
             "p",
+            "p",
             None,
             &resolved,
             &requirements.stdlib_features,
             Some("lock-a"),
         );
         let fp_two = super::rust_inspect_workspace_fingerprint(
+            "p",
             "p",
             None,
             &resolved,
