@@ -2297,6 +2297,38 @@ fn test_issue367_result_ok_string_literal_emits_owned_strings() {
     );
 }
 
+#[test]
+fn test_issue880_map_err_string_literal_closure_codegen() {
+    let source = load_test_file("issue880_map_err_string_literal_closure");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("issue880_map_err_string_literal_closure", rust_code);
+}
+
+#[test]
+fn test_issue880_map_err_string_literal_closure_emits_owned_error() {
+    let source = load_test_file("issue880_map_err_string_literal_closure");
+    let rust_code = generate_rust(&source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+
+    assert!(
+        compact.contains("map_err(|_error|\"malformed_json\".to_string())"),
+        "expected closure return conversion to materialize the error as String; generated:\n{rust_code}"
+    );
+    assert!(
+        !compact.contains("map_err(|_error|\"malformed_json\")"),
+        "unexpected borrowed &str closure result; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("fnparse_formatted(source:String)->Result<JsonValue,String>")
+            && compact.contains("incan_stdlib::strings::fstring(&__parts,&__args)"),
+        "expected the existing owned f-string closure path to remain unchanged; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("fnpreserve_error<T:Clone>(value:T)->Result<i64,T>"),
+        "expected generic closure return cloning to add its backend Clone bound; generated:\n{rust_code}"
+    );
+}
+
 /// Issue #374: qualified enum constructor patterns in `Pattern =>` arms must resolve for same-enum scrutinees.
 #[test]
 fn test_issue374_enum_constructor_match_codegen() {
