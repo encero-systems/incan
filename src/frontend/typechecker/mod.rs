@@ -278,10 +278,11 @@ pub struct TypeChecker {
     /// Used to validate that `rust.module()` paths reference known crates. When `None`, crate validation is skipped
     /// (e.g. single-file mode without a manifest).
     pub(crate) declared_crate_names: Option<HashSet<String>>,
-    /// RFC 023: Cached stdlib function signatures loaded from `.incn` files.
+    /// RFC 023 source-bootstrap and inventoryless-compatibility metadata loaded from stdlib `.incn` files.
     ///
-    /// Used by `collect_import` to derive function signatures from parsed stdlib source instead of hardcoded
-    /// registries. See [`stdlib_loader::StdlibAstCache`] for details.
+    /// Component-aware SDK consumers use checked provider manifests instead. This cache remains for provider
+    /// publication, focused source-backed compiler tests, and legacy toolchains that do not expose an SDK inventory.
+    /// See [`stdlib_loader::StdlibAstCache`] for details.
     pub(crate) stdlib_cache: stdlib_loader::StdlibAstCache,
     /// Local names bound to `std.testing` marker decorators via imports.
     ///

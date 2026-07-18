@@ -108,8 +108,9 @@ impl<'a> FromImportContext<'a> {
 
 /// Stdlib-specific classification for unqualified `from std... import ...` paths.
 ///
-/// `incan_core::lang::stdlib` remains the source of truth for known modules; this struct only snapshots the repeated
-/// predicates needed while collecting individual import items.
+/// The shared provider plan owns module availability for component-aware SDKs. This struct only snapshots the
+/// stdlib-specific surface predicates needed while collecting individual import items; the legacy registry is used by
+/// explicit source-bootstrap and inventoryless compatibility paths before this context is constructed.
 struct StdlibFromImportContext {
     module_path_str: String,
     is_unknown_module: bool,
