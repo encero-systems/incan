@@ -6351,6 +6351,7 @@
 </ul>
 <h2 id="bugfixes">Bugfixes<a class="headerlink" href="#bugfixes" title="Permanent link">&para;</a></h2>
 <ul>
+<li><strong>Compiler</strong>: Imported mutable Rust trait receivers now distinguish owned values from dereferenceable guards, so calls such as <code>Read.by_ref(input)</code> emit a valid direct borrow for <code>Stdin</code> while stdlib <code>RefMut</code> readers retain their required reborrow (#878).</li>
 <li><strong>Compiler</strong>: Rust interop method calls with inferred <code>Into</code>-bound generic parameters now keep string literals in an inferable shape instead of generating ambiguous <code>.into()</code> calls (#804).</li>
 <li><strong>Compiler</strong>: Generic Rust function results can now be inferred from an annotated return or parameter context through <code>Result.unwrap()</code>, including generated package-test builds such as <code>serde_json::from_str</code> (#852).</li>
 <li><strong>Compiler</strong>: Rust interop now preserves callable bounds such as <code>FnMut(&amp;mut T, &amp;U)</code> when checking generic callback parameters, so by-value Incan callbacks are rejected at typecheck instead of reaching Rust codegen with an invalid borrowed callback shape (#805).</li>
