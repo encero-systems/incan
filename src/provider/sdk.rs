@@ -1168,6 +1168,12 @@ exclude-components = ["stdlib-data"]
             .get("stdlib-codecs")
             .ok_or("missing stdlib-codecs source component")?;
         assert!(!codecs.namespace_roots.contains("hash"));
+        assert!(!codecs.namespace_roots.contains("compression"));
+        let compression = catalog
+            .components
+            .get("stdlib-compression")
+            .ok_or("missing stdlib-compression source component")?;
+        assert_eq!(compression.namespace_roots, set(["compression"]));
         Ok(())
     }
 

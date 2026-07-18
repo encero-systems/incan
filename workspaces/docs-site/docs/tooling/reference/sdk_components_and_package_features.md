@@ -30,18 +30,19 @@ The v0.5 SDK defines these standard-library components:
 | --- | --- | --- |
 | `stdlib-core` | Prelude, result, reflection, derives, traits, and compiler-required standard contracts. | None; mandatory. |
 | `stdlib-system` | Environment, I/O, temporary files, and filesystem APIs. | `stdlib-core` |
-| `stdlib-codecs` | Checksums, compression, and encoding. | `stdlib-core`, `stdlib-system` |
+| `stdlib-codecs` | Checksums and encoding. | `stdlib-core`, `stdlib-system` |
+| `stdlib-compression` | Compression codecs and stream adapters. | `stdlib-core`, `stdlib-system` |
 | `stdlib-data` | Collections, graph, hashing, JSON, math, UUID, datetime, regex, and serialization support. | `stdlib-core`, `stdlib-system` |
 | `stdlib-async` | Async runtime-facing standard APIs. | `stdlib-core` |
 | `stdlib-observability` | Logging and telemetry data surfaces. | `stdlib-core`, `stdlib-data` |
 | `stdlib-web` | Web APIs. | `stdlib-core`, `stdlib-data`, `stdlib-async` |
 | `stdlib-testing` | Standard testing APIs. | `stdlib-core` |
 
-`minimal` contains only the mandatory core closure. `default` is used when a project does not declare `[sdk]`. `full` contains every stable official component in that SDK release. In the first v0.5 distribution, `default` and `full` contain the same eight components; they remain distinct profile identities so a future release can evolve the conventional default without changing the meaning of full.
+`minimal` contains only the mandatory core closure. `default` is used when a project does not declare `[sdk]`. `full` contains every stable official component in that SDK release. In the first v0.5 distribution, `default` and `full` contain the same nine components; they remain distinct profile identities so a future release can evolve the conventional default without changing the meaning of full.
 
 Project selection starts with the profile, adds explicit components, expands dependencies, and then validates exclusions. The command-local `--sdk-profile` override replaces only the base profile for that invocation; explicit project additions and exclusions still apply.
 
-Hashing belongs to `stdlib-data` because collections and UUID reuse it directly. This keeps those implementations Incan-authored without making data consumers link the compression dependencies owned by `stdlib-codecs`.
+Hashing belongs to `stdlib-data` because collections and UUID reuse it directly. Compression is independently selectable so encoding and checksum consumers do not link its native and algorithm-specific dependency closure.
 
 ## Package-feature resolution
 

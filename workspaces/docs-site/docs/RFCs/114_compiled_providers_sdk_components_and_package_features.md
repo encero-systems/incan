@@ -402,13 +402,14 @@ These concerns are coupled at the checked-artifact boundary, not merely because 
 
 ### Initial official standard-library components
 
-The v0.5 standard-library source graph is grouped into eight component artifacts. The grouping follows public capability and dependency cohesion rather than source-file count:
+The v0.5 standard-library source graph is grouped into nine component artifacts. The grouping follows public capability and dependency cohesion rather than source-file count:
 
 | Component | Public module ownership | Direct component dependencies | Profile membership in v0.5 |
 | --- | --- | --- | --- |
 | `stdlib-core` | `std.prelude`, `std.result`, `std.traits.*`, `std.derives.*`, `std.this`, `std.reflection` | — | mandatory, `minimal`, `default`, `full` |
 | `stdlib-system` | `std.environ`, `std.io`, `std.fs.*`, `std.tempfile` | `stdlib-core` | `default`, `full` |
-| `stdlib-codecs` | `std.encoding.*`, `std.checksum`, `std.compression.*` | `stdlib-core`, `stdlib-system` | `default`, `full` |
+| `stdlib-codecs` | `std.encoding.*`, `std.checksum` | `stdlib-core`, `stdlib-system` | `default`, `full` |
+| `stdlib-compression` | `std.compression.*` | `stdlib-core`, `stdlib-system` | `default`, `full` |
 | `stdlib-data` | `std.collections`, `std.graph`, `std.hash.*`, `std.math`, `std.datetime.*`, `std.uuid`, `std.regex.*`, `std.json`, `std.serde.*` | `stdlib-core`, `stdlib-system` | `default`, `full` |
 | `stdlib-async` | `std.async.*` | `stdlib-core` | `default`, `full` |
 | `stdlib-observability` | `std.logging`, `std.telemetry.*` | `stdlib-core`, `stdlib-data` | `default`, `full` |
@@ -419,7 +420,7 @@ The v0.5 standard-library source graph is grouped into eight component artifacts
 
 The v0.5 `default` and `full` profiles intentionally contain the same stable standard-library modules to preserve source compatibility while the component system lands. They are distinct profile identities because later releases may keep the compatibility-oriented default smaller than the complete stable official set. The lock records expanded membership, so that future policy change is explicit rather than silently inherited.
 
-The initial dependency edges describe the intended public provider graph rather than freezing every historical source grouping. `std.collections` uses ordinal hashing and UUID versions 3 and 5 use the public hashing algorithms, so `std.hash.*` belongs to `stdlib-data` with those consumers. This keeps the Incan-authored reuse honest without linking the compression-heavy codecs artifact into every data consumer. Disabling `stdlib-codecs` therefore leaves hashing available through `stdlib-data` while `std.encoding.*`, `std.checksum`, and `std.compression.*` remain unavailable.
+The initial dependency edges describe the intended public provider graph rather than freezing every historical source grouping. `std.collections` uses ordinal hashing and UUID versions 3 and 5 use the public hashing algorithms, so `std.hash.*` belongs to `stdlib-data` with those consumers. Encoding and checksums remain a dependency-light codecs component, while compression is physically separate because its native and algorithm-specific dependency closure must not enter projects that only need base encodings. Disabling `stdlib-codecs` leaves hashing available through `stdlib-data`; disabling `stdlib-compression` independently makes `std.compression.*` unavailable.
 
 Component boundaries are allowed to change while the language and SDK compatibility contract remains explicitly pre-stable, provided the SDK release changes and locks expose the expanded graph. Public import paths, declaration identities, and compatibility promises remain the stable user surface. Once component compatibility is declared stable, moving a module between components requires ordinary compatibility and migration policy even when its `std.*` path stays unchanged, because project exclusions and installation profiles may depend on component identity.
 
@@ -497,7 +498,7 @@ Negative or exclusive features introduce order, global-choice, and graph-conflic
 
 This design introduces more named concepts than a monolithic stdlib with Cargo features: providers, components, profiles, public features, implementation facets, and three participation states. The distinctions are necessary for truthful diagnostics and future backends, but documentation and inspection must make them understandable.
 
-Splitting artifacts creates packaging and test-matrix cost. Every component edge, profile, feature projection, relocation path, and missing-artifact state needs verification. Small components may also increase metadata and archive overhead enough to offset their payload savings, so the initial eight-way split must be measured rather than assumed optimal.
+Splitting artifacts creates packaging and test-matrix cost. Every component edge, profile, feature projection, relocation path, and missing-artifact state needs verification. Small components may also increase metadata and archive overhead enough to offset their payload savings, so the initial nine-way split must be measured rather than assumed optimal.
 
 Feature-conditioned checked artifacts require richer manifests and a new source-level conditional-compilation form. The shared projection prevents backend leakage, but it also expands parser, formatter, semantic, documentation, and editor scope beyond artifact publication alone.
 
@@ -538,7 +539,7 @@ Provider construction may use one staging workspace, but the published artifacts
 
 - Define and validate the relocatable SDK inventory, component catalog, provider artifact locations and digests, component dependencies, mandatory membership, profiles, and reserved namespace grants.
 - Discover the active inventory relative to the executable or explicit toolchain root, then resolve project `[sdk]` profile, additions, exclusions, dependency expansion, availability, and lock state without implicit acquisition.
-- Publish the eight initial stdlib component artifacts into the shared immutable cache and prove that minimal-profile packages omit excluded payloads and exclusive dependencies.
+- Publish the nine initial stdlib component artifacts into the shared immutable cache and prove that minimal-profile packages omit excluded payloads and exclusive dependencies.
 
 ### Phase 3: Public package-feature graph
 
@@ -571,7 +572,7 @@ Provider construction may use one staging workspace, but the published artifacts
 - [ ] Reserved namespace authority and duplicate canonical module claims are validated before typechecking.
 - [ ] Relocatable SDK inventory discovery and integrity validation are implemented.
 - [ ] `[sdk]` profile, component additions, exclusions, dependencies, mandatory membership, and availability are resolved and locked.
-- [ ] The eight stdlib components are independently published and physically excludable from SDK profile packages.
+- [ ] The nine stdlib components are independently published and physically excludable from SDK profile packages.
 - [ ] Shared content-addressed cache publication, reuse, locking, relocation, and compact offline seed behavior are verified.
 - [ ] Compact and expanded package-feature declarations normalize into one typed graph.
 - [ ] Optional Incan dependencies, dependency feature requests, defaults, and CLI feature flags resolve additively across the package graph.
@@ -600,4 +601,4 @@ Provider construction may use one staging workspace, but the published artifacts
 2. `[project.features]` supports both the compact reference list and an expanded typed table. Both normalize into the same feature graph, and a feature cannot mix both representations.
 3. A feature may declare that its active provider facts require SDK components, but it never enables or installs them. `[sdk]` remains the explicit owner of component enablement and tooling may offer a reviewable manifest edit when a requirement is unmet.
 4. Project environments and workspace matrices may pass explicit feature and SDK-profile selections into compilation commands. They do not become a second persistent owner: the project manifest and canonical lock remain authoritative, and reports record every transient override.
-5. The eight stdlib components must be independently addressable and physically excludable from release-profile packages before implementation is complete. Components do not require one top-level archive each, but packaging must prove that excluded payloads and exclusive dependencies are absent, shared immutable content is not duplicated, and all artifacts remain relocatable and integrity-checked. Size measurements are published as release evidence rather than used to waive those invariants.
+5. The nine stdlib components must be independently addressable and physically excludable from release-profile packages before implementation is complete. Components do not require one top-level archive each, but packaging must prove that excluded payloads and exclusive dependencies are absent, shared immutable content is not duplicated, and all artifacts remain relocatable and integrity-checked. Size measurements are published as release evidence rather than used to waive those invariants.

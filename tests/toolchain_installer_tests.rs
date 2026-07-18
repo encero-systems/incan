@@ -199,6 +199,7 @@ fn write_fixture_sdk_provider_seed(root: &Path, profile: &str) -> Result<PathBuf
         "stdlib-core",
         "stdlib-system",
         "stdlib-codecs",
+        "stdlib-compression",
         "stdlib-data",
         "stdlib-async",
         "stdlib-observability",
@@ -460,7 +461,7 @@ fn toolchain_archive_packager_writes_archive_checksum_and_release_metadata() -> 
     );
     let evidence = read_profile_evidence(&archive)?;
     assert_eq!(evidence["sdk_profile"], serde_json::json!("full"));
-    assert_eq!(evidence["sdk_component_count"], serde_json::json!(8));
+    assert_eq!(evidence["sdk_component_count"], serde_json::json!(9));
     assert_eq!(evidence["archive_bytes"].as_u64(), Some(fs::metadata(&archive)?.len()));
     assert!(evidence["sdk_payload_bytes"].as_u64().is_some_and(|bytes| bytes > 0));
 
@@ -493,6 +494,7 @@ fn toolchain_archive_packager_writes_archive_checksum_and_release_metadata() -> 
         "stdlib-core",
         "stdlib-system",
         "stdlib-codecs",
+        "stdlib-compression",
         "stdlib-data",
         "stdlib-async",
         "stdlib-observability",
@@ -563,6 +565,7 @@ fn minimal_sdk_archive_physically_excludes_non_profile_components() -> Result<()
     for component in [
         "stdlib-system",
         "stdlib-codecs",
+        "stdlib-compression",
         "stdlib-data",
         "stdlib-async",
         "stdlib-observability",
@@ -589,7 +592,7 @@ fn default_sdk_archive_contains_every_default_profile_component() -> Result<(), 
     let archive = out_dir.join(format!("incan-{}-x86_64-unknown-linux-gnu.tar.gz", release.trim()));
     let evidence = read_profile_evidence(&archive)?;
     assert_eq!(evidence["sdk_profile"], serde_json::json!("default"));
-    assert_eq!(evidence["sdk_component_count"], serde_json::json!(8));
+    assert_eq!(evidence["sdk_component_count"], serde_json::json!(9));
     assert!(evidence["sdk_payload_bytes"].as_u64().is_some_and(|bytes| bytes > 0));
     let listing = Command::new("tar").arg("-tzf").arg(&archive).output()?;
     assert!(listing.status.success(), "default archive listing failed");
@@ -598,6 +601,7 @@ fn default_sdk_archive_contains_every_default_profile_component() -> Result<(), 
         "stdlib-core",
         "stdlib-system",
         "stdlib-codecs",
+        "stdlib-compression",
         "stdlib-data",
         "stdlib-async",
         "stdlib-observability",

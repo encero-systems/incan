@@ -588,8 +588,8 @@ def main() -> None:
         String::from_utf8_lossy(&compression.stderr)
     );
     assert!(
-        diagnostic.contains("stdlib-codecs") && diagnostic.contains("disabled"),
-        "disabled public codec imports must identify the component selection remedy:\n{diagnostic}"
+        diagnostic.contains("stdlib-compression") && diagnostic.contains("disabled"),
+        "disabled public compression imports must identify the component selection remedy:\n{diagnostic}"
     );
     Ok(())
 }

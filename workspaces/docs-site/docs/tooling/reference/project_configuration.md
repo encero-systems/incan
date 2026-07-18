@@ -101,7 +101,7 @@ exclude-components = ["stdlib-web"]
 
 `stdlib-core` is mandatory. Selected components bring their declared component dependencies. Excluding a mandatory component or a component still required by another enabled component is an error. Selection does not install anything: an enabled component can still be unavailable in the active SDK installation, and that is diagnosed separately.
 
-The eight v0.5 standard-library components are `stdlib-core`, `stdlib-system`, `stdlib-codecs`, `stdlib-data`, `stdlib-async`, `stdlib-observability`, `stdlib-web`, and `stdlib-testing`. Component membership and dependencies are SDK-versioned; source imports remain stable `std.*` paths.
+The nine v0.5 standard-library components are `stdlib-core`, `stdlib-system`, `stdlib-codecs`, `stdlib-compression`, `stdlib-data`, `stdlib-async`, `stdlib-observability`, `stdlib-web`, and `stdlib-testing`. Component membership and dependencies are SDK-versioned; source imports remain stable `std.*` paths.
 
 ## `[build]`
 

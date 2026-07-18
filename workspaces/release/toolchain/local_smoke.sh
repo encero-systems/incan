@@ -127,7 +127,7 @@ smoke_direct() {
   [ -f "$installed_sdk_store/sdk-inventory.json" ] || fail "installed toolchain is missing sdk-inventory.json"
   local component
   for component in \
-    stdlib-core stdlib-system stdlib-codecs stdlib-data \
+    stdlib-core stdlib-system stdlib-codecs stdlib-compression stdlib-data \
     stdlib-async stdlib-observability stdlib-web stdlib-testing
   do
     [ -d "$installed_sdk_store/components/$component" ] \

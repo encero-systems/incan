@@ -9,6 +9,7 @@ default = [
     "stdlib-core",
     "stdlib-system",
     "stdlib-codecs",
+    "stdlib-compression",
     "stdlib-data",
     "stdlib-async",
     "stdlib-observability",
@@ -19,6 +20,7 @@ full = [
     "stdlib-core",
     "stdlib-system",
     "stdlib-codecs",
+    "stdlib-compression",
     "stdlib-data",
     "stdlib-async",
     "stdlib-observability",
@@ -40,7 +42,12 @@ namespace-roots = ["environ", "io", "tempfile", "fs"]
 [components.stdlib-codecs]
 project = "components/stdlib-codecs"
 dependencies = ["stdlib-core", "stdlib-system"]
-namespace-roots = ["checksum", "compression", "encoding"]
+namespace-roots = ["checksum", "encoding"]
+
+[components.stdlib-compression]
+project = "components/stdlib-compression"
+dependencies = ["stdlib-core", "stdlib-system"]
+namespace-roots = ["compression"]
 
 [components.stdlib-data]
 project = "components/stdlib-data"

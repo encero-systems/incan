@@ -113,10 +113,10 @@ validate_sdk_provider_seed() {
   case "$distribution_profile" in
     minimal)
       required_components="stdlib-core"
-      excluded_components="stdlib-system stdlib-codecs stdlib-data stdlib-async stdlib-observability stdlib-web stdlib-testing"
+      excluded_components="stdlib-system stdlib-codecs stdlib-compression stdlib-data stdlib-async stdlib-observability stdlib-web stdlib-testing"
       ;;
     default|full)
-      required_components="stdlib-core stdlib-system stdlib-codecs stdlib-data stdlib-async stdlib-observability stdlib-web stdlib-testing"
+      required_components="stdlib-core stdlib-system stdlib-codecs stdlib-compression stdlib-data stdlib-async stdlib-observability stdlib-web stdlib-testing"
       excluded_components=""
       ;;
     *)
