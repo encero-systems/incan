@@ -239,7 +239,7 @@ impl TypecheckContext {
 
     /// Resolve the shared provider projection for one collected codegraph compilation.
     fn provider_plan_for_modules(&self, modules: &[ParsedModule]) -> CliResult<Arc<ProviderPlan>> {
-        self.session.provider_plan_for_modules(modules, true)
+        self.session.provider_plan_for_modules(modules)
     }
 }
 
@@ -402,7 +402,7 @@ fn collect_codegraph_semantic_contexts(
             Err(error) => return Err(error),
         };
         let modules = modules_by_path.into_values().collect::<Vec<_>>();
-        let provider_plan = match session.provider_plan_for_modules(&modules, true) {
+        let provider_plan = match session.provider_plan_for_modules(&modules) {
             Ok(plan) => plan,
             Err(_) if allow_errors => Arc::clone(&session.provider_plan),
             Err(error) => return Err(error),

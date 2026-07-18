@@ -142,6 +142,7 @@ fn inspection_report(
             "status": "present",
             "fingerprint": lock.deps_fingerprint,
             "cargo_features": lock.cargo_features,
+            "semantic": lock.semantic,
         }),
         Err(error) if root_lock_path.exists() => json!({
             "status": "invalid",
@@ -328,6 +329,26 @@ fn print_text_report(report: &Value) {
         "Canonical lock: {}",
         lock["canonical_path"].as_str().unwrap_or("<unknown>")
     );
+    if let Some(members) = lock["state"]["semantic"]["workspace_members"].as_array()
+        && !members.is_empty()
+    {
+        println!("Locked semantic member graphs:");
+        for member in members {
+            let root = member["member_root"].as_str().unwrap_or("<unknown>");
+            let profile = member["sdk"]["profile"].as_str().unwrap_or("none");
+            let features = member["packages"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .flat_map(|package| package["active_features"].as_array().into_iter().flatten())
+                .filter_map(Value::as_str)
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>()
+                .join(", ");
+            println!("  - {root}: SDK profile {profile}; features [{}]", features);
+        }
+    }
     if let Some(stale_locks) = lock["stale_member_local_locks"].as_array()
         && !stale_locks.is_empty()
     {

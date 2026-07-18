@@ -17,6 +17,7 @@ pub(crate) struct CompiledSdkModules {
 impl CompiledSdkModules {
     /// Build an inventory from module paths relative to the artifact crate root.
     #[must_use]
+    #[cfg(test)]
     pub(crate) fn from_relative_paths(paths: impl IntoIterator<Item = Vec<String>>) -> Self {
         Self {
             relative_paths: paths.into_iter().collect(),

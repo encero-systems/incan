@@ -18,7 +18,6 @@ use crate::backend::project::INCAN_STDLIB_CRATE_NAME;
 use crate::backend::project::generator::GENERATED_CARGO_TARGET_DIR_ENV;
 use crate::cli::prelude::ParsedModule;
 use crate::cli::{CliError, CliResult};
-use crate::compiled_sdk::CompiledSdkModules;
 use crate::dependency_resolver::ResolvedDependencies;
 use crate::dependency_resolver::{DependencyError, InlineRustImport};
 use crate::frontend::ast::{ImportKind, Program, Span};
@@ -49,8 +48,8 @@ use crate::project_lifecycle::toolchain::ToolchainConstraintSet;
 use crate::provider::{
     BackendImplementationRequirement, FeatureSelection, PackageFeatureGraph, PackageFeaturePlan,
     ProviderModuleResolution, ProviderPlan, ProviderProvenance, ResolvedSdkComponents, SDK_INVENTORY_FILE,
-    SDK_SOURCE_CATALOG_FILE, SdkComponent, SdkComponentSelection, SdkInventory, SdkProviderDescriptor,
-    SdkSourceCatalog,
+    SDK_PROVIDER_BUILD_ENV, SDK_SOURCE_CATALOG_FILE, SdkComponent, SdkComponentSelection, SdkInventory,
+    SdkProviderDescriptor, SdkResolutionError, SdkSourceCatalog,
 };
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect::{Inspector, InspectorConfig};
@@ -72,8 +71,6 @@ static PREPARED_LIBRARY_DEPENDENCIES: LazyLock<Mutex<HashMap<PathBuf, BTreeSet<S
 static SDK_PROVIDER_COMPILER_DIGESTS: LazyLock<Mutex<HashMap<PathBuf, [u8; 32]>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 pub(crate) const INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV: &str = "INCAN_INTERNAL_LIBRARY_ARTIFACT_ONLY";
-/// Internal marker selecting canonical local module paths while compiling an SDK provider artifact.
-pub(crate) const INTERNAL_SDK_PROVIDER_BUILD_ENV: &str = "INCAN_INTERNAL_SDK_PROVIDER_BUILD";
 /// Internal provider-store override used by isolated compiler and packaging tests.
 const INTERNAL_SDK_PROVIDER_STORE_ENV: &str = "INCAN_INTERNAL_SDK_PROVIDER_STORE";
 /// Internal file through which release packaging receives the exact immutable SDK provider root.
@@ -656,7 +653,7 @@ fn build_sdk_components_into_staging(
             .arg("--all-features")
             .env_remove(INTERNAL_MANIFEST_OVERRIDE_ENV)
             .env_remove(INTERNAL_PROJECT_ROOT_OVERRIDE_ENV)
-            .env(INTERNAL_SDK_PROVIDER_BUILD_ENV, &component.id)
+            .env(SDK_PROVIDER_BUILD_ENV, &component.id)
             .env(INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, "1");
         if built_any {
             inventory
@@ -860,22 +857,6 @@ fn nested_sdk_component_build_error(component: &str, project_root: &Path, output
     ))
 }
 
-/// Load the module inventory emitted by the resolved built-in stdlib library graph.
-pub(crate) fn compiled_sdk_modules() -> CliResult<CompiledSdkModules> {
-    let Some(inventory) = prepare_or_discover_sdk_inventory()? else {
-        return Ok(CompiledSdkModules::default());
-    };
-    let paths = inventory
-        .components
-        .values()
-        .filter(|component| component.available)
-        .flat_map(|component| component.providers.iter())
-        .flat_map(|provider| provider.namespace_claims.iter())
-        .filter(|claim| claim.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT))
-        .map(|claim| claim.iter().skip(1).cloned().collect());
-    Ok(CompiledSdkModules::from_relative_paths(paths))
-}
-
 /// Cargo execution policy resolved from CLI inputs and environment defaults.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CargoPolicy {
@@ -1035,7 +1016,7 @@ pub(crate) fn prepare_or_discover_sdk_inventory() -> CliResult<Option<Arc<SdkInv
     if let Some(inventory) = discover_active_sdk_inventory()? {
         return Ok(Some(inventory));
     }
-    if env::var_os(INTERNAL_SDK_PROVIDER_BUILD_ENV).is_some() {
+    if env::var_os(SDK_PROVIDER_BUILD_ENV).is_some() {
         return Ok(None);
     }
     let has_source_catalog =
@@ -1057,10 +1038,98 @@ fn validate_component_inventory_selection(
     if inventory.is_some() || !explicit_selection {
         return Ok(());
     }
-    Err(CliError::failure(concat!(
+    let message = concat!(
         "the active Incan SDK has no component inventory, so explicit `[sdk]` selection is unavailable; ",
         "use a component-aware v0.5 SDK or remove the explicit SDK selection",
-    )))
+    );
+    let message = manifest
+        .and_then(|manifest| sdk_manifest_value_location(manifest, &[]))
+        .map_or_else(|| message.to_string(), |location| format!("{location}: {message}"));
+    Err(CliError::failure(message))
+}
+
+/// Resolve one SDK component selection and retain the manifest or command provenance of configuration failures.
+pub(crate) fn resolve_sdk_component_selection(
+    inventory: &SdkInventory,
+    selection: &SdkComponentSelection,
+    manifest: Option<&ProjectManifest>,
+    sdk_profile_override: Option<&str>,
+    require_available: bool,
+) -> CliResult<ResolvedSdkComponents> {
+    let result = if require_available {
+        inventory.resolve(selection)
+    } else {
+        inventory.resolve_catalog(selection)
+    };
+    result.map_err(|error| {
+        CliError::failure(format_sdk_selection_error(
+            &error,
+            selection,
+            manifest,
+            sdk_profile_override,
+        ))
+    })
+}
+
+/// Attach exact `[sdk]` source provenance to one component-resolution failure when it came from the manifest.
+fn format_sdk_selection_error(
+    error: &SdkResolutionError,
+    selection: &SdkComponentSelection,
+    manifest: Option<&ProjectManifest>,
+    sdk_profile_override: Option<&str>,
+) -> String {
+    if matches!(error, SdkResolutionError::UnknownProfile { profile, .. } if sdk_profile_override == Some(profile)) {
+        return format!("{error} (selected by the current command's `--sdk-profile` override)");
+    }
+    let candidates = match error {
+        SdkResolutionError::UnknownProfile { profile, .. } => vec![profile.clone()],
+        SdkResolutionError::UnknownComponent { component, .. }
+        | SdkResolutionError::MandatoryComponentExcluded { component, .. }
+        | SdkResolutionError::SelectedComponentExcluded { component }
+        | SdkResolutionError::ExcludedRequiredComponent { component, .. }
+        | SdkResolutionError::EnabledComponentUnavailable { component, .. } => {
+            vec![component.clone(), selection.profile.clone()]
+        }
+    };
+    manifest
+        .and_then(|manifest| sdk_manifest_value_location(manifest, &candidates))
+        .map_or_else(|| error.to_string(), |location| format!("{location}: {error}"))
+}
+
+/// Locate an authored SDK selection value, falling back to the `[sdk]` table header for derived failures.
+fn sdk_manifest_value_location(manifest: &ProjectManifest, candidates: &[String]) -> Option<String> {
+    let content = fs::read_to_string(manifest.path()).ok()?;
+    let mut in_sdk = false;
+    let mut sdk_header = None;
+    let mut sdk_lines = Vec::new();
+    for (line_index, line) in content.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            in_sdk = trimmed == "[sdk]";
+            if in_sdk {
+                sdk_header = Some(format!("{}:{}:1", manifest.path().display(), line_index + 1));
+            }
+            continue;
+        }
+        if !in_sdk {
+            continue;
+        }
+        sdk_lines.push((line_index, line));
+    }
+    for candidate in candidates {
+        for (line_index, line) in &sdk_lines {
+            let quoted = format!("\"{candidate}\"");
+            if let Some(column) = line.find(&quoted) {
+                return Some(format!(
+                    "{}:{}:{}",
+                    manifest.path().display(),
+                    line_index + 1,
+                    column + 1
+                ));
+            }
+        }
+    }
+    sdk_header
 }
 
 /// Add linked generated crates selected by active compiled providers to the current backend requirements.
@@ -1171,7 +1240,7 @@ fn provider_cargo_dependency_spec(dependency: &ProviderCargoDependency) -> Depen
 /// Collect canonical provider module use from resolved source modules and authored import edges.
 pub(crate) fn provider_used_module_paths(modules: &[ParsedModule]) -> BTreeSet<Vec<String>> {
     let mut used = BTreeSet::new();
-    if !modules.is_empty() && env::var_os(INTERNAL_SDK_PROVIDER_BUILD_ENV).is_none() {
+    if !modules.is_empty() && env::var_os(SDK_PROVIDER_BUILD_ENV).is_none() {
         // Every ordinary compilation consumes the implicit language prelude. Recording that compiler requirement
         // keeps the mandatory core provider linked even when generated support such as iterator adapters is the only
         // emitted path into `std.derives.*`.
@@ -1205,7 +1274,7 @@ pub(crate) fn provider_used_module_paths(modules: &[ParsedModule]) -> BTreeSet<V
 
 /// Resolve the reserved namespace roots granted to the SDK component currently being compiled from source.
 pub(crate) fn sdk_provider_bootstrap_namespace_roots(project_root: &Path) -> CliResult<BTreeSet<String>> {
-    let Some(component_marker) = env::var_os(INTERNAL_SDK_PROVIDER_BUILD_ENV).filter(|value| !value.is_empty()) else {
+    let Some(component_marker) = env::var_os(SDK_PROVIDER_BUILD_ENV).filter(|value| !value.is_empty()) else {
         return Ok(BTreeSet::new());
     };
     let stdlib_root = crate::cli::prelude::find_stdlib_dir()
@@ -1284,8 +1353,6 @@ pub(crate) struct CompilationSession {
     pub sdk_inventory: Option<Arc<SdkInventory>>,
     /// Project-selected SDK component closure, when an inventory is active.
     pub sdk_components: Option<ResolvedSdkComponents>,
-    /// Persistent project component refinements plus any command-local profile override.
-    pub sdk_selection: SdkComponentSelection,
     /// Typed additive feature closure for the root package and active path dependencies.
     pub package_feature_plan: Option<PackageFeaturePlan>,
     /// Active root-package features used to project compilation-unit `when feature(...)` declarations.
@@ -1418,9 +1485,16 @@ impl CompilationSession {
             SdkComponentSelection::from_manifest_with_profile_override(manifest.as_ref(), sdk_profile_override);
         let sdk_components = sdk_inventory
             .as_ref()
-            .map(|inventory| inventory.resolve_catalog(&sdk_selection))
-            .transpose()
-            .map_err(|error| CliError::failure(error.to_string()))?;
+            .map(|inventory| {
+                resolve_sdk_component_selection(
+                    inventory,
+                    &sdk_selection,
+                    manifest.as_ref(),
+                    sdk_profile_override,
+                    false,
+                )
+            })
+            .transpose()?;
         let bootstrap_sdk_namespace_roots = sdk_provider_bootstrap_namespace_roots(&project_root)?;
         let provider_plan = Arc::new(
             ProviderPlan::from_resolved_inputs(
@@ -1441,7 +1515,6 @@ impl CompilationSession {
             provider_plan,
             sdk_inventory,
             sdk_components,
-            sdk_selection,
             package_feature_plan,
             active_features,
             declared_features,
@@ -1452,32 +1525,12 @@ impl CompilationSession {
     }
 
     /// Resolve module participation from this session's immutable provider, feature, and SDK inputs.
-    pub(crate) fn provider_plan_for_modules(
-        &self,
-        modules: &[ParsedModule],
-        prepare_source_sdk: bool,
-    ) -> CliResult<Arc<ProviderPlan>> {
-        let sdk_inventory = match self.sdk_inventory.as_ref() {
-            Some(inventory) => Some(inventory.clone()),
-            None if prepare_source_sdk => prepare_or_discover_sdk_inventory()?,
-            None => None,
-        };
-        let sdk_components = match (sdk_inventory.as_ref(), self.sdk_components.as_ref()) {
-            (Some(inventory), Some(components)) if inventory.identity() == components.sdk_identity => {
-                Some(components.clone())
-            }
-            (Some(inventory), _) => Some(
-                inventory
-                    .resolve_catalog(&self.sdk_selection)
-                    .map_err(|error| CliError::failure(error.to_string()))?,
-            ),
-            (None, _) => None,
-        };
+    pub(crate) fn provider_plan_for_modules(&self, modules: &[ParsedModule]) -> CliResult<Arc<ProviderPlan>> {
         ProviderPlan::from_resolved_inputs(
             self.provider_plan.library_manifest_index().clone(),
             self.package_feature_plan.as_ref(),
-            sdk_inventory.as_deref(),
-            sdk_components.as_ref(),
+            self.sdk_inventory.as_deref(),
+            self.sdk_components.as_ref(),
             provider_used_module_paths(modules),
         )
         .map(|plan| {
@@ -1859,7 +1912,7 @@ pub(crate) fn collect_project_requirements(
     library_manifest_index: &LibraryManifestIndex,
 ) -> CliResult<ProjectRequirements> {
     let mut stdlib_namespaces = HashSet::new();
-    if env::var_os(INTERNAL_SDK_PROVIDER_BUILD_ENV).is_some() {
+    if env::var_os(SDK_PROVIDER_BUILD_ENV).is_some() {
         for module in modules {
             for decl in &module.ast.declarations {
                 let crate::frontend::ast::Declaration::Import(import) = &decl.node else {
@@ -2978,15 +3031,18 @@ pub(crate) fn collect_modules_detailed_with_selections(
             })?
             .join(entry_path)
     };
-    let session = CompilationSession::discover_with_selections(&path, feature_selection, sdk_profile_override)
-        .map_err(|error| {
-            CliDiagnosticFailure::single(
-                path.to_string_lossy(),
-                "",
-                diagnostics::CompileError::new(error.message, Span::default()),
-                diagnostics::DiagnosticPhase::Import,
-            )
-        })?;
+    let session = match sdk_profile_override {
+        Some(profile) => CompilationSession::discover_with_selections(&path, feature_selection, Some(profile)),
+        None => CompilationSession::discover_with_feature_selection(&path, feature_selection),
+    }
+    .map_err(|error| {
+        CliDiagnosticFailure::single(
+            path.to_string_lossy(),
+            "",
+            diagnostics::CompileError::new(error.message, Span::default()),
+            diagnostics::DiagnosticPhase::Import,
+        )
+    })?;
     collect_modules_detailed_with_session(path, &session)
 }
 
@@ -3000,7 +3056,7 @@ pub(crate) fn collect_modules_detailed_with_session(
     let mut processed = HashSet::new();
     let mut dependency_edges: HashMap<String, HashSet<String>> = HashMap::new();
     let mut incan_source_stdlib_module_paths: HashMap<String, PathBuf> = HashMap::new();
-    let compiling_sdk_provider = env::var_os(INTERNAL_SDK_PROVIDER_BUILD_ENV).is_some();
+    let compiling_sdk_provider = env::var_os(SDK_PROVIDER_BUILD_ENV).is_some();
     let stdlib_module_segments = |module_path: &[String]| {
         if compiling_sdk_provider {
             module_path.iter().skip(1).cloned().collect()
@@ -3751,16 +3807,57 @@ mod tests {
 
     #[test]
     fn explicit_sdk_selection_rejects_legacy_inventoryless_toolchains() -> Result<(), Box<dyn std::error::Error>> {
-        let manifest = ProjectManifest::from_str(
+        let project = tempfile::tempdir()?;
+        let manifest_path = project.path().join("incan.toml");
+        fs::write(
+            &manifest_path,
             "[project]\nname = \"demo\"\n\n[sdk]\nprofile = \"minimal\"\n",
-            Path::new("/workspace/incan.toml"),
         )?;
+        let manifest = ProjectManifest::load(&manifest_path)?;
         let error = validate_component_inventory_selection(Some(&manifest), None, None)
             .err()
             .ok_or("expected explicit SDK selection to require an inventory")?;
 
         assert!(error.message.contains("no component inventory"));
+        assert!(
+            error.message.contains("incan.toml:4:1"),
+            "expected the explicit SDK table location, got: {}",
+            error.message
+        );
         assert!(validate_component_inventory_selection(None, None, None).is_ok());
+        Ok(())
+    }
+
+    #[test]
+    fn sdk_selection_errors_retain_manifest_or_command_provenance() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let manifest_path = project.path().join("incan.toml");
+        fs::write(
+            &manifest_path,
+            "[project]\nname = \"demo\"\n\n[sdk]\nprofile = \"minimal\"\ncomponents = [\"stdlib-web\"]\n",
+        )?;
+        let manifest = ProjectManifest::load(&manifest_path)?;
+        let selection = SdkComponentSelection::from_manifest(Some(&manifest));
+        let component_error = SdkResolutionError::UnknownComponent {
+            component: "stdlib-web".to_string(),
+            sdk_identity: "incan@0.5.0".to_string(),
+        };
+
+        let rendered = format_sdk_selection_error(&component_error, &selection, Some(&manifest), None);
+        assert!(
+            rendered.contains("incan.toml:6:15"),
+            "expected exact SDK component location, got: {rendered}"
+        );
+
+        let profile_error = SdkResolutionError::UnknownProfile {
+            profile: "tiny".to_string(),
+            sdk_identity: "incan@0.5.0".to_string(),
+        };
+        let rendered = format_sdk_selection_error(&profile_error, &selection, Some(&manifest), Some("tiny"));
+        assert!(
+            rendered.contains("current command's `--sdk-profile` override"),
+            "expected transient profile provenance, got: {rendered}"
+        );
         Ok(())
     }
 

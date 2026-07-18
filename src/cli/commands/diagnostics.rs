@@ -116,7 +116,7 @@ pub(crate) fn check_path_report_with_selections(
     let project_root = resolve_project_root(&normalized_path);
     let manifest = compilation_session.manifest.clone();
     let library_manifest_index = compilation_session.library_manifest_index.clone();
-    let provider_plan = compilation_session.provider_plan_for_modules(&modules, true)?;
+    let provider_plan = compilation_session.provider_plan_for_modules(&modules)?;
     #[cfg(feature = "rust_inspect")]
     let project_name = manifest
         .as_ref()

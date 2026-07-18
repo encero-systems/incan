@@ -86,4 +86,6 @@ Release packaging copies only the selected, relocatable provider seed into `shar
 
 `incan.lock` format 2 records the expanded SDK component selection, exact provider identities and digests, public feature closure and activation reasons, dependency feature edges, and implementation-facet closure that can affect checking or generated output. `--locked` rejects semantic drift; `--frozen` adds the existing offline and no-mutation policy. Neither mode downloads a missing component.
 
+Inside an RFC 077 workspace, the canonical root lock keeps one member-attributed semantic graph for every project. `incan workspace inspect` exposes those locked member roots, feature closures, SDK profiles, component selections, and provider facts in both its human summary and JSON projection instead of flattening them into one ambient workspace-wide selection.
+
 See [Project configuration](project_configuration.md) for manifest syntax and [Conditional compilation](../../language/reference/conditional_compilation.md) for `when feature(...)` source projection.

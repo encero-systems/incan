@@ -742,6 +742,7 @@ fn prepare_isolated_source_module_batch(
             Some(library_imported_vocab),
             Some(library_imported_dsl_surfaces),
             Some(library_manifest_index),
+            compilation_session.provider_plan.as_ref(),
         )? {
             deferred_dependencies.push(dependency);
         }
@@ -3055,6 +3056,7 @@ pub(super) fn run_file_tests_batch(
             Some(&library_imported_vocab),
             Some(&library_imported_dsl_surfaces),
             Some(&library_manifest_index),
+            compilation_session.provider_plan.as_ref(),
         ) {
             Ok(m) => m,
             Err(e) => {
@@ -3221,40 +3223,12 @@ pub(super) fn run_file_tests_batch(
             }
         }
 
-        let sdk_inventory = match common::prepare_or_discover_sdk_inventory() {
-            Ok(inventory) => inventory,
+        let provider_plan = match compilation_session.provider_plan_for_modules(&lock_dependency_modules) {
+            Ok(plan) => plan,
             Err(error) => {
                 return tests
                     .iter()
                     .map(|test| (test.clone(), TestResult::Failed(start.elapsed(), error.message.clone())))
-                    .collect();
-            }
-        };
-        let sdk_components = match sdk_inventory
-            .as_ref()
-            .map(|inventory| inventory.resolve(&compilation_session.sdk_selection))
-            .transpose()
-        {
-            Ok(components) => components,
-            Err(error) => {
-                return tests
-                    .iter()
-                    .map(|test| (test.clone(), TestResult::Failed(start.elapsed(), error.to_string())))
-                    .collect();
-            }
-        };
-        let provider_plan = match ProviderPlan::from_resolved_inputs(
-            library_manifest_index.clone(),
-            compilation_session.package_feature_plan.as_ref(),
-            sdk_inventory.as_deref(),
-            sdk_components.as_ref(),
-            common::provider_used_module_paths(&lock_dependency_modules),
-        ) {
-            Ok(plan) => Arc::new(plan),
-            Err(error) => {
-                return tests
-                    .iter()
-                    .map(|test| (test.clone(), TestResult::Failed(start.elapsed(), error.to_string())))
                     .collect();
             }
         };
@@ -3288,8 +3262,8 @@ pub(super) fn run_file_tests_batch(
         }
         let semantic = match semantic_lock_state(
             &project_root,
-            sdk_inventory.as_deref(),
-            sdk_components.as_ref(),
+            compilation_session.sdk_inventory.as_deref(),
+            compilation_session.sdk_components.as_ref(),
             compilation_session.package_feature_plan.as_ref(),
             &provider_plan,
         ) {

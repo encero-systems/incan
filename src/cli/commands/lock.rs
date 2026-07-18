@@ -26,15 +26,17 @@ use crate::lockfile::{
     workspace_semantic_lock_state,
 };
 use crate::manifest::{DependencySpec, ProjectManifest};
-use crate::provider::{FeatureSelection, PackageFeaturePlan, ProviderPlan, SdkComponentSelection};
+use crate::provider::{
+    FeatureSelection, PackageFeaturePlan, ProviderPlan, SDK_PROVIDER_BUILD_ENV, SdkComponentSelection,
+};
 use crate::workspace::WorkspaceGraph;
 
 use super::common::{
-    CargoPolicy, INTERNAL_CARGO_LOCK_PAYLOAD_PATH_ENV, INTERNAL_SDK_PROVIDER_BUILD_ENV, ProjectRequirements,
-    build_source_map, cargo_command_flags, cargo_lockfile_flags, collect_modules, collect_project_requirements,
-    collect_rust_dependency_uses, enforce_project_toolchain_constraint, extend_lock_requirements_with_provider_plan,
-    format_dependency_error, merge_project_requirement_dependencies, merge_project_requirements,
-    merge_resolved_dependencies, prepare_or_discover_sdk_inventory, provider_used_module_paths,
+    CargoPolicy, INTERNAL_CARGO_LOCK_PAYLOAD_PATH_ENV, ProjectRequirements, build_source_map, cargo_command_flags,
+    cargo_lockfile_flags, collect_modules, collect_project_requirements, collect_rust_dependency_uses,
+    enforce_project_toolchain_constraint, extend_lock_requirements_with_provider_plan, format_dependency_error,
+    merge_project_requirement_dependencies, merge_project_requirements, merge_resolved_dependencies,
+    prepare_or_discover_sdk_inventory, provider_used_module_paths, resolve_sdk_component_selection,
 };
 #[cfg(feature = "rust_inspect")]
 use super::common::{collect_rust_inspect_query_paths, ensure_rust_inspect_workspace, prewarm_rust_inspect_workspace};
@@ -363,7 +365,7 @@ pub(crate) fn resolve_lock_payload(request: LockResolutionRequest<'_>) -> CliRes
         return Ok(None);
     }
 
-    if std::env::var_os(INTERNAL_SDK_PROVIDER_BUILD_ENV).is_some()
+    if std::env::var_os(SDK_PROVIDER_BUILD_ENV).is_some()
         && let Some(payload) = cargo_lock_payload_override(
             std::env::var_os(INTERNAL_CARGO_LOCK_PAYLOAD_PATH_ENV)
                 .filter(|path| !path.is_empty())
@@ -849,24 +851,35 @@ fn collect_project_lock_context(
         modules.extend(collect_modules(&entry_path.to_string_lossy())?);
     }
 
-    let test_inputs = collect_test_lock_inputs(
-        manifest.project_root(),
-        Some(&library_imported_vocab),
-        Some(&library_imported_dsl_surfaces),
-        Some(&library_manifest_index),
-    )?;
-
-    let mut project_requirement_modules = modules.clone();
-    project_requirement_modules.extend(test_inputs.project_requirement_modules);
-    let mut project_requirements = collect_project_requirements(&project_requirement_modules, &library_manifest_index)?;
     let sdk_inventory = prepare_or_discover_sdk_inventory()?;
     let sdk_selection =
         SdkComponentSelection::from_manifest_with_profile_override(Some(manifest), sdk_profile_override);
     let sdk_components = sdk_inventory
         .as_ref()
-        .map(|inventory| inventory.resolve(&sdk_selection))
-        .transpose()
-        .map_err(|error| CliError::failure(error.to_string()))?;
+        .map(|inventory| {
+            resolve_sdk_component_selection(inventory, &sdk_selection, Some(manifest), sdk_profile_override, true)
+        })
+        .transpose()?;
+    let provider_catalog = ProviderPlan::from_resolved_inputs(
+        library_manifest_index.clone(),
+        Some(&package_feature_plan),
+        sdk_inventory.as_deref(),
+        sdk_components.as_ref(),
+        std::iter::empty(),
+    )
+    .map_err(|error| CliError::failure(error.to_string()))?;
+
+    let test_inputs = collect_test_lock_inputs(
+        manifest.project_root(),
+        Some(&library_imported_vocab),
+        Some(&library_imported_dsl_surfaces),
+        Some(&library_manifest_index),
+        &provider_catalog,
+    )?;
+
+    let mut project_requirement_modules = modules.clone();
+    project_requirement_modules.extend(test_inputs.project_requirement_modules);
+    let mut project_requirements = collect_project_requirements(&project_requirement_modules, &library_manifest_index)?;
     let provider_plan = ProviderPlan::from_resolved_inputs(
         library_manifest_index.clone(),
         Some(&package_feature_plan),
@@ -1495,6 +1508,7 @@ fn collect_test_lock_inputs(
     library_imported_vocab: Option<&parser::ImportedLibraryVocab>,
     library_imported_dsl_surfaces: Option<&parser::ImportedLibraryDslSurfaces>,
     library_manifest_index: Option<&LibraryManifestIndex>,
+    provider_plan: &ProviderPlan,
 ) -> CliResult<TestLockInputs> {
     let mut inline_imports = Vec::new();
     let mut project_requirement_modules = Vec::new();
@@ -1546,6 +1560,7 @@ fn collect_test_lock_inputs(
             library_imported_vocab,
             library_imported_dsl_surfaces,
             library_manifest_index,
+            provider_plan,
         )
         .map_err(CliError::failure)?;
         for module in &source_modules {
@@ -1704,7 +1719,7 @@ mod tests {
             "from internal import SessionContext\nfrom rust::tokio @ \"1\" import spawn\n",
         )?;
 
-        let inputs = collect_test_lock_inputs(project_root, None, None, None)?;
+        let inputs = collect_test_lock_inputs(project_root, None, None, None, &ProviderPlan::default())?;
         let imports = inputs.inline_imports;
         let tokio = imports
             .iter()

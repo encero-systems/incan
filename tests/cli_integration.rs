@@ -713,6 +713,18 @@ itoa = "1"
             vec!["default".to_string(), "zebra".to_string()]
         ]
     );
+    let inspect_output = run_incan(
+        &root.path().join("packages/alpha"),
+        &["workspace", "inspect", "--format", "json", "--workspace"],
+    )?;
+    assert_success(&inspect_output, "workspace inspect after semantic lock publication");
+    let inspect_report = parse_json_stdout(&inspect_output)?;
+    assert_eq!(
+        inspect_report["lock"]["state"]["semantic"]["workspace_members"]
+            .as_array()
+            .map(Vec::len),
+        Some(2)
+    );
     assert!(
         !root.path().join("packages/alpha/incan.lock").exists()
             && !root.path().join("packages/zebra/incan.lock").exists(),

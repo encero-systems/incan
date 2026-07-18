@@ -14,9 +14,7 @@ use crate::provider::{
     ProviderProvenance,
 };
 
-use super::common::{
-    CompilationSession, collect_modules_detailed_with_session, prepare_or_discover_sdk_inventory, resolve_project_root,
-};
+use super::common::{CompilationSession, collect_modules_detailed_with_session, resolve_project_root};
 
 /// Human or JSON output for provider and feature inspection.
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
@@ -112,15 +110,12 @@ pub fn inspect_providers(
     sdk_profile_override: Option<&str>,
 ) -> CliResult<ExitCode> {
     let context = inspection_context(path, feature_selection, sdk_profile_override)?;
-    let inventory = prepare_or_discover_sdk_inventory()?;
-    let resolved_components = inventory
+    let provider_plan = context.session.provider_plan_for_modules(&context.modules)?;
+    let sdk = context
+        .session
+        .sdk_inventory
         .as_ref()
-        .map(|inventory| inventory.resolve_catalog(&context.session.sdk_selection))
-        .transpose()
-        .map_err(|error| CliError::failure(error.to_string()))?;
-    let provider_plan = context.session.provider_plan_for_modules(&context.modules, true)?;
-    let sdk = inventory
-        .zip(resolved_components)
+        .zip(context.session.sdk_components.as_ref())
         .map(|(inventory, resolved)| SdkReport {
             identity: inventory.identity(),
             profile: resolved.profile.clone(),
@@ -155,7 +150,7 @@ pub fn inspect_features(
     sdk_profile_override: Option<&str>,
 ) -> CliResult<ExitCode> {
     let context = inspection_context(path, feature_selection, sdk_profile_override)?;
-    let provider_plan = context.session.provider_plan_for_modules(&context.modules, true)?;
+    let provider_plan = context.session.provider_plan_for_modules(&context.modules)?;
     let packages = context
         .session
         .package_feature_plan

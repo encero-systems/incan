@@ -614,6 +614,8 @@ If `FILE` is omitted, uses the `[project.scripts].main` entry from `incan.toml`.
 
 Inside a workspace, `incan lock` always resolves every member's effective dependencies and publishes the one canonical root `incan.lock`, even when invoked from one member. It does not create or consume member-local locks. Cooperative publishers serialize generation and publication with a stable sibling advisory lock and replace the completed root lock atomically after synchronizing its staged contents.
 
+Because the lock refresh covers every member, command-local `--features`, `--no-default-features`, `--all-features`, and `--sdk-profile` selections apply to every member projection in that refresh. A requested public feature must therefore be declared by each workspace member; use member manifests for different persistent per-member selections.
+
 Options:
 
 - `--features <FEATURES>`: Add public Incan features to the root package's locked projection.
@@ -654,7 +656,7 @@ Options:
 - `--workspace`: Select every workspace member for the projected command scope.
 - `--member <NAME_OR_PATH>`: Select one or more named or root-relative members.
 
-The JSON projection includes canonical root and manifest paths, ordered members and root-member status, defaults and exclusions, the selection origin, shared declarations, effective inherited dependency provenance, explicit workspace environment extensions, root-lock state, stale member-local locks, and configuration that is reserved for later policy or source evaluation. Workspace capability application is intentionally reported as member-local only.
+The JSON projection includes canonical root and manifest paths, ordered members and root-member status, defaults and exclusions, the selection origin, shared declarations, effective inherited dependency provenance, explicit workspace environment extensions, root-lock state, the locked feature/component/provider graph for every member, stale member-local locks, and configuration that is reserved for later policy or source evaluation. Workspace capability application is intentionally reported as member-local only.
 
 Examples:
 

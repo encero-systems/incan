@@ -74,7 +74,7 @@ pub struct SemanticLockState {
     pub feature_edges: Vec<LockedFeatureEdge>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub providers: Vec<LockedProvider>,
-    #[serde(rename = "workspace-members", default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub workspace_members: Vec<LockedWorkspaceMember>,
 }
 

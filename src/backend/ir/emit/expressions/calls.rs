@@ -15,6 +15,7 @@ use super::super::super::types::IrType;
 use super::super::super::{FunctionRegistry, FunctionSignature};
 use super::super::{EmitError, IrEmitter};
 use crate::frontend::ast::ParamKind;
+use crate::provider::SDK_PROVIDER_BUILD_ENV;
 use incan_core::lang::stdlib;
 use incan_core::lang::surface::constructors::{self, ConstructorId};
 
@@ -1220,7 +1221,7 @@ impl<'a> IrEmitter<'a> {
         let Some(function_name) = canonical_path.last() else {
             return Ok(None);
         };
-        let compiling_sdk_provider = std::env::var_os("INCAN_INTERNAL_SDK_PROVIDER_BUILD").is_some();
+        let compiling_sdk_provider = std::env::var_os(SDK_PROVIDER_BUILD_ENV).is_some();
         // Private stdlib helpers are implementation details of the artifact. They remain addressable only while
         // compiling that artifact itself; consumer code must never acquire a cross-crate path to an underscored
         // source helper merely because its enclosing module is compiled.

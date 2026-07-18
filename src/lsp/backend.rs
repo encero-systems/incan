@@ -285,7 +285,7 @@ impl IncanLanguageServer {
         typecheck_modules.extend(typecheck_deps.iter().cloned());
         let provider_plan = match compilation_session
             .as_ref()
-            .map(|session| session.provider_plan_for_modules(&typecheck_modules, true))
+            .map(|session| session.provider_plan_for_modules(&typecheck_modules))
             .unwrap_or_else(|| Ok(Arc::new(ProviderPlan::default())))
         {
             Ok(plan) => plan,
@@ -1017,7 +1017,7 @@ def use_it(x: Serialize) -> None:
         std::fs::create_dir_all(tmp.path().join("src"))?;
         std::fs::write(&module.file_path, source)?;
         let session = CompilationSession::discover_with_feature_selection(&module.file_path, &Default::default())?;
-        let provider_plan = session.provider_plan_for_modules(std::slice::from_ref(&module), true)?;
+        let provider_plan = session.provider_plan_for_modules(std::slice::from_ref(&module))?;
 
         let (out_dir, _query_paths) =
             prepare_lsp_rust_inspect_workspace(&manifest, &[module], &LibraryManifestIndex::default(), &provider_plan)

@@ -26,6 +26,7 @@ use crate::frontend::ast::TypeConstraintKey;
 use crate::frontend::symbols::{
     NewtypePrimitiveConstraint, overload_emitted_name_prefix, overload_source_name_from_emitted,
 };
+use crate::provider::SDK_PROVIDER_BUILD_ENV;
 use incan_core::lang::surface::result_methods::ResultMethodId;
 use incan_core::lang::types::numerics::{self, NumericFamily};
 use incan_core::lang::{conventions, magic_methods, stdlib as core_stdlib, trait_capabilities};
@@ -42,8 +43,6 @@ use super::super::stmt::AssignTarget;
 use super::super::types::{IR_UNION_TYPE_NAME, IrType};
 use super::super::{FunctionRegistry, FunctionSignature, IrDecl, IrProgram, IrStmt, IrStmtKind, TypedExpr};
 use super::{CallableNameUseFacts, EmitError, GeneratedUseAnalysis, IrEmitter};
-
-const SDK_PROVIDER_BUILD_ENV: &str = "INCAN_INTERNAL_SDK_PROVIDER_BUILD";
 
 struct OrdinalValueEnumBridgeSpec {
     type_path: TokenStream,

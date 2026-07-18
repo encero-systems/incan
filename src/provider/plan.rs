@@ -15,6 +15,7 @@ use crate::library_manifest::{
     digest_provider_artifact,
 };
 
+use super::features::feature_value_location;
 use super::{PackageFeaturePlan, ResolvedSdkComponents, SdkInventory};
 
 /// Stable identity of one immutable compiled-provider projection.
@@ -222,10 +223,16 @@ pub enum ProviderPlanError {
         message: String,
     },
     /// A package feature requires a component that is not enabled by the project SDK selection.
-    #[error("package `{package}` feature projection requires disabled SDK component `{component}`")]
+    #[error(
+        "package `{package}` feature projection in {manifest_path}{location} requires disabled SDK component `{component}`"
+    )]
     RequiredComponentDisabled {
         /// Package that owns the active feature requirement.
         package: String,
+        /// Exact source manifest or checked provider artifact that introduced the requirement.
+        manifest_path: PathBuf,
+        /// Exact source location when the requirement came from an available project manifest.
+        location: String,
         /// SDK component that must be selected explicitly.
         component: String,
     },
@@ -905,8 +912,11 @@ fn validate_package_component_requirements(
             .iter()
             .find(|component| !components.enabled.contains(*component))
         {
+            let candidates = [component.clone()];
             return Err(ProviderPlanError::RequiredComponentDisabled {
                 package: package.package_name.clone(),
+                manifest_path: package.feature_manifest_path.clone(),
+                location: feature_value_location(&package.feature_manifest_path, None, &candidates),
                 component: component.clone(),
             });
         }
@@ -1079,6 +1089,7 @@ mod tests {
     use super::*;
     use crate::frontend::library_manifest_index::LibraryManifestIndex;
     use crate::library_manifest::LibraryManifest;
+    use crate::manifest::ProjectManifest;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -1234,6 +1245,35 @@ mod tests {
         ));
         assert!(!plan.bootstrap_owns_sdk_module(&path(&["std", "result"])));
         assert_eq!(plan.bootstrap_sdk_namespace_roots().count(), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn disabled_component_requirements_point_to_the_exact_package_feature_entry() -> TestResult {
+        let project = tempfile::tempdir()?;
+        let manifest_path = project.path().join("incan.toml");
+        std::fs::write(
+            &manifest_path,
+            "[project]\nname = \"demo\"\n\n[project.features]\ndefault = []\n\n[project.features.web]\nrequires-sdk-components = [\"stdlib-web\"]\n",
+        )?;
+        let manifest = ProjectManifest::load(&manifest_path)?;
+        let features = PackageFeaturePlan::resolve(&manifest, &super::super::FeatureSelection::new(["web"]))?;
+        let components = ResolvedSdkComponents {
+            sdk_identity: "incan@0.5.0".to_string(),
+            profile: "minimal".to_string(),
+            enabled: BTreeSet::new(),
+            unavailable: BTreeSet::new(),
+            reasons: BTreeMap::new(),
+        };
+
+        let error = validate_package_component_requirements(&features, &components)
+            .err()
+            .ok_or("expected a disabled SDK component requirement")?;
+
+        assert!(
+            error.to_string().contains("incan.toml:8:28"),
+            "expected exact package-feature component location, got: {error}"
+        );
         Ok(())
     }
 

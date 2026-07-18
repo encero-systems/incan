@@ -157,6 +157,8 @@ pub struct ResolvedPackageFeatureState {
     pub package_name: String,
     /// Canonical or manifest-resolved project root used for graph identity.
     pub project_root: PathBuf,
+    /// Exact source manifest or checked provider artifact that defined this package feature graph.
+    pub feature_manifest_path: PathBuf,
     /// Parsed project manifest when source is available; installed providers resolve from their checked artifact.
     pub manifest: Option<ProjectManifest>,
     /// Active feature and optional-dependency projection.
@@ -392,6 +394,7 @@ impl PackageFeaturePlan {
                     ResolvedPackageFeatureState {
                         package_name: package_name.clone(),
                         project_root: project_root.clone(),
+                        feature_manifest_path: artifact_path.clone(),
                         manifest: None,
                         features: resolved,
                         active_dependencies,
@@ -509,6 +512,7 @@ impl PackageFeaturePlan {
                 ResolvedPackageFeatureState {
                     package_name: package_name.clone(),
                     project_root: project_root.clone(),
+                    feature_manifest_path: manifest.path().to_path_buf(),
                     manifest: Some(manifest.clone()),
                     features: resolved.clone(),
                     active_dependencies: active_dependencies.clone(),
@@ -689,10 +693,15 @@ fn manifest_package_name(manifest: &ProjectManifest, project_root: &Path) -> Str
 
 /// Locate the exact authored feature member responsible for one graph failure when it came from the manifest.
 fn feature_error_location(path: &Path, error: &FeatureGraphError) -> String {
+    let (owner, candidates) = feature_error_anchor(error);
+    feature_value_location(path, owner, &candidates)
+}
+
+/// Locate one authored package-feature value in its source manifest, when source is available.
+pub(crate) fn feature_value_location(path: &Path, owner: Option<&str>, candidates: &[String]) -> String {
     let Ok(content) = fs::read_to_string(path) else {
         return String::new();
     };
-    let (owner, candidates) = feature_error_anchor(error);
     let mut section = String::new();
     let mut compact_owner_active = false;
     for (line_index, line) in content.lines().enumerate() {
@@ -716,7 +725,7 @@ fn feature_error_location(path: &Path, error: &FeatureGraphError) -> String {
         if !in_owner_section {
             continue;
         }
-        for candidate in &candidates {
+        for candidate in candidates {
             let quoted = format!("\"{candidate}\"");
             if let Some(column) = line.find(&quoted) {
                 return format!(":{}:{}", line_index + 1, column + 1);

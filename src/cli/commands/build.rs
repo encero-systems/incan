@@ -38,7 +38,9 @@ use crate::library_manifest::{
 };
 use crate::lockfile::{CargoFeatureSelection, semantic_lock_state};
 use crate::manifest::ProjectManifest;
-use crate::provider::{FeatureSelection, PackageFeatureGraph, PackageFeaturePlan, ProviderPlan, SdkComponentSelection};
+use crate::provider::{
+    FeatureSelection, PackageFeatureGraph, PackageFeaturePlan, ProviderPlan, SDK_PROVIDER_BUILD_ENV,
+};
 
 use super::build_report::{
     BuildReportDraft, BuildReportMode, BuildReportOptions, BuildReportProject, RustInspectionFormat, SourceFileReport,
@@ -49,11 +51,10 @@ use super::build_report::{
 use super::common::collect_rust_inspect_query_paths;
 use super::common::{
     CargoPolicy, INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, ProjectRequirements, build_source_map, cargo_command_flags,
-    collect_modules_with_feature_selection, collect_project_requirements, collect_rust_dependency_uses,
-    discover_effective_project_manifest, enforce_project_toolchain_constraint, extend_requirements_with_provider_plan,
-    format_dependency_error, imported_module_deps_for_with_index, merge_project_requirement_dependencies,
-    module_key_index, prepare_or_discover_sdk_inventory, provider_used_module_paths, resolve_project_root,
-    resolve_source_root, typecheck_modules_with_import_graph, validate_output_dir,
+    collect_project_requirements, collect_rust_dependency_uses, discover_effective_project_manifest,
+    enforce_project_toolchain_constraint, extend_requirements_with_provider_plan, format_dependency_error,
+    imported_module_deps_for_with_index, merge_project_requirement_dependencies, module_key_index,
+    resolve_project_root, resolve_source_root, typecheck_modules_with_import_graph, validate_output_dir,
 };
 use super::lock::{
     GeneratedLibraryDependencyPreheatRequest, LockResolutionRequest, resolve_lock_payload,
@@ -780,13 +781,19 @@ fn prepare_project_with_options(
     };
     let path = normalized_file_path.as_path();
     let inferred_project_root = resolve_project_root(path);
-    let manifest = discover_effective_project_manifest(&inferred_project_root)?;
+    let compilation_session = super::common::CompilationSession::discover_with_selections(
+        path,
+        package_features,
+        options.sdk_profile_override,
+    )?;
+    let manifest = compilation_session.manifest.clone();
     if let Some(manifest) = manifest.as_ref() {
         enforce_project_toolchain_constraint(manifest)?;
     }
 
-    let normalized_file_path_str = normalized_file_path.to_string_lossy().to_string();
-    let modules = collect_modules_with_feature_selection(&normalized_file_path_str, package_features)?;
+    let modules =
+        super::common::collect_modules_detailed_with_session(normalized_file_path.clone(), &compilation_session)
+            .map_err(|failure| CliError::failure(failure.render_human()))?;
     let rust_extern_contexts = collect_rust_extern_contexts(&modules);
 
     let Some(main_module) = modules.last() else {
@@ -798,70 +805,16 @@ fn prepare_project_with_options(
         .as_ref()
         .map(|manifest| manifest.project_root().to_path_buf())
         .unwrap_or(inferred_project_root);
-    let package_feature_plan = manifest
-        .as_ref()
-        .map(|manifest| PackageFeaturePlan::resolve(manifest, package_features))
-        .transpose()
-        .map_err(|error| CliError::failure(error.to_string()))?;
-    let active_dependencies = package_feature_plan
-        .as_ref()
-        .and_then(|plan| plan.package(&project_root))
-        .map(|package| package.active_dependencies.clone())
-        .unwrap_or_default();
-    let library_manifest_index = manifest
-        .as_ref()
-        .map(|manifest| {
-            LibraryManifestIndex::from_project_manifest_dependencies(
-                manifest,
-                active_dependencies.iter().map(String::as_str),
-            )
-        })
-        .unwrap_or_default();
+    let package_feature_plan = compilation_session.package_feature_plan.clone();
+    let library_manifest_index = compilation_session.library_manifest_index.clone();
     let mut project_requirements = collect_project_requirements(&modules, &library_manifest_index)?;
-    let provider_used_modules = provider_used_module_paths(&modules);
-    let sdk_inventory = prepare_or_discover_sdk_inventory()?;
-    let sdk_selection =
-        SdkComponentSelection::from_manifest_with_profile_override(manifest.as_ref(), options.sdk_profile_override);
-    let sdk_components = sdk_inventory
-        .as_ref()
-        .map(|inventory| inventory.resolve(&sdk_selection))
-        .transpose()
-        .map_err(|error| CliError::failure(error.to_string()))?;
-    let bootstrap_sdk_namespace_roots = super::common::sdk_provider_bootstrap_namespace_roots(&project_root)?;
-    let (provider_plan, compiled_sdk_modules) =
-        if let (Some(inventory), Some(components)) = (sdk_inventory.as_ref(), sdk_components.as_ref()) {
-            let plan = Arc::new(
-                ProviderPlan::from_resolved_inputs(
-                    library_manifest_index.clone(),
-                    package_feature_plan.as_ref(),
-                    Some(inventory),
-                    Some(components),
-                    provider_used_modules.clone(),
-                )
-                .map_err(|error| CliError::failure(error.to_string()))?
-                .with_bootstrap_sdk_namespace_roots(bootstrap_sdk_namespace_roots.clone()),
-            );
-            let modules = CompiledSdkModules::from_provider_plan(&plan);
-            (plan, modules)
-        } else {
-            let plan = Arc::new(
-                ProviderPlan::from_resolved_inputs(
-                    library_manifest_index.clone(),
-                    package_feature_plan.as_ref(),
-                    None,
-                    None,
-                    std::iter::empty(),
-                )
-                .map_err(|error| CliError::failure(error.to_string()))?
-                .with_bootstrap_sdk_namespace_roots(bootstrap_sdk_namespace_roots),
-            );
-            (plan, CompiledSdkModules::default())
-        };
+    let provider_plan = compilation_session.provider_plan_for_modules(&modules)?;
+    let compiled_sdk_modules = CompiledSdkModules::from_provider_plan(&provider_plan);
     extend_requirements_with_provider_plan(&mut project_requirements, &provider_plan)?;
     let semantic = semantic_lock_state(
         &project_root,
-        sdk_inventory.as_deref(),
-        sdk_components.as_ref(),
+        compilation_session.sdk_inventory.as_deref(),
+        compilation_session.sdk_components.as_ref(),
         package_feature_plan.as_ref(),
         &provider_plan,
     )
@@ -1022,7 +975,7 @@ fn prepare_project_with_options(
         mode: BuildReportMode::Executable,
         profile: "release".to_string(),
         project: manifest_project_report(manifest.as_ref(), project_name.as_str(), &project_root),
-        entrypoint: Some(normalized_file_path_str.clone()),
+        entrypoint: Some(normalized_file_path.to_string_lossy().to_string()),
         library_root: None,
         source_files: source_file_report(&modules),
         generated: generated_project_report(
@@ -1038,8 +991,8 @@ fn prepare_project_with_options(
             project_requirements.stdlib_features.clone(),
         ),
         semantic: semantic_report(
-            sdk_inventory.as_deref(),
-            sdk_components.as_ref(),
+            compilation_session.sdk_inventory.as_deref(),
+            compilation_session.sdk_components.as_ref(),
             package_feature_plan.as_ref(),
             &provider_plan,
         ),
@@ -1201,9 +1154,14 @@ fn prepare_library_project(
     enforce_project_toolchain_constraint(&manifest)?;
 
     let lib_entry = validate_library_entrypoint(&manifest)?;
-    let lib_entry_str = lib_entry.to_string_lossy().to_string();
-    let modules = collect_modules_with_feature_selection(&lib_entry_str, package_features)?;
-    let provider_metadata_modules = collect_unprojected_provider_modules(&lib_entry, package_features)?;
+    let compilation_session = super::common::CompilationSession::discover_with_selections(
+        &lib_entry,
+        package_features,
+        sdk_profile_override,
+    )?;
+    let modules = super::common::collect_modules_detailed_with_session(lib_entry.clone(), &compilation_session)
+        .map_err(|failure| CliError::failure(failure.render_human()))?;
+    let provider_metadata_modules = collect_unprojected_provider_modules(&lib_entry, &compilation_session)?;
 
     let Some(lib_module) = modules.last() else {
         return Err(CliError::failure("No modules found for library build"));
@@ -1219,61 +1177,19 @@ fn prepare_library_project(
 
     let requirements_start = Instant::now();
     let declared = manifest.declared_rust_crate_names();
-    let package_feature_plan = PackageFeaturePlan::resolve(&manifest, package_features)
-        .map_err(|error| CliError::failure(error.to_string()))?;
-    let active_dependencies = package_feature_plan
-        .package(&project_root)
-        .map(|package| package.active_dependencies.clone())
-        .unwrap_or_default();
-    let library_manifest_index = LibraryManifestIndex::from_project_manifest_dependencies(
-        &manifest,
-        active_dependencies.iter().map(String::as_str),
-    );
+    let package_feature_plan = compilation_session
+        .package_feature_plan
+        .clone()
+        .ok_or_else(|| CliError::failure("library compilation session is missing its package feature graph"))?;
+    let library_manifest_index = compilation_session.library_manifest_index.clone();
     let mut project_requirements = collect_project_requirements(&modules, &library_manifest_index)?;
-    let provider_used_modules = provider_used_module_paths(&modules);
-    let sdk_inventory = prepare_or_discover_sdk_inventory()?;
-    let sdk_selection =
-        SdkComponentSelection::from_manifest_with_profile_override(Some(&manifest), sdk_profile_override);
-    let sdk_components = sdk_inventory
-        .as_ref()
-        .map(|inventory| inventory.resolve(&sdk_selection))
-        .transpose()
-        .map_err(|error| CliError::failure(error.to_string()))?;
-    let bootstrap_sdk_namespace_roots = super::common::sdk_provider_bootstrap_namespace_roots(&project_root)?;
-    let (provider_plan, compiled_sdk_modules) =
-        if let (Some(inventory), Some(components)) = (sdk_inventory.as_ref(), sdk_components.as_ref()) {
-            let plan = Arc::new(
-                ProviderPlan::from_resolved_inputs(
-                    library_manifest_index.clone(),
-                    Some(&package_feature_plan),
-                    Some(inventory),
-                    Some(components),
-                    provider_used_modules.clone(),
-                )
-                .map_err(|error| CliError::failure(error.to_string()))?
-                .with_bootstrap_sdk_namespace_roots(bootstrap_sdk_namespace_roots.clone()),
-            );
-            let modules = CompiledSdkModules::from_provider_plan(&plan);
-            (plan, modules)
-        } else {
-            let plan = Arc::new(
-                ProviderPlan::from_resolved_inputs(
-                    library_manifest_index.clone(),
-                    Some(&package_feature_plan),
-                    None,
-                    None,
-                    std::iter::empty(),
-                )
-                .map_err(|error| CliError::failure(error.to_string()))?
-                .with_bootstrap_sdk_namespace_roots(bootstrap_sdk_namespace_roots),
-            );
-            (plan, CompiledSdkModules::default())
-        };
+    let provider_plan = compilation_session.provider_plan_for_modules(&modules)?;
+    let compiled_sdk_modules = CompiledSdkModules::from_provider_plan(&provider_plan);
     extend_requirements_with_provider_plan(&mut project_requirements, &provider_plan)?;
     let semantic = semantic_lock_state(
         &project_root,
-        sdk_inventory.as_deref(),
-        sdk_components.as_ref(),
+        compilation_session.sdk_inventory.as_deref(),
+        compilation_session.sdk_components.as_ref(),
         Some(&package_feature_plan),
         &provider_plan,
     )
@@ -1580,7 +1496,7 @@ fn prepare_library_project(
         mode: BuildReportMode::Library,
         profile: "release".to_string(),
         project: manifest_project_report(Some(&manifest), project_name.as_str(), &project_root),
-        entrypoint: Some(lib_entry_str.clone()),
+        entrypoint: Some(lib_entry.to_string_lossy().to_string()),
         library_root: Some(project_root.to_string_lossy().to_string()),
         source_files: source_file_report(&modules),
         generated: generated_project_report(
@@ -1596,8 +1512,8 @@ fn prepare_library_project(
             project_requirements.stdlib_features.clone(),
         ),
         semantic: semantic_report(
-            sdk_inventory.as_deref(),
-            sdk_components.as_ref(),
+            compilation_session.sdk_inventory.as_deref(),
+            compilation_session.sdk_components.as_ref(),
             Some(&package_feature_plan),
             &provider_plan,
         ),
@@ -1887,10 +1803,8 @@ fn relative_provider_artifact_path(from: &Path, to: &Path) -> CliResult<String> 
 /// without reparsing provider source.
 fn collect_unprojected_provider_modules(
     library_entrypoint: &Path,
-    feature_selection: &FeatureSelection,
+    session: &super::common::CompilationSession,
 ) -> CliResult<Vec<ParsedModule>> {
-    let session =
-        super::common::CompilationSession::discover_with_feature_selection(library_entrypoint, feature_selection)?;
     let mut pending = vec![(
         library_entrypoint.to_path_buf(),
         "main".to_string(),
@@ -1946,7 +1860,7 @@ fn collect_unprojected_provider_modules(
 /// compiler-side stdlib module inventory. This bootstrap adapter can disappear once provider source can author the
 /// equivalent backend mappings directly.
 fn provider_implementation_facets(namespace_claims: &[ProviderModuleClaim]) -> Vec<ProviderImplementationFacet> {
-    if env::var_os(super::common::INTERNAL_SDK_PROVIDER_BUILD_ENV).is_none() {
+    if env::var_os(SDK_PROVIDER_BUILD_ENV).is_none() {
         return Vec::new();
     }
     let roots = namespace_claims
@@ -2016,7 +1930,7 @@ fn module_is_owned_by_dependency_provider(provider_plan: &ProviderPlan, emission
     let prefix = [incan_core::lang::stdlib::INCAN_STD_NAMESPACE.to_string()];
     let relative = if let Some(relative) = emission_path.strip_prefix(prefix.as_slice()) {
         relative
-    } else if env::var_os(super::common::INTERNAL_SDK_PROVIDER_BUILD_ENV).is_some() {
+    } else if env::var_os(SDK_PROVIDER_BUILD_ENV).is_some() {
         emission_path
     } else {
         return false;
@@ -3343,7 +3257,11 @@ pub model Nested:
             "when feature(\"missing\"):\n    pub model Nested:\n        value: int\n",
         )?;
 
-        let error = collect_unprojected_provider_modules(&entry_path, &FeatureSelection::default())
+        let session = super::super::common::CompilationSession::discover_with_feature_selection(
+            &entry_path,
+            &FeatureSelection::default(),
+        )?;
+        let error = collect_unprojected_provider_modules(&entry_path, &session)
             .err()
             .ok_or("unknown feature in inactive provider module should fail collection")?;
 

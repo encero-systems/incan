@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 use crate::compiled_sdk::CompiledSdkModules;
 use crate::manifest::DependencySpec;
-use crate::provider::ProviderPlan;
+use crate::provider::{ProviderPlan, SDK_PROVIDER_BUILD_ENV};
 use incan_core::lang::{rust_keywords, stdlib};
 use sha2::{Digest as _, Sha256};
 
@@ -54,7 +54,7 @@ fn transform_stdlib_path(path: &[String]) -> Vec<String> {
 /// bridges address those same modules through `crate::__incan_std`. Keep that compatibility namespace confined to the
 /// artifact build so ordinary user libraries do not acquire a synthetic module.
 pub(super) fn is_sdk_provider_build() -> bool {
-    std::env::var_os("INCAN_INTERNAL_SDK_PROVIDER_BUILD").is_some()
+    std::env::var_os(SDK_PROVIDER_BUILD_ENV).is_some()
 }
 
 /// Project generator for creating runnable Rust projects from Incan code.
