@@ -628,11 +628,13 @@ impl TypeChecker {
         seen_newtypes: &mut HashSet<String>,
     ) -> Option<bool> {
         match ty {
-            ResolvedType::Never
-            | ResolvedType::Unknown
-            | ResolvedType::TypeVar(_)
-            | ResolvedType::RustPath(_)
-            | ResolvedType::CallSiteInfer => Some(true),
+            ResolvedType::Never | ResolvedType::Unknown | ResolvedType::TypeVar(_) | ResolvedType::CallSiteInfer => {
+                Some(true)
+            }
+            // A Rust-backed value has no source-owned `TryFrom[str]` contract. Treating it as provisionally
+            // supported causes the compiler to synthesize an impl with an unsatisfied Rust backing bound when a
+            // source newtype wraps a host type (for example Tokio synchronization primitives).
+            ResolvedType::RustPath(_) => Some(false),
             ResolvedType::Int => Some(trait_capabilities::supports_type(capability, TraitCapabilityType::Int)),
             ResolvedType::Float => Some(trait_capabilities::supports_type(
                 capability,

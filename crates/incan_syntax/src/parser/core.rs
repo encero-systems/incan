@@ -4,8 +4,8 @@
 /// It also contains a few small internal helper types shared across the other parser chunks.
 ///
 /// ## Notes
-/// - This file is `include!`'d into `crate::parser` to keep all parser methods in a
-///   single module while avoiding a single “god file”.
+/// - This file is `include!`'d into `crate::parser` to keep all parser methods in a single module while avoiding a
+///   single “god file”.
 type FieldsAndMethods = (
     Vec<Spanned<FieldDecl>>,
     Vec<Spanned<MethodAliasDecl>>,
@@ -55,8 +55,8 @@ struct ScopedCallArgumentContext {
 /// Parser state.
 ///
 /// ## Notes
-/// - The parser is intentionally single-pass and recovers from errors where possible by
-///   synchronizing at statement/declaration boundaries.
+/// - The parser is intentionally single-pass and recovers from errors where possible by synchronizing at
+///   statement/declaration boundaries.
 /// - Most parsing helpers are implemented on `Parser` but split across multiple files.
 pub struct Parser<'a> {
     tokens: &'a [Token],
@@ -183,6 +183,36 @@ impl<'a> Parser<'a> {
                 continue;
             }
 
+            // ---- Context: compilation-unit feature projection (RFC 114) ----
+            if self.starts_feature_condition() {
+                match self.feature_conditioned_declarations(&[]) {
+                    Ok(conditioned) => {
+                        for decl in conditioned {
+                            if matches!(decl.node, Declaration::TestModule(_)) {
+                                if seen_test_module {
+                                    self.errors.push(CompileError::syntax(
+                                        "Only one `module tests:` block is allowed per file".to_string(),
+                                        decl.span,
+                                    ));
+                                }
+                                seen_test_module = true;
+                            }
+                            if !matches!(decl.node, Declaration::Docstring(_)) {
+                                seen_non_doc_decl = true;
+                            }
+                            declarations.push(decl);
+                        }
+                    }
+                    Err(error) => {
+                        self.errors.push(error);
+                        self.synchronize();
+                    }
+                }
+                self.skip_newlines();
+                self.skip_dedents();
+                continue;
+            }
+
             // ---- Context: normal declarations ----
             match self.declaration() {
                 Ok(decl) => {
@@ -221,7 +251,8 @@ impl<'a> Parser<'a> {
             })
         } else {
             // Fold non-fatal warnings into the error list so callers don't silently lose them when parsing fails.
-            // Warnings retain their `ErrorKind::Warning` kind so callers can still distinguish them from errors if needed.
+            // Warnings retain their `ErrorKind::Warning` kind so callers can still distinguish them from errors when
+            // needed.
             self.errors.append(&mut self.warnings);
             Err(self.errors)
         }
@@ -260,9 +291,12 @@ impl<'a> Parser<'a> {
 
     /// Whether the parser is currently parsing a module under `src/`.
     ///
-    /// This gates [`Visibility::Public`] on `from ... import ...` (RFC 031). Callers must pass a filesystem-style module path (as the CLI and LSP do) so the parser can enforce that `pub from` appears only in source modules.
+    /// This gates [`Visibility::Public`] on `from ... import ...` (RFC 031). Callers must pass a filesystem-style
+    /// module path, as the CLI and LSP do, so the parser can enforce that `pub from` appears only in source
+    /// modules.
     ///
-    /// On Windows, path-segment checks are ASCII case-insensitive so editor URIs that normalize path casing still match.
+    /// On Windows, path-segment checks are ASCII case-insensitive so editor URIs that normalize path casing still
+    /// match.
     fn is_src_module(&self) -> bool {
         let Some(module_path) = self.module_path.as_deref() else {
             return false;
@@ -314,34 +348,36 @@ impl<'a> Parser<'a> {
     ///
     /// This bridges serialized vocab metadata into parser state by:
     /// - recording compatible soft-keyword ids in `active_soft_keywords` (for existing parser flows), and
-    /// - recording imported keyword surface specs in `active_imported_keyword_specs`
-    ///   (for surface-kind checks driven by imported metadata).
+    /// - recording imported keyword surface specs in `active_imported_keyword_specs` (for surface-kind checks driven by
+    ///   imported metadata).
     fn activate_imported_keywords_for_library(&mut self, library: &str) {
         if let Some(surfaces) = self.library_imported_dsl_surfaces.get(library) {
             for surface in surfaces {
                 if !dsl_surface_applies_to_pub_import(surface, library) {
                     continue;
                 }
-                self.active_scoped_surface_descriptors.extend(
-                    surface
-                        .scoped_surfaces
-                        .iter()
-                        .cloned()
-                        .map(|descriptor| ActiveScopedSurfaceDescriptor {
-                            dependency_key: library.to_string(),
-                            descriptor,
-                        }),
-                );
-                self.active_scoped_symbol_descriptors.extend(
-                    surface
-                        .scoped_symbols
-                        .iter()
-                        .cloned()
-                        .map(|descriptor| ActiveScopedSymbolDescriptor {
-                            dependency_key: library.to_string(),
-                            descriptor,
-                        }),
-                );
+                self.active_scoped_surface_descriptors
+                    .extend(
+                        surface
+                            .scoped_surfaces
+                            .iter()
+                            .cloned()
+                            .map(|descriptor| ActiveScopedSurfaceDescriptor {
+                                dependency_key: library.to_string(),
+                                descriptor,
+                            }),
+                    );
+                self.active_scoped_symbol_descriptors
+                    .extend(
+                        surface
+                            .scoped_symbols
+                            .iter()
+                            .cloned()
+                            .map(|descriptor| ActiveScopedSymbolDescriptor {
+                                dependency_key: library.to_string(),
+                                descriptor,
+                            }),
+                    );
             }
         }
 

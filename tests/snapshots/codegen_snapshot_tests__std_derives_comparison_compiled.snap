@@ -7,3 +7,110 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+/// Eq trait - Provides equality comparison (`==` and `!=`)
+/// Python equivalent: `__eq__`, `__ne__`
+///
+/// When derived, compares all fields for equality.
+///
+/// Examples:
+///
+/// ```ignore
+/// @derive(Eq)
+/// model Point:
+///     x: int
+///     y: int
+///
+/// p1 = Point(x=10, y=20)
+/// p2 = Point(x=10, y=20)
+/// p3 = Point(x=5, y=5)
+///
+/// println(p1 == p2)  # true
+/// println(p1 != p3)  # true
+/// ```
+///
+/// Custom equality (override specific fields):
+///
+/// ```ignore
+/// model User:
+///     id: int
+///     name: str
+///     cache_key: str  # Don't include in equality
+///
+///     def __eq__(self, other: User) -> bool:
+///         return self.id == other.id  # Only compare by id
+/// ```
+pub trait Eq {
+    fn __eq__(&self, other: Self) -> bool;
+    fn __ne__(&self, other: Self) -> bool;
+}
+/// Ord trait - Provides ordering comparison (`<`, `<=`, `>`, `>=`) and sorting
+/// Python equivalent: `__lt__`, `__le__`, `__gt__`, `__ge__`
+/// Ord refines Eq: any type that adopts or derives Ord is also an Eq type.
+///
+/// When derived, compares fields in declaration order.
+///
+/// Examples:
+///
+/// ```ignore
+/// @derive(Ord)
+/// model Score:
+///     points: int
+///     name: str
+///
+/// alice = Score(points=100, name="Alice")
+/// bob = Score(points=85, name="Bob")
+///
+/// println(alice > bob)   # true (100 > 85)
+/// println(bob <= alice)  # true
+/// ```
+///
+/// Custom ordering:
+///
+/// ```ignore
+/// model Player:
+///     name: str
+///     score: int
+///
+///     def __lt__(self, other: Player) -> bool:
+///         return self.score < other.score  # Only compare by score
+/// ```
+pub trait Ord: PartialEq {
+    fn __lt__(&self, other: Self) -> bool;
+    fn __le__(&self, other: Self) -> bool;
+    fn __gt__(&self, other: Self) -> bool;
+    fn __ge__(&self, other: Self) -> bool;
+}
+/// Hash trait - Enables use as Dict keys or in Sets
+/// Python equivalent: `__hash__`
+///
+/// WHY IT'S NEEDED:
+/// Sets and Dicts use hashing internally for fast lookups. Without Hash,
+/// you get a compile error when trying to use your type in a Set or as a Dict key.
+///
+/// When derived, combines all fields into a single hash integer.
+///
+/// Examples:
+///
+/// ```ignore
+/// # Without @derive(Hash), this won't compile:
+/// # ids: Set[UserId] = Set()  # Error: UserId doesn't implement Hash
+///
+/// # With Hash derived, it works:
+/// @derive(Eq, Hash)
+/// model UserId:
+///     value: int
+///
+/// ids: Set[UserId] = Set()
+/// ids.add(UserId(value=1))
+/// ids.add(UserId(value=2))
+///
+/// # Also required for Dict keys:
+/// names: Dict[UserId, str] = Dict()
+/// names[UserId(value=1)] = "Alice"
+/// ```
+///
+/// ⚠️ Important: If you override `__eq__`, you must also override `__hash__`
+/// to ensure equal objects have equal hashes. Otherwise Set/Dict lookups break.
+pub trait Hash {
+    fn __hash__(&self) -> i64;
+}

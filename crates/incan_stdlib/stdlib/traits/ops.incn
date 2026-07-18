@@ -6,7 +6,7 @@ capability vocabulary that generic code can name in bounds and annotations.
 """
 
 
-trait Add[Rhs, Output]:
+pub trait Add[Rhs, Output]:
     """
     Add trait - Enables `a + b` for custom types
     Python equivalent: __add__
@@ -28,7 +28,7 @@ trait Add[Rhs, Output]:
     def __add__(self, other: Rhs) -> Output: ...
 
 
-trait AddAssign[Rhs, Output]:
+pub trait AddAssign[Rhs, Output]:
     """
     AddAssign trait - Enables an explicit `a += b` hook for custom types
     Python equivalent: __iadd__
@@ -39,7 +39,7 @@ trait AddAssign[Rhs, Output]:
     def __iadd__(self, other: Rhs) -> Output: ...
 
 
-trait Sub[Rhs, Output]:
+pub trait Sub[Rhs, Output]:
     """
     Sub trait - Enables `a - b` for custom types
     Python equivalent: __sub__
@@ -62,7 +62,7 @@ trait Sub[Rhs, Output]:
     def __sub__(self, other: Rhs) -> Output: ...
 
 
-trait SubAssign[Rhs, Output]:
+pub trait SubAssign[Rhs, Output]:
     """
     SubAssign trait - Enables an explicit `a -= b` hook for custom types
     Python equivalent: __isub__
@@ -73,7 +73,7 @@ trait SubAssign[Rhs, Output]:
     def __isub__(self, other: Rhs) -> Output: ...
 
 
-trait Mul[Rhs, Output]:
+pub trait Mul[Rhs, Output]:
     """
     Mul trait - Enables `a * b` for custom types
     Python equivalent: __mul__
@@ -95,7 +95,7 @@ trait Mul[Rhs, Output]:
     def __mul__(self, other: Rhs) -> Output: ...
 
 
-trait MulAssign[Rhs, Output]:
+pub trait MulAssign[Rhs, Output]:
     """
     MulAssign trait - Enables an explicit `a *= b` hook for custom types
     Python equivalent: __imul__
@@ -106,7 +106,7 @@ trait MulAssign[Rhs, Output]:
     def __imul__(self, other: Rhs) -> Output: ...
 
 
-trait Div[Rhs, Output]:
+pub trait Div[Rhs, Output]:
     """
     Div trait - Enables `a / b` for custom types
     Python equivalent: __truediv__
@@ -132,7 +132,7 @@ trait Div[Rhs, Output]:
     def __div__(self, other: Rhs) -> Output: ...
 
 
-trait DivAssign[Rhs, Output]:
+pub trait DivAssign[Rhs, Output]:
     """
     DivAssign trait - Enables an explicit `a /= b` hook for custom types
     Python equivalent: __idiv__
@@ -143,7 +143,7 @@ trait DivAssign[Rhs, Output]:
     def __idiv__(self, other: Rhs) -> Output: ...
 
 
-trait FloorDiv[Rhs, Output]:
+pub trait FloorDiv[Rhs, Output]:
     """
     FloorDiv trait - Enables `a // b` for custom types
     Python equivalent: __floordiv__
@@ -151,7 +151,7 @@ trait FloorDiv[Rhs, Output]:
     def __floordiv__(self, other: Rhs) -> Output: ...
 
 
-trait FloorDivAssign[Rhs, Output]:
+pub trait FloorDivAssign[Rhs, Output]:
     """
     FloorDivAssign trait - Enables an explicit `a //= b` hook for custom types
     Python equivalent: __ifloordiv__
@@ -162,7 +162,7 @@ trait FloorDivAssign[Rhs, Output]:
     def __ifloordiv__(self, other: Rhs) -> Output: ...
 
 
-trait Pow[Rhs, Output]:
+pub trait Pow[Rhs, Output]:
     """
     Pow trait - Enables `a ** b` for custom types
     Python equivalent: __pow__
@@ -170,7 +170,7 @@ trait Pow[Rhs, Output]:
     def __pow__(self, other: Rhs) -> Output: ...
 
 
-trait Neg[Output]:
+pub trait Neg[Output]:
     """
     Neg trait - Enables `-a` (unary negation) for custom types
     Python equivalent: __neg__
@@ -191,7 +191,7 @@ trait Neg[Output]:
     def __neg__(self) -> Output: ...
 
 
-trait Not[Output]:
+pub trait Not[Output]:
     """
     Not trait - Enables `~a` (bitwise inversion) for custom types
     Python equivalent: __invert__
@@ -200,7 +200,7 @@ trait Not[Output]:
     def __invert__(self) -> Output: ...
 
 
-trait Mod[Rhs, Output]:
+pub trait Mod[Rhs, Output]:
     """
     Mod trait - Enables `a % b` (modulo) for custom types
     Python equivalent: __mod__
@@ -221,7 +221,7 @@ trait Mod[Rhs, Output]:
     def __mod__(self, other: Rhs) -> Output: ...
 
 
-trait ModAssign[Rhs, Output]:
+pub trait ModAssign[Rhs, Output]:
     """
     ModAssign trait - Enables an explicit `a %= b` hook for custom types
     Python equivalent: __imod__
@@ -232,7 +232,7 @@ trait ModAssign[Rhs, Output]:
     def __imod__(self, other: Rhs) -> Output: ...
 
 
-trait Shr[Rhs, Output]:
+pub trait Shr[Rhs, Output]:
     """
     Shr trait - Enables `a >> b` for custom types
     Python equivalent: __rshift__
@@ -241,7 +241,7 @@ trait Shr[Rhs, Output]:
     def __rshift__(self, other: Rhs) -> Output: ...
 
 
-trait ShrAssign[Rhs, Output]:
+pub trait ShrAssign[Rhs, Output]:
     """
     ShrAssign trait - Enables an explicit `a >>= b` hook for custom types
     Python equivalent: __irshift__
@@ -252,7 +252,7 @@ trait ShrAssign[Rhs, Output]:
     def __irshift__(self, other: Rhs) -> Output: ...
 
 
-trait Shl[Rhs, Output]:
+pub trait Shl[Rhs, Output]:
     """
     Shl trait - Enables `a << b` for custom types
     Python equivalent: __lshift__
@@ -261,7 +261,7 @@ trait Shl[Rhs, Output]:
     def __lshift__(self, other: Rhs) -> Output: ...
 
 
-trait ShlAssign[Rhs, Output]:
+pub trait ShlAssign[Rhs, Output]:
     """
     ShlAssign trait - Enables an explicit `a <<= b` hook for custom types
     Python equivalent: __ilshift__
@@ -272,7 +272,7 @@ trait ShlAssign[Rhs, Output]:
     def __ilshift__(self, other: Rhs) -> Output: ...
 
 
-trait PipeForward[Rhs, Output]:
+pub trait PipeForward[Rhs, Output]:
     """
     PipeForward trait - Enables `a |> b` for custom types
     Python-style equivalent: __pipe_forward__
@@ -280,7 +280,7 @@ trait PipeForward[Rhs, Output]:
     def __pipe_forward__(self, other: Rhs) -> Output: ...
 
 
-trait PipeBackward[Rhs, Output]:
+pub trait PipeBackward[Rhs, Output]:
     """
     PipeBackward trait - Enables `a <| b` for custom types
     Python-style equivalent: __pipe_backward__
@@ -288,7 +288,7 @@ trait PipeBackward[Rhs, Output]:
     def __pipe_backward__(self, other: Rhs) -> Output: ...
 
 
-trait BitAnd[Rhs, Output]:
+pub trait BitAnd[Rhs, Output]:
     """
     BitAnd trait - Enables `a & b` for custom types
     Python equivalent: __and__
@@ -297,7 +297,7 @@ trait BitAnd[Rhs, Output]:
     def __and__(self, other: Rhs) -> Output: ...
 
 
-trait BitAndAssign[Rhs, Output]:
+pub trait BitAndAssign[Rhs, Output]:
     """
     BitAndAssign trait - Enables an explicit `a &= b` hook for custom types
     Python equivalent: __iand__
@@ -308,7 +308,7 @@ trait BitAndAssign[Rhs, Output]:
     def __iand__(self, other: Rhs) -> Output: ...
 
 
-trait BitOr[Rhs, Output]:
+pub trait BitOr[Rhs, Output]:
     """
     BitOr trait - Enables `a | b` for custom types
     Python equivalent: __or__
@@ -317,7 +317,7 @@ trait BitOr[Rhs, Output]:
     def __or__(self, other: Rhs) -> Output: ...
 
 
-trait BitOrAssign[Rhs, Output]:
+pub trait BitOrAssign[Rhs, Output]:
     """
     BitOrAssign trait - Enables an explicit `a |= b` hook for custom types
     Python equivalent: __ior__
@@ -328,7 +328,7 @@ trait BitOrAssign[Rhs, Output]:
     def __ior__(self, other: Rhs) -> Output: ...
 
 
-trait BitXor[Rhs, Output]:
+pub trait BitXor[Rhs, Output]:
     """
     BitXor trait - Enables `a ^ b` for custom types
     Python equivalent: __xor__
@@ -337,7 +337,7 @@ trait BitXor[Rhs, Output]:
     def __xor__(self, other: Rhs) -> Output: ...
 
 
-trait BitXorAssign[Rhs, Output]:
+pub trait BitXorAssign[Rhs, Output]:
     """
     BitXorAssign trait - Enables an explicit `a ^= b` hook for custom types
     Python equivalent: __ixor__
@@ -348,7 +348,7 @@ trait BitXorAssign[Rhs, Output]:
     def __ixor__(self, other: Rhs) -> Output: ...
 
 
-trait MatMul[Rhs, Output]:
+pub trait MatMul[Rhs, Output]:
     """
     MatMul trait - Enables `a @ b` for custom types
     Python equivalent: __matmul__
@@ -356,7 +356,7 @@ trait MatMul[Rhs, Output]:
     def __matmul__(self, other: Rhs) -> Output: ...
 
 
-trait MatMulAssign[Rhs, Output]:
+pub trait MatMulAssign[Rhs, Output]:
     """
     MatMulAssign trait - Enables an explicit `a @= b` hook for custom types
     Python equivalent: __imatmul__
@@ -367,7 +367,7 @@ trait MatMulAssign[Rhs, Output]:
     def __imatmul__(self, other: Rhs) -> Output: ...
 
 
-trait GetItem[Key, Output]:
+pub trait GetItem[Key, Output]:
     """
     Compatibility/operator alias for indexed read access.
 
@@ -378,7 +378,7 @@ trait GetItem[Key, Output]:
     def __getitem__(self, key: Key) -> Output: ...
 
 
-trait SetItem[Key, Value]:
+pub trait SetItem[Key, Value]:
     """
     Compatibility/operator alias for indexed write access.
 

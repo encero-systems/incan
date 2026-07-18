@@ -1,0 +1,11 @@
+[project]
+name = "incan_stdlib_codecs"
+version = "0.5.0"
+private = true
+
+[build]
+source-root = "../.."
+
+[sdk]
+profile = "minimal"
+components = ["stdlib-system"]

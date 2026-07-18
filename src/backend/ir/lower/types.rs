@@ -207,6 +207,29 @@ impl AstLowering {
         }
     }
 
+    /// Mark anonymous union wrappers in a checked callable signature as owned by one compiled provider artifact.
+    ///
+    /// Unlike [`Self::pub_external_signature`], this path does not consult ordinary `pub::` dependency aliases. SDK
+    /// provider API metadata is already structurally resolved; the remaining consumer-side operation is attaching the
+    /// generated Rust crate that owns each anonymous union's nominal identity.
+    pub(super) fn compiled_provider_external_signature(
+        &self,
+        provider_crate: &str,
+        signature: FunctionSignature,
+    ) -> FunctionSignature {
+        FunctionSignature {
+            params: signature
+                .params
+                .into_iter()
+                .map(|mut param| {
+                    param.ty = self.pub_external_type(provider_crate, param.ty);
+                    param
+                })
+                .collect(),
+            return_type: self.pub_external_type(provider_crate, signature.return_type),
+        }
+    }
+
     /// Expand provider-local type aliases inside already-lowered IR signature metadata.
     fn expand_pub_manifest_ir_type_aliases(
         &self,
@@ -386,7 +409,7 @@ impl AstLowering {
 
     /// Resolve a provider-local public type alias through the same identity graph/API metadata used for callables.
     fn pub_type_alias_export(&self, library: &str, name: &str) -> Option<TypeAliasExport> {
-        let manifest_index = self.library_manifest_index.as_ref()?;
+        let manifest_index = self.provider_plan.as_deref()?.library_manifest_index();
         let LibraryManifestIndexEntry::Loaded { manifest, .. } = manifest_index.get(library)? else {
             return None;
         };
@@ -445,7 +468,7 @@ impl AstLowering {
         if root != "pub" {
             return None;
         }
-        let manifest_index = self.library_manifest_index.as_ref()?;
+        let manifest_index = self.provider_plan.as_deref()?.library_manifest_index();
         let entry = manifest_index.get(library)?;
         let LibraryManifestIndexEntry::Loaded { manifest, .. } = entry else {
             return None;

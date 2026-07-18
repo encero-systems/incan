@@ -321,13 +321,12 @@ impl AstLowering {
         let mut lowered = Vec::new();
         for variant in target.variants {
             let temp_name = format!("__incan_union_{}_v{}", primary_binding.name, variant.source_index);
+            let Some(variant_path) = source_union_ty.union_variant_path(variant.source_index) else {
+                continue;
+            };
             let union_pattern = Pattern::Enum {
                 name: source_union_name.clone(),
-                variant: format!(
-                    "{}::{}",
-                    source_union_name,
-                    IrType::union_variant_name(variant.source_index)
-                ),
+                variant: variant_path,
                 fields: vec![Pattern::Var(temp_name.clone())],
             };
             let pattern = if matches!(scrutinee_ty, IrType::Option(inner) if inner.is_union()) {
@@ -569,6 +568,7 @@ impl AstLowering {
             let union_ty = option_wrapped_union.unwrap_or(expected_ty);
             if let Some(variant_index) = union_ty.union_variant_index_for_member(&target_ty)
                 && let Some(union_name) = union_ty.union_type_name()
+                && let Some(variant_path) = union_ty.union_variant_path(variant_index)
             {
                 let member_ty = expected_ty
                     .union_members()
@@ -587,7 +587,7 @@ impl AstLowering {
                     .collect();
                 let union_pattern = Pattern::Enum {
                     name: union_name.clone(),
-                    variant: format!("{}::{}", union_name, IrType::union_variant_name(variant_index)),
+                    variant: variant_path,
                     fields,
                 };
                 if option_wrapped_union.is_some() {

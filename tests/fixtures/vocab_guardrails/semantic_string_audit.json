@@ -73,6 +73,12 @@
       "expected_fingerprint": "0x2b22f0e7dbaebdbd"
     },
     {
+      "path": "src/backend/ir/codegen/string_try_from_bridge.rs",
+      "category": "std.environ generic conversion bridge compatibility",
+      "expected_count": 1,
+      "expected_fingerprint": "0x3447ddc21699825d"
+    },
+    {
       "path": "src/backend/ir/conversions.rs",
       "category": "central argument conversion shape checks",
       "expected_count": 3,
@@ -123,8 +129,8 @@
     {
       "path": "src/backend/ir/emit/expressions/methods.rs",
       "category": "quarantined metadata-free method compatibility",
-      "expected_count": 9,
-      "expected_fingerprint": "0xa79a69b55f1cffdf"
+      "expected_count": 11,
+      "expected_fingerprint": "0x78afd8a9c8305f8a"
     },
     {
       "path": "src/backend/ir/emit/expressions/methods/fast_paths.rs",
@@ -147,8 +153,8 @@
     {
       "path": "src/backend/ir/emit/program.rs",
       "category": "callable source-name metadata use analysis",
-      "expected_count": 4,
-      "expected_fingerprint": "0x9cbc492d11b61ac2"
+      "expected_count": 2,
+      "expected_fingerprint": "0x497886b639dd72c9"
     },
     {
       "path": "src/backend/ir/emit/types.rs",
@@ -225,8 +231,8 @@
     {
       "path": "src/backend/ir/ownership.rs",
       "category": "central external Rust duckborrower buffer planning",
-      "expected_count": 4,
-      "expected_fingerprint": "0xe78ae9c1c06afb76"
+      "expected_count": 5,
+      "expected_fingerprint": "0xe0f92591a022208b"
     },
     {
       "path": "src/backend/ir/reference_shape.rs",
@@ -242,9 +248,9 @@
     },
     {
       "path": "src/cli/commands/common.rs",
-      "category": "project materialization, dependency, and rust-inspect prewarm compatibility",
-      "expected_count": 7,
-      "expected_fingerprint": "0xcaeb999c51153406"
+      "category": "project materialization, provider hashing, dependency, and rust-inspect prewarm compatibility",
+      "expected_count": 10,
+      "expected_fingerprint": "0xad8c166a6309d24b"
     },
     {
       "path": "src/dependency_resolver.rs",
@@ -326,9 +332,9 @@
     },
     {
       "path": "src/frontend/typechecker/collect/stdlib_imports.rs",
-      "category": "stdlib import, checked API target paths, and extension-trait compatibility",
-      "expected_count": 9,
-      "expected_fingerprint": "0x56c1ff8fc69debec"
+      "category": "stdlib import, checked API target paths, provider-bound roots, and extension-trait compatibility",
+      "expected_count": 10,
+      "expected_fingerprint": "0x6b541f0e7968ad59"
     },
     {
       "path": "src/frontend/typechecker/const_eval.rs",

@@ -84,10 +84,9 @@ impl SurfaceSemanticsPack for StdlibSemanticsPack {
         }
         #[cfg(feature = "std_decorators")]
         {
-            if resolved_path.len() >= 3
-                && resolved_path[0] == stdlib::STDLIB_ROOT
-                && stdlib::is_known_stdlib_module(&resolved_path[..resolved_path.len() - 1])
-            {
+            // Provider catalogs validate whether the module and function exist. The semantics pack only classifies
+            // the shape here so a newly published `std.*` provider decorator does not need a compiler registry entry.
+            if resolved_path.len() >= 3 && resolved_path[0] == stdlib::STDLIB_ROOT {
                 return Some(DecoratorFeature::StdlibDecoratorFunction);
             }
         }

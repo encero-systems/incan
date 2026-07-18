@@ -680,8 +680,17 @@ impl TypeChecker {
                 .map(|end| path[..end].to_vec())
                 .filter(|segments| !segments.is_empty());
         }
-        let (module_name, _trait_name) = name.rsplit_once('.')?;
-        self.module_path_for_imported_name(module_name)
+        if let Some((module_name, _trait_name)) = name.rsplit_once('.') {
+            return self.module_path_for_imported_name(module_name);
+        }
+        if let Some(target) = self.source_import_targets.get(name) {
+            return Some(target.module_path.clone());
+        }
+        let symbol = self.lookup_symbol(name)?;
+        if !matches!(&symbol.kind, SymbolKind::Trait(_)) {
+            return None;
+        }
+        self.current_module_path.clone()
     }
 
     /// Return the defining source trait name for imported or module-qualified trait bounds.

@@ -38,6 +38,9 @@ use crate::frontend::diagnostics::CompileError;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::canonicalize_source_module_segments;
 use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
+use crate::library_manifest::LibraryManifest;
+use crate::provider::ProviderPlan;
+use incan_core::lang::stdlib;
 
 use super::emit::CallableNameResolution;
 use super::scanners::{
@@ -154,6 +157,9 @@ struct IrGenerationOptions<'a> {
     direct_generated_path_support_items: Option<&'a mut HashMap<Vec<String>, HashSet<String>>>,
 }
 
+/// Lowered metadata-only modules whose generated Rust identity belongs to compiled SDK providers.
+type CompiledSdkMetadataPrograms = Vec<(Vec<String>, IrProgram)>;
+
 impl IrGenerationOptions<'_> {
     /// Build options for an ordinary single-program generation pass.
     fn ordinary() -> Self {
@@ -178,6 +184,12 @@ pub struct IrCodegen<'a> {
     /// Stores both the flat module name (used for build graph identity) and the nested module path
     /// segments (used for correct Rust qualification in codegen).
     dependency_modules: Vec<(&'a str, &'a Program, Option<Vec<String>>)>,
+    /// Source-derived dependency symbols used for Rust qualification but linked from an external artifact.
+    ///
+    /// The compiler typechecks provider imports against checked contracts. Once a module is supplied by a compiled
+    /// provider, codegen must retain those contracts' canonical symbol paths without treating the module as a
+    /// consumer-local Rust source module.
+    dependency_symbol_modules: Vec<(&'a str, &'a Program, Option<Vec<String>>)>,
     /// Whether serde is needed for emitted Rust derives or helpers.
     // Serde still affects emitted Rust imports and derive augmentation in IR emission, so this remains an
     // emission-internal signal even after project-level requirement collection moved to provider manifests.
@@ -195,8 +207,8 @@ pub struct IrCodegen<'a> {
     /// When set, internal typechecking (used to obtain `TypeCheckInfo` for lowering) will validate `rust.module()`
     /// crate segments against this set.
     declared_crate_names: Option<HashSet<String>>,
-    /// Consumer-side `pub::` dependency metadata used by internal typechecking.
-    library_manifest_index: Option<Arc<LibraryManifestIndex>>,
+    /// Shared provider and feature projection used by checking, lowering, and emission.
+    provider_plan: Option<Arc<ProviderPlan>>,
     /// Whether generated Rust should deny warnings so tests can prove normal emission stays warning-clean.
     strict_generated_lints: bool,
     /// Private IR items called by generated code that is appended outside normal IR emission.
@@ -223,13 +235,14 @@ impl<'a> IrCodegen<'a> {
         Self {
             current_program: None,
             dependency_modules: Vec::new(),
+            dependency_symbol_modules: Vec::new(),
             needs_serde: false,
             external_rust_functions: HashSet::new(),
             fixtures: HashMap::new(),
             rust_crates: HashSet::new(),
             emit_zen_in_main: false,
             declared_crate_names: None,
-            library_manifest_index: None,
+            provider_plan: None,
             strict_generated_lints: false,
             externally_reachable_items: HashSet::new(),
             externally_reachable_items_by_module: HashMap::new(),
@@ -397,16 +410,52 @@ impl<'a> IrCodegen<'a> {
     fn apply_dependency_symbol_metadata(
         emitter: &mut IrEmitter<'_>,
         metadata: &DependencySymbolMetadata,
-        library_manifest_index: Option<&Arc<LibraryManifestIndex>>,
+        provider_plan: Option<&ProviderPlan>,
     ) {
+        let stdlib_module_paths = provider_plan
+            .map(ProviderPlan::active_std_module_paths)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|path| {
+                path.strip_prefix(&[stdlib::STDLIB_ROOT.to_string()])
+                    .map(<[String]>::to_vec)
+            })
+            .collect();
+        emitter.set_compiled_sdk_module_paths(stdlib_module_paths);
         emitter.set_type_module_paths(metadata.module_paths.clone(), metadata.ambiguous_type_names.clone());
         emitter.set_value_module_paths(
             metadata.value_module_paths.clone(),
             metadata.ambiguous_value_names.clone(),
         );
-        emitter.set_dependency_enum_types(metadata.enum_type_names.clone());
-        if let Some(index) = library_manifest_index {
-            emitter.seed_public_dependency_nominal_metadata(index);
+        let mut enum_type_names = metadata.enum_type_names.clone();
+        if let Some(plan) = provider_plan {
+            for provider in plan.active_sdk_records() {
+                let Some(manifest) = provider.manifest.as_deref() else {
+                    continue;
+                };
+                enum_type_names.extend(manifest.exports.enums.iter().map(|enum_| enum_.name.clone()));
+                enum_type_names.extend(
+                    manifest
+                        .contract_metadata
+                        .api
+                        .iter()
+                        .flat_map(|api| api.modules.iter())
+                        .flat_map(|module| module.declarations.iter())
+                        .filter_map(|declaration| match declaration {
+                            crate::frontend::api_metadata::ApiDeclaration::Enum(enum_) => Some(enum_.name.clone()),
+                            _ => None,
+                        }),
+                );
+            }
+        }
+        emitter.set_dependency_enum_types(enum_type_names);
+        if let Some(plan) = provider_plan {
+            emitter.seed_public_dependency_nominal_metadata(plan.library_manifest_index());
+            for provider in plan.active_sdk_records() {
+                if let Some(manifest) = provider.manifest.as_deref() {
+                    emitter.seed_sdk_provider_manifest_metadata(manifest);
+                }
+            }
         }
     }
 
@@ -432,12 +481,15 @@ impl<'a> IrCodegen<'a> {
 
     /// Collect the OrdinalKey bridge facts needed by the emitter for this program.
     fn ordinal_bridge_config(&self, uses_std_ordinal_contract: bool) -> OrdinalBridgeConfig {
-        OrdinalBridgeConfig::for_crate_root(uses_std_ordinal_contract, self.library_manifest_index.as_ref())
+        OrdinalBridgeConfig::for_crate_root(
+            uses_std_ordinal_contract,
+            self.provider_plan.as_deref().map(ProviderPlan::library_manifest_index),
+        )
     }
 
     /// Collect `TryFrom[str]` bridge facts needed at the generated crate root.
     fn string_try_from_bridge_config(&self, uses_contract: bool) -> StringTryFromBridgeConfig {
-        StringTryFromBridgeConfig::for_crate_root(uses_contract, self.library_manifest_index.as_ref())
+        StringTryFromBridgeConfig::for_crate_root(uses_contract)
     }
 
     /// Apply collected OrdinalKey bridge metadata to a freshly created emitter.
@@ -451,7 +503,6 @@ impl<'a> IrCodegen<'a> {
     /// Apply compiler-provided `TryFrom[str]` bridge metadata to a freshly created emitter.
     fn apply_string_try_from_bridge_config(&self, emitter: &mut IrEmitter, config: &StringTryFromBridgeConfig) {
         emitter.set_emit_std_string_try_from_newtype_impls(config.emit_local_newtype_impls);
-        emitter.set_external_string_try_from_types(config.external_types.clone());
     }
 
     /// Apply every temporary source-owned capability bridge to a freshly created emitter.
@@ -494,9 +545,47 @@ impl<'a> IrCodegen<'a> {
         self.declared_crate_names = Some(names);
     }
 
-    /// Set the consumer-side library manifest index for `pub::` import validation.
+    /// Set the consumer-side library manifest index for focused `pub::` tests and embedding adapters.
     pub fn set_library_manifest_index(&mut self, index: LibraryManifestIndex) {
-        self.library_manifest_index = Some(Arc::new(index));
+        self.provider_plan = Some(Arc::new(ProviderPlan::for_library_index(index)));
+    }
+
+    /// Set one in-memory SDK provider manifest for focused compiler tests.
+    #[doc(hidden)]
+    pub fn set_sdk_provider_manifest(&mut self, manifest: LibraryManifest) {
+        let library_index = self
+            .provider_plan
+            .as_deref()
+            .map(ProviderPlan::library_manifest_index)
+            .cloned()
+            .unwrap_or_default();
+        self.provider_plan = Some(Arc::new(ProviderPlan::for_in_memory_sdk_manifest(
+            library_index,
+            manifest,
+        )));
+    }
+
+    /// Set SDK-provider module paths already derived from a producer entrypoint or checked manifest.
+    ///
+    /// Compiler frontends should normally call [`Self::set_sdk_provider_manifest`]. This lower-level hook supports
+    /// source-backed codegen fixtures and embedders that already own equivalent checked module discovery.
+    #[doc(hidden)]
+    pub fn set_sdk_provider_module_paths(&mut self, module_paths: Vec<Vec<String>>) {
+        let library_index = self
+            .provider_plan
+            .as_deref()
+            .map(ProviderPlan::library_manifest_index)
+            .cloned()
+            .unwrap_or_default();
+        self.provider_plan = Some(Arc::new(ProviderPlan::for_in_memory_sdk_modules(
+            library_index,
+            module_paths,
+        )));
+    }
+
+    /// Set the immutable provider plan shared across every compiler stage.
+    pub fn set_provider_plan(&mut self, plan: Arc<ProviderPlan>) {
+        self.provider_plan = Some(plan);
     }
 
     /// Set the manifest/workspace root used for rust-inspect-backed typechecking during IR generation.
@@ -527,8 +616,8 @@ impl<'a> IrCodegen<'a> {
         if let Some(names) = self.declared_crate_names.clone() {
             tc.set_declared_crate_names(names);
         }
-        if let Some(index) = self.library_manifest_index.clone() {
-            tc.set_library_manifest_index_shared(index);
+        if let Some(plan) = self.provider_plan.clone() {
+            tc.set_provider_plan(plan);
         }
         #[cfg(feature = "rust_inspect")]
         if let Some(dir) = self.rust_inspect_manifest_dir.clone() {
@@ -552,7 +641,7 @@ impl<'a> IrCodegen<'a> {
     /// Apply codegen's shared metadata context to one AST lowering pass.
     fn configure_lowering(&self, lowering: &mut AstLowering) {
         lowering.set_stdlib_cache(self.stdlib_cache.clone());
-        lowering.set_library_manifest_index(self.library_manifest_index.clone());
+        lowering.set_provider_plan(self.provider_plan.clone());
     }
 
     /// Add a dependency module (for multi-file compilation)
@@ -572,6 +661,91 @@ impl<'a> IrCodegen<'a> {
     ) {
         self.dependency_modules
             .push((module_name, module_ast, Some(path_segments)));
+    }
+
+    /// Add dependency source metadata without scheduling that module for local Rust emission.
+    ///
+    /// This remains available for non-emitted source dependencies. Compiled SDK-provider imports instead derive
+    /// their semantics from the compiled artifact manifest and resolve Rust symbols through the linked artifact crate.
+    pub fn add_dependency_symbol_module_with_path_segments(
+        &mut self,
+        module_name: &'a str,
+        module_ast: &'a Program,
+        path_segments: Vec<String>,
+    ) {
+        self.dependency_symbol_modules
+            .push((module_name, module_ast, Some(path_segments)));
+    }
+
+    /// Return emitted and metadata-only dependencies, deduplicated by canonical source module identity.
+    fn dependency_modules_for_symbol_metadata(&self) -> Vec<(&'a str, &'a Program, Option<Vec<String>>)> {
+        let mut modules = self.dependency_modules.clone();
+        for module in &self.dependency_symbol_modules {
+            let key = Self::dependency_module_key(module.0, &module.2);
+            if !modules
+                .iter()
+                .any(|candidate| Self::dependency_module_key(candidate.0, &candidate.2) == key)
+            {
+                modules.push(module.clone());
+            }
+        }
+        modules
+    }
+
+    /// Lower metadata-only stdlib modules enough to discover anonymous union wrappers owned by the artifact crate.
+    ///
+    /// Anonymous unions have stable structural names but no source-level name to place in the `.incnlib` contract yet.
+    /// Until that manifest capability exists, this source-derived registry preserves one Rust nominal identity without
+    /// re-emitting the provider modules in every consumer.
+    fn compiled_sdk_metadata_programs(&mut self) -> Result<CompiledSdkMetadataPrograms, GenerationError> {
+        if let Some(plan) = self.provider_plan.as_deref() {
+            let mut has_compiled_provider = false;
+            for provider in plan.active_sdk_records() {
+                let Some(_manifest) = provider.manifest.as_deref() else {
+                    continue;
+                };
+                has_compiled_provider = true;
+            }
+            if has_compiled_provider {
+                return Ok(Vec::new());
+            }
+        }
+        if self.dependency_symbol_modules.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let dependencies = self.dependency_modules_for_symbol_metadata();
+        let symbol_modules = self.dependency_symbol_modules.clone();
+        let mut programs = Vec::new();
+        for (module_name, module_ast, path_segments) in symbol_modules {
+            let Some(path_segments) = path_segments.as_ref() else {
+                continue;
+            };
+            if path_segments.first().map(String::as_str) != Some(stdlib::INCAN_STD_NAMESPACE) {
+                continue;
+            }
+            let module_key = Self::dependency_module_key(module_name, &Some(path_segments.clone()));
+            let module_type_info = {
+                use crate::frontend::typechecker::TypeChecker;
+                let mut tc = TypeChecker::new();
+                self.configure_typechecker(&mut tc);
+                let typecheck_deps =
+                    Self::imported_dependency_modules_for_program(module_ast, &dependencies, Some(&module_key));
+                let result = match tc.check_with_imports_allow_private(module_ast, &typecheck_deps) {
+                    Ok(()) => tc.type_info().clone(),
+                    Err(errs) => return Err(Self::typecheck_errors_for_module(&module_key, errs)),
+                };
+                self.capture_typechecker_stdlib_cache(&tc);
+                result
+            };
+            let mut lowering = AstLowering::new_with_type_info(module_type_info);
+            self.configure_lowering(&mut lowering);
+            lowering.set_current_source_module_name(Some(path_segments.join(".")));
+            lowering.seed_dependency_trait_decls(&dependencies);
+            let ir = lowering.lower_program(module_ast)?;
+            programs.push((path_segments.clone(), ir));
+        }
+        Ok(programs)
     }
 
     /// Backfill nested module path segments for a dependency module by name.
@@ -739,16 +913,18 @@ impl<'a> IrCodegen<'a> {
         mut options: IrGenerationOptions<'_>,
     ) -> Result<String, GenerationError> {
         let dependency_modules = self.dependency_modules.clone();
+        let dependency_symbol_modules = self.dependency_modules_for_symbol_metadata();
+        let compiled_stdlib_metadata_programs = self.compiled_sdk_metadata_programs()?;
         let deps: Vec<(&str, &Program)> = dependency_modules.iter().map(|(name, ast, _)| (*name, *ast)).collect();
 
         // RFC 021: Make alias-aware lowering work across module boundaries by seeding alias maps
         // for models declared in dependency modules as well.
         let global_aliases = collect_model_field_aliases(program, &deps);
-        let dependency_symbol_metadata = collect_dependency_symbol_metadata(&dependency_modules);
-        let uses_std_ordinal_contract = compilation_imports_std_ordinal_contract(program, &dependency_modules);
+        let dependency_symbol_metadata = collect_dependency_symbol_metadata(&dependency_symbol_modules);
+        let uses_std_ordinal_contract = compilation_imports_std_ordinal_contract(program, &dependency_symbol_modules);
         let ordinal_bridge = self.ordinal_bridge_config(uses_std_ordinal_contract);
         let string_try_from_bridge = self.string_try_from_bridge_config(
-            compilation_imports_std_string_try_from_contract(program, &dependency_modules),
+            compilation_imports_std_string_try_from_contract(program, &dependency_symbol_modules),
         );
         let (needs_serialize, needs_deserialize) = collect_serde_derives(program, &deps);
 
@@ -858,7 +1034,12 @@ impl<'a> IrCodegen<'a> {
         let canonical_registry = Self::canonical_registry_for_programs(
             dependency_ir_programs
                 .iter()
-                .map(|(module_path, dep_ir)| (module_path.as_slice(), dep_ir)),
+                .map(|(module_path, dep_ir)| (module_path.as_slice(), dep_ir))
+                .chain(
+                    compiled_stdlib_metadata_programs
+                        .iter()
+                        .map(|(module_path, dep_ir)| (module_path.as_slice(), dep_ir)),
+                ),
         );
 
         // Emit IR to Rust code
@@ -871,11 +1052,7 @@ impl<'a> IrCodegen<'a> {
             if self.emit_zen_in_main {
                 inner.set_emit_zen(true);
             }
-            Self::apply_dependency_symbol_metadata(
-                inner,
-                &dependency_symbol_metadata,
-                self.library_manifest_index.as_ref(),
-            );
+            Self::apply_dependency_symbol_metadata(inner, &dependency_symbol_metadata, self.provider_plan.as_deref());
             inner.set_needs_serde(self.needs_serde);
             inner.set_external_rust_functions(self.external_rust_functions.clone());
             inner.set_strict_generated_lints(self.strict_generated_lints);
@@ -891,6 +1068,9 @@ impl<'a> IrCodegen<'a> {
             for (_, dep_ir) in &dependency_ir_programs {
                 inner.seed_dependency_nominal_metadata_from_program(dep_ir);
             }
+            for (_, dep_ir) in &compiled_stdlib_metadata_programs {
+                inner.seed_dependency_nominal_metadata_from_program(dep_ir);
+            }
             Ok(svc.emit_program(&ir_program)?)
         } else {
             let mut emitter = IrEmitter::new(&ir_program.function_registry);
@@ -901,7 +1081,7 @@ impl<'a> IrCodegen<'a> {
             Self::apply_dependency_symbol_metadata(
                 &mut emitter,
                 &dependency_symbol_metadata,
-                self.library_manifest_index.as_ref(),
+                self.provider_plan.as_deref(),
             );
             emitter.set_needs_serde(self.needs_serde);
             emitter.set_external_rust_functions(self.external_rust_functions.clone());
@@ -916,6 +1096,9 @@ impl<'a> IrCodegen<'a> {
             emitter.set_callable_name_used_signature_keys(callable_name_used_signature_keys_for_emit);
             emitter.set_callable_name_local_registry(ir_program.function_registry.clone());
             for (_, dep_ir) in &dependency_ir_programs {
+                emitter.seed_dependency_nominal_metadata_from_program(dep_ir);
+            }
+            for (_, dep_ir) in &compiled_stdlib_metadata_programs {
                 emitter.seed_dependency_nominal_metadata_from_program(dep_ir);
             }
             Ok(emitter.emit_program(&ir_program)?)
@@ -1108,13 +1291,15 @@ impl<'a> IrCodegen<'a> {
         let internal_roots: HashSet<String> = module_names.iter().map(|s| (*s).to_string()).collect();
 
         let dependency_modules = self.dependency_modules.clone();
+        let dependency_symbol_modules = self.dependency_modules_for_symbol_metadata();
+        let compiled_stdlib_metadata_programs = self.compiled_sdk_metadata_programs()?;
         let deps: Vec<(&str, &Program)> = dependency_modules.iter().map(|(name, ast, _)| (*name, *ast)).collect();
         let global_aliases = collect_model_field_aliases(program, &deps);
-        let dependency_symbol_metadata = collect_dependency_symbol_metadata(&dependency_modules);
-        let uses_std_ordinal_contract = compilation_imports_std_ordinal_contract(program, &dependency_modules);
+        let dependency_symbol_metadata = collect_dependency_symbol_metadata(&dependency_symbol_modules);
+        let uses_std_ordinal_contract = compilation_imports_std_ordinal_contract(program, &dependency_symbol_modules);
         let ordinal_bridge = OrdinalBridgeConfig::for_internal_module(uses_std_ordinal_contract);
         let string_try_from_bridge = StringTryFromBridgeConfig::for_internal_module(
-            compilation_imports_std_string_try_from_contract(program, &dependency_modules),
+            compilation_imports_std_string_try_from_contract(program, &dependency_symbol_modules),
         );
         let mut dependency_reachable_items = collect_externally_reachable_items_by_module(program, &dependency_modules);
 
@@ -1175,7 +1360,12 @@ impl<'a> IrCodegen<'a> {
         let all_module_canonical_registry = Self::canonical_registry_for_programs(
             lowered_modules
                 .iter()
-                .map(|(_, module_path, ir)| (module_path.as_slice(), ir)),
+                .map(|(_, module_path, ir)| (module_path.as_slice(), ir))
+                .chain(
+                    compiled_stdlib_metadata_programs
+                        .iter()
+                        .map(|(module_path, ir)| (module_path.as_slice(), ir)),
+                ),
         );
         let mut shared_union_types = HashMap::new();
         for (_, _, ir) in &lowered_modules {
@@ -1239,7 +1429,7 @@ impl<'a> IrCodegen<'a> {
                 Self::apply_dependency_symbol_metadata(
                     inner,
                     &dependency_symbol_metadata,
-                    self.library_manifest_index.as_ref(),
+                    self.provider_plan.as_deref(),
                 );
                 inner.set_external_rust_functions(self.external_rust_functions.clone());
                 inner.set_qualify_union_types_from_crate(true);
@@ -1252,6 +1442,9 @@ impl<'a> IrCodegen<'a> {
                 for (_, _, dep_ir) in &lowered_modules {
                     inner.seed_dependency_nominal_metadata_from_program(dep_ir);
                 }
+                for (_, dep_ir) in &compiled_stdlib_metadata_programs {
+                    inner.seed_dependency_nominal_metadata_from_program(dep_ir);
+                }
                 svc.emit_program(ir)?
             } else {
                 let mut emitter = IrEmitter::new(&ir.function_registry);
@@ -1261,7 +1454,7 @@ impl<'a> IrCodegen<'a> {
                 Self::apply_dependency_symbol_metadata(
                     &mut emitter,
                     &dependency_symbol_metadata,
-                    self.library_manifest_index.as_ref(),
+                    self.provider_plan.as_deref(),
                 );
                 emitter.set_external_rust_functions(self.external_rust_functions.clone());
                 emitter.set_qualify_union_types_from_crate(true);
@@ -1272,6 +1465,9 @@ impl<'a> IrCodegen<'a> {
                 emitter.set_callable_name_used_signature_keys(callable_name_used_signature_keys.clone());
                 self.apply_capability_bridge_configs(&mut emitter, &ordinal_bridge, &string_try_from_bridge);
                 for (_, _, dep_ir) in &lowered_modules {
+                    emitter.seed_dependency_nominal_metadata_from_program(dep_ir);
+                }
+                for (_, dep_ir) in &compiled_stdlib_metadata_programs {
                     emitter.seed_dependency_nominal_metadata_from_program(dep_ir);
                 }
                 emitter.emit_program(ir)?
@@ -1351,13 +1547,15 @@ impl<'a> IrCodegen<'a> {
         let internal_roots: HashSet<String> = module_paths.iter().filter_map(|p| p.first().cloned()).collect();
 
         let dependency_modules = self.dependency_modules.clone();
+        let dependency_symbol_modules = self.dependency_modules_for_symbol_metadata();
+        let compiled_stdlib_metadata_programs = self.compiled_sdk_metadata_programs()?;
         let deps: Vec<(&str, &Program)> = dependency_modules.iter().map(|(name, ast, _)| (*name, *ast)).collect();
         let global_aliases = collect_model_field_aliases(program, &deps);
-        let dependency_symbol_metadata = collect_dependency_symbol_metadata(&dependency_modules);
-        let uses_std_ordinal_contract = compilation_imports_std_ordinal_contract(program, &dependency_modules);
+        let dependency_symbol_metadata = collect_dependency_symbol_metadata(&dependency_symbol_modules);
+        let uses_std_ordinal_contract = compilation_imports_std_ordinal_contract(program, &dependency_symbol_modules);
         let ordinal_bridge = OrdinalBridgeConfig::for_internal_module(uses_std_ordinal_contract);
         let string_try_from_bridge = StringTryFromBridgeConfig::for_internal_module(
-            compilation_imports_std_string_try_from_contract(program, &dependency_modules),
+            compilation_imports_std_string_try_from_contract(program, &dependency_symbol_modules),
         );
         let mut dependency_reachable_items = collect_externally_reachable_items_by_module(program, &dependency_modules);
 
@@ -1422,8 +1620,13 @@ impl<'a> IrCodegen<'a> {
                 .collect();
             super::trait_bound_inference::propagate_trait_bounds_from_programs(current_ir, &external_programs);
         }
-        let all_module_canonical_registry =
-            Self::canonical_registry_for_programs(lowered_modules.iter().map(|(path, ir)| (path.as_slice(), ir)));
+        let all_module_canonical_registry = Self::canonical_registry_for_programs(
+            lowered_modules.iter().map(|(path, ir)| (path.as_slice(), ir)).chain(
+                compiled_stdlib_metadata_programs
+                    .iter()
+                    .map(|(path, ir)| (path.as_slice(), ir)),
+            ),
+        );
         let mut shared_union_types = HashMap::new();
         for (_, ir) in &lowered_modules {
             shared_union_types.extend(IrEmitter::collect_union_types_from_program(ir));
@@ -1482,7 +1685,7 @@ impl<'a> IrCodegen<'a> {
                 Self::apply_dependency_symbol_metadata(
                     inner,
                     &dependency_symbol_metadata,
-                    self.library_manifest_index.as_ref(),
+                    self.provider_plan.as_deref(),
                 );
                 inner.set_external_rust_functions(self.external_rust_functions.clone());
                 inner.set_qualify_union_types_from_crate(true);
@@ -1495,6 +1698,9 @@ impl<'a> IrCodegen<'a> {
                 for (_, dep_ir) in &lowered_modules {
                     inner.seed_dependency_nominal_metadata_from_program(dep_ir);
                 }
+                for (_, dep_ir) in &compiled_stdlib_metadata_programs {
+                    inner.seed_dependency_nominal_metadata_from_program(dep_ir);
+                }
                 svc.emit_program(ir)?
             } else {
                 let mut emitter = IrEmitter::new(&ir.function_registry);
@@ -1504,7 +1710,7 @@ impl<'a> IrCodegen<'a> {
                 Self::apply_dependency_symbol_metadata(
                     &mut emitter,
                     &dependency_symbol_metadata,
-                    self.library_manifest_index.as_ref(),
+                    self.provider_plan.as_deref(),
                 );
                 emitter.set_external_rust_functions(self.external_rust_functions.clone());
                 emitter.set_qualify_union_types_from_crate(true);
@@ -1515,6 +1721,9 @@ impl<'a> IrCodegen<'a> {
                 emitter.set_callable_name_used_signature_keys(callable_name_used_signature_keys.clone());
                 self.apply_capability_bridge_configs(&mut emitter, &ordinal_bridge, &string_try_from_bridge);
                 for (_, dep_ir) in &lowered_modules {
+                    emitter.seed_dependency_nominal_metadata_from_program(dep_ir);
+                }
+                for (_, dep_ir) in &compiled_stdlib_metadata_programs {
                     emitter.seed_dependency_nominal_metadata_from_program(dep_ir);
                 }
                 emitter.emit_program(ir)?
@@ -1564,6 +1773,14 @@ mod tests {
         let tokens = must_ok(lexer::lex(source));
         let ast = must_ok(parser::parse(&tokens));
         must_ok(IrCodegen::new().try_generate(&ast))
+    }
+
+    fn generate_with_sdk_provider_modules(source: &str, modules: Vec<Vec<String>>) -> String {
+        let tokens = must_ok(lexer::lex(source));
+        let ast = must_ok(parser::parse(&tokens));
+        let mut codegen = IrCodegen::new();
+        codegen.set_sdk_provider_module_paths(modules);
+        must_ok(codegen.try_generate(&ast))
     }
 
     fn assert_no_generated_unused_lint_allows(code: &str) {
@@ -1746,12 +1963,13 @@ pub modulo = alias mod
 
     #[test]
     fn top_level_qualified_alias_preserves_target_path() {
-        let code = generate(
+        let code = generate_with_sdk_provider_modules(
             r#"
 import std.math as math
 
 pub root = math.sqrt
 "#,
+            vec![vec!["math".to_string()]],
         );
         assert!(code.contains("pub use crate::__incan_std::math as math;"), "{code}");
         assert!(code.contains("pub use math::sqrt as root;"), "{code}");

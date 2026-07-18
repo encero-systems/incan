@@ -59,6 +59,14 @@ impl std::error::Error for PreludeError {}
 /// - Workspace-root: `stdlib/`
 /// - Crate-local: `crates/incan_stdlib/stdlib/`
 pub fn find_stdlib_dir() -> Option<PathBuf> {
+    // `incan build --lib` is valid from the built-in stdlib root itself. Recognize that layout before looking for a
+    // nested `stdlib/` directory so source imports resolve as `web/macros.incn`, not `stdlib/web/macros.incn`.
+    if let Ok(cwd) = env::current_dir()
+        && is_builtin_stdlib_source_dir(&cwd)
+    {
+        return Some(cwd);
+    }
+
     // Try relative to current directory (development mode).
     for candidate in ["crates/incan_stdlib/stdlib", "stdlib"] {
         let path = Path::new(candidate);
@@ -100,6 +108,11 @@ pub fn find_stdlib_dir() -> Option<PathBuf> {
     }
 
     None
+}
+
+/// Return whether `path` is the Incan built-in stdlib source root itself.
+fn is_builtin_stdlib_source_dir(path: &Path) -> bool {
+    path.is_dir() && path.join("incan.toml").is_file() && path.join("prelude.incn").is_file()
 }
 
 /// Resolve a stdlib directory from either a toolchain root containing `stdlib/` or the stdlib directory itself.
@@ -214,7 +227,7 @@ pub fn load_prelude() -> Result<Vec<ParsedModule>, PreludeError> {
 
 #[cfg(test)]
 mod tests {
-    use super::stdlib_dir_from_root;
+    use super::{is_builtin_stdlib_source_dir, stdlib_dir_from_root};
 
     #[test]
     fn stdlib_dir_from_root_accepts_toolchain_root() -> Result<(), Box<dyn std::error::Error>> {
@@ -238,6 +251,19 @@ mod tests {
         let found = stdlib_dir_from_root(stdlib_dir).ok_or("expected direct stdlib directory")?;
 
         assert!(found.ends_with("stdlib"));
+        Ok(())
+    }
+
+    #[test]
+    fn builtin_stdlib_source_root_requires_its_manifest_and_prelude() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let root = tmp.path().join("stdlib");
+        std::fs::create_dir_all(&root)?;
+        assert!(!is_builtin_stdlib_source_dir(&root));
+
+        std::fs::write(root.join("incan.toml"), "[project]\nname = \"incan_builtin_stdlib\"\n")?;
+        std::fs::write(root.join("prelude.incn"), "")?;
+        assert!(is_builtin_stdlib_source_dir(&root));
         Ok(())
     }
 }
