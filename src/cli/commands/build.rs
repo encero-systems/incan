@@ -2483,6 +2483,12 @@ pub fn run_inline_source(
             source_parent.display()
         ))
     })?;
+    let _inline_command_lock = crate::lockfile::acquire_publication_lock(&source_path).map_err(|error| {
+        CliError::failure(format!(
+            "failed to coordinate temporary inline command project {}: {error}",
+            source_parent.display()
+        ))
+    })?;
     fs::write(&source_path, wrapped_source).map_err(|err| {
         CliError::failure(format!(
             "Error writing temporary inline command file {}: {err}",
