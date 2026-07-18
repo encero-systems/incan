@@ -2079,7 +2079,7 @@ impl AstLowering {
     }
 
     /// Count identifier reads inside an expression so lowering can plan moves, borrows, and clones.
-    fn count_expr_ident_reads(&self, expr: &ast::Expr, counts: &mut HashMap<String, usize>) {
+    pub(super) fn count_expr_ident_reads(&self, expr: &ast::Expr, counts: &mut HashMap<String, usize>) {
         match expr {
             ast::Expr::Ident(name) => Self::bump_ident_read(counts, name),
             ast::Expr::Literal(_) | ast::Expr::SelfExpr => {}

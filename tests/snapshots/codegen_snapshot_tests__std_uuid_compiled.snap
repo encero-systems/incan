@@ -880,7 +880,7 @@ impl _UuidBytesWriter {
                 self.out.write_bytes(value),
                 _discard_written_count,
             )
-            .map_err(|err| _io_error(self.operation.clone(), err.clone()));
+            .map_err(|err| _io_error(self.operation.clone(), err));
     }
     /// Append one byte to the UUID buffer.
     ///
@@ -894,7 +894,7 @@ impl _UuidBytesWriter {
         return crate::__incan_std::io::BinaryWrite::<
             u8,
         >::write(&self.out, value, Endian::Big.clone())
-            .map_err(|err| _io_error(self.operation.clone(), err.clone()));
+            .map_err(|err| _io_error(self.operation.clone(), err));
     }
     /// Append a 16-bit integer in network byte order.
     ///
@@ -908,7 +908,7 @@ impl _UuidBytesWriter {
         return crate::__incan_std::io::BinaryWrite::<
             u16,
         >::write(&self.out, value, Endian::Big.clone())
-            .map_err(|err| _io_error(self.operation.clone(), err.clone()));
+            .map_err(|err| _io_error(self.operation.clone(), err));
     }
     /// Append a 32-bit integer in network byte order.
     ///
@@ -922,7 +922,7 @@ impl _UuidBytesWriter {
         return crate::__incan_std::io::BinaryWrite::<
             u32,
         >::write(&self.out, value, Endian::Big.clone())
-            .map_err(|err| _io_error(self.operation.clone(), err.clone()));
+            .map_err(|err| _io_error(self.operation.clone(), err));
     }
     /// Append a 128-bit integer in network byte order.
     ///
@@ -936,7 +936,7 @@ impl _UuidBytesWriter {
         return crate::__incan_std::io::BinaryWrite::<
             u128,
         >::write(&self.out, value, Endian::Big.clone())
-            .map_err(|err| _io_error(self.operation.clone(), err.clone()));
+            .map_err(|err| _io_error(self.operation.clone(), err));
     }
     /// Append RFC 9562 variant-adjusted clock sequence bytes.
     ///

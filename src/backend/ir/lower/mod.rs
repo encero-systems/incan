@@ -150,6 +150,11 @@ pub struct AstLowering {
     ///
     /// While in a non-linear context, lowering avoids last-use moves.
     pub(super) non_linear_context_depth: usize,
+    /// Closure parameters that may move on their final read at the closure body's entry depth.
+    ///
+    /// Captures remain non-consuming because a closure can run repeatedly. Parameters are freshly owned by each
+    /// invocation, but nested non-linear contexts inside the closure must still suppress syntactic last-use moves.
+    pub(super) closure_param_scopes: Vec<(usize, HashSet<String>)>,
     /// Import alias map for decorator/derive passthrough resolution.
     pub(super) import_aliases: HashMap<String, Vec<String>>,
     /// Direct Rust import aliases mapped to Rust path segments.
@@ -273,6 +278,7 @@ impl AstLowering {
             struct_field_aliases: HashMap::new(),
             remaining_ident_reads: Vec::new(),
             non_linear_context_depth: 0,
+            closure_param_scopes: Vec::new(),
             import_aliases: HashMap::new(),
             rust_import_aliases: HashMap::new(),
             callable_param_scopes: Vec::new(),
@@ -981,7 +987,10 @@ impl AstLowering {
         let is_last_use_here = self.consume_ident_read(name);
 
         let is_mutable = self.mutable_vars.get(name).copied().unwrap_or(false);
-        if self.non_linear_context_depth > 0 || is_mutable || !is_last_use_here {
+        let closure_param_can_move = self.closure_param_scopes.last().is_some_and(|(entry_depth, params)| {
+            *entry_depth == self.non_linear_context_depth && params.contains(name)
+        });
+        if (self.non_linear_context_depth > 0 && !closure_param_can_move) || is_mutable || !is_last_use_here {
             return VarAccess::Read;
         }
 
