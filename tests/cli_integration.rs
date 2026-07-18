@@ -156,6 +156,42 @@ def main() -> Result[None, str]:
 }
 
 #[test]
+fn rust_read_by_ref_borrows_owned_receiver_issue878() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "rust_read_by_ref_owned_receiver", "")?;
+    fs::write(
+        &main_path,
+        r#"from rust::std::io import Read, stdin
+
+
+def main() -> None:
+    mut input = stdin()
+    _ = Read.by_ref(input)
+"#,
+    )?;
+    let main_arg = main_path.to_str().ok_or("non-utf8 main path")?;
+
+    let lock_output = run_incan(tmp.path(), &["lock", main_arg])?;
+    assert_success(&lock_output, "incan lock for Read.by_ref owned receiver");
+    let build_output = run_incan(tmp.path(), &["build", main_arg, "--locked"])?;
+    assert_success(&build_output, "incan build for Read.by_ref owned receiver");
+
+    let generated = fs::read_to_string(
+        tmp.path()
+            .join("target/incan/rust_read_by_ref_owned_receiver/src/main.rs"),
+    )?;
+    assert!(
+        generated.contains("Read::by_ref(&mut input)"),
+        "owned Rust trait receiver must be borrowed without dereference:\n{generated}"
+    );
+    assert!(
+        !generated.contains("Read::by_ref(&mut *input)"),
+        "owned Rust trait receiver must not use the guard reborrow shape:\n{generated}"
+    );
+    Ok(())
+}
+
+#[test]
 fn rust_trait_object_method_arguments_borrow_by_metadata_issue832() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(

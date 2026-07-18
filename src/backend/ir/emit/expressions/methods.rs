@@ -14,7 +14,7 @@ use super::super::super::expr::{
 };
 use super::super::super::ownership::{
     ArgumentPassingPlan, AssociatedFunctionArgumentContext, RegularMethodArgumentContext, ValueUseSite,
-    associated_function_argument_use_site, is_byte_buffer_type, is_string_buffer_type,
+    associated_function_argument_use_site, is_byte_buffer_type, is_string_buffer_type, plan_read_by_ref_receiver,
     regular_method_argument_use_site,
 };
 use super::super::super::reference_shape::{expr_has_rust_reference_shape, type_has_rust_reference_shape};
@@ -453,7 +453,7 @@ impl<'a> IrEmitter<'a> {
                     };
                 }
                 if idx == 0 && method == "by_ref" {
-                    emitted = quote! { &mut *#emitted };
+                    emitted = plan_read_by_ref_receiver(&arg.ty).apply(emitted);
                 }
                 if idx == 0
                     && Self::receiver_type_for_method_dispatch(&receiver.ty).nominal_type_name() == Some("Path")
