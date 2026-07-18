@@ -223,6 +223,8 @@ license = "Apache-2.0"
 authors = ["Danny Meijer <dannys.code.corner@gmail.com>"]
 repository = "https://github.com/encero-systems/incan"
 homepage = "https://github.com/encero-systems/incan"
+keywords = ["programming-language", "compiler", "rust", "python"]
+categories = ["compilers", "development-tools"]
 WORKSPACE
 git show HEAD:Cargo.lock > "$package_dir/crates/Cargo.lock" \
   || fail "could not stage the verified workspace Cargo.lock"

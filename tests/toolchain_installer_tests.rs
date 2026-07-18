@@ -519,6 +519,26 @@ fn toolchain_archive_packager_writes_archive_checksum_and_release_metadata() -> 
     assert!(listing.contains("crates/incan_stdlib/Cargo.toml"));
     assert!(listing.contains("crates/incan_vocab/Cargo.toml"));
     assert!(listing.contains("crates/incan_web_macros/Cargo.toml"));
+
+    let extracted = tmp.path().join("extracted-toolchain");
+    fs::create_dir_all(&extracted)?;
+    let extract = Command::new("tar")
+        .args(["-xzf"])
+        .arg(&archive)
+        .args(["-C"])
+        .arg(&extracted)
+        .status()?;
+    assert!(extract.success(), "toolchain archive extraction failed");
+    let metadata = Command::new("cargo")
+        .args(["metadata", "--no-deps", "--format-version", "1", "--manifest-path"])
+        .arg(extracted.join("crates/Cargo.toml"))
+        .env("CARGO_NET_OFFLINE", "true")
+        .output()?;
+    assert!(
+        metadata.status.success(),
+        "packaged support-crate workspace is invalid:\n{}",
+        String::from_utf8_lossy(&metadata.stderr)
+    );
     Ok(())
 }
 
