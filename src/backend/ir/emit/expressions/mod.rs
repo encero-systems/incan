@@ -1517,6 +1517,72 @@ mod tests {
         }
     }
 
+    /// Build the imported-trait associated call shape used by `Read.by_ref(value)` regressions.
+    fn read_by_ref_call(receiver_name: &str, receiver_ty: IrType) -> TypedExpr {
+        TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "Read".to_string(),
+                        access: VarAccess::Copy,
+                        ref_kind: VarRefKind::ExternalRustName,
+                    },
+                    IrType::Trait("std::io::Read".to_string()),
+                )),
+                method: "by_ref".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: vec![IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: TypedExpr::new(
+                        IrExprKind::Var {
+                            name: receiver_name.to_string(),
+                            access: VarAccess::Read,
+                            ref_kind: VarRefKind::Value,
+                        },
+                        receiver_ty,
+                    ),
+                }],
+                callable_signature: None,
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            IrType::Unknown,
+        )
+    }
+
+    #[test]
+    fn read_by_ref_receiver_borrows_owned_reader_without_dereference() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let emitted = emitter
+            .emit_expr(&read_by_ref_call("input", IrType::Struct("std::io::Stdin".to_string())))
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+
+        assert_eq!(rendered, "Read :: by_ref (& mut input)");
+        Ok(())
+    }
+
+    #[test]
+    fn read_by_ref_receiver_reborrows_through_refmut_guard() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let emitted = emitter
+            .emit_expr(&read_by_ref_call(
+                "cursor",
+                IrType::NamedGeneric(
+                    "std::cell::RefMut".to_string(),
+                    vec![IrType::Struct("std::io::Cursor<Vec<u8>>".to_string())],
+                ),
+            ))
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+
+        assert_eq!(rendered, "Read :: by_ref (& mut * cursor)");
+        Ok(())
+    }
+
     #[test]
     fn type_name_associated_call_does_not_borrow_string_arguments() -> Result<(), String> {
         let registry = FunctionRegistry::new();

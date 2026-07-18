@@ -251,6 +251,13 @@ pub const METADATA_FREE_METHOD_SIGNATURE_RULES: &[MetadataFreeMethodSignatureRul
 /// part of Rust's public contract and whose result shapes matter for Incan source typing.
 pub const METADATA_FREE_FUNCTION_SIGNATURE_RULES: &[MetadataFreeFunctionSignatureRule] = &[
     MetadataFreeFunctionSignatureRule {
+        path: "std::io::stdin",
+        params: &[],
+        return_type: "std::io::Stdin",
+        is_async: false,
+        is_unsafe: false,
+    },
+    MetadataFreeFunctionSignatureRule {
         path: "std::fs::metadata",
         params: &[MetadataFreeFunctionParamRule {
             name: Some("path"),
@@ -1387,5 +1394,18 @@ pub fn run_inline<D: FnMut(&mut Data, &OutputCallbackInfo)>(callback: D) {
         assert!(!signature.is_async);
         assert!(!signature.is_unsafe);
         assert!(metadata_free_function_signature("std::fs::remove_file").is_none());
+    }
+
+    #[test]
+    fn metadata_free_function_signature_preserves_stdin_receiver_type() -> Result<(), String> {
+        let Some(signature) = metadata_free_function_signature("std::io::stdin") else {
+            return Err("std::io::stdin should have a metadata-free signature".to_string());
+        };
+
+        assert_eq!(signature.return_type, "std::io::Stdin");
+        assert!(signature.params.is_empty());
+        assert!(!signature.is_async);
+        assert!(!signature.is_unsafe);
+        Ok(())
     }
 }

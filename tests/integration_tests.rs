@@ -3423,8 +3423,12 @@ def main() -> None:
             .stderr(Stdio::piped())
             .spawn()?;
 
+        // A cold CI runner must compile the generated holder project before it can create the readiness file. Keep
+        // this deadline comfortably above observed cold MSRV compilation time while retaining a finite failure bound.
+        let holder_ready_started = std::time::Instant::now();
+        let holder_ready_timeout = Duration::from_secs(120);
         let mut holder_ready = false;
-        for _ in 0..1200 {
+        while holder_ready_started.elapsed() < holder_ready_timeout {
             if ready.exists() {
                 holder_ready = true;
                 break;

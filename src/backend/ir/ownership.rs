@@ -567,6 +567,50 @@ pub fn plan_collection_receiver(receiver_ty: &IrType, mutable: bool) -> Collecti
     }
 }
 
+/// How an owned or guard-backed value should satisfy `Read::by_ref`'s mutable receiver parameter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadByRefReceiverPlan {
+    /// Emit `&mut receiver` for an owned mutable value.
+    BorrowOwned,
+    /// Emit `&mut *receiver` to reborrow the value behind a mutable dereference guard.
+    ReborrowThroughDeref,
+}
+
+impl ReadByRefReceiverPlan {
+    /// Apply the planned receiver shape to an already-emitted value.
+    pub fn apply(&self, tokens: TokenStream) -> TokenStream {
+        match self {
+            Self::BorrowOwned => quote! { &mut #tokens },
+            Self::ReborrowThroughDeref => quote! { &mut *#tokens },
+        }
+    }
+}
+
+/// Plan a `Read::by_ref` receiver without assuming every source value can be dereferenced.
+///
+/// Incan's stdlib passes `RefMut<T>` guards to associated trait calls such as `Read.by_ref`, where Rust needs a
+/// reborrow of the guarded `T`. Ordinary imported Rust values such as `Stdin` instead need a direct mutable borrow.
+#[must_use]
+pub fn plan_read_by_ref_receiver(receiver_ty: &IrType) -> ReadByRefReceiverPlan {
+    let is_refmut_guard = match receiver_ty {
+        // Metadata-free stdlib compilation cannot yet recover `RefMut<T>` from `borrow_mut()`. Preserve the existing
+        // dereferenced reborrow for that compatibility lane until the return type is available in IR.
+        IrType::Unknown | IrType::RefMut(_) => true,
+        IrType::NamedGeneric(name, _) | IrType::Struct(name) => name
+            .rsplit("::")
+            .next()
+            .and_then(|segment| segment.split('<').next())
+            .is_some_and(|name| name == "RefMut"),
+        _ => false,
+    };
+
+    if is_refmut_guard {
+        ReadByRefReceiverPlan::ReborrowThroughDeref
+    } else {
+        ReadByRefReceiverPlan::BorrowOwned
+    }
+}
+
 /// How a dictionary lookup-style probe key should be shaped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DictLookupKeyPlan {
@@ -1252,6 +1296,33 @@ mod tests {
         assert_eq!(
             plan_collection_receiver(&IrType::List(Box::new(IrType::Int)), false),
             CollectionReceiverPlan::BorrowShared
+        );
+    }
+
+    #[test]
+    fn plan_read_by_ref_receiver_borrows_owned_value() {
+        assert_eq!(
+            plan_read_by_ref_receiver(&IrType::Struct("std::io::Stdin".to_string())),
+            ReadByRefReceiverPlan::BorrowOwned
+        );
+    }
+
+    #[test]
+    fn plan_read_by_ref_receiver_reborrows_refmut_guard() {
+        assert_eq!(
+            plan_read_by_ref_receiver(&IrType::NamedGeneric(
+                "std::cell::RefMut".to_string(),
+                vec![IrType::Struct("std::io::Cursor<Vec<u8>>".to_string())]
+            )),
+            ReadByRefReceiverPlan::ReborrowThroughDeref
+        );
+    }
+
+    #[test]
+    fn plan_read_by_ref_receiver_preserves_metadata_free_guard_fallback() {
+        assert_eq!(
+            plan_read_by_ref_receiver(&IrType::Unknown),
+            ReadByRefReceiverPlan::ReborrowThroughDeref
         );
     }
 
