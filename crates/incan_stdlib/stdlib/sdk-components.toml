@@ -1,0 +1,75 @@
+[sdk]
+id = "incan"
+version = "0.5.0"
+compiler-requirement = ">=0.5.0-dev.6,<0.6.0"
+
+[profiles]
+minimal = ["stdlib-core"]
+default = [
+    "stdlib-core",
+    "stdlib-system",
+    "stdlib-codecs",
+    "stdlib-compression",
+    "stdlib-data",
+    "stdlib-async",
+    "stdlib-observability",
+    "stdlib-web",
+    "stdlib-testing",
+]
+full = [
+    "stdlib-core",
+    "stdlib-system",
+    "stdlib-codecs",
+    "stdlib-compression",
+    "stdlib-data",
+    "stdlib-async",
+    "stdlib-observability",
+    "stdlib-web",
+    "stdlib-testing",
+]
+
+[components.stdlib-core]
+project = "components/stdlib-core"
+mandatory = true
+dependencies = []
+namespace-roots = ["prelude", "result", "reflection", "this", "derives", "traits"]
+
+[components.stdlib-system]
+project = "components/stdlib-system"
+dependencies = ["stdlib-core"]
+namespace-roots = ["environ", "io", "tempfile", "fs"]
+
+[components.stdlib-codecs]
+project = "components/stdlib-codecs"
+dependencies = ["stdlib-core", "stdlib-system"]
+namespace-roots = ["checksum", "encoding"]
+
+[components.stdlib-compression]
+project = "components/stdlib-compression"
+dependencies = ["stdlib-core", "stdlib-system"]
+namespace-roots = ["compression"]
+
+[components.stdlib-data]
+project = "components/stdlib-data"
+dependencies = ["stdlib-core", "stdlib-system"]
+namespace-roots = ["collections", "graph", "hash", "json", "math", "uuid", "datetime", "regex", "serde"]
+
+[components.stdlib-async]
+project = "components/stdlib-async"
+dependencies = ["stdlib-core"]
+namespace-roots = ["async"]
+
+[components.stdlib-observability]
+project = "components/stdlib-observability"
+dependencies = ["stdlib-core", "stdlib-data"]
+namespace-roots = ["logging", "telemetry"]
+
+[components.stdlib-web]
+project = "components/stdlib-web"
+dependencies = ["stdlib-core", "stdlib-data", "stdlib-async"]
+namespace-roots = ["web"]
+
+[components.stdlib-testing]
+project = "components/stdlib-testing"
+dependencies = ["stdlib-core"]
+namespace-roots = ["testing"]

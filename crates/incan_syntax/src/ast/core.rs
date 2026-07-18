@@ -32,15 +32,28 @@ pub struct Spanned<T> {
     /// `0`; two or more consecutive newlines collapse to `1`. All other `Spanned<T>` uses keep the default `0` from
     /// [`Spanned::new`].
     pub leading_blank_lines: u8,
+    /// Positive package features required for this compilation-unit declaration to participate.
+    ///
+    /// The parser flattens `when feature(...):` blocks into ordinary declarations and attaches the normalized
+    /// conjunction here. Statement and expression nodes leave this empty.
+    pub required_features: Vec<String>,
 }
 
 impl<T> Spanned<T> {
+    /// Wrap one syntax node with its source span and empty formatter and feature-projection metadata.
     pub fn new(node: T, span: Span) -> Self {
         Self {
             node,
             span,
             leading_blank_lines: 0,
+            required_features: Vec::new(),
         }
+    }
+
+    /// Attach a normalized positive package-feature conjunction to this node.
+    pub fn with_required_features(mut self, required_features: Vec<String>) -> Self {
+        self.required_features = required_features;
+        self
     }
 }
 
@@ -77,6 +90,36 @@ pub struct Program {
     /// These do not prevent the program from being type-checked or compiled. They are surfaced in CLI output and
     /// forwarded to the LSP as `DiagnosticSeverity::WARNING` squiggles.
     pub warnings: Vec<crate::diagnostics::CompileError>,
+}
+
+impl Program {
+    /// Build the active compilation projection without discarding inactive syntax from the parsed source tree.
+    pub fn projected_for_features(&self, active_features: &std::collections::BTreeSet<String>) -> Self {
+        let mut projected = self.clone();
+        projected.declarations = self
+            .declarations
+            .iter()
+            .filter(|declaration| {
+                declaration
+                    .required_features
+                    .iter()
+                    .all(|feature| active_features.contains(feature))
+            })
+            .cloned()
+            .map(|mut declaration| {
+                if let Declaration::TestModule(module) = &mut declaration.node {
+                    module.body.retain(|nested| {
+                        nested
+                            .required_features
+                            .iter()
+                            .all(|feature| active_features.contains(feature))
+                    });
+                }
+                declaration
+            })
+            .collect();
+        projected
+    }
 }
 
 /// Top-level declarations

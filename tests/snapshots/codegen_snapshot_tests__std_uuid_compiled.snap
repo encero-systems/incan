@@ -992,6 +992,17 @@ impl _UuidBytesWriter {
         return Ok::<(), UuidError>(());
     }
 }
+/// Drop a successful byte count from `BytesIO.write_bytes`.
+///
+/// Args:
+///     _count: Number of bytes written.
+///
+/// Returns:
+///     `None` for writer methods that expose only success or failure.
+pub fn _discard_written_count(_: i64) {
+    let _ = "\n    Drop a successful byte count from `BytesIO.write_bytes`.\n\n    Args:\n        _count: Number of bytes written.\n\n    Returns:\n        `None` for writer methods that expose only success or failure.\n    ";
+    let _ = ();
+}
 fn _uuid_writer(operation: String) -> _UuidBytesWriter {
     let _ = "\n    Create a UUID byte writer tagged with an operation name for errors.\n\n    Args:\n        operation: Human-readable operation label used in converted `UuidError` details.\n\n    Returns:\n        An empty UUID byte writer.\n    ";
     return _UuidBytesWriter {

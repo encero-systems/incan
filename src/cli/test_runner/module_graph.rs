@@ -7,11 +7,13 @@ use crate::cli::commands::common::{
     uses_result_combinator_surface,
 };
 use crate::cli::prelude::ParsedModule;
+use crate::compiled_sdk::CompiledSdkModules;
 use crate::frontend::ast::Program;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::{SourceModuleImportResolution, resolve_program_source_imports};
 use crate::frontend::vocab_desugar_pass;
 use crate::frontend::{diagnostics, lexer, parser};
+use crate::provider::ProviderPlan;
 use incan_core::lang::stdlib;
 
 /// Resolve and queue an emitted Incan stdlib source module for recursive test dependency collection.
@@ -22,10 +24,16 @@ use incan_core::lang::stdlib;
 /// - avoids re-queueing modules that have already been processed
 fn queue_incan_stdlib_source_module(
     module_path: &[String],
+    compiled_sdk_modules: &CompiledSdkModules,
     incan_source_stdlib_module_paths: &mut HashMap<String, PathBuf>,
     processed: &HashSet<PathBuf>,
     to_process: &mut Vec<(PathBuf, String, Vec<String>)>,
 ) -> Result<Option<PathBuf>, String> {
+    // The compiled artifact owns this module's generated Rust implementation. Its checked manifest is loaded by the
+    // test preparation path, so materializing source here would create a second `__incan_std` tree in the harness.
+    if compiled_sdk_modules.contains_source_path(module_path) {
+        return Ok(None);
+    }
     let stdlib_key = module_path.join(".");
     let source_path = if let Some(cached_path) = incan_source_stdlib_module_paths.get(&stdlib_key) {
         cached_path.clone()
@@ -46,6 +54,7 @@ fn queue_incan_stdlib_source_module(
 /// Queue one canonical source-import resolution for test dependency collection.
 fn queue_resolved_source_import(
     resolution: SourceModuleImportResolution,
+    compiled_sdk_modules: &CompiledSdkModules,
     incan_source_stdlib_module_paths: &mut HashMap<String, PathBuf>,
     processed: &HashSet<PathBuf>,
     to_process: &mut Vec<(PathBuf, String, Vec<String>)>,
@@ -55,6 +64,7 @@ fn queue_resolved_source_import(
             if stdlib::stdlib_stub_path(&module_path).is_some() {
                 return queue_incan_stdlib_source_module(
                     &module_path,
+                    compiled_sdk_modules,
                     incan_source_stdlib_module_paths,
                     processed,
                     to_process,
@@ -79,6 +89,7 @@ fn queue_resolved_source_import(
 /// Queue implicit source stdlib helper modules that generated Rust may reference without a source import.
 fn queue_implicit_stdlib_helpers(
     program: &Program,
+    compiled_sdk_modules: &CompiledSdkModules,
     incan_source_stdlib_module_paths: &mut HashMap<String, PathBuf>,
     processed: &HashSet<PathBuf>,
     to_process: &mut Vec<(PathBuf, String, Vec<String>)>,
@@ -91,6 +102,7 @@ fn queue_implicit_stdlib_helpers(
                 "derives".to_string(),
                 "collection".to_string(),
             ],
+            compiled_sdk_modules,
             incan_source_stdlib_module_paths,
             processed,
             to_process,
@@ -101,6 +113,7 @@ fn queue_implicit_stdlib_helpers(
     if uses_result_combinator_surface(program)
         && let Some(path) = queue_incan_stdlib_source_module(
             &[stdlib::STDLIB_ROOT.to_string(), "result".to_string()],
+            compiled_sdk_modules,
             incan_source_stdlib_module_paths,
             processed,
             to_process,
@@ -129,15 +142,18 @@ pub(crate) fn collect_source_modules_for_test(
     library_imported_vocab: Option<&parser::ImportedLibraryVocab>,
     library_imported_dsl_surfaces: Option<&parser::ImportedLibraryDslSurfaces>,
     library_manifest_index: Option<&LibraryManifestIndex>,
+    provider_plan: &ProviderPlan,
 ) -> Result<Vec<ParsedModule>, String> {
     let mut modules = Vec::new();
     let mut processed = HashSet::new();
     let mut to_process: Vec<(PathBuf, String, Vec<String>)> = Vec::new();
     let mut incan_source_stdlib_module_paths: HashMap<String, PathBuf> = HashMap::new();
+    let compiled_sdk_modules = CompiledSdkModules::from_provider_plan(provider_plan);
     let mut dependency_edges: HashMap<String, HashSet<String>> = HashMap::new();
 
     queue_implicit_stdlib_helpers(
         test_ast,
+        &compiled_sdk_modules,
         &mut incan_source_stdlib_module_paths,
         &processed,
         &mut to_process,
@@ -147,6 +163,7 @@ pub(crate) fn collect_source_modules_for_test(
     for resolved in resolve_program_source_imports(test_ast, source_root, Some(source_root)) {
         let _ = queue_resolved_source_import(
             resolved.resolution,
+            &compiled_sdk_modules,
             &mut incan_source_stdlib_module_paths,
             &processed,
             &mut to_process,
@@ -203,9 +220,13 @@ pub(crate) fn collect_source_modules_for_test(
             eprint!("{}", diagnostics::format_error(&fp, &source, warn));
         }
 
-        for dependency_path in
-            queue_implicit_stdlib_helpers(&ast, &mut incan_source_stdlib_module_paths, &processed, &mut to_process)?
-        {
+        for dependency_path in queue_implicit_stdlib_helpers(
+            &ast,
+            &compiled_sdk_modules,
+            &mut incan_source_stdlib_module_paths,
+            &processed,
+            &mut to_process,
+        )? {
             dependency_edges
                 .entry(file_key.clone())
                 .or_default()
@@ -217,6 +238,7 @@ pub(crate) fn collect_source_modules_for_test(
         for resolved in resolve_program_source_imports(&ast, current_base, Some(source_root)) {
             if let Some(dependency_path) = queue_resolved_source_import(
                 resolved.resolution,
+                &compiled_sdk_modules,
                 &mut incan_source_stdlib_module_paths,
                 &processed,
                 &mut to_process,
@@ -244,6 +266,7 @@ pub(crate) fn collect_source_modules_for_test(
 mod tests {
     use super::collect_source_modules_for_test;
     use crate::frontend::{lexer, parser};
+    use crate::provider::ProviderPlan;
     use std::path::Path;
 
     #[test]
@@ -268,7 +291,7 @@ mod tests {
         let ast = parser::parse_with_context(&tokens, Some("tests/test_dataset.incn"), None)
             .map_err(|errs| errs[0].message.clone())?;
 
-        let modules = collect_source_modules_for_test(&ast, &src_dir, None, None, None)?;
+        let modules = collect_source_modules_for_test(&ast, &src_dir, None, None, None, &ProviderPlan::default())?;
 
         let dataset_mod = modules
             .iter()
@@ -304,7 +327,7 @@ mod tests {
         let ast = parser::parse_with_context(&tokens, Some("tests/test_alias.incn"), None)
             .map_err(|errs| errs[0].message.clone())?;
 
-        let modules = collect_source_modules_for_test(&ast, &src_dir, None, None, None)?;
+        let modules = collect_source_modules_for_test(&ast, &src_dir, None, None, None, &ProviderPlan::default())?;
         let helper_idx = modules
             .iter()
             .position(|module| module.file_path.ends_with("helper.incn"))
@@ -322,7 +345,8 @@ mod tests {
     }
 
     #[test]
-    fn test_runner_collects_implicit_result_helper_modules() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_runner_uses_compiled_result_helper_without_materializing_source() -> Result<(), Box<dyn std::error::Error>>
+    {
         let tmp = tempfile::tempdir()?;
         let src_dir = tmp.path().join("src");
         std::fs::create_dir_all(&src_dir)?;
@@ -345,15 +369,19 @@ def test_map_err_result_helper_is_packaged() -> None:
         let ast = parser::parse_with_context(&tokens, Some("tests/test_result_map_err.incn"), None)
             .map_err(|errs| errs[0].message.clone())?;
 
-        let modules = collect_source_modules_for_test(&ast, &src_dir, None, None, None)?;
+        let provider_plan = ProviderPlan::for_in_memory_sdk_modules(
+            crate::frontend::library_manifest_index::LibraryManifestIndex::default(),
+            [vec!["result".to_string()]],
+        );
+        let modules = collect_source_modules_for_test(&ast, &src_dir, None, None, None, &provider_plan)?;
 
         assert!(
-            modules.iter().any(|module| module.path_segments
+            !modules.iter().any(|module| module.path_segments
                 == vec![
                     incan_core::lang::stdlib::INCAN_STD_NAMESPACE.to_string(),
                     "result".to_string()
                 ]),
-            "expected std.result helper module to be collected, got {:?}",
+            "compiled std.result helper source must not be collected, got {:?}",
             modules
                 .iter()
                 .map(|module| module.path_segments.clone())

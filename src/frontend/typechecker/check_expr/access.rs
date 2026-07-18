@@ -1691,7 +1691,9 @@ impl TypeChecker {
         };
         match &metadata.kind {
             RustItemKind::Type(_) => {
-                let Some(sig) = self.rust_method_signature(rust_path, method) else {
+                let Some(sig) = metadata_free_method_signature(rust_path, method)
+                    .or_else(|| self.rust_method_signature(rust_path, method))
+                else {
                     if let Some(import_use) = self.record_rust_extension_trait_import_for_call(&metadata, method, span)
                         && let Some(sig) = import_use.signature.as_ref()
                     {
@@ -2971,6 +2973,9 @@ impl TypeChecker {
 
         if let ResolvedType::RustPath(path) = &base_ty {
             let Some(meta) = self.rust_item_metadata_for_path(path) else {
+                if let Some(sig) = metadata_free_method_signature(path, field) {
+                    return self.resolved_function_type_from_rust_sig_for_path(&sig, false, path);
+                }
                 // Metadata backend disabled/unavailable: preserve permissive RFC 005 behavior.
                 return ResolvedType::Unknown;
             };

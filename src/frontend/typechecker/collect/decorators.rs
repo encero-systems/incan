@@ -5,6 +5,7 @@
 
 use std::collections::HashSet;
 
+use crate::frontend::api_metadata::ApiDeclaration;
 use crate::frontend::ast::*;
 use crate::frontend::decorator_resolution;
 use crate::frontend::diagnostics::errors;
@@ -12,6 +13,7 @@ use crate::frontend::symbols::{ResolvedType, SymbolKind, SymbolTable, TypeInfo};
 use crate::frontend::typechecker::TypeChecker;
 use incan_core::lang::decorators::{self, DecoratorId};
 use incan_core::lang::derives;
+use incan_core::lang::stdlib;
 use incan_semantics_core::{DecoratorFeature, SurfaceFeatureKey};
 
 #[derive(Clone, Copy)]
@@ -60,6 +62,42 @@ pub(super) fn positional_idents(args: &[DecoratorArg]) -> impl Iterator<Item = (
 }
 
 impl TypeChecker {
+    /// Return whether a checked provider manifest declares this resolved path as an extern-backed decorator function.
+    fn provider_declares_decorator_function(&self, resolved: &[String]) -> bool {
+        let Some((function_name, module_path)) = resolved.split_last() else {
+            return false;
+        };
+        let Some(provider) = self.provider_plan.active_sdk_provider_for_module(module_path) else {
+            return false;
+        };
+        let Some(api) = provider
+            .manifest
+            .as_deref()
+            .and_then(|manifest| manifest.contract_metadata.api.as_ref())
+        else {
+            return false;
+        };
+        let provider_module_path = if module_path.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT) {
+            &module_path[1..]
+        } else {
+            module_path
+        };
+        api.modules
+            .iter()
+            .filter(|module| module.module_path == provider_module_path)
+            .flat_map(|module| module.declarations.iter())
+            .any(|declaration| {
+                let ApiDeclaration::Function(function) = declaration else {
+                    return false;
+                };
+                function.name == *function_name
+                    && function
+                        .decorators
+                        .iter()
+                        .any(|decorator| decorator.path.as_slice() == ["rust", "extern"])
+            })
+    }
+
     /// Validate decorator paths for declarations that allow user-defined decorator candidates.
     pub(crate) fn validate_decorators_allowing_user_defined(&mut self, decorators: &[Spanned<Decorator>]) {
         self.validate_decorators_for_target(decorators, DecoratorValidationTarget::AllowsUserDefined);
@@ -104,10 +142,11 @@ impl TypeChecker {
                 let is_stdlib_decorator_function = feature
                     == Some(SurfaceFeatureKey::Decorator(DecoratorFeature::StdlibDecoratorFunction))
                     && resolved.len() >= 3
-                    && self
-                        .stdlib_cache
-                        .lookup_function_meta(&resolved[..resolved.len() - 1], &resolved[resolved.len() - 1])
-                        .is_some_and(|f| f.is_rust_extern && f.rust_module_path.is_some());
+                    && (self.provider_declares_decorator_function(&resolved)
+                        || self
+                            .stdlib_cache
+                            .lookup_function_meta(&resolved[..resolved.len() - 1], &resolved[resolved.len() - 1])
+                            .is_some_and(|f| f.is_rust_extern && f.rust_module_path.is_some()));
                 if is_stdlib_decorator_function {
                     continue;
                 }

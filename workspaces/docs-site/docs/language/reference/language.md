@@ -45,6 +45,7 @@ Reservation describes how a spelling is reserved: `Hard` keywords are always res
 | Yield | `yield` |  | Hard | - | ControlFlow | Statement, Expression | RFC 001 | 0.1 | Stable |
 | Pass | `pass` |  | Hard | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
 | Assert | `assert` |  | Contextual | - | ControlFlow | Statement | RFC 018 | 0.3 | Draft |
+| When | `when` |  | Contextual | - | ControlFlow | Statement | RFC 114 | 0.5 | Stable |
 | Def | `def` | `fn` | Hard | - | Definition | Statement | RFC 000 | 0.1 | Stable |
 | Async | `async` |  | Soft | `std.async` | Definition | Modifier | RFC 000 | 0.1 | Stable |
 | Await | `await` |  | Soft | `std.async` | Definition | Expression | RFC 000 | 0.1 | Stable |

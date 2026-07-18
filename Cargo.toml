@@ -102,8 +102,10 @@ toml_edit = { version = "0.25", features = ["parse", "serde"] }
 # Serde derive for manifest deserialization
 serde = { version = "1.0", features = ["derive"] }
 sha2 = "0.10.9"
+blake3 = "1"
 hex = "0.4.3"
 semver = "1.0.27"
+globset = "0.4.18"
 rust_inspect = { path = "crates/rust_inspect", optional = true }
 # WASM runtime for desugarer packaging
 wasmtime = { version = "45.0.3", default-features = false, features = ["cranelift", "runtime", "std"] }
@@ -124,7 +126,6 @@ snap = "1"
 crc32fast = "1"
 # Runtime crates used by std.hash generated-project offline smoke tests.
 blake2 = "0.10"
-blake3 = "1"
 md5_010 = { package = "md-5", version = "0.10" }
 sha1 = "0.10"
 sha3 = "0.10"

@@ -9,9 +9,8 @@ use crate::frontend::ast::{
     Statement, UnaryOp,
 };
 use crate::frontend::ast_walk::any_expr_in_body;
-use crate::frontend::testing_markers::{
-    TestingMarkerKind, TestingMarkerSemantics, load_testing_marker_semantics, resolve_testing_marker_kind,
-};
+use crate::frontend::testing_markers::{TestingMarkerKind, TestingMarkerSemantics, resolve_testing_marker_kind};
+use crate::provider::FeatureSelection;
 
 use super::types::{DiscoveryResult, FixtureInfo, FixtureScope, ParametrizeCase, TestInfo, TestMarker};
 
@@ -37,15 +36,27 @@ fn source_may_contain_inline_test_module(source: &str) -> bool {
 
 /// Parse one source file for collection-time discovery using the same dependency-provided vocabulary surfaces that
 /// ordinary source compilation receives.
-fn parse_collection_program(path: &Path, source: &str) -> Result<Program, String> {
-    let session = CompilationSession::discover(path).map_err(|e| format!("Manifest error: {}", e.message))?;
-    session
-        .parse_source_for_collection(path, source)
-        .map_err(|e| format!("Parser error: {:?}", e))
+fn parse_collection_program(
+    path: &Path,
+    source: &str,
+    package_features: &FeatureSelection,
+    sdk_profile_override: Option<&str>,
+) -> Result<(Program, CompilationSession), String> {
+    let session =
+        CompilationSession::discover_for_collection_with_selections(path, package_features, sdk_profile_override)
+            .map_err(|e| format!("Manifest error: {}", e.message))?;
+    let program = session
+        .parse_source(path, source, false)
+        .map_err(|e| format!("Parser error: {:?}", e))?;
+    Ok((program, session))
 }
 
 /// Parse a non-test source file just far enough to prove it contains a real RFC 018 inline test module.
-fn file_has_inline_test_module(path: &Path) -> bool {
+fn file_has_inline_test_module(
+    path: &Path,
+    package_features: &FeatureSelection,
+    sdk_profile_override: Option<&str>,
+) -> bool {
     if !is_incan_source_file(path) || is_named_test_file(path) {
         return false;
     }
@@ -57,7 +68,7 @@ fn file_has_inline_test_module(path: &Path) -> bool {
         return false;
     }
 
-    let Ok(ast) = parse_collection_program(path, &source) else {
+    let Ok((ast, _session)) = parse_collection_program(path, &source, package_features, sdk_profile_override) else {
         return false;
     };
 
@@ -74,6 +85,21 @@ fn program_for_decls(declarations: Vec<Spanned<Declaration>>) -> Program {
         rust_module_path: None,
         warnings: Vec::new(),
     }
+}
+
+/// Return whether declarations use any decorator supplied by `std.testing`.
+fn declarations_use_testing_markers(
+    declarations: &[Spanned<Declaration>],
+    aliases: &HashMap<String, Vec<String>>,
+) -> bool {
+    declarations.iter().any(|declaration| match &declaration.node {
+        Declaration::Function(function) => function.decorators.iter().any(|decorator| {
+            let resolved = crate::frontend::decorator_resolution::resolve_decorator_path(&decorator.node, aliases);
+            resolved.len() == 3 && resolved[0] == "std" && resolved[1] == "testing"
+        }),
+        Declaration::TestModule(test_module) => declarations_use_testing_markers(&test_module.body, aliases),
+        _ => false,
+    })
 }
 
 const BUILTIN_FIXTURES: &[&str] = &["tmp_path", "tmp_workdir", "env"];
@@ -104,10 +130,19 @@ impl Default for CollectionEvalContext {
 
 /// Discover test files in a directory.
 pub fn discover_test_files(path: &Path) -> Vec<PathBuf> {
+    discover_test_files_with_selections(path, &FeatureSelection::default(), None)
+}
+
+/// Discover test files for explicit package-feature and transient SDK-profile selections.
+pub(crate) fn discover_test_files_with_selections(
+    path: &Path,
+    package_features: &FeatureSelection,
+    sdk_profile_override: Option<&str>,
+) -> Vec<PathBuf> {
     let mut files = Vec::new();
 
     if path.is_file() {
-        if is_named_test_file(path) || file_has_inline_test_module(path) {
+        if is_named_test_file(path) || file_has_inline_test_module(path, package_features, sdk_profile_override) {
             files.push(path.to_path_buf());
         }
     } else if path.is_dir()
@@ -118,10 +153,16 @@ pub fn discover_test_files(path: &Path) -> Vec<PathBuf> {
             if entry_path.is_dir() {
                 let name = entry_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
                 if !name.starts_with('.') && name != "target" && name != "node_modules" {
-                    files.extend(discover_test_files(&entry_path));
+                    files.extend(discover_test_files_with_selections(
+                        &entry_path,
+                        package_features,
+                        sdk_profile_override,
+                    ));
                 }
             } else {
-                if is_named_test_file(&entry_path) || file_has_inline_test_module(&entry_path) {
+                if is_named_test_file(&entry_path)
+                    || file_has_inline_test_module(&entry_path, package_features, sdk_profile_override)
+                {
                     files.push(entry_path);
                 }
             }
@@ -134,7 +175,15 @@ pub fn discover_test_files(path: &Path) -> Vec<PathBuf> {
 
 /// Discover both tests and fixtures in a file.
 pub fn discover_tests_and_fixtures(file_path: &Path) -> Result<DiscoveryResult, String> {
-    discover_tests_and_fixtures_with_context(file_path, &[], &[], &[], &CollectionEvalContext::default())
+    discover_tests_and_fixtures_with_context(
+        file_path,
+        &[],
+        &[],
+        &[],
+        &CollectionEvalContext::default(),
+        &FeatureSelection::default(),
+        None,
+    )
 }
 
 /// Discover test declarations using inherited conftest fixtures and marker registries.
@@ -144,9 +193,12 @@ pub(crate) fn discover_tests_and_fixtures_with_context(
     inherited_marks: &[String],
     inherited_known_markers: &[String],
     eval_context: &CollectionEvalContext,
+    package_features: &FeatureSelection,
+    sdk_profile_override: Option<&str>,
 ) -> Result<DiscoveryResult, String> {
     let source = fs::read_to_string(file_path).map_err(|e| format!("Failed to read file: {}", e))?;
-    let ast = parse_collection_program(file_path, &source)?;
+    let (ast, compilation_session) =
+        parse_collection_program(file_path, &source, package_features, sdk_profile_override)?;
 
     let is_named_test_file = is_named_test_file(file_path);
     let is_conftest_file = file_path.file_name().and_then(|name| name.to_str()) == Some("conftest.incn");
@@ -173,8 +225,13 @@ pub(crate) fn discover_tests_and_fixtures_with_context(
             &inline_program,
         ));
     }
-    let semantics =
-        load_testing_marker_semantics().map_err(|e| format!("Failed to load std.testing marker semantics: {e}"))?;
+    let semantics = if declarations_use_testing_markers(&declarations, &import_aliases) {
+        compilation_session
+            .require_testing_marker_semantics()
+            .map_err(|error| format!("Failed to load std.testing marker semantics: {}", error.message))?
+    } else {
+        TestingMarkerSemantics::default()
+    };
 
     let mut tests = Vec::new();
     let mut fixtures = Vec::new();

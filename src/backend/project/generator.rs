@@ -7,13 +7,15 @@
 //! - [`super::cargo_toml`] — `Cargo.toml` rendering (`generate_cargo_toml`, `format_dependency_spec`)
 //! - [`super::runner`] — `build()`, `run()`, `run_with_cwd()` and result types
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::compiled_sdk::CompiledSdkModules;
 use crate::manifest::DependencySpec;
-use incan_core::lang::rust_keywords;
+use crate::provider::{ProviderPlan, SDK_PROVIDER_BUILD_ENV};
+use incan_core::lang::{rust_keywords, stdlib};
 use sha2::{Digest as _, Sha256};
 
 const MOD_INSERT_MARKER: &str = "// __INCAN_INSERT_MODS__";
@@ -46,6 +48,15 @@ fn transform_stdlib_path(path: &[String]) -> Vec<String> {
     }
 }
 
+/// Return whether this process is compiling an SDK provider into its own library artifact.
+///
+/// The generated artifact exposes source modules directly (`crate::fs`, `crate::traits`, …), while existing compiler
+/// bridges address those same modules through `crate::__incan_std`. Keep that compatibility namespace confined to the
+/// artifact build so ordinary user libraries do not acquire a synthetic module.
+pub(super) fn is_sdk_provider_build() -> bool {
+    std::env::var_os(SDK_PROVIDER_BUILD_ENV).is_some()
+}
+
 /// Project generator for creating runnable Rust projects from Incan code.
 pub struct ProjectGenerator {
     /// Output directory for the generated project
@@ -74,6 +85,10 @@ pub struct ProjectGenerator {
     pub(super) rust_edition: Option<String>,
     /// Profile used when building the generated crate for `incan run`.
     pub(super) run_profile: RunProfile,
+    /// Modules supplied by linked compiled SDK providers.
+    pub(super) compiled_sdk_modules: CompiledSdkModules,
+    /// Top-level `std.*` modules grouped by the generated Rust crate that supplies each compiled SDK provider.
+    pub(super) compiled_provider_modules: BTreeMap<String, BTreeSet<String>>,
 }
 
 /// Cargo profile used for `incan run`.
@@ -102,6 +117,8 @@ impl ProjectGenerator {
             cargo_target_dir_override: None,
             rust_edition: None,
             run_profile: RunProfile::Debug,
+            compiled_sdk_modules: CompiledSdkModules::default(),
+            compiled_provider_modules: BTreeMap::new(),
         }
     }
 
@@ -160,6 +177,44 @@ impl ProjectGenerator {
     /// Set the cargo profile used for `incan run`.
     pub fn set_run_profile(&mut self, profile: RunProfile) {
         self.run_profile = profile;
+    }
+
+    /// Configure one compiled SDK provider directly for focused generator tests.
+    #[cfg(test)]
+    fn set_compiled_provider_modules(&mut self, crate_name: &str, modules: CompiledSdkModules) {
+        let top_level_modules = modules
+            .relative_paths()
+            .filter_map(|path| path.first().cloned())
+            .collect::<BTreeSet<_>>();
+        if top_level_modules.is_empty() {
+            self.compiled_provider_modules.remove(crate_name);
+        } else {
+            self.compiled_provider_modules
+                .insert(crate_name.to_string(), top_level_modules);
+        }
+        self.compiled_sdk_modules = modules;
+    }
+
+    /// Configure generated Rust facade links from the shared compiler provider plan.
+    pub(crate) fn set_provider_plan(&mut self, plan: &ProviderPlan) {
+        self.compiled_provider_modules.clear();
+        self.compiled_sdk_modules = CompiledSdkModules::from_provider_plan(plan);
+        for provider in plan.sdk_link_roots() {
+            let Some(artifact) = provider.artifact.as_ref() else {
+                continue;
+            };
+            let modules = self
+                .compiled_provider_modules
+                .entry(artifact.dependency_key.clone())
+                .or_default();
+            for claim in &provider.namespace_claims {
+                if claim.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT)
+                    && let Some(module) = claim.get(1)
+                {
+                    modules.insert(module.clone());
+                }
+            }
+        }
     }
 
     /// Return the generated Rust project directory.
@@ -335,6 +390,37 @@ impl ProjectGenerator {
         format!("{visibility}mod {escaped_name};")
     }
 
+    /// Render the compatibility namespace used by generated compiler bridges inside the compiled stdlib artifact.
+    ///
+    /// The artifact owns its source modules at crate root so consumers can depend on normal Rust paths, but generated
+    /// source still refers to `__incan_std` while the migration is in flight. Re-export each concrete root module
+    /// rather than glob-re-exporting the crate: the latter would recursively re-export the facade itself.
+    fn compiled_provider_facade(&self, local_top_level_modules: &[String]) -> String {
+        let mut facade = String::from("pub mod __incan_std {\n");
+        for module in local_top_level_modules {
+            let escaped_module = rust_keywords::escape_keyword(module);
+            facade.push_str(&format!("    pub use crate::{escaped_module};\n"));
+        }
+        for crate_name in self.compiled_provider_modules.keys() {
+            let escaped_crate = rust_keywords::escape_keyword(crate_name);
+            // A provider's compatibility facade includes the provider modules of its component dependencies. Reuse
+            // that checked artifact projection so compiler-generated paths such as `crate::__incan_std::traits` keep
+            // working without making transitive component crates direct Cargo dependencies of the consumer.
+            facade.push_str(&format!("    pub use {escaped_crate}::__incan_std::*;\n"));
+        }
+        facade.push_str("}\n");
+        facade
+    }
+
+    /// Return whether this generated project links at least one compiled SDK provider.
+    ///
+    /// The artifact preserves a narrow `__incan_std` facade for compiler-generated compatibility paths. Consumers
+    /// re-export that facade instead of regenerating any stdlib source; the bridge can be removed once every emitted
+    /// compiler path is artifact-qualified.
+    fn links_compiled_sdk_provider(&self) -> bool {
+        !self.compiled_provider_modules.is_empty()
+    }
+
     /// Generate the project structure (single-file mode).
     pub fn generate(&self, rust_code: &str) -> io::Result<bool> {
         let src_dir = self.ensure_generated_src_dir()?;
@@ -345,13 +431,36 @@ impl ProjectGenerator {
         changed |= Self::write_file_if_changed(&self.output_dir.join("Cargo.toml"), &cargo_toml)?;
         changed |= self.write_cargo_lock_if_needed()?;
 
+        // Single-file consumers need the same artifact-backed compatibility namespace as nested projects. Compiler
+        // bridges still use `crate::__incan_std` while they are migrated to canonical artifact paths; re-exporting
+        // the artifact's facade keeps those bridges out of a regenerated source stdlib tree.
+        let mut full_main = rust_code.to_string();
+        if self.links_compiled_sdk_provider() && !is_sdk_provider_build() && !full_main.contains("mod __incan_std") {
+            let facade = self.compiled_provider_facade(&[]);
+            if let Some(marker_pos) = full_main.find(MOD_INSERT_MARKER) {
+                let line_end = full_main[marker_pos..]
+                    .find('\n')
+                    .map(|offset| marker_pos + offset + 1)
+                    .unwrap_or(full_main.len());
+                full_main.replace_range(marker_pos..line_end, &facade);
+            } else if let Some(attr_pos) = full_main.find("#![") {
+                let line_end = full_main[attr_pos..]
+                    .find('\n')
+                    .map(|offset| attr_pos + offset + 1)
+                    .unwrap_or(full_main.len());
+                full_main.insert_str(line_end, &facade);
+            } else {
+                full_main = format!("{facade}\n{full_main}");
+            }
+        }
+
         // Write main source file
         let main_file = if self.is_binary {
             src_dir.join("main.rs")
         } else {
             src_dir.join("lib.rs")
         };
-        changed |= Self::write_file_if_changed(&main_file, rust_code)?;
+        changed |= Self::write_file_if_changed(&main_file, &full_main)?;
 
         Ok(changed)
     }
@@ -458,6 +567,31 @@ impl ProjectGenerator {
         for (path, code) in modules {
             let transformed_path = transform_stdlib_path(path);
             transformed_modules.insert(transformed_path, code.clone());
+        }
+
+        // Remove only migrated artifact modules from a reused generated project. Other source-backed stdlib modules
+        // must remain available until their own migration is complete.
+        for relative_path in self.compiled_sdk_modules.relative_paths() {
+            let mut emitted_path = Vec::with_capacity(relative_path.len() + 1);
+            emitted_path.push(stdlib::INCAN_STD_NAMESPACE.to_string());
+            emitted_path.extend(relative_path.iter().cloned());
+            let Some(last_segment) = emitted_path.last() else {
+                continue;
+            };
+            let mut leaf = src_dir.clone();
+            for segment in &emitted_path[..emitted_path.len() - 1] {
+                leaf.push(segment);
+            }
+            leaf.push(last_segment);
+            changed |= Self::remove_conflicting_module_artifact(&leaf.with_extension("rs"))?;
+            for depth in (1..emitted_path.len()).rev() {
+                let parent = &emitted_path[..depth];
+                if transformed_modules.keys().any(|path| path.starts_with(parent)) {
+                    break;
+                }
+                let parent_dir = parent.iter().fold(src_dir.clone(), |dir, segment| dir.join(segment));
+                changed |= Self::remove_conflicting_module_artifact(&parent_dir)?;
+            }
         }
 
         // ---- Collect directory structure and submodules ----
@@ -596,9 +730,12 @@ impl ProjectGenerator {
 
         let mut sorted_top: Vec<_> = top_level_modules.into_iter().collect();
         sorted_top.sort();
-        if !sorted_top.is_empty() {
+        let consumer_stdlib_facade = self.links_compiled_sdk_provider()
+            && !is_sdk_provider_build()
+            && !sorted_top.iter().any(|module| module == "__incan_std");
+        if !sorted_top.is_empty() || consumer_stdlib_facade {
             let visibility = if self.is_binary { "" } else { "pub " };
-            let mods: String = sorted_top
+            let mut mods = sorted_top
                 .iter()
                 .map(|m| {
                     let top_level_path = vec![(*m).clone()];
@@ -610,8 +747,17 @@ impl ProjectGenerator {
                     Self::render_module_decl(m, &relative_path, visibility)
                 })
                 .collect::<Vec<_>>()
-                .join("\n")
-                + "\n";
+                .join("\n");
+            if !mods.is_empty() {
+                mods.push('\n');
+            }
+
+            if !self.is_binary && is_sdk_provider_build() {
+                mods.push('\n');
+                mods.push_str(&self.compiled_provider_facade(&sorted_top));
+            } else if consumer_stdlib_facade {
+                mods.push_str(&self.compiled_provider_facade(&[]));
+            }
 
             if let Some(marker_pos) = full_main.find(MOD_INSERT_MARKER) {
                 let line_end = full_main[marker_pos..]
@@ -655,6 +801,7 @@ impl ProjectGenerator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::manifest::DependencySource;
     use std::collections::HashMap;
 
     #[test]
@@ -687,6 +834,78 @@ mod tests {
             vec!["db".to_string(), "models".to_string()]
         );
         assert_eq!(transform_stdlib_path(&["api".to_string()]), vec!["api".to_string()]);
+    }
+
+    #[test]
+    fn test_compiled_sdk_provider_facade_reexports_direct_modules() {
+        let generator = ProjectGenerator::new("target/test-provider-facade", "provider", false);
+        let facade = generator.compiled_provider_facade(&["async".to_string(), "fs".to_string(), "traits".to_string()]);
+
+        assert_eq!(
+            facade,
+            "pub mod __incan_std {\n    pub use crate::r#async;\n    pub use crate::fs;\n    pub use crate::traits;\n}\n"
+        );
+    }
+
+    #[test]
+    fn test_generate_nested_consumer_reexports_compiled_stdlib_compatibility_facade()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let mut generator = ProjectGenerator::new(temp.path(), "consumer", true);
+        generator.set_dependencies(vec![DependencySpec {
+            crate_name: "test_sdk_provider".to_string(),
+            version: None,
+            features: Vec::new(),
+            default_features: true,
+            source: DependencySource::Path {
+                path: temp.path().join("artifact"),
+            },
+            optional: false,
+            package: None,
+        }]);
+        generator.set_compiled_provider_modules(
+            "test_sdk_provider",
+            CompiledSdkModules::from_relative_paths([vec!["math".to_string()]]),
+        );
+
+        generator.generate_nested("fn main() {}\n", &HashMap::new())?;
+        let generated = fs::read_to_string(temp.path().join("src/main.rs"))?;
+        assert!(
+            generated.contains("pub use test_sdk_provider::__incan_std::*;"),
+            "compiled-provider consumers must reuse the artifact compatibility facade:\n{generated}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_generate_consumer_reexports_compiled_stdlib_compatibility_facade() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let temp = tempfile::tempdir()?;
+        let mut generator = ProjectGenerator::new(temp.path(), "consumer", true);
+        generator.set_dependencies(vec![DependencySpec {
+            crate_name: "test_sdk_provider".to_string(),
+            version: None,
+            features: Vec::new(),
+            default_features: true,
+            source: DependencySource::Path {
+                path: temp.path().join("artifact"),
+            },
+            optional: false,
+            package: None,
+        }]);
+        generator.set_compiled_provider_modules(
+            "test_sdk_provider",
+            CompiledSdkModules::from_relative_paths([vec!["math".to_string()]]),
+        );
+
+        generator.generate("// __INCAN_INSERT_MODS__\nfn main() {}\n")?;
+        let generated = fs::read_to_string(temp.path().join("src/main.rs"))?;
+        assert!(
+            generated.contains("pub use test_sdk_provider::__incan_std::*;"),
+            "single-file compiled-provider consumers must reuse the artifact compatibility facade:\n{generated}"
+        );
+        assert!(!generated.contains("__INCAN_INSERT_MODS__"));
+        Ok(())
     }
 
     #[test]
@@ -946,6 +1165,27 @@ mod tests {
         assert!(!second, "identical nested regeneration should not rewrite files");
 
         let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_generate_nested_removes_manifest_owned_stdlib_source() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let stale_module = temp.path().join("src/__incan_std/fs/locking.rs");
+        fs::create_dir_all(stale_module.parent().ok_or("stale module had no parent")?)?;
+        fs::write(&stale_module, "pub fn stale() {}\n")?;
+
+        let mut generator = ProjectGenerator::new(temp.path(), "consumer", true);
+        generator.set_compiled_provider_modules(
+            "test_sdk_provider",
+            CompiledSdkModules::from_relative_paths([vec!["fs".to_string(), "locking".to_string()]]),
+        );
+        generator.generate_nested("fn main() {}\n", &HashMap::new())?;
+
+        assert!(
+            !stale_module.exists(),
+            "artifact-owned modules discovered from the manifest must be removed from reused consumer projects"
+        );
         Ok(())
     }
 

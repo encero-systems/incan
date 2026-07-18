@@ -25,7 +25,10 @@ use crate::frontend::typechecker;
 use crate::library_manifest::{LibraryManifest, ParamExport, ParamKindExport, TypeRef};
 use crate::manifest::ProjectManifest;
 
-use super::common::{collect_modules, imported_module_deps_for_with_index, module_key_index, resolve_project_root};
+use super::common::{
+    collect_modules, discover_effective_project_manifest, imported_module_deps_for_with_index, module_key_index,
+    resolve_project_root,
+};
 
 /// Output format for `incan tools doctor`.
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
@@ -331,9 +334,7 @@ fn collect_model_bundles_for_path(path: &Path) -> CliResult<Vec<CanonicalModelBu
     } else {
         resolve_project_root(&absolute)
     };
-    let Some(manifest) =
-        ProjectManifest::discover(&project_root).map_err(|error| CliError::failure(error.to_string()))?
-    else {
+    let Some(manifest) = discover_effective_project_manifest(&project_root)? else {
         return Err(CliError::failure(format!(
             "model metadata lookup requires a project manifest, bundle JSON, or `.incnlib` artifact: {}",
             path.display()
@@ -371,8 +372,8 @@ fn collect_api_metadata_package(path: &Path) -> CliResult<CheckedApiMetadataPack
     let entry_path_string = entry_path.to_string_lossy();
     let modules = collect_modules(&entry_path_string)?;
     let project_root = resolve_project_root(&entry_path);
-    let manifest = ProjectManifest::discover(&project_root).map_err(|error| CliError::failure(error.to_string()))?;
-    let declared = manifest.as_ref().map(ProjectManifest::declared_rust_crate_names);
+    let manifest = discover_effective_project_manifest(&project_root)?;
+    let declared = manifest.as_ref().map(|manifest| manifest.declared_rust_crate_names());
     let library_manifest_index = manifest
         .as_ref()
         .map(LibraryManifestIndex::from_project_manifest)

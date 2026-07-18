@@ -1,0 +1,5 @@
+"""Compiled provider entrypoint for Incan structured logging and telemetry support."""
+
+import logging
+import telemetry.core
+import telemetry.prelude

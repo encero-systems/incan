@@ -449,7 +449,9 @@ impl AstLowering {
                             variant: constructors::as_str(ConstructorId::Some).to_string(),
                             fields: vec![IrPattern::Enum {
                                 name: union_name.clone(),
-                                variant: format!("{}::{}", union_name, IrType::union_variant_name(index)),
+                                variant: inner_ty.union_variant_path(index).unwrap_or_else(|| {
+                                    format!("{}::{}", union_name, IrType::union_variant_name(index))
+                                }),
                                 fields: vec![IrPattern::Var(format!("__incan_option_union_{}_{}", binding, index))],
                             }],
                         },
@@ -479,7 +481,9 @@ impl AstLowering {
                     variant: constructors::as_str(ConstructorId::Some).to_string(),
                     fields: vec![IrPattern::Enum {
                         name: union_name.clone(),
-                        variant: format!("{}::{}", union_name, IrType::union_variant_name(variant_index)),
+                        variant: inner_ty.union_variant_path(variant_index).unwrap_or_else(|| {
+                            format!("{}::{}", union_name, IrType::union_variant_name(variant_index))
+                        }),
                         fields: vec![IrPattern::Var(binding.clone())],
                     }],
                 },
@@ -639,13 +643,18 @@ impl AstLowering {
     fn lower_union_false_arm(
         &mut self,
         binding: &str,
-        union_name: &str,
+        union_ty: &IrType,
         variant_index: usize,
         member_ty: &IrType,
         false_ty: &IrType,
         branch_tail: &BranchTail<'_>,
     ) -> Result<MatchArm, LoweringError> {
-        let variant = format!("{}::{}", union_name, IrType::union_variant_name(variant_index));
+        let union_name = union_ty
+            .union_type_name()
+            .unwrap_or_else(|| super::super::types::IR_UNION_TYPE_NAME.to_string());
+        let variant = union_ty
+            .union_variant_path(variant_index)
+            .unwrap_or_else(|| format!("{}::{}", union_name, IrType::union_variant_name(variant_index)));
         let direct_member_binding = false_ty == member_ty;
         let pattern_binding = if direct_member_binding {
             binding.to_string()
@@ -679,7 +688,7 @@ impl AstLowering {
 
         Ok(MatchArm {
             pattern: IrPattern::Enum {
-                name: union_name.to_string(),
+                name: union_name,
                 variant,
                 fields: vec![IrPattern::Var(pattern_binding)],
             },
@@ -763,7 +772,10 @@ impl AstLowering {
                 .union_ty
                 .union_type_name()
                 .unwrap_or_else(|| super::super::types::IR_UNION_TYPE_NAME.to_string());
-            let variant = format!("{}::{}", union_name, IrType::union_variant_name(test.variant_index));
+            let variant = test
+                .union_ty
+                .union_variant_path(test.variant_index)
+                .unwrap_or_else(|| format!("{}::{}", union_name, IrType::union_variant_name(test.variant_index)));
             let mut arms = vec![MatchArm {
                 pattern: IrPattern::Enum {
                     name: union_name.clone(),
@@ -785,7 +797,7 @@ impl AstLowering {
                 for (variant_index, member_ty) in &false_remainder.variants {
                     arms.push(self.lower_union_false_arm(
                         &test.binding,
-                        &union_name,
+                        &test.union_ty,
                         *variant_index,
                         member_ty,
                         &false_remainder.ty,

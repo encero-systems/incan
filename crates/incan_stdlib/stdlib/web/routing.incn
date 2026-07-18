@@ -27,11 +27,6 @@ pub def route(path: str, methods: list[str] = ["GET"]) -> None:
     """
     Decorator to register a function as an HTTP route handler.
 
-    Args:
-        path: URL path pattern (e.g., "/users/{id}").
-              Path parameters use {name} syntax.
-        methods: List of HTTP methods this route handles (default: [GET]).
-
     Path parameters are extracted and passed to the handler function.
     The parameter name in the path must match the function argument name.
 
@@ -45,6 +40,11 @@ pub def route(path: str, methods: list[str] = ["GET"]) -> None:
         @route("/api/items/{id}", methods=[GET, DELETE])
         async def item_handler(id: int) -> Response:
             return Response.ok()
+
+    Args:
+        path: URL path pattern (e.g., "/users/{id}").
+              Path parameters use {name} syntax.
+        methods: List of HTTP methods this route handles (default: [GET]).
     """
     ...
 

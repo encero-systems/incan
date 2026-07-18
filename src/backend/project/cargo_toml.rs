@@ -17,7 +17,8 @@ use serde::Serialize;
 
 use crate::manifest::{DependencySource, DependencySpec, GitReference};
 
-use super::generator::ProjectGenerator;
+use super::INCAN_STDLIB_CRATE_NAME;
+use super::generator::{ProjectGenerator, is_sdk_provider_build};
 
 /// Incan compiler version stamped into generated `Cargo.toml` files.
 pub(crate) const INCAN_VERSION: &str = crate::version::INCAN_VERSION;
@@ -159,10 +160,21 @@ fn dependency_spec_to_toml(spec: &DependencySpec, output_dir: &Path) -> (String,
     (dependency_key, toml::Value::Table(table))
 }
 
-/// Build a [`toml::Value::Table`] for a path-only dependency (used for stdlib/derive crates).
-fn path_dependency(path: &Path, features: &[String]) -> toml::Value {
+/// Build a [`toml::Value::Table`] for a toolchain-owned path dependency.
+///
+/// Support crates are shipped beside generated projects in installed SDKs. Rendering their paths relative to the
+/// generated crate keeps a compiled library artifact relocatable instead of binding it to the checkout that produced
+/// it.
+fn path_dependency(path: &Path, features: &[String], output_dir: &Path, relocatable: bool) -> toml::Value {
     let mut table = toml::Table::new();
-    table.insert("path".into(), path.display().to_string().into());
+    let rendered_path = if relocatable {
+        let from = output_dir.canonicalize().unwrap_or_else(|_| output_dir.to_path_buf());
+        let to = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        relative_path(&from, &to).to_string_lossy().replace('\\', "/")
+    } else {
+        path.display().to_string()
+    };
+    table.insert("path".into(), rendered_path.into());
     if !features.is_empty() {
         let feat_values: Vec<toml::Value> = features.iter().map(|f| f.clone().into()).collect();
         table.insert("features".into(), toml::Value::Array(feat_values));
@@ -170,8 +182,17 @@ fn path_dependency(path: &Path, features: &[String]) -> toml::Value {
     toml::Value::Table(table)
 }
 
-/// Return the path to a bundled support crate in an installed toolchain layout, if this binary is running from one.
+/// Return the path to a bundled support crate from explicit release staging or an installed toolchain layout.
+///
+/// Release packaging uses a host compiler outside the target archive, so it provides the staged `crates/` root
+/// explicitly. Ordinary installed compilers discover the same layout beside their executable.
 fn installed_toolchain_crate_path(crate_name: &str) -> Option<PathBuf> {
+    if let Some(crates_dir) = std::env::var_os("INCAN_TOOLCHAIN_CRATES_DIR").filter(|path| !path.is_empty()) {
+        let candidate = PathBuf::from(crates_dir).join(crate_name);
+        if candidate.join("Cargo.toml").is_file() {
+            return Some(candidate);
+        }
+    }
     for base in crate::toolchain_layout::current_executable_search_bases() {
         let candidate = base.join("crates").join(crate_name);
         if candidate.join("Cargo.toml").exists() {
@@ -205,20 +226,42 @@ impl ProjectGenerator {
         let package_name = self.package_name.as_deref().unwrap_or(&self.name).to_string();
 
         // ---- Resolve toolchain-owned support crates for generated Rust projects ----
-        let stdlib_path = toolchain_crate_path("incan_stdlib");
+        let stdlib_path = toolchain_crate_path(INCAN_STDLIB_CRATE_NAME);
         let derive_path = toolchain_crate_path("incan_derive");
+        let relocatable_toolchain_paths = is_sdk_provider_build();
 
         // ---- Build dependencies table ----
         let mut deps = toml::Table::new();
         let mut added_crates: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-        // Always add incan_stdlib with the resolved feature set.
-        let stdlib_features = self.stdlib_features.clone();
-        deps.insert("incan_stdlib".into(), path_dependency(&stdlib_path, &stdlib_features));
-        added_crates.insert("incan_stdlib".into());
+        // Always add incan_stdlib with the resolved feature set. Provider source may declare private implementation
+        // features through its ordinary Rust dependency; preserve those while keeping the toolchain-owned crate path
+        // authoritative for generated projects.
+        let mut stdlib_features = self.stdlib_features.clone();
+        stdlib_features.extend(
+            self.dependencies
+                .iter()
+                .filter(|dependency| rendered_dependency_key(dependency) == INCAN_STDLIB_CRATE_NAME)
+                .flat_map(|dependency| dependency.features.iter().cloned()),
+        );
+        stdlib_features.sort();
+        stdlib_features.dedup();
+        deps.insert(
+            INCAN_STDLIB_CRATE_NAME.into(),
+            path_dependency(
+                &stdlib_path,
+                &stdlib_features,
+                &self.output_dir,
+                relocatable_toolchain_paths,
+            ),
+        );
+        added_crates.insert(INCAN_STDLIB_CRATE_NAME.into());
 
         // Always add incan_derive for derive macros
-        deps.insert("incan_derive".into(), path_dependency(&derive_path, &Vec::new()));
+        deps.insert(
+            "incan_derive".into(),
+            path_dependency(&derive_path, &Vec::new(), &self.output_dir, relocatable_toolchain_paths),
+        );
         added_crates.insert("incan_derive".into());
 
         // Add resolved user dependencies
@@ -354,10 +397,12 @@ fn relative_path(from: &Path, to: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     use crate::backend::project::generator::ProjectGenerator;
     use crate::manifest::{DependencySource, DependencySpec};
+
+    use super::path_dependency;
 
     fn parsed_manifest(toml: &str) -> Result<toml::Value, Box<dyn std::error::Error>> {
         Ok(toml::from_str(toml)?)
@@ -446,6 +491,19 @@ mod tests {
         let toml = generator.generate_cargo_toml()?;
         assert!(toml.contains("name = \"hello\""));
         assert!(toml.contains("[[bin]]"));
+        let manifest = parsed_manifest(&toml)?;
+        let support_path = manifest
+            .get("dependencies")
+            .and_then(toml::Value::as_table)
+            .and_then(|dependencies| dependencies.get("incan_stdlib"))
+            .and_then(toml::Value::as_table)
+            .and_then(|dependency| dependency.get("path"))
+            .and_then(toml::Value::as_str)
+            .ok_or("generated Cargo.toml missing incan_stdlib path")?;
+        assert!(
+            PathBuf::from(support_path).is_absolute(),
+            "ordinary generated projects should keep stable absolute toolchain paths"
+        );
         Ok(())
     }
 
@@ -457,6 +515,24 @@ mod tests {
 
         assert!(toml.contains("[package]\nname = \"locked_root\""));
         assert!(toml.contains("[lib]\nname = \"test_runner_abc\""));
+        Ok(())
+    }
+
+    #[test]
+    fn compiled_artifact_support_crate_paths_are_relocatable() -> Result<(), Box<dyn std::error::Error>> {
+        let output_dir = Path::new("/tmp/relocatable_incan_artifact");
+        let dependency = path_dependency(
+            &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib"),
+            &[],
+            output_dir,
+            true,
+        );
+        let path = dependency
+            .as_table()
+            .and_then(|dependency| dependency.get("path"))
+            .and_then(toml::Value::as_str)
+            .ok_or("toolchain support dependency missing path")?;
+        assert!(!PathBuf::from(path).is_absolute(), "artifact support path was {path}");
         Ok(())
     }
 
@@ -485,6 +561,31 @@ mod tests {
             &["incan_derive", "incan_stdlib", "serde"],
             &["json"],
             &["axum", "incan_web_macros", "inventory", "serde_json", "tokio"],
+        )
+    }
+
+    #[test]
+    fn provider_authored_stdlib_features_merge_with_generated_requirements() -> Result<(), Box<dyn std::error::Error>> {
+        let mut generator = ProjectGenerator::new("/tmp/test_provider_stdlib_features", "provider_contract", false);
+        generator.set_stdlib_features(vec!["json".to_string()]);
+        generator.set_dependencies(vec![DependencySpec {
+            crate_name: "incan_stdlib".to_string(),
+            version: None,
+            features: vec!["ordinal".to_string()],
+            default_features: true,
+            source: DependencySource::Path {
+                path: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib"),
+            },
+            optional: false,
+            package: None,
+        }]);
+        let toml = generator.generate_cargo_toml()?;
+
+        assert_dependency_contract(
+            &toml,
+            &["incan_derive", "incan_stdlib"],
+            &["json", "ordinal"],
+            &["xxhash-rust"],
         )
     }
 

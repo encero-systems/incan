@@ -21,6 +21,7 @@ const DEFAULT_ENV_NAME: &str = "default";
 pub struct EnvConfigSet {
     base: EnvOverlay,
     envs: BTreeMap<String, EnvSection>,
+    workspace_envs: BTreeMap<String, EnvSection>,
 }
 
 /// A deterministic overlay of fields that can participate in environment resolution.
@@ -110,7 +111,15 @@ impl EnvConfigSet {
                 ..EnvOverlay::default()
             },
             envs: manifest.env_sections(),
+            workspace_envs: BTreeMap::new(),
         }
+    }
+
+    /// Attach root-owned RFC 077 environment fragments that members may extend explicitly as `workspace:<name>`.
+    #[must_use]
+    pub fn with_workspace_envs(mut self, workspace_envs: BTreeMap<String, EnvSection>) -> Self {
+        self.workspace_envs = workspace_envs;
+        self
     }
 
     /// Attach project-level base data that env overlays should merge on top of.
@@ -219,7 +228,13 @@ impl EnvConfigSet {
             });
         }
 
-        let env = if name == DEFAULT_ENV_NAME {
+        let env = if let Some(workspace_name) = name.strip_prefix("workspace:") {
+            Some(
+                self.workspace_envs
+                    .get(workspace_name)
+                    .ok_or_else(|| EnvConfigError::MissingEnv { name: name.to_string() })?,
+            )
+        } else if name == DEFAULT_ENV_NAME {
             self.envs.get(name)
         } else {
             Some(
@@ -424,6 +439,52 @@ mod tests {
             vec![PROJECT_BASE_OVERLAY.to_string(), "default".to_string()]
         );
         assert_eq!(resolved.env_vars.get("INCAN_NO_BANNER").map(String::as_str), Some("1"));
+        Ok(())
+    }
+
+    #[test]
+    fn member_env_can_explicitly_extend_a_workspace_fragment() -> Result<(), Box<dyn std::error::Error>> {
+        let member = ProjectManifest::from_str(
+            r#"
+[tool.incan.envs.ci]
+extends = ["workspace:ci"]
+env-vars = { MEMBER = "1", SHARED = "member" }
+"#,
+            Path::new("packages/member/incan.toml"),
+        )?;
+        let root = ProjectManifest::from_str(
+            r#"
+[workspace]
+members = ["packages/member"]
+
+[workspace.envs.ci]
+env-vars = { SHARED = "workspace", ROOT = "1" }
+
+[workspace.envs.ci.scripts]
+test = ["incan", "test"]
+"#,
+            Path::new("incan.toml"),
+        )?;
+        let workspace_envs = root
+            .workspace()
+            .map(|workspace| workspace.envs.clone())
+            .ok_or("workspace env declarations missing")?;
+
+        let resolved = EnvConfigSet::from_manifest(&member)
+            .with_workspace_envs(workspace_envs)
+            .resolve_env("ci")?;
+
+        assert_eq!(
+            resolved.overlay_chain,
+            vec![PROJECT_BASE_OVERLAY, "default", "workspace:ci", "ci"]
+        );
+        assert_eq!(resolved.env_vars.get("ROOT").map(String::as_str), Some("1"));
+        assert_eq!(resolved.env_vars.get("SHARED").map(String::as_str), Some("member"));
+        assert_eq!(resolved.env_vars.get("MEMBER").map(String::as_str), Some("1"));
+        assert_eq!(
+            resolved.scripts.get("test"),
+            Some(&vec!["incan".to_string(), "test".to_string()])
+        );
         Ok(())
     }
 

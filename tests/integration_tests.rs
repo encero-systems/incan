@@ -624,7 +624,10 @@ def main() -> None:
 /// the current build, including when `CARGO_TARGET_DIR` is not the default `target/`.
 fn incan_debug_binary() -> std::path::PathBuf {
     if let Ok(path) = std::env::var("CARGO_BIN_EXE_incan") {
-        return path.into();
+        let path = std::path::PathBuf::from(path);
+        if path.exists() {
+            return path;
+        }
     }
     if let Ok(target_dir) = std::env::var("CARGO_TARGET_DIR") {
         let p = std::path::PathBuf::from(&target_dir).join("debug/incan");
@@ -632,7 +635,7 @@ fn incan_debug_binary() -> std::path::PathBuf {
             return p;
         }
     }
-    std::path::PathBuf::from("target/debug/incan")
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/debug/incan")
 }
 
 fn shared_generated_cargo_target_dir() -> std::path::PathBuf {
@@ -643,8 +646,35 @@ fn shared_generated_cargo_target_dir() -> std::path::PathBuf {
 
 fn incan_command() -> Command {
     let mut command = Command::new(incan_debug_binary());
-    command.env("INCAN_GENERATED_CARGO_TARGET_DIR", shared_generated_cargo_target_dir());
     command
+        .env("INCAN_GENERATED_CARGO_TARGET_DIR", shared_generated_cargo_target_dir())
+        .env("CARGO_NET_OFFLINE", "true")
+        .env(
+            "INCAN_INTERNAL_SDK_PROVIDER_STORE",
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("target/incan_test_sdk_provider_store"),
+        );
+    command
+}
+
+/// Resolve one exact immutable compiled SDK provider selected for a generated consumer.
+fn compiled_sdk_provider_artifact_root(
+    generated_project: &Path,
+    crate_name: &str,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let cargo_toml = fs::read_to_string(generated_project.join("Cargo.toml"))?;
+    let manifest: toml::Value = toml::from_str(&cargo_toml)?;
+    let path = manifest
+        .get("dependencies")
+        .and_then(|dependencies| dependencies.get(crate_name))
+        .and_then(|dependency| dependency.get("path"))
+        .and_then(toml::Value::as_str)
+        .ok_or_else(|| format!("generated consumer did not select compiled SDK provider `{crate_name}`"))?;
+    let path = PathBuf::from(path);
+    Ok(if path.is_absolute() {
+        path
+    } else {
+        generated_project.join(path)
+    })
 }
 
 fn run_incan_command_with_timeout(
@@ -2676,7 +2706,7 @@ def main() -> None:
 
 /// End-to-end codegen tests
 mod codegen_tests {
-    use super::{incan_command, strip_ansi_escapes};
+    use super::{compiled_sdk_provider_artifact_root, incan_command, strip_ansi_escapes};
     use incan::backend::IrCodegen;
     use incan::frontend::{lexer, parser, typechecker};
     use std::fs;
@@ -6749,7 +6779,8 @@ async def main() -> None:
         let output = incan_command()
             .args(["run", "tests/fixtures/valid/std_ordinal_map_surface.incn"])
             .env("CARGO_NET_OFFLINE", "true")
-            .output()?;
+            .output()
+            .map_err(|error| format!("failed to run std.ordinal_map fixture: {error}"))?;
 
         assert!(
             output.status.success(),
@@ -6760,16 +6791,29 @@ async def main() -> None:
         );
         assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "std.ordinal_map ok");
 
-        let generated_main = fs::read_to_string("target/incan/std_ordinal_map_surface/src/main.rs")?;
+        let generated_main = fs::read_to_string("target/incan/std_ordinal_map_surface/src/main.rs")
+            .map_err(|error| format!("failed to read generated std.ordinal_map consumer: {error}"))?;
         assert!(
             generated_main.contains("__incan_ordinal_require_str("),
             "OrdinalMap[str] literal lookup should lower through the borrowed string fast path:\n{generated_main}"
         );
-        let generated_collections =
-            fs::read_to_string("target/incan/std_ordinal_map_surface/src/__incan_std/collections.rs")?;
+        assert!(
+            generated_main.contains("pub use crate::__incan_std::collections::OrdinalMap;"),
+            "OrdinalMap should be supplied through the stable compiled-provider facade:\n{generated_main}"
+        );
+        assert!(
+            !std::path::Path::new("target/incan/std_ordinal_map_surface/src/__incan_std/collections.rs").exists(),
+            "a compiled std.collections module must not be materialized in the consumer"
+        );
+        let artifact_root = compiled_sdk_provider_artifact_root(
+            Path::new("target/incan/std_ordinal_map_surface"),
+            "incan_stdlib_data",
+        )?;
+        let generated_collections = fs::read_to_string(artifact_root.join("src/collections.rs"))
+            .map_err(|error| format!("failed to read compiled std.collections artifact: {error}"))?;
         assert!(
             generated_collections.contains("incan_stdlib::__incan_ordinal_map_string_fast_impls!();"),
-            "generated std.collections should splice in the stdlib-owned OrdinalMap string support:\n{generated_collections}"
+            "the compiled std.collections artifact should splice in the stdlib-owned OrdinalMap string support:\n{generated_collections}"
         );
         Ok(())
     }
@@ -6816,7 +6860,15 @@ async def main() -> None:
             ],
             "unexpected std.regex output:\n{stdout}"
         );
-        let generated_core = fs::read_to_string("target/incan/std_regex_surface/src/__incan_std/regex/_core.rs")?;
+        let consumer_core = Path::new("target/incan/std_regex_surface/src/__incan_std/regex/_core.rs");
+        assert!(
+            !consumer_core.exists(),
+            "a compiled std.regex module must not be materialized in the consumer: {}",
+            consumer_core.display()
+        );
+        let artifact_root =
+            compiled_sdk_provider_artifact_root(Path::new("target/incan/std_regex_surface"), "incan_stdlib_data")?;
+        let generated_core = fs::read_to_string(artifact_root.join("src/regex/_core.rs"))?;
         for unexpected in [
             "RegexBuilder::new(&(pattern).to_string())",
             "raw.find(&(text).to_string())",
@@ -7621,6 +7673,25 @@ def main() -> None:
             output.status.success(),
             "rust associated call in elif branch failed: status={:?} stderr={}",
             output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn test_rust_path_new_borrows_owned_string_argument() {
+        let output = run_incan_source(
+            r#"
+from rust::std::path import Path as RustPath
+
+def main() -> None:
+    path = "example.txt"
+    println(RustPath.new(path).exists())
+"#,
+        );
+
+        assert!(
+            output.status.success(),
+            "Path.new should borrow an owned Incan string at the Rust boundary. stderr:\n{}",
             String::from_utf8_lossy(&output.stderr)
         );
     }
@@ -10843,6 +10914,7 @@ mod rfc031_pub_import_integration_tests {
     use incan::library_manifest::{FunctionExport, LibraryManifest, ModelExport, ParamExport, TypeRef};
     use incan::manifest::{INTERNAL_MANIFEST_OVERRIDE_ENV, INTERNAL_PROJECT_ROOT_OVERRIDE_ENV};
     use sha2::{Digest, Sha256};
+    use std::collections::BTreeSet;
     use std::path::PathBuf;
 
     fn write_project_files(
@@ -11477,6 +11549,104 @@ pub def marker(value: int) -> Marker:
         assert!(
             !project_root.join("target/lib/target").exists(),
             "artifact-only build should not run generated Cargo build or create a nested target directory"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn relocated_artifact_only_provider_keeps_transitive_feature_and_rust_dependency_graph()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let original = tmp.path().join("original");
+        let serializer_root = original.join("serializer");
+        std::fs::create_dir_all(serializer_root.join("src"))?;
+        std::fs::write(
+            serializer_root.join("incan.toml"),
+            r#"[project]
+name = "serializer_core"
+version = "0.5.0"
+
+[project.features]
+default = ["json"]
+json = []
+"#,
+        )?;
+        std::fs::write(
+            serializer_root.join("src/lib.incn"),
+            "pub def serialized_value() -> int:\n    return 7\n",
+        )?;
+        let serializer_build = run_build_lib_artifact_only(&serializer_root)?;
+        assert!(
+            serializer_build.status.success(),
+            "expected leaf provider artifact build to succeed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&serializer_build.stdout),
+            String::from_utf8_lossy(&serializer_build.stderr)
+        );
+
+        let reporting_root = original.join("reporting");
+        std::fs::create_dir_all(reporting_root.join("src"))?;
+        std::fs::write(
+            reporting_root.join("incan.toml"),
+            r#"[project]
+name = "reporting_core"
+version = "0.5.0"
+
+[project.features]
+default = ["json"]
+json = ["dep:serializer", "serializer/json"]
+
+[dependencies]
+serializer = { path = "../serializer", optional = true, default-features = false }
+"#,
+        )?;
+        std::fs::write(
+            reporting_root.join("src/lib.incn"),
+            "pub def report_value() -> int:\n    return 11\n",
+        )?;
+        let reporting_build = run_build_lib_artifact_only(&reporting_root)?;
+        assert!(
+            reporting_build.status.success(),
+            "expected parent provider artifact build to succeed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&reporting_build.stdout),
+            String::from_utf8_lossy(&reporting_build.stderr)
+        );
+        let reporting_manifest =
+            LibraryManifest::read_from_path(&reporting_root.join("target/lib/reporting_core.incnlib"))?;
+        let dependency = reporting_manifest
+            .contract_metadata
+            .provider
+            .provider_dependencies
+            .first()
+            .ok_or("reporting artifact omitted its active provider dependency")?;
+        assert_eq!(dependency.dependency_key, "serializer");
+        assert_eq!(dependency.requested_features, BTreeSet::from(["json".to_string()]));
+        assert!(dependency.relative_artifact_path.starts_with("../"));
+
+        let consumer_root = original.join("consumer");
+        std::fs::create_dir_all(consumer_root.join("src"))?;
+        std::fs::write(
+            consumer_root.join("incan.toml"),
+            "[project]\nname = \"artifact_consumer\"\n\n[dependencies]\nreporting = { path = \"../reporting\" }\n",
+        )?;
+        std::fs::write(consumer_root.join("src/main.incn"), "def main() -> None:\n    pass\n")?;
+
+        let relocated = tmp.path().join("relocated");
+        std::fs::rename(&original, &relocated)?;
+        std::fs::remove_file(relocated.join("serializer/incan.toml"))?;
+        std::fs::remove_file(relocated.join("reporting/incan.toml"))?;
+        std::fs::remove_dir_all(relocated.join("serializer/src"))?;
+        std::fs::remove_dir_all(relocated.join("reporting/src"))?;
+
+        let relocated_consumer = relocated.join("consumer");
+        let output = run_build(
+            &relocated_consumer.join("src/main.incn"),
+            &relocated_consumer.join("out"),
+        )?;
+        assert!(
+            output.status.success(),
+            "expected relocated source-free transitive provider graph to compile.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
         );
         Ok(())
     }

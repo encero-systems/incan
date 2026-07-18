@@ -9,13 +9,18 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use clap::ValueEnum;
 use incan_codegraph::{
-    CODEGRAPH_SCHEMA_VERSION, CodegraphCallRecord, CodegraphContainmentRecord, CodegraphDeclarationRecord,
-    CodegraphDiagnosticRecord, CodegraphDiagnosticRelatedSpan, CodegraphExportRecord, CodegraphFileRecord,
-    CodegraphHeaderRecord, CodegraphImportRecord, CodegraphLanguage, CodegraphMode, CodegraphModuleRecord,
-    CodegraphPackage, CodegraphProvenance, CodegraphRecord, CodegraphReferenceRecord, CodegraphSourceSpan, to_jsonl,
+    CODEGRAPH_SCHEMA_VERSION, CodegraphCallRecord, CodegraphComponentSelectionReason, CodegraphContainmentRecord,
+    CodegraphDeclarationRecord, CodegraphDependencyFeatureProjection, CodegraphDiagnosticRecord,
+    CodegraphDiagnosticRelatedSpan, CodegraphExportRecord, CodegraphFeatureActivationReason,
+    CodegraphFeatureReasonProjection, CodegraphFileRecord, CodegraphHeaderRecord, CodegraphImportRecord,
+    CodegraphLanguage, CodegraphMode, CodegraphModuleRecord, CodegraphPackage, CodegraphPackageFeatureProjection,
+    CodegraphProvenance, CodegraphProviderParticipation, CodegraphProviderProjection, CodegraphProviderProvenance,
+    CodegraphRecord, CodegraphReferenceRecord, CodegraphSdkComponentProjection, CodegraphSdkProjection,
+    CodegraphSemanticContext, CodegraphSourceSpan, to_jsonl,
 };
 
 use crate::cli::prelude::ParsedModule;
@@ -26,15 +31,18 @@ use crate::frontend::ast::{
     RaceForBody, Span, Spanned, Statement, SurfaceExprPayload, SurfaceStmtPayload, TypeParam, Visibility,
 };
 use crate::frontend::diagnostics::{self, StableDiagnostic};
-use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::canonicalize_source_module_segments;
 use crate::frontend::typechecker::{SourceTargetInfo, TypeCheckInfo};
 use crate::manifest::ProjectManifest;
+use crate::provider::{
+    BackendImplementationRequirement, ComponentSelectionReason, FeatureActivationReason, FeatureSelection,
+    ProviderParticipation, ProviderPlan, ProviderProvenance,
+};
 use crate::version::INCAN_VERSION;
 
 use super::common::{
-    CliDiagnosticFailure, CompilationSession, collect_modules_detailed, read_source, resolve_project_root,
-    typecheck_modules_with_import_graph_info,
+    CliDiagnosticFailure, CompilationSession, collect_modules_detailed_with_selections,
+    discover_effective_project_manifest, read_source, resolve_project_root, typecheck_modules_with_import_graph_info,
 };
 
 /// Output format for `incan inspect codegraph`.
@@ -45,9 +53,15 @@ pub enum CodegraphInspectionFormat {
 }
 
 /// Emit compiler-backed codegraph facts for one Incan file or directory.
-pub fn inspect_codegraph(path: &Path, format: CodegraphInspectionFormat, allow_errors: bool) -> CliResult<ExitCode> {
+pub fn inspect_codegraph(
+    path: &Path,
+    format: CodegraphInspectionFormat,
+    allow_errors: bool,
+    feature_selection: &FeatureSelection,
+    sdk_profile_override: Option<&str>,
+) -> CliResult<ExitCode> {
     let normalized = normalize_input_path(path)?;
-    let records = collect_codegraph_records(&normalized, allow_errors)?;
+    let records = collect_codegraph_records(&normalized, allow_errors, feature_selection, sdk_profile_override)?;
     match format {
         CodegraphInspectionFormat::Jsonl => {
             let jsonl = to_jsonl(&records)
@@ -59,13 +73,21 @@ pub fn inspect_codegraph(path: &Path, format: CodegraphInspectionFormat, allow_e
 }
 
 /// Collect checked or tolerant graph records for one normalized input path.
-fn collect_codegraph_records(path: &Path, allow_errors: bool) -> CliResult<Vec<CodegraphRecord>> {
+fn collect_codegraph_records(
+    path: &Path,
+    allow_errors: bool,
+    feature_selection: &FeatureSelection,
+    sdk_profile_override: Option<&str>,
+) -> CliResult<Vec<CodegraphRecord>> {
     let package = package_identity(path)?;
     let mut builder = CodegraphBuilder::new(path, package, allow_errors);
+    builder.semantic_contexts =
+        collect_codegraph_semantic_contexts(path, feature_selection, sdk_profile_override, allow_errors)?;
 
     if path.is_dir() {
         let files = discover_incan_files(path)?;
-        let (modules, diagnostics, type_info_by_path) = directory_modules_diagnostics_and_info(&files)?;
+        let (modules, diagnostics, type_info_by_path) =
+            directory_modules_diagnostics_and_info(&files, feature_selection, sdk_profile_override)?;
         if !diagnostics.is_empty() && !allow_errors {
             return Err(CliError::failure(render_diagnostics(&diagnostics)));
         }
@@ -80,7 +102,10 @@ fn collect_codegraph_records(path: &Path, allow_errors: bool) -> CliResult<Vec<C
             for file in &files {
                 let project_root = resolve_project_root(file);
                 if !sessions.contains_key(&project_root) {
-                    sessions.insert(project_root.clone(), CompilationSession::discover(file)?);
+                    sessions.insert(
+                        project_root.clone(),
+                        CompilationSession::discover_with_selections(file, feature_selection, sdk_profile_override)?,
+                    );
                 }
                 let Some(session) = sessions.get(&project_root) else {
                     return Err(CliError::failure(format!(
@@ -96,9 +121,11 @@ fn collect_codegraph_records(path: &Path, allow_errors: bool) -> CliResult<Vec<C
             return Err(CliError::failure(render_diagnostics(builder.diagnostics())));
         }
     } else {
-        match collect_modules_detailed(&path.to_string_lossy()) {
+        match collect_modules_detailed_with_selections(&path.to_string_lossy(), feature_selection, sdk_profile_override)
+        {
             Ok(modules) => {
-                let (diagnostics, type_info_by_path) = typecheck_diagnostics_and_info(path, &modules)?;
+                let (diagnostics, type_info_by_path) =
+                    typecheck_diagnostics_and_info(path, &modules, feature_selection, sdk_profile_override)?;
                 if !diagnostics.is_empty() && !allow_errors {
                     return Err(CliError::failure(render_diagnostics(&diagnostics)));
                 }
@@ -110,7 +137,7 @@ fn collect_codegraph_records(path: &Path, allow_errors: bool) -> CliResult<Vec<C
                 builder.collect_diagnostics(diagnostics);
             }
             Err(failure) if allow_errors => {
-                builder.collect_tolerant_failure(path, failure)?;
+                builder.collect_tolerant_failure(path, failure, feature_selection, sdk_profile_override)?;
             }
             Err(failure) => return Err(CliError::failure(failure.render_human())),
         }
@@ -127,7 +154,11 @@ type DirectoryTypecheckArtifacts = (
 
 /// Collect and typecheck every discovered directory source root, keeping semantic artifacts only when the whole
 /// directory graph is clean.
-fn directory_modules_diagnostics_and_info(files: &[PathBuf]) -> CliResult<DirectoryTypecheckArtifacts> {
+fn directory_modules_diagnostics_and_info(
+    files: &[PathBuf],
+    feature_selection: &FeatureSelection,
+    sdk_profile_override: Option<&str>,
+) -> CliResult<DirectoryTypecheckArtifacts> {
     let file_set = files.iter().cloned().collect::<BTreeSet<_>>();
     let mut modules_by_path = BTreeMap::new();
     let mut diagnostics = Vec::new();
@@ -135,7 +166,8 @@ fn directory_modules_diagnostics_and_info(files: &[PathBuf]) -> CliResult<Direct
     let mut type_info_by_path = BTreeMap::new();
 
     for file in files {
-        match collect_modules_detailed(&file.to_string_lossy()) {
+        match collect_modules_detailed_with_selections(&file.to_string_lossy(), feature_selection, sdk_profile_override)
+        {
             Ok(modules) => {
                 for module in &modules {
                     if file_set.contains(&module.file_path) {
@@ -146,7 +178,10 @@ fn directory_modules_diagnostics_and_info(files: &[PathBuf]) -> CliResult<Direct
                 }
                 let project_root = resolve_project_root(file);
                 if !contexts.contains_key(&project_root) {
-                    contexts.insert(project_root.clone(), TypecheckContext::discover(file)?);
+                    contexts.insert(
+                        project_root.clone(),
+                        TypecheckContext::discover(file, feature_selection, sdk_profile_override)?,
+                    );
                 }
                 let Some(context) = contexts.get(&project_root) else {
                     return Err(CliError::failure(format!(
@@ -154,10 +189,11 @@ fn directory_modules_diagnostics_and_info(files: &[PathBuf]) -> CliResult<Direct
                         project_root.display()
                     )));
                 };
+                let provider_plan = context.provider_plan_for_modules(&modules)?;
                 match typecheck_modules_with_import_graph_info(
                     &modules,
                     context.manifest.as_ref(),
-                    &context.library_manifest_index,
+                    &provider_plan,
                     #[cfg(feature = "rust_inspect")]
                     None,
                 ) {
@@ -186,23 +222,24 @@ fn directory_modules_diagnostics_and_info(files: &[PathBuf]) -> CliResult<Direct
 
 struct TypecheckContext {
     manifest: Option<ProjectManifest>,
-    library_manifest_index: LibraryManifestIndex,
+    session: CompilationSession,
 }
 
 impl TypecheckContext {
     /// Discover manifest and library metadata needed to typecheck codegraph entrypoint collections.
-    fn discover(path: &Path) -> CliResult<Self> {
-        let project_root = resolve_project_root(path);
-        let manifest = ProjectManifest::discover(&project_root)
-            .map_err(|error| CliError::failure(format!("failed to load project manifest: {error}")))?;
-        let library_manifest_index = manifest
-            .as_ref()
-            .map(LibraryManifestIndex::from_project_manifest)
-            .unwrap_or_default();
-        Ok(Self {
-            manifest,
-            library_manifest_index,
-        })
+    fn discover(
+        path: &Path,
+        feature_selection: &FeatureSelection,
+        sdk_profile_override: Option<&str>,
+    ) -> CliResult<Self> {
+        let session = CompilationSession::discover_with_selections(path, feature_selection, sdk_profile_override)?;
+        let manifest = session.manifest.clone();
+        Ok(Self { manifest, session })
+    }
+
+    /// Resolve the shared provider projection for one collected codegraph compilation.
+    fn provider_plan_for_modules(&self, modules: &[ParsedModule]) -> CliResult<Arc<ProviderPlan>> {
+        self.session.provider_plan_for_modules(modules)
     }
 }
 
@@ -210,12 +247,15 @@ impl TypecheckContext {
 fn typecheck_diagnostics_and_info(
     path: &Path,
     modules: &[ParsedModule],
+    feature_selection: &FeatureSelection,
+    sdk_profile_override: Option<&str>,
 ) -> CliResult<(Vec<StableDiagnostic>, BTreeMap<PathBuf, TypeCheckInfo>)> {
-    let context = TypecheckContext::discover(path)?;
+    let context = TypecheckContext::discover(path, feature_selection, sdk_profile_override)?;
+    let provider_plan = context.provider_plan_for_modules(modules)?;
     match typecheck_modules_with_import_graph_info(
         modules,
         context.manifest.as_ref(),
-        &context.library_manifest_index,
+        &provider_plan,
         #[cfg(feature = "rust_inspect")]
         None,
     ) {
@@ -312,13 +352,232 @@ fn should_skip_directory(path: &Path) -> bool {
 /// metadata exports.
 fn package_identity(path: &Path) -> CliResult<Option<CodegraphPackage>> {
     let project_root = resolve_project_root(path);
-    let manifest = ProjectManifest::discover(&project_root)
+    let manifest = discover_effective_project_manifest(&project_root)
         .map_err(|error| CliError::failure(format!("failed to load project manifest: {error}")))?;
     Ok(manifest.map(|manifest| CodegraphPackage {
         name: manifest.project.as_ref().and_then(|project| project.name.clone()),
         version: manifest.project.as_ref().and_then(|project| project.version.clone()),
         root_path: Some(path_string(manifest.project_root())),
     }))
+}
+
+/// Build the typed provider/component/feature header projection from the same sessions used by codegraph checking.
+fn collect_codegraph_semantic_contexts(
+    path: &Path,
+    feature_selection: &FeatureSelection,
+    sdk_profile_override: Option<&str>,
+    allow_errors: bool,
+) -> CliResult<Vec<CodegraphSemanticContext>> {
+    let files = if path.is_dir() {
+        discover_incan_files(path)?
+    } else {
+        vec![path.to_path_buf()]
+    };
+    let mut projects: BTreeMap<PathBuf, (PathBuf, BTreeMap<PathBuf, ParsedModule>)> = BTreeMap::new();
+    for file in files {
+        let project_root = resolve_project_root(&file);
+        let (_, modules_by_path) = projects
+            .entry(project_root.clone())
+            .or_insert_with(|| (file.clone(), BTreeMap::new()));
+        if let Ok(modules) =
+            collect_modules_detailed_with_selections(&file.to_string_lossy(), feature_selection, sdk_profile_override)
+        {
+            for module in modules {
+                if resolve_project_root(&module.file_path) == project_root {
+                    modules_by_path.insert(module.file_path.clone(), module);
+                }
+            }
+        }
+    }
+
+    let mut contexts = Vec::new();
+    for (project_root, (representative, modules_by_path)) in projects {
+        let session = match CompilationSession::discover_with_selections(
+            &representative,
+            feature_selection,
+            sdk_profile_override,
+        ) {
+            Ok(session) => session,
+            Err(_) if allow_errors => continue,
+            Err(error) => return Err(error),
+        };
+        let modules = modules_by_path.into_values().collect::<Vec<_>>();
+        let provider_plan = match session.provider_plan_for_modules(&modules) {
+            Ok(plan) => plan,
+            Err(_) if allow_errors => Arc::clone(&session.provider_plan),
+            Err(error) => return Err(error),
+        };
+        contexts.push(codegraph_semantic_context(&project_root, &session, &provider_plan));
+    }
+    Ok(contexts)
+}
+
+/// Convert compiler-owned semantic plans to the storage-agnostic codegraph wire contract.
+fn codegraph_semantic_context(
+    project_root: &Path,
+    session: &CompilationSession,
+    provider_plan: &ProviderPlan,
+) -> CodegraphSemanticContext {
+    let sdk = session
+        .sdk_inventory
+        .as_ref()
+        .zip(session.sdk_components.as_ref())
+        .map(|(inventory, components)| CodegraphSdkProjection {
+            identity: inventory.identity(),
+            profile: components.profile.clone(),
+            components: inventory
+                .components
+                .values()
+                .map(|component| CodegraphSdkComponentProjection {
+                    id: component.id.clone(),
+                    version: component.version.clone(),
+                    available: component.available,
+                    enabled: components.enabled.contains(&component.id),
+                    mandatory: component.mandatory,
+                    dependencies: component.dependencies.iter().cloned().collect(),
+                    reason: components
+                        .reasons
+                        .get(&component.id)
+                        .map(codegraph_component_selection_reason),
+                })
+                .collect(),
+        });
+    let packages = session
+        .package_feature_plan
+        .iter()
+        .flat_map(|plan| plan.packages())
+        .map(|package| CodegraphPackageFeatureProjection {
+            package: package.package_name.clone(),
+            project_root: path_string(&package.project_root),
+            active_features: package.features.active_features.iter().cloned().collect(),
+            active_optional_dependencies: package.features.active_optional_dependencies.iter().cloned().collect(),
+            dependency_features: package
+                .features
+                .dependency_features
+                .iter()
+                .map(|(dependency, features)| CodegraphDependencyFeatureProjection {
+                    dependency: dependency.clone(),
+                    features: features.iter().cloned().collect(),
+                })
+                .collect(),
+            required_sdk_components: package.features.required_sdk_components.iter().cloned().collect(),
+            reasons: package
+                .features
+                .reasons
+                .iter()
+                .map(|(feature, reasons)| CodegraphFeatureReasonProjection {
+                    feature: feature.clone(),
+                    reasons: reasons.iter().map(codegraph_feature_activation_reason).collect(),
+                })
+                .collect(),
+        })
+        .collect();
+    let providers = provider_plan
+        .records()
+        .map(|provider| CodegraphProviderProjection {
+            identity: provider.identity.stable_key(),
+            available: provider.available,
+            enabled: provider.enabled,
+            participation: codegraph_provider_participation(provider_plan.participation(provider)),
+            provenance: codegraph_provider_provenance(&provider.provenance),
+            namespace_claims: provider.namespace_claims.iter().cloned().collect(),
+            used_modules: provider_plan.used_modules(provider).into_iter().collect(),
+            active_features: provider.identity.feature_projection.iter().cloned().collect(),
+            implementation_facets: provider_plan
+                .selected_implementation_facets(provider)
+                .into_iter()
+                .map(|facet| facet.id.clone())
+                .collect(),
+            backend_requirements: provider_plan
+                .selected_backend_requirements(provider)
+                .iter()
+                .map(codegraph_backend_requirement)
+                .collect(),
+            manifest_path: provider
+                .artifact
+                .as_ref()
+                .map(|artifact| path_string(&artifact.manifest_path)),
+        })
+        .collect();
+    CodegraphSemanticContext {
+        project_root: path_string(project_root),
+        sdk,
+        packages,
+        providers,
+    }
+}
+
+/// Project one compiler component-selection reason into the versioned codegraph schema.
+fn codegraph_component_selection_reason(reason: &ComponentSelectionReason) -> CodegraphComponentSelectionReason {
+    match reason {
+        ComponentSelectionReason::Mandatory => CodegraphComponentSelectionReason::Mandatory,
+        ComponentSelectionReason::Profile { profile } => CodegraphComponentSelectionReason::Profile(profile.clone()),
+        ComponentSelectionReason::Explicit => CodegraphComponentSelectionReason::Explicit,
+        ComponentSelectionReason::Dependency { required_by } => {
+            CodegraphComponentSelectionReason::Dependency(required_by.clone())
+        }
+    }
+}
+
+/// Project one package-feature activation reason into the versioned codegraph schema.
+fn codegraph_feature_activation_reason(reason: &FeatureActivationReason) -> CodegraphFeatureActivationReason {
+    match reason {
+        FeatureActivationReason::Default => CodegraphFeatureActivationReason::Default,
+        FeatureActivationReason::Requested => CodegraphFeatureActivationReason::Requested,
+        FeatureActivationReason::AllFeatures => CodegraphFeatureActivationReason::AllFeatures,
+        FeatureActivationReason::IncludedBy(feature) => CodegraphFeatureActivationReason::IncludedBy(feature.clone()),
+        FeatureActivationReason::DependencyRequest { package, dependency } => {
+            CodegraphFeatureActivationReason::DependencyRequest {
+                package: package.clone(),
+                dependency: dependency.clone(),
+            }
+        }
+    }
+}
+
+/// Project provider availability, enablement, and use into the versioned codegraph participation enum.
+fn codegraph_provider_participation(participation: ProviderParticipation) -> CodegraphProviderParticipation {
+    match participation {
+        ProviderParticipation::Unavailable => CodegraphProviderParticipation::Unavailable,
+        ProviderParticipation::Disabled => CodegraphProviderParticipation::Disabled,
+        ProviderParticipation::Enabled => CodegraphProviderParticipation::Enabled,
+        ProviderParticipation::Used => CodegraphProviderParticipation::Used,
+    }
+}
+
+/// Project provider authority and origin into portable codegraph provenance.
+fn codegraph_provider_provenance(provenance: &ProviderProvenance) -> CodegraphProviderProvenance {
+    match provenance {
+        ProviderProvenance::ProjectDependency {
+            dependency_key,
+            manifest_path,
+        } => CodegraphProviderProvenance::ProjectDependency {
+            dependency_key: dependency_key.clone(),
+            manifest_path: path_string(manifest_path),
+        },
+        ProviderProvenance::Sdk {
+            sdk_identity,
+            component_id,
+            inventory_path,
+        } => CodegraphProviderProvenance::Sdk {
+            sdk_identity: sdk_identity.clone(),
+            component_id: component_id.clone(),
+            inventory_path: inventory_path.as_ref().map(|path| path_string(path)),
+        },
+        ProviderProvenance::Compiler => CodegraphProviderProvenance::Compiler,
+    }
+}
+
+/// Render one private provider implementation requirement in the stable codegraph vocabulary.
+fn codegraph_backend_requirement(requirement: &BackendImplementationRequirement) -> String {
+    match requirement {
+        BackendImplementationRequirement::CargoFeature { crate_name, feature } => {
+            format!("cargo-feature:{crate_name}/{feature}")
+        }
+        BackendImplementationRequirement::CargoDependency { dependency } => {
+            format!("cargo-dependency:{}", dependency.crate_name)
+        }
+    }
 }
 
 /// Normalize a user-provided CLI path relative to the current working directory.
@@ -341,6 +600,7 @@ struct CodegraphBuilder {
     root_path: String,
     root_path_buf: PathBuf,
     package: Option<CodegraphPackage>,
+    semantic_contexts: Vec<CodegraphSemanticContext>,
     next_body_fact_index: usize,
     type_info_by_path: BTreeMap<PathBuf, TypeCheckInfo>,
     source_target_ids: BTreeMap<(Vec<String>, String, String), String>,
@@ -371,6 +631,7 @@ impl CodegraphBuilder {
             root_path: path_string(root_path),
             root_path_buf: root_path.to_path_buf(),
             package,
+            semantic_contexts: Vec::new(),
             next_body_fact_index: 0,
             type_info_by_path: BTreeMap::new(),
             source_target_ids: BTreeMap::new(),
@@ -459,10 +720,16 @@ impl CodegraphBuilder {
     }
 
     /// Recover as much source structure as possible after the ordinary entrypoint collection path failed.
-    fn collect_tolerant_failure(&mut self, path: &Path, failure: CliDiagnosticFailure) -> CliResult<()> {
+    fn collect_tolerant_failure(
+        &mut self,
+        path: &Path,
+        failure: CliDiagnosticFailure,
+        feature_selection: &FeatureSelection,
+        sdk_profile_override: Option<&str>,
+    ) -> CliResult<()> {
         let before = self.diagnostics.len();
         if path.is_file() {
-            self.collect_tolerant_file(path)?;
+            self.collect_tolerant_file(path, feature_selection, sdk_profile_override)?;
         }
         if self.diagnostics.len() == before {
             self.collect_diagnostics(stable_diagnostics(failure));
@@ -471,8 +738,13 @@ impl CodegraphBuilder {
     }
 
     /// Parse one file with project-aware vocabulary context and record either syntax facts or parse diagnostics.
-    fn collect_tolerant_file(&mut self, path: &Path) -> CliResult<()> {
-        let session = CompilationSession::discover(path)?;
+    fn collect_tolerant_file(
+        &mut self,
+        path: &Path,
+        feature_selection: &FeatureSelection,
+        sdk_profile_override: Option<&str>,
+    ) -> CliResult<()> {
+        let session = CompilationSession::discover_with_selections(path, feature_selection, sdk_profile_override)?;
         self.collect_tolerant_file_with_session(path, &session)
     }
 
@@ -1326,6 +1598,7 @@ impl CodegraphBuilder {
             root_path: self.root_path,
             languages: vec![CodegraphLanguage::Incan],
             package: self.package,
+            semantic_contexts: self.semantic_contexts,
             degraded,
         })];
         records.append(&mut self.records);

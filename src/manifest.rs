@@ -121,8 +121,45 @@ impl DependencySpec {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LibraryDependencySpec {
+    /// Dependency key used by `pub::<name>` imports.
     pub library_name: String,
+    /// Resolved path to the dependency project root.
     pub path: PathBuf,
+    /// Public Incan features requested from this dependency.
+    pub features: Vec<String>,
+    /// Whether the dependency's `default` feature is enabled.
+    pub default_features: bool,
+    /// Whether this dependency participates only when a project feature activates it.
+    pub optional: bool,
+}
+
+/// A member request to inherit one Incan library dependency from its RFC 077 workspace root.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceLibraryDependencyRequest {
+    /// Dependency key owned by the workspace root.
+    pub library_name: String,
+}
+
+/// A member request to inherit one Rust dependency from its RFC 077 workspace root.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceRustDependencyRequest {
+    /// Dependency key owned by the workspace root.
+    pub crate_name: String,
+    /// Member-local feature additions. The workspace owns all other dependency identity fields.
+    pub features: Vec<String>,
+    /// Whether this member uses the inherited dependency optionally.
+    pub optional: bool,
+}
+
+/// Direct dependency declarations owned by an RFC 077 workspace root.
+#[derive(Debug, Clone, Default)]
+pub struct WorkspaceSharedDependencies {
+    /// Shared Incan library identities.
+    pub library_dependencies: BTreeMap<String, LibraryDependencySpec>,
+    /// Shared Rust crate identities.
+    pub rust_dependencies: BTreeMap<String, DependencySpec>,
+    /// Shared Rust development-crate identities.
+    pub rust_dev_dependencies: BTreeMap<String, DependencySpec>,
 }
 
 // ============================================================================
@@ -190,7 +227,53 @@ pub struct ProjectSection {
     pub scripts: HashMap<String, String>,
     /// Named project feature groups.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub features: HashMap<String, Vec<String>>,
+    pub features: HashMap<String, ProjectFeatureDefinition>,
+}
+
+/// One public Incan package-feature definition.
+///
+/// Small feature graphs use the compact reference list. Larger definitions may separate each edge kind in an expanded
+/// table; both representations normalize into the same resolver-owned graph.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ProjectFeatureDefinition {
+    /// Compact members such as `json`, `dep:serializer`, or `serializer/json`.
+    Compact(Vec<String>),
+    /// Typed feature edges grouped by their semantic role.
+    Expanded(ExpandedProjectFeature),
+}
+
+/// Expanded public feature declaration under `[project.features.<name>]`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct ExpandedProjectFeature {
+    /// Other features in this package that become active.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub includes: Vec<String>,
+    /// Optional Incan dependencies that become active.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub optional_dependencies: Vec<String>,
+    /// Public features requested from active Incan dependencies.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub dependency_features: BTreeMap<String, Vec<String>>,
+    /// SDK components that must already be enabled and available while this feature is active.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requires_sdk_components: Vec<String>,
+}
+
+/// Project-owned SDK profile and component refinements.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct SdkSection {
+    /// Named SDK profile; omission selects the SDK's `default` profile.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+    /// Components added to the selected profile.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub components: Vec<String>,
+    /// Components deliberately excluded from the expanded selection.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude_components: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -297,6 +380,48 @@ pub struct EnvSection {
     pub dev_dependencies: HashMap<String, toml::Value>,
 }
 
+/// `[workspace]` topology declarations from RFC 077.
+///
+/// This type intentionally owns only manifest schema. [`crate::workspace::WorkspaceGraph`] resolves these root-relative
+/// declarations against the filesystem and validates the resulting member graph. Shared dependency, policy, and
+/// source tables are retained as raw TOML until their later RFC 077 phases own their semantic schemas; environments
+/// reuse the canonical RFC 015 [`EnvSection`] schema immediately.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceSection {
+    /// Root-relative non-root member paths or glob patterns.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub members: Vec<String>,
+    /// Members selected by commands started at the workspace root.
+    #[serde(rename = "default-members", default, skip_serializing_if = "Vec::is_empty")]
+    pub default_members: Vec<String>,
+    /// Root-relative member paths or glob patterns removed after member expansion.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude: Vec<String>,
+    /// Raw shared Incan dependency declarations, reserved for the dependency-inheritance phase.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub dependencies: BTreeMap<String, toml::Value>,
+    /// Raw shared Rust dependency declarations, reserved for the dependency-inheritance phase.
+    #[serde(rename = "rust-dependencies", default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub rust_dependencies: BTreeMap<String, toml::Value>,
+    /// Raw shared Rust development dependency declarations, reserved for the dependency-inheritance phase.
+    #[serde(
+        rename = "rust-dev-dependencies",
+        default,
+        skip_serializing_if = "BTreeMap::is_empty"
+    )]
+    pub rust_dev_dependencies: BTreeMap<String, toml::Value>,
+    /// Named environment fragments that members inherit explicitly as `workspace:<name>`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub envs: BTreeMap<String, EnvSection>,
+    /// Raw workspace policy hooks owned by RFC 076.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub policy: BTreeMap<String, toml::Value>,
+    /// Raw workspace catalog/source hooks owned by RFC 076 and package-source work.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub sources: BTreeMap<String, toml::Value>,
+}
+
 /// Helper for serde `skip_serializing_if` on boolean flags.
 fn is_false(value: &bool) -> bool {
     !*value
@@ -316,6 +441,8 @@ pub struct WritableManifest {
     pub vocab: Option<VocabSection>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool: Option<ToolSection>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sdk: Option<SdkSection>,
 }
 
 impl WritableManifest {
@@ -338,12 +465,22 @@ pub struct ProjectManifest {
     pub vocab: Option<VocabSection>,
     /// `[tool]` configuration (optional).
     pub tool: Option<ToolSection>,
+    /// `[sdk]` profile and component selection (optional).
+    pub sdk: Option<SdkSection>,
+    /// `[workspace]` topology metadata when this manifest is a workspace root.
+    pub workspace: Option<WorkspaceSection>,
     /// `[dependencies]` (Incan library dependencies).
     library_dependencies: HashMap<String, LibraryDependencySpec>,
     /// `[rust-dependencies]` (Rust crate dependencies).
     rust_dependencies: HashMap<String, DependencySpec>,
     /// `[rust-dev-dependencies]` (dev-only Rust crates).
     rust_dev_dependencies: HashMap<String, DependencySpec>,
+    /// Explicit RFC 077 inherited Incan library dependency requests.
+    workspace_library_dependencies: BTreeMap<String, WorkspaceLibraryDependencyRequest>,
+    /// Explicit RFC 077 inherited Rust dependency requests.
+    workspace_rust_dependencies: BTreeMap<String, WorkspaceRustDependencyRequest>,
+    /// Explicit RFC 077 inherited Rust development dependency requests.
+    workspace_rust_dev_dependencies: BTreeMap<String, WorkspaceRustDependencyRequest>,
 }
 
 impl ProjectManifest {
@@ -377,6 +514,18 @@ impl ProjectManifest {
         parse_manifest_content(content, path)
     }
 
+    /// Read and parse one manifest at its exact path without applying nested-command discovery overrides.
+    ///
+    /// Workspace graph construction uses this boundary to inspect ancestor manifests as they exist on disk. Callers
+    /// that need ordinary current-directory project discovery should continue to use [`Self::discover`].
+    pub fn load(path: &Path) -> Result<Self, ManifestError> {
+        let content = std::fs::read_to_string(path).map_err(|source| ManifestError::Read {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        Self::from_str(&content, path)
+    }
+
     /// The set of crate names declared in `[rust-dependencies]` (normal deps only).
     pub fn declared_rust_crate_names(&self) -> HashSet<String> {
         crate_name_alias_set(self.rust_dependencies.keys())
@@ -392,6 +541,19 @@ impl ProjectManifest {
         &self.library_dependencies
     }
 
+    /// Public package features declared under `[project.features]`.
+    pub fn project_features(&self) -> &HashMap<String, ProjectFeatureDefinition> {
+        match self.project.as_ref() {
+            Some(project) => &project.features,
+            None => empty_project_features(),
+        }
+    }
+
+    /// Project-owned SDK profile and component refinements.
+    pub fn sdk(&self) -> Option<&SdkSection> {
+        self.sdk.as_ref()
+    }
+
     /// Normal Rust dependencies from the manifest.
     pub fn rust_dependencies(&self) -> &HashMap<String, DependencySpec> {
         &self.rust_dependencies
@@ -400,6 +562,72 @@ impl ProjectManifest {
     /// Dev-only Rust dependencies from the manifest.
     pub fn rust_dev_dependencies(&self) -> &HashMap<String, DependencySpec> {
         &self.rust_dev_dependencies
+    }
+
+    /// Explicit Incan library dependencies inherited from an active workspace root.
+    pub fn workspace_library_dependencies(&self) -> &BTreeMap<String, WorkspaceLibraryDependencyRequest> {
+        &self.workspace_library_dependencies
+    }
+
+    /// Explicit Rust dependencies inherited from an active workspace root.
+    pub fn workspace_rust_dependencies(&self) -> &BTreeMap<String, WorkspaceRustDependencyRequest> {
+        &self.workspace_rust_dependencies
+    }
+
+    /// Explicit Rust development dependencies inherited from an active workspace root.
+    pub fn workspace_rust_dev_dependencies(&self) -> &BTreeMap<String, WorkspaceRustDependencyRequest> {
+        &self.workspace_rust_dev_dependencies
+    }
+
+    /// Return whether this manifest needs an RFC 077 workspace to resolve any declared dependency.
+    pub fn has_workspace_inherited_dependencies(&self) -> bool {
+        !self.workspace_library_dependencies.is_empty()
+            || !self.workspace_rust_dependencies.is_empty()
+            || !self.workspace_rust_dev_dependencies.is_empty()
+    }
+
+    /// Clone this member manifest with validated RFC 077 dependency inheritance materialized.
+    ///
+    /// The compiler's existing project pipeline consumes one `ProjectManifest`; workspace orchestration therefore
+    /// materializes its effective view at this explicit boundary instead of teaching every downstream stage a second
+    /// dependency schema. The source path and all non-dependency project metadata remain member-local.
+    pub(crate) fn with_effective_dependencies(
+        &self,
+        library_dependencies: impl IntoIterator<Item = (String, LibraryDependencySpec)>,
+        rust_dependencies: impl IntoIterator<Item = (String, DependencySpec)>,
+        rust_dev_dependencies: impl IntoIterator<Item = (String, DependencySpec)>,
+    ) -> Self {
+        let mut effective = self.clone();
+        effective.library_dependencies = library_dependencies.into_iter().collect();
+        effective.rust_dependencies = rust_dependencies.into_iter().collect();
+        effective.rust_dev_dependencies = rust_dev_dependencies.into_iter().collect();
+        effective.workspace_library_dependencies.clear();
+        effective.workspace_rust_dependencies.clear();
+        effective.workspace_rust_dev_dependencies.clear();
+        effective
+    }
+
+    /// Parse the dependency identities declared by this workspace root.
+    ///
+    /// Members never reach this method directly: their `{ workspace = true }` requests are resolved by the workspace
+    /// graph against these root-owned declarations. A root cannot itself inherit an identity from another workspace.
+    pub fn workspace_shared_dependencies(&self) -> Result<WorkspaceSharedDependencies, ManifestError> {
+        let Some(workspace) = self.workspace() else {
+            return Ok(WorkspaceSharedDependencies::default());
+        };
+        Ok(WorkspaceSharedDependencies {
+            library_dependencies: parse_workspace_library_dependency_table(&workspace.dependencies, &self.path)?,
+            rust_dependencies: parse_workspace_rust_dependency_table(
+                &workspace.rust_dependencies,
+                &self.path,
+                "[workspace.rust-dependencies]",
+            )?,
+            rust_dev_dependencies: parse_workspace_rust_dependency_table(
+                &workspace.rust_dev_dependencies,
+                &self.path,
+                "[workspace.rust-dev-dependencies]",
+            )?,
+        })
     }
 
     /// Path to the `incan.toml` file.
@@ -425,6 +653,11 @@ impl ProjectManifest {
     /// Optional Incan-owned tool configuration.
     pub fn incan_tool(&self) -> Option<&IncanToolSection> {
         self.tool.as_ref().and_then(|tool| tool.incan.as_ref())
+    }
+
+    /// Optional RFC 077 workspace declaration owned by this root manifest.
+    pub fn workspace(&self) -> Option<&WorkspaceSection> {
+        self.workspace.as_ref()
     }
 
     /// RFC 048 model bundle JSON paths declared under `[tool.incan.metadata]`.
@@ -536,6 +769,10 @@ struct RawManifest {
     #[serde(default)]
     tool: Option<ToolSection>,
     #[serde(default)]
+    sdk: Option<SdkSection>,
+    #[serde(default)]
+    workspace: Option<WorkspaceSection>,
+    #[serde(default)]
     dependencies: Option<DependencyTable>,
     #[serde(rename = "rust-dependencies", default)]
     rust_dependencies: Option<DependencyTable>,
@@ -585,6 +822,7 @@ struct DependencyEntryTable {
     package: Option<String>,
     #[serde(rename = "default-features")]
     default_features: Option<bool>,
+    workspace: Option<bool>,
 }
 
 struct ManifestSpans<'a> {
@@ -788,9 +1026,14 @@ fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest,
         build: raw.build,
         vocab: raw.vocab,
         tool: raw.tool,
-        library_dependencies,
+        sdk: raw.sdk,
+        workspace: raw.workspace,
+        library_dependencies: library_dependencies.specs,
         rust_dependencies: rust_dependencies.specs,
         rust_dev_dependencies: rust_dev_dependencies.specs,
+        workspace_library_dependencies: library_dependencies.workspace_inherited,
+        workspace_rust_dependencies: rust_dependencies.workspace_inherited,
+        workspace_rust_dev_dependencies: rust_dev_dependencies.workspace_inherited,
     })
 }
 
@@ -1000,6 +1243,7 @@ const DEPENDENCY_ENTRY_KEYS: &[&str] = &[
     "optional",
     "package",
     "default-features",
+    "workspace",
 ];
 
 /// Validate the raw TOML shapes of all dependency tables before serde decoding proceeds.
@@ -1087,7 +1331,7 @@ fn validate_dependency_entry_item(
                     format!("dependency `{entry_name}` field `{key}` must be a string"),
                 ));
             }
-            "optional" | "default-features" if !value.is_bool() => {
+            "optional" | "default-features" | "workspace" if !value.is_bool() => {
                 return Err(manifest_invalid(
                     path,
                     location,
@@ -1169,7 +1413,7 @@ fn parse_library_dependency_table(
     table: &DependencyTable,
     spans: &ManifestSpans<'_>,
     path: &Path,
-) -> Result<HashMap<String, LibraryDependencySpec>, ManifestError> {
+) -> Result<ParsedLibraryDependencyTable, ManifestError> {
     if !table.optional.is_empty() {
         return Err(manifest_invalid(
             path,
@@ -1178,13 +1422,80 @@ fn parse_library_dependency_table(
         ));
     }
 
-    let mut result = HashMap::new();
+    let mut result = ParsedLibraryDependencyTable::default();
     for (name, entry) in &table.entries {
         let location = spans.entry_location(&["dependencies"], name);
-        let spec = library_dependency_from_entry(name, entry, path, location)?;
-        result.insert(name.clone(), spec);
+        if workspace_inheritance_requested(entry, path, location, name)? {
+            validate_workspace_library_request(name, entry, path, location)?;
+            result.workspace_inherited.insert(
+                name.clone(),
+                WorkspaceLibraryDependencyRequest {
+                    library_name: name.clone(),
+                },
+            );
+        } else {
+            let spec = library_dependency_from_entry(name, entry, path, location)?;
+            result.specs.insert(name.clone(), spec);
+        }
     }
     Ok(result)
+}
+
+/// Return whether an entry opts into RFC 077 workspace-owned dependency identity.
+fn workspace_inheritance_requested(
+    entry: &DependencyEntry,
+    path: &Path,
+    location: Option<ManifestLocation>,
+    name: &str,
+) -> Result<bool, ManifestError> {
+    let DependencyEntry::Table(table) = entry else {
+        return Ok(false);
+    };
+    match table.workspace {
+        None => Ok(false),
+        Some(true) => Ok(true),
+        Some(false) => Err(manifest_invalid(
+            path,
+            location,
+            format!("dependency `{name}` workspace inheritance must use `workspace = true`"),
+        )),
+    }
+}
+
+/// Validate the deliberately narrow Incan-library inheritance form: `{ workspace = true }`.
+fn validate_workspace_library_request(
+    name: &str,
+    entry: &DependencyEntry,
+    path: &Path,
+    location: Option<ManifestLocation>,
+) -> Result<(), ManifestError> {
+    let DependencyEntry::Table(table) = entry else {
+        return Err(manifest_invalid(
+            path,
+            location,
+            format!("library dependency `{name}` workspace inheritance requires a table"),
+        ));
+    };
+    if table.version.is_some()
+        || table.features.is_some()
+        || table.git.is_some()
+        || table.branch.is_some()
+        || table.tag.is_some()
+        || table.rev.is_some()
+        || table.path.is_some()
+        || table.optional.is_some()
+        || table.package.is_some()
+        || table.default_features.is_some()
+    {
+        return Err(manifest_invalid(
+            path,
+            location,
+            format!(
+                "library dependency `{name}` uses workspace inheritance; path and all dependency identity fields belong to [workspace.dependencies]"
+            ),
+        ));
+    }
+    Ok(())
 }
 
 /// Parse one library dependency entry from `[dependencies]`.
@@ -1244,6 +1555,14 @@ fn library_dependency_from_entry(
     Ok(LibraryDependencySpec {
         library_name: name.to_string(),
         path: resolved_path,
+        features: {
+            let mut features = table.features.clone().unwrap_or_default();
+            features.sort();
+            features.dedup();
+            features
+        },
+        default_features: table.default_features.unwrap_or(true),
+        optional: table.optional.unwrap_or(false),
     })
 }
 
@@ -1253,16 +1572,19 @@ fn looks_like_legacy_rust_dependency(entry: &DependencyEntry) -> bool {
         DependencyEntry::Version(_) => true,
         DependencyEntry::Table(table) => {
             table.version.is_some()
-                || table.features.is_some()
                 || table.git.is_some()
                 || table.branch.is_some()
                 || table.tag.is_some()
                 || table.rev.is_some()
-                || table.optional.is_some()
                 || table.package.is_some()
-                || table.default_features.is_some()
         }
     }
+}
+
+/// Shared empty project-feature map used by manifest accessors without allocating.
+fn empty_project_features() -> &'static HashMap<String, ProjectFeatureDefinition> {
+    static EMPTY: std::sync::OnceLock<HashMap<String, ProjectFeatureDefinition>> = std::sync::OnceLock::new();
+    EMPTY.get_or_init(HashMap::new)
 }
 
 /// Parse one Rust dependency table, including the optional-subtable overlay form.
@@ -1284,23 +1606,140 @@ fn parse_dependency_table(
             ));
         }
         let location = spans.entry_location(table_path, name);
-        let spec = dependency_from_entry(name, entry, false, path, location)?;
-        result.specs.insert(name.clone(), spec);
-        if let Some(location) = location {
-            result.locations.insert(name.clone(), location);
+        if workspace_inheritance_requested(entry, path, location, name)? {
+            let request = workspace_rust_dependency_request(name, entry, false, path, location)?;
+            result.workspace_inherited.insert(name.clone(), request);
+        } else {
+            let spec = dependency_from_entry(name, entry, false, path, location)?;
+            result.specs.insert(name.clone(), spec);
+            if let Some(location) = location {
+                result.locations.insert(name.clone(), location);
+            }
         }
     }
 
     for (name, entry) in &table.optional {
         let location = spans.entry_location(table_path, name);
-        let spec = dependency_from_entry(name, entry, true, path, location)?;
-        result.specs.insert(name.clone(), spec);
-        if let Some(location) = location {
-            result.locations.insert(name.clone(), location);
+        if workspace_inheritance_requested(entry, path, location, name)? {
+            let request = workspace_rust_dependency_request(name, entry, true, path, location)?;
+            result.workspace_inherited.insert(name.clone(), request);
+        } else {
+            let spec = dependency_from_entry(name, entry, true, path, location)?;
+            result.specs.insert(name.clone(), spec);
+            if let Some(location) = location {
+                result.locations.insert(name.clone(), location);
+            }
         }
     }
 
     Ok(result)
+}
+
+/// Parse the only member-local refinements RFC 077 allows for an inherited Rust dependency.
+fn workspace_rust_dependency_request(
+    name: &str,
+    entry: &DependencyEntry,
+    optional_override: bool,
+    path: &Path,
+    location: Option<ManifestLocation>,
+) -> Result<WorkspaceRustDependencyRequest, ManifestError> {
+    let DependencyEntry::Table(table) = entry else {
+        return Err(manifest_invalid(
+            path,
+            location,
+            format!("dependency `{name}` workspace inheritance requires a table"),
+        ));
+    };
+    if table.version.is_some()
+        || table.git.is_some()
+        || table.branch.is_some()
+        || table.tag.is_some()
+        || table.rev.is_some()
+        || table.path.is_some()
+        || table.package.is_some()
+        || table.default_features.is_some()
+    {
+        return Err(manifest_invalid(
+            path,
+            location,
+            format!(
+                "dependency `{name}` uses workspace inheritance; version, source, package, and default-feature policy belong to the workspace root"
+            ),
+        ));
+    }
+    let mut features = table.features.clone().unwrap_or_default();
+    features.sort();
+    features.dedup();
+    Ok(WorkspaceRustDependencyRequest {
+        crate_name: name.to_string(),
+        features,
+        optional: optional_override || table.optional.unwrap_or(false),
+    })
+}
+
+/// Parse direct shared Incan library identities from `[workspace.dependencies]`.
+fn parse_workspace_library_dependency_table(
+    entries: &BTreeMap<String, toml::Value>,
+    path: &Path,
+) -> Result<BTreeMap<String, LibraryDependencySpec>, ManifestError> {
+    let mut parsed = BTreeMap::new();
+    for (name, value) in entries {
+        let entry = workspace_dependency_entry(value, name, "[workspace.dependencies]", path)?;
+        if workspace_inheritance_requested(&entry, path, None, name)? {
+            return Err(manifest_invalid(
+                path,
+                None,
+                format!("workspace root dependency `{name}` cannot inherit from another workspace"),
+            ));
+        }
+        parsed.insert(name.clone(), library_dependency_from_entry(name, &entry, path, None)?);
+    }
+    Ok(parsed)
+}
+
+/// Parse direct shared Rust identities from one workspace Rust dependency table.
+fn parse_workspace_rust_dependency_table(
+    entries: &BTreeMap<String, toml::Value>,
+    path: &Path,
+    table_name: &str,
+) -> Result<BTreeMap<String, DependencySpec>, ManifestError> {
+    let mut parsed = BTreeMap::new();
+    for (name, value) in entries {
+        let entry = workspace_dependency_entry(value, name, table_name, path)?;
+        if workspace_inheritance_requested(&entry, path, None, name)? {
+            return Err(manifest_invalid(
+                path,
+                None,
+                format!("workspace root dependency `{name}` cannot inherit from another workspace"),
+            ));
+        }
+        let spec = dependency_from_entry(name, &entry, false, path, None)?;
+        if spec.optional {
+            return Err(manifest_invalid(
+                path,
+                None,
+                format!("workspace root dependency `{name}` cannot set optional; member requests own optionality"),
+            ));
+        }
+        parsed.insert(name.clone(), spec);
+    }
+    Ok(parsed)
+}
+
+/// Decode one raw workspace declaration through the same dependency schema used for member manifests.
+fn workspace_dependency_entry(
+    value: &toml::Value,
+    name: &str,
+    table_name: &str,
+    path: &Path,
+) -> Result<DependencyEntry, ManifestError> {
+    value.clone().try_into().map_err(|error| {
+        manifest_invalid(
+            path,
+            None,
+            format!("invalid dependency `{name}` in {table_name}: {error}"),
+        )
+    })
 }
 
 /// Parse one Rust dependency entry into the canonical dependency model.
@@ -1481,9 +1920,16 @@ fn validate_package_collisions(
 }
 
 #[derive(Debug, Default)]
+struct ParsedLibraryDependencyTable {
+    specs: HashMap<String, LibraryDependencySpec>,
+    workspace_inherited: BTreeMap<String, WorkspaceLibraryDependencyRequest>,
+}
+
+#[derive(Debug, Default)]
 struct ParsedDependencyTable {
     specs: HashMap<String, DependencySpec>,
     locations: HashMap<String, ManifestLocation>,
+    workspace_inherited: BTreeMap<String, WorkspaceRustDependencyRequest>,
 }
 
 /// Return a stable identity key for one dependency source.
@@ -1658,6 +2104,115 @@ mylib = { path = "../mylib" }
             mylib.path.display()
         );
         Ok(())
+    }
+
+    #[test]
+    fn parses_explicit_workspace_dependency_requests_without_granting_them_local_identity() -> TestResult {
+        let manifest = ProjectManifest::from_str(
+            r#"
+[dependencies]
+domain = { workspace = true }
+
+[rust-dependencies]
+serde = { workspace = true, features = ["derive"], optional = true }
+
+[rust-dev-dependencies]
+proptest = { workspace = true, features = ["std"] }
+"#,
+            Path::new("packages/member/incan.toml"),
+        )?;
+
+        assert!(manifest.library_dependencies().is_empty());
+        assert!(manifest.rust_dependencies().is_empty());
+        assert!(manifest.rust_dev_dependencies().is_empty());
+        assert_eq!(
+            manifest
+                .workspace_library_dependencies()
+                .get("domain")
+                .map(|request| request.library_name.as_str()),
+            Some("domain")
+        );
+        let serde = manifest
+            .workspace_rust_dependencies()
+            .get("serde")
+            .ok_or("missing inherited serde request")?;
+        assert_eq!(serde.features, vec!["derive"]);
+        assert!(serde.optional);
+        assert_eq!(
+            manifest
+                .workspace_rust_dev_dependencies()
+                .get("proptest")
+                .map(|request| request.features == vec!["std"]),
+            Some(true)
+        );
+        assert!(manifest.has_workspace_inherited_dependencies());
+        Ok(())
+    }
+
+    #[test]
+    fn parses_workspace_owned_dependency_identities() -> TestResult {
+        let manifest = ProjectManifest::from_str(
+            r#"
+[project]
+name = "root"
+
+[workspace]
+members = ["packages/member"]
+
+[workspace.dependencies]
+domain = { path = "libs/domain" }
+
+[workspace.rust-dependencies]
+serde = { version = "1", features = ["alloc"], default-features = false }
+
+[workspace.rust-dev-dependencies]
+proptest = "1"
+"#,
+            Path::new("incan.toml"),
+        )?;
+        let shared = manifest.workspace_shared_dependencies()?;
+
+        assert_eq!(
+            shared
+                .library_dependencies
+                .get("domain")
+                .map(|dependency| dependency.path.as_path()),
+            Some(Path::new("libs/domain"))
+        );
+        assert_eq!(
+            shared
+                .rust_dependencies
+                .get("serde")
+                .map(|dependency| dependency.features.as_slice()),
+            Some(["alloc".to_string()].as_slice())
+        );
+        assert_eq!(
+            shared
+                .rust_dependencies
+                .get("serde")
+                .map(|dependency| dependency.default_features),
+            Some(false)
+        );
+        assert!(shared.rust_dev_dependencies.contains_key("proptest"));
+        Ok(())
+    }
+
+    #[test]
+    fn workspace_dependency_requests_reject_member_owned_identity_fields() {
+        let rendered = match ProjectManifest::from_str(
+            r#"
+[rust-dependencies]
+serde = { workspace = true, version = "1" }
+"#,
+            Path::new("incan.toml"),
+        ) {
+            Ok(_) => panic!("workspace request should reject version ownership"),
+            Err(error) => error.to_string(),
+        };
+        assert!(
+            rendered.contains("workspace inheritance"),
+            "unexpected error: {rendered}"
+        );
     }
 
     #[test]
@@ -1845,6 +2400,82 @@ some_other_field = "value"
             rendered.contains("unknown field `some_other_field`"),
             "expected unknown-field wording, got: {rendered}"
         );
+    }
+
+    #[test]
+    fn parse_compact_and_expanded_project_features() -> TestResult {
+        let content = r#"
+[project]
+name = "reporting"
+
+[project.features]
+default = ["json"]
+json = ["dep:serializer", "serializer/json"]
+
+[project.features.server]
+includes = ["json"]
+optional-dependencies = ["http_server"]
+dependency-features = { http_server = ["tls"] }
+requires-sdk-components = ["stdlib-web"]
+"#;
+        let manifest = ProjectManifest::from_str(content, Path::new("incan.toml"))?;
+        let features = manifest.project_features();
+
+        assert_eq!(
+            features.get("json"),
+            Some(&ProjectFeatureDefinition::Compact(vec![
+                "dep:serializer".to_string(),
+                "serializer/json".to_string(),
+            ]))
+        );
+        assert_eq!(
+            features.get("server"),
+            Some(&ProjectFeatureDefinition::Expanded(ExpandedProjectFeature {
+                includes: vec!["json".to_string()],
+                optional_dependencies: vec!["http_server".to_string()],
+                dependency_features: BTreeMap::from([("http_server".to_string(), vec!["tls".to_string()])]),
+                requires_sdk_components: vec!["stdlib-web".to_string()],
+            }))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn parse_incan_dependency_feature_selection() -> TestResult {
+        let content = r#"
+[dependencies]
+reporting = { path = "../reporting", optional = true, default-features = false, features = ["json", "http"] }
+"#;
+        let manifest = ProjectManifest::from_str(content, Path::new("incan.toml"))?;
+        let reporting = manifest
+            .library_dependencies()
+            .get("reporting")
+            .ok_or("missing reporting dependency")?;
+
+        assert!(reporting.optional);
+        assert!(!reporting.default_features);
+        assert_eq!(reporting.features, vec!["http".to_string(), "json".to_string()]);
+        Ok(())
+    }
+
+    #[test]
+    fn parse_sdk_component_selection() -> TestResult {
+        let content = r#"
+[sdk]
+profile = "minimal"
+components = ["stdlib-data", "stdlib-system"]
+exclude-components = ["stdlib-web"]
+"#;
+        let manifest = ProjectManifest::from_str(content, Path::new("incan.toml"))?;
+        let sdk = manifest.sdk().ok_or("missing sdk selection")?;
+
+        assert_eq!(sdk.profile.as_deref(), Some("minimal"));
+        assert_eq!(
+            sdk.components,
+            vec!["stdlib-data".to_string(), "stdlib-system".to_string()]
+        );
+        assert_eq!(sdk.exclude_components, vec!["stdlib-web".to_string()]);
+        Ok(())
     }
 
     fn tempdir_with_manifest(content: &str) -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {

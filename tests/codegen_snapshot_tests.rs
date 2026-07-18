@@ -10,6 +10,15 @@ use incan::backend::IrCodegen;
 use incan::frontend::{lexer, parser};
 use std::fs;
 
+#[path = "support/builtin_stdlib.rs"]
+mod builtin_stdlib_support;
+
+fn codegen_with_builtin_stdlib_inventory() -> IrCodegen<'static> {
+    let mut codegen = IrCodegen::new();
+    codegen.set_sdk_provider_module_paths(builtin_stdlib_support::artifact_module_paths());
+    codegen
+}
+
 /// Generate Rust code from Incan source
 fn generate_rust(source: &str) -> String {
     let Ok(tokens) = lexer::lex(source) else {
@@ -18,7 +27,7 @@ fn generate_rust(source: &str) -> String {
     let Ok(ast) = parser::parse(&tokens) else {
         panic!("parser failed");
     };
-    let code = match IrCodegen::new().try_generate(&ast) {
+    let code = match codegen_with_builtin_stdlib_inventory().try_generate(&ast) {
         Ok(code) => code,
         Err(e) => panic!("codegen snapshot inputs must typecheck: {e:?}"),
     };
@@ -110,7 +119,7 @@ fn generate_rust_with_widgets_manifest(source: &str) -> String {
         },
     )]));
 
-    let mut codegen = IrCodegen::new();
+    let mut codegen = codegen_with_builtin_stdlib_inventory();
     codegen.set_library_manifest_index(index);
     let code = match codegen.try_generate(&ast) {
         Ok(c) => c,
@@ -189,7 +198,7 @@ edition = "2021"
     let Ok(ast) = parser::parse(&tokens) else {
         panic!("parser failed");
     };
-    let mut codegen = IrCodegen::new();
+    let mut codegen = codegen_with_builtin_stdlib_inventory();
     codegen.set_rust_inspect_manifest_dir(root.to_path_buf());
     let code = match codegen.try_generate(&ast) {
         Ok(c) => c,
@@ -366,7 +375,7 @@ fn generate_rust_with_vocab_wasm_desugaring(source: &str) -> String {
         panic!("desugar pass failed: {errs:?}");
     }
 
-    let mut codegen = IrCodegen::new();
+    let mut codegen = codegen_with_builtin_stdlib_inventory();
     codegen.set_library_manifest_index(index);
     let code = match codegen.try_generate(&ast) {
         Ok(code) => code,
@@ -571,7 +580,7 @@ fn generate_rust_with_helper_backed_vocab_wasm_desugaring(source: &str) -> Strin
         panic!("desugar pass failed: {errs:?}");
     }
 
-    let mut codegen = IrCodegen::new();
+    let mut codegen = codegen_with_builtin_stdlib_inventory();
     codegen.set_library_manifest_index(index);
     let code = match codegen.try_generate(&ast) {
         Ok(code) => code,
@@ -903,6 +912,32 @@ def main() -> None:
 }
 
 #[test]
+fn imported_stdlib_associated_function_defaults_expand_in_generated_rust() {
+    let source = r#"
+from std.collections import OrdinalMapError
+
+def main() -> None:
+  error = OrdinalMapError.invalid_key_record("bad key")
+  print(error.message())
+"#;
+    let tokens = lexer::lex(source).expect("fixture should lex");
+    let ast = parser::parse(&tokens).expect("fixture should parse");
+    let plan = incan::provider::ProviderPlan::default().with_bootstrap_sdk_namespace_roots(["collections".to_string()]);
+    let mut codegen = IrCodegen::new();
+    codegen.set_provider_plan(std::sync::Arc::new(plan));
+    let rust_code = normalize_codegen_output(
+        &codegen
+            .try_generate(&ast)
+            .expect("provider-bootstrap fixture should typecheck and lower"),
+    );
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("OrdinalMapError::invalid_key_record(\"badkey\".to_string(),-1)"),
+        "imported stdlib associated-function calls must expand omitted defaults:\n{rust_code}"
+    );
+}
+
+#[test]
 fn test_web_route_extractors_nested_module_codegen() {
     let main_source = r#"
 import std.async
@@ -937,7 +972,7 @@ async def search(id: int) -> int:
         panic!("parser failed")
     };
 
-    let mut codegen = IrCodegen::new();
+    let mut codegen = codegen_with_builtin_stdlib_inventory();
     codegen.add_module_with_path_segments("api_routes", &routes_ast, vec!["api".to_string(), "routes".to_string()]);
     let Ok((main_code, _modules)) =
         codegen.try_generate_multi_file_nested(&main_ast, &[vec!["api".to_string(), "routes".to_string()]])
@@ -987,7 +1022,7 @@ async def list_user(id: int) -> Json[User]:
     };
 
     let routes_path = vec!["api".to_string(), "routes".to_string()];
-    let mut codegen = IrCodegen::new();
+    let mut codegen = codegen_with_builtin_stdlib_inventory();
     codegen.set_preserve_dependency_public_items(false);
     codegen.add_module_with_path_segments("api_routes", &routes_ast, routes_path.clone());
     let Ok((main_code, modules)) =
@@ -1178,7 +1213,7 @@ fn test_std_fs_import_codegen() {
     let rust_code = generate_rust(&source);
     assert!(
         rust_code.contains("pub use crate::__incan_std::fs::Path;"),
-        "std.fs Path import should emit through the generated stdlib fs module; generated:\n{rust_code}"
+        "std.fs Path import should emit through the compiled stdlib artifact; generated:\n{rust_code}"
     );
     assert!(
         !rust_code.contains("__incan_std::web::Path"),
@@ -1193,19 +1228,19 @@ fn test_std_tempfile_import_codegen() {
     let rust_code = generate_rust(&source);
     assert!(
         rust_code.contains("pub use crate::__incan_std::tempfile::NamedTemporaryFile;"),
-        "std.tempfile NamedTemporaryFile import should emit through the generated stdlib tempfile module; generated:\n{rust_code}"
+        "std.tempfile NamedTemporaryFile import should emit through the compiled stdlib artifact; generated:\n{rust_code}"
     );
     assert!(
         rust_code.contains("pub use crate::__incan_std::tempfile::TemporaryDirectory;"),
-        "std.tempfile TemporaryDirectory import should emit through the generated stdlib tempfile module; generated:\n{rust_code}"
+        "std.tempfile TemporaryDirectory import should emit through the compiled stdlib artifact; generated:\n{rust_code}"
     );
     assert!(
         rust_code.contains("pub use crate::__incan_std::tempfile::SpooledTemporaryFile;"),
-        "std.tempfile SpooledTemporaryFile import should emit through the generated stdlib tempfile module; generated:\n{rust_code}"
+        "std.tempfile SpooledTemporaryFile import should emit through the compiled stdlib artifact; generated:\n{rust_code}"
     );
     assert!(
         rust_code.contains("pub use crate::__incan_std::fs::Path;"),
-        "std.tempfile call sites should still use std.fs Path for path values; generated:\n{rust_code}"
+        "std.tempfile call sites should use the compiled std.fs Path value; generated:\n{rust_code}"
     );
     assert!(
         !rust_code.contains("__incan_std::web::Path"),
@@ -1492,7 +1527,7 @@ pub def describe(value: int | str) -> str:
         panic!("parser failed")
     };
 
-    let mut codegen = IrCodegen::new();
+    let mut codegen = codegen_with_builtin_stdlib_inventory();
     codegen.add_module_with_path_segments("producers", &producers_ast, vec!["producers".to_string()]);
     codegen.add_module_with_path_segments("consumers", &consumers_ast, vec!["consumers".to_string()]);
     let (main_code, modules) = codegen
@@ -1639,7 +1674,7 @@ def main() -> None:
     let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parser failed: {errs:?}")))?;
 
     let rust_code = normalize_codegen_output(
-        &IrCodegen::new()
+        &codegen_with_builtin_stdlib_inventory()
             .try_generate(&ast)
             .map_err(|err| std::io::Error::other(format!("generator function codegen failed: {err:?}")))?,
     );
@@ -1939,7 +1974,7 @@ pub enum ConformanceRel:
         panic!("parser failed")
     };
 
-    let mut codegen = IrCodegen::new();
+    let mut codegen = codegen_with_builtin_stdlib_inventory();
     codegen.add_module_with_path_segments("rels", &rels_ast, vec!["rels".to_string()]);
     let Ok((main_code, _modules)) = codegen.try_generate_multi_file_nested(&main_ast, &[vec!["rels".to_string()]])
     else {
@@ -1999,7 +2034,7 @@ pub def sum(expr: ColumnRef) -> AggregateMeasure:
         panic!("parser failed")
     };
 
-    let mut codegen = IrCodegen::new();
+    let mut codegen = codegen_with_builtin_stdlib_inventory();
     codegen.add_module_with_path_segments("functions", &functions_ast, vec!["functions".to_string()]);
     let Ok((main_code, _modules)) = codegen.try_generate_multi_file_nested(&main_ast, &[vec!["functions".to_string()]])
     else {
@@ -3113,7 +3148,7 @@ def main() -> str:
 
     let yaml_ast = parse_incan_program(yaml_source, "yaml module");
     let main_ast = parse_incan_program(source, "consumer");
-    let mut codegen = IrCodegen::new();
+    let mut codegen = codegen_with_builtin_stdlib_inventory();
     codegen.add_module_with_path_segments("yaml", &yaml_ast, vec!["yaml".to_string()]);
     let (main_code, _modules) = codegen
         .try_generate_multi_file_nested(&main_ast, &[vec!["yaml".to_string()]])
@@ -3165,7 +3200,7 @@ def main() -> str:
 
     let schema_ast = parse_incan_program(schema_source, "schema module");
     let main_ast = parse_incan_program(source, "consumer");
-    let mut codegen = IrCodegen::new();
+    let mut codegen = codegen_with_builtin_stdlib_inventory();
     codegen.add_module_with_path_segments("schema", &schema_ast, vec!["schema".to_string()]);
     let (main_code, _modules) = codegen
         .try_generate_multi_file_nested(&main_ast, &[vec!["schema".to_string()]])
