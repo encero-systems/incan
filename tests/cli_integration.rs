@@ -5807,6 +5807,51 @@ def main() -> None:
 }
 
 #[test]
+fn build_locked_map_err_string_literal_closure_issue880() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "map_err_string_literal_closure_issue880", "")?;
+    fs::write(
+        &main_path,
+        r#"from std.json import JsonValue
+
+def parse(source: str) -> Result[JsonValue, str]:
+    return JsonValue.parse(source).map_err((_error) => "malformed_json")
+
+def main() -> None:
+    match parse("{"):
+        Ok(_) => println("unexpected")
+        Err(error) => println(error)
+"#,
+    )?;
+
+    let lock_output = run_incan(
+        tmp.path(),
+        &["lock", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(&lock_output, "incan lock for map_err closure issue880");
+
+    let build_output = run_incan(
+        tmp.path(),
+        &[
+            "build",
+            "--locked",
+            main_path.to_str().ok_or("main path was not valid UTF-8")?,
+        ],
+    )?;
+    assert_success(&build_output, "incan build --locked for map_err closure issue880");
+
+    let generated = fs::read_to_string(
+        tmp.path()
+            .join("target/incan/map_err_string_literal_closure_issue880/src/main.rs"),
+    )?;
+    assert!(
+        generated.contains("map_err(|_error| \"malformed_json\".to_string())"),
+        "expected generated Rust to own the map_err closure literal, got:\n{generated}"
+    );
+    Ok(())
+}
+
+#[test]
 fn build_inline_fstring_rust_string_variant_issue716() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let helper_dir = tmp.path().join("rust").join("tiny_error");

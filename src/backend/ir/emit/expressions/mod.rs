@@ -1315,7 +1315,12 @@ impl<'a> IrEmitter<'a> {
                         }
                     })
                     .collect();
-                let b = self.emit_expr(body)?;
+                let b = match &expr.ty {
+                    IrType::Function { ret, .. } => {
+                        self.emit_expr_for_use(body, ValueUseSite::ReturnValue { target_ty: Some(ret) })?
+                    }
+                    _ => self.emit_expr(body)?,
+                };
                 Ok(quote! { |#(#param_tokens),*| #b })
             }
 

@@ -1415,6 +1415,16 @@ fn collect_backend_clone_bounds_in_expr(
             }
         }
         IrExprKind::Closure { body, .. } => {
+            if let IrType::Function { ret, .. } = &expr.ty {
+                collect_backend_clone_bounds_for_value_use(
+                    body,
+                    ValueUseSite::ReturnValue { target_ty: Some(ret) },
+                    type_param_names,
+                    self_clone_params,
+                    clone_context,
+                    clone_params,
+                );
+            }
             collect_backend_clone_bounds_in_expr(
                 body,
                 type_param_names,
