@@ -106,7 +106,13 @@ fn write_fixture_archive(root: &Path) -> Result<(PathBuf, String), Box<dyn std::
     let crates = payload.join("crates");
     fs::create_dir_all(&crates)?;
     fs::write(crates.join("Cargo.toml"), "[workspace]\nmembers = []\n")?;
-    for support_crate in ["incan_core", "incan_derive", "incan_stdlib", "incan_web_macros"] {
+    for support_crate in [
+        "incan_core",
+        "incan_derive",
+        "incan_stdlib",
+        "incan_vocab",
+        "incan_web_macros",
+    ] {
         let crate_dir = crates.join(support_crate);
         fs::create_dir_all(&crate_dir)?;
         fs::write(
@@ -511,6 +517,7 @@ fn toolchain_archive_packager_writes_archive_checksum_and_release_metadata() -> 
     assert!(listing.contains("crates/incan_core/Cargo.toml"));
     assert!(listing.contains("crates/incan_derive/Cargo.toml"));
     assert!(listing.contains("crates/incan_stdlib/Cargo.toml"));
+    assert!(listing.contains("crates/incan_vocab/Cargo.toml"));
     assert!(listing.contains("crates/incan_web_macros/Cargo.toml"));
     Ok(())
 }

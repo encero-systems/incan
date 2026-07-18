@@ -85,7 +85,7 @@ distribution_profile="${INCAN_SDK_DISTRIBUTION_PROFILE:-full}"
 [ -x "$incan_lsp_bin" ] || fail "incan-lsp binary is not executable: $incan_lsp_bin"
 [ -d "$stdlib_dir" ] || fail "stdlib source directory does not exist: $stdlib_dir"
 [ -f "$stdlib_dir/testing.incn" ] || fail "stdlib source directory is missing testing.incn: $stdlib_dir"
-for support_crate in incan_core incan_derive incan_stdlib incan_web_macros; do
+for support_crate in incan_core incan_derive incan_stdlib incan_vocab incan_web_macros; do
   [ -f "crates/${support_crate}/Cargo.toml" ] || fail "support crate is missing: crates/${support_crate}"
 done
 
@@ -197,7 +197,7 @@ rm -rf "$package_dir"
 mkdir -p "$package_dir/bin" "$package_dir/crates"
 cp "$incan_bin" "$package_dir/bin/incan"
 cp "$incan_lsp_bin" "$package_dir/bin/incan-lsp"
-for support_crate in incan_core incan_derive incan_stdlib incan_web_macros; do
+for support_crate in incan_core incan_derive incan_stdlib incan_vocab incan_web_macros; do
   support_destination="$package_dir/crates/${support_crate}"
   stage_tracked_tree "crates/${support_crate}" "$support_destination"
 done
@@ -210,6 +210,7 @@ members = [
     "incan_core",
     "incan_derive",
     "incan_stdlib",
+    "incan_vocab",
     "incan_web_macros",
 ]
 resolver = "2"
