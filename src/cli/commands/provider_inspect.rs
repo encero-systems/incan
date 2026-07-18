@@ -195,6 +195,7 @@ struct InspectionContext {
     modules: Vec<ParsedModule>,
 }
 
+/// Discover the shared compilation session and any source modules needed to inspect one file or project directory.
 fn inspection_context(
     path: &Path,
     feature_selection: &FeatureSelection,
@@ -223,6 +224,7 @@ fn inspection_context(
     Ok(InspectionContext { session, modules })
 }
 
+/// Select an explicit source file or the conventional project entrypoint used to collect inspection-time usage facts.
 fn inspection_entrypoint(input: &Path, manifest: Option<&ProjectManifest>) -> Option<PathBuf> {
     if input.is_file() {
         return Some(input.to_path_buf());
@@ -233,6 +235,7 @@ fn inspection_entrypoint(input: &Path, manifest: Option<&ProjectManifest>) -> Op
         .find(|candidate| candidate.is_file())
 }
 
+/// Project provider identities, availability, participation, provenance, and implementation facts into stable reports.
 fn provider_reports(plan: &ProviderPlan) -> Vec<ProviderReport> {
     plan.records()
         .map(|provider| ProviderReport {
@@ -270,6 +273,7 @@ fn provider_reports(plan: &ProviderPlan) -> Vec<ProviderReport> {
         .collect()
 }
 
+/// Project every feature-conditioned provider fact and whether the provider's active feature set enables that fact.
 fn conditioned_fact_reports(plan: &ProviderPlan) -> Vec<ConditionedFactReport> {
     plan.records()
         .flat_map(|provider| {
@@ -292,6 +296,7 @@ fn conditioned_fact_reports(plan: &ProviderPlan) -> Vec<ConditionedFactReport> {
         .collect()
 }
 
+/// Render provider inspection as deterministic JSON or as the concise human-readable provider and component summary.
 fn emit_provider_report(report: &ProvidersReport, format: ProviderInspectionFormat) -> CliResult<()> {
     match format {
         ProviderInspectionFormat::Json => println!(
@@ -323,6 +328,7 @@ fn emit_provider_report(report: &ProvidersReport, format: ProviderInspectionForm
     Ok(())
 }
 
+/// Render feature inspection as deterministic JSON or as the concise human-readable package activation summary.
 fn emit_feature_report(report: &FeaturesReport, format: ProviderInspectionFormat) -> CliResult<()> {
     match format {
         ProviderInspectionFormat::Json => println!(

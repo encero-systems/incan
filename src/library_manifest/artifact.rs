@@ -39,6 +39,7 @@ pub fn digest_provider_artifact(root: &Path) -> Result<String, ProviderArtifactD
     Ok(format!("sha256:{}", hex::encode(hasher.finalize())))
 }
 
+/// Feed one artifact directory into the stable digest in lexical path order while excluding its mutable target tree.
 fn hash_directory(root: &Path, directory: &Path, hasher: &mut Sha256) -> Result<(), ProviderArtifactDigestError> {
     let mut entries = fs::read_dir(directory)
         .map_err(|source| ProviderArtifactDigestError::Io {

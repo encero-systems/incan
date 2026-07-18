@@ -511,6 +511,7 @@ struct WorkspaceLockResolutionRequest<'a> {
     caller_rust_inspect_query_paths: &'a [String],
 }
 
+/// Resolve the canonical workspace-root Cargo lock payload from every member plus the caller's backend refinements.
 fn resolve_workspace_lock_payload(request: WorkspaceLockResolutionRequest<'_>) -> CliResult<Option<String>> {
     let WorkspaceLockResolutionRequest {
         workspace,

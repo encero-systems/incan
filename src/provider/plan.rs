@@ -874,6 +874,7 @@ fn implementation_facets(manifest: &LibraryManifest, active_features: &BTreeSet<
         .collect()
 }
 
+/// Translate one checked provider facet into backend-neutral implementation requirements for the resolved plan.
 fn implementation_facet(facet: &ProviderImplementationFacet) -> ImplementationFacet {
     let mut backend_requirements = facet
         .cargo_dependencies
@@ -1046,6 +1047,7 @@ fn validate_sdk_descriptor(
     Ok(())
 }
 
+/// Preserve a library-manifest validation failure as the provider-plan diagnostic payload.
 fn manifest_error_message(error: LibraryManifestError) -> String {
     error.to_string()
 }

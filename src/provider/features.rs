@@ -654,6 +654,7 @@ fn validate_provider_dependency_descriptor(
     Ok(())
 }
 
+/// Render a deterministic comma-separated feature set for source-anchored package-feature diagnostics.
 fn render_features(features: &BTreeSet<String>) -> String {
     features.iter().cloned().collect::<Vec<_>>().join(", ")
 }
