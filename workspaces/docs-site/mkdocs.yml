@@ -257,6 +257,7 @@ nav:
           - Testing: tooling/how-to/testing.md
       - Explanation:
           - Projects today: tooling/explanation/projects_today.md
+          - Compiled SDK provider flow: tooling/explanation/compiled_sdk_provider_flow.md
           - LSP architecture: tooling/explanation/lsp_architecture.md
       - Reference:
           - CLI reference: tooling/reference/cli_reference.md
