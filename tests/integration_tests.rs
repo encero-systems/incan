@@ -11262,6 +11262,99 @@ def test_absolute_crate_public_types() -> None:
     }
 
     #[test]
+    fn test_batch_keeps_transitive_pub_imports_out_of_later_test_scope_issue898()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let producer_root = tmp.path().join("probe_lib_provider");
+        std::fs::create_dir_all(producer_root.join("src"))?;
+        std::fs::write(
+            producer_root.join("incan.toml"),
+            "[project]\nname = \"probe_lib\"\nversion = \"0.1.0\"\n",
+        )?;
+        std::fs::write(
+            producer_root.join("src/lib.incn"),
+            r#"pub model Record:
+  pub value: int
+
+pub def marker() -> int:
+  return 7
+"#,
+        )?;
+
+        let producer_build = run_build_lib(&producer_root)?;
+        assert!(
+            producer_build.status.success(),
+            "expected #898 provider library build to succeed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&producer_build.stdout),
+            String::from_utf8_lossy(&producer_build.stderr),
+        );
+
+        let consumer_root = tmp.path().join("consumer");
+        std::fs::create_dir_all(consumer_root.join("src"))?;
+        std::fs::create_dir_all(consumer_root.join("tests"))?;
+        std::fs::write(
+            consumer_root.join("incan.toml"),
+            "[project]\nname = \"pub_import_batch\"\nversion = \"0.1.0\"\n\n[dependencies]\nprobe_lib = { path = \"../probe_lib_provider\" }\n",
+        )?;
+        std::fs::write(
+            consumer_root.join("src/bridge.incn"),
+            r#"from pub::probe_lib import Record, marker
+
+pub def bridged() -> int:
+  _ = Record(value=marker())
+  return marker()
+
+pub def bridged_record() -> Record:
+  return Record(value=marker())
+"#,
+        )?;
+        std::fs::write(
+            consumer_root.join("tests/aaa_indirect_test.incn"),
+            r#"from crate.bridge import bridged, bridged_record
+
+def test_indirect_import() -> None:
+  assert bridged() == 7
+  assert bridged_record().value == 7
+"#,
+        )?;
+        std::fs::write(
+            consumer_root.join("tests/zzz_direct_test.incn"),
+            r#"from pub::probe_lib import Record, marker
+from crate.bridge import bridged, bridged_record
+
+def test_direct_import() -> None:
+  record: Record = bridged_record()
+  assert record.value == 7
+  assert marker() == 7
+  assert bridged() == 7
+"#,
+        )?;
+
+        let batch = run_test(&consumer_root.join("tests"))?;
+        let stdout = String::from_utf8_lossy(&batch.stdout);
+        let stderr = String::from_utf8_lossy(&batch.stderr);
+        assert!(
+            batch.status.success(),
+            "expected #898 indirect/direct public-import test batch to pass.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(
+            stdout.contains("test_indirect_import") && stdout.contains("test_direct_import"),
+            "expected both #898 regression tests to run.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(
+            !stderr.contains("already in scope"),
+            "transitive dependency imports must not leak into a later test module.\nstderr:\n{}",
+            stderr,
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn boundary_parity_preserves_dependency_owned_union_helpers_through_facade()
     -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;

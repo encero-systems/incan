@@ -85,14 +85,17 @@ pub struct SymbolTable {
     symbols: Vec<Symbol>,
     scopes: Vec<Scope>,
     current_scope: usize,
+    current_scope_binding_transaction: Option<HashMap<String, Option<SymbolId>>>,
 }
 
 impl SymbolTable {
+    /// Create a root module scope populated with the language's builtin symbols.
     pub fn new() -> Self {
         let mut table = Self {
             symbols: Vec::new(),
             scopes: vec![Scope::new(None, ScopeKind::Module)],
             current_scope: 0,
+            current_scope_binding_transaction: None,
         };
 
         // Add builtin types
@@ -274,6 +277,7 @@ impl SymbolTable {
 
     /// Define a new symbol in the current scope
     pub fn define(&mut self, mut symbol: Symbol) -> SymbolId {
+        self.record_current_scope_binding_before_change(&symbol.name);
         symbol.scope = self.current_scope;
         let id = self.symbols.len();
         self.scopes[self.current_scope].symbols.insert(symbol.name.clone(), id);
@@ -286,6 +290,7 @@ impl SymbolTable {
     /// Enum variants need to remain available to whole-table consumers such as match exhaustiveness and qualified
     /// pattern resolution, but a variant named like an imported type must not steal the bare identifier from that type.
     pub fn define_preserving_existing_binding(&mut self, mut symbol: Symbol) -> SymbolId {
+        self.record_current_scope_binding_before_change(&symbol.name);
         symbol.scope = self.current_scope;
         let id = self.symbols.len();
         self.scopes[self.current_scope]
@@ -315,6 +320,36 @@ impl SymbolTable {
     /// Look up a symbol only in the current scope (no parent lookup)
     pub fn lookup_local(&self, name: &str) -> Option<SymbolId> {
         self.scopes[self.current_scope].symbols.get(name).copied()
+    }
+
+    /// Start recording the previous value of each current-scope binding changed by subsequent definitions.
+    pub(crate) fn begin_current_scope_binding_transaction(&mut self) {
+        debug_assert!(self.current_scope_binding_transaction.is_none());
+        self.current_scope_binding_transaction = Some(HashMap::new());
+    }
+
+    /// Finish the active binding transaction and return only the names it touched.
+    pub(crate) fn finish_current_scope_binding_transaction(&mut self) -> HashMap<String, Option<SymbolId>> {
+        self.current_scope_binding_transaction.take().unwrap_or_default()
+    }
+
+    /// Record one binding before its first change in the active transaction.
+    fn record_current_scope_binding_before_change(&mut self, name: &str) {
+        let previous = self.scopes[self.current_scope].symbols.get(name).copied();
+        if let Some(transaction) = &mut self.current_scope_binding_transaction {
+            transaction.entry(name.to_string()).or_insert(previous);
+        }
+    }
+
+    /// Restore or remove one name binding in the current scope without deleting historical symbol metadata.
+    pub(crate) fn restore_current_scope_binding(&mut self, name: &str, binding: Option<SymbolId>) {
+        if let Some(symbol_id) = binding {
+            self.scopes[self.current_scope]
+                .symbols
+                .insert(name.to_string(), symbol_id);
+        } else {
+            self.scopes[self.current_scope].symbols.remove(name);
+        }
     }
 
     /// Get a symbol by ID

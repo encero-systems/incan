@@ -1851,6 +1851,7 @@ impl TypeChecker {
             ManifestExportRef::TypeAlias(export) => {
                 let mut target = resolved_type_from_manifest_type_ref(&export.target);
                 Self::remap_resolved_type_with_import_aliases(&mut target, imported_type_aliases);
+                self.record_dependency_import_type_alias_before_change(&local_name);
                 self.type_aliases.insert(
                     local_name.clone(),
                     crate::frontend::typechecker::TypeAliasTarget {
