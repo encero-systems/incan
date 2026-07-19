@@ -993,6 +993,236 @@ itoa = "1"
     Ok(())
 }
 
+#[test]
+fn rooted_workspace_semantic_lock_is_relocation_stable_issue906() -> Result<(), Box<dyn std::error::Error>> {
+    fn create_locked_workspace(
+        root: &Path,
+        prebuilt_artifact: &Path,
+    ) -> Result<incan::lockfile::IncanLock, Box<dyn std::error::Error>> {
+        fs::create_dir_all(root.join("src"))?;
+        fs::write(
+            root.join("incan.toml"),
+            r#"[project]
+name = "root_lib"
+version = "0.1.0"
+
+[project.scripts]
+library = "src/lib.incn"
+
+[workspace]
+members = ["consumer"]
+default-members = ["root_lib", "consumer"]
+
+[workspace.dependencies]
+root_lib = { path = "." }
+"#,
+        )?;
+        fs::write(root.join("src/lib.incn"), "pub def answer() -> int:\n  return 42\n")?;
+        let artifact = root.join("target/lib");
+        fs::create_dir_all(artifact.join("src"))?;
+        for relative in ["Cargo.toml", "Cargo.lock", "root_lib.incnlib", "src/lib.rs"] {
+            fs::copy(prebuilt_artifact.join(relative), artifact.join(relative))?;
+        }
+        let consumer = root.join("consumer");
+        fs::create_dir_all(consumer.join("src"))?;
+        fs::write(
+            consumer.join("incan.toml"),
+            r#"[project]
+name = "consumer"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+root_lib = { workspace = true }
+"#,
+        )?;
+        fs::write(
+            consumer.join("src/main.incn"),
+            "from pub::root_lib import answer\n\n\ndef main() -> None:\n  println(answer())\n",
+        )?;
+
+        let lock_output = run_incan(root, &["lock"])?;
+        assert_success(&lock_output, "rooted workspace lock generation");
+        Ok(incan::lockfile::IncanLock::load(&root.join("incan.lock"))?)
+    }
+
+    let temp = tempfile::tempdir()?;
+    let producer = temp.path().join("prebuilt/root_lib");
+    fs::create_dir_all(producer.join("src"))?;
+    fs::write(
+        producer.join("incan.toml"),
+        r#"[project]
+name = "root_lib"
+version = "0.1.0"
+
+[project.scripts]
+library = "src/lib.incn"
+"#,
+    )?;
+    fs::write(producer.join("src/lib.incn"), "pub def answer() -> int:\n  return 42\n")?;
+    let library_output = run_incan(&producer, &["build", "--lib"])?;
+    assert_success(
+        &library_output,
+        "standalone root library build before workspace activation",
+    );
+
+    let first = create_locked_workspace(&temp.path().join("first/root_lib"), &producer.join("target/lib"))?;
+    let second = create_locked_workspace(&temp.path().join("relocated/root_lib"), &producer.join("target/lib"))?;
+
+    assert_eq!(first.semantic, second.semantic);
+    assert_eq!(first.deps_fingerprint, second.deps_fingerprint);
+    let consumer = first
+        .semantic
+        .workspace_members
+        .iter()
+        .find(|member| member.member_root == "consumer")
+        .ok_or("consumer semantic graph missing")?;
+    assert!(
+        consumer
+            .packages
+            .iter()
+            .any(|package| package.package == "root_lib" && package.project_root.is_empty()),
+        "the root package should use the workspace-root coordinate"
+    );
+    assert!(
+        consumer
+            .packages
+            .iter()
+            .any(|package| package.package == "consumer" && package.project_root == "consumer"),
+        "the selected member package should use its workspace-relative coordinate"
+    );
+    assert!(
+        consumer
+            .feature_edges
+            .iter()
+            .any(|edge| edge.from == "consumer" && edge.to.is_empty()),
+        "the member-to-root dependency edge should be workspace-relative"
+    );
+    Ok(())
+}
+
+#[test]
+fn rooted_workspace_member_build_uses_direct_rust_dependencies_issue907() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("src"))?;
+    fs::write(
+        root.path().join("incan.toml"),
+        r#"[project]
+name = "root_lib"
+version = "0.1.0"
+
+[workspace]
+members = ["consumer"]
+default-members = ["consumer"]
+"#,
+    )?;
+    fs::write(
+        root.path().join("src/lib.incn"),
+        "pub def root_marker() -> None:\n  pass\n",
+    )?;
+
+    let consumer = root.path().join("consumer");
+    fs::create_dir_all(consumer.join("src"))?;
+    fs::write(
+        consumer.join("incan.toml"),
+        r#"[project]
+name = "consumer"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[rust-dependencies]
+itoa = "1"
+"#,
+    )?;
+    fs::write(
+        consumer.join("src/main.incn"),
+        "from rust::itoa import Buffer\n\n\ndef main() -> None:\n  println(\"direct dependency\")\n",
+    )?;
+
+    let output = run_incan(&consumer, &["build", "--no-locked"])?;
+    assert_success(&output, "rooted workspace member build with a direct Rust dependency");
+    Ok(())
+}
+
+#[test]
+fn rooted_workspace_member_test_uses_inherited_rust_dependencies_issue907() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("src"))?;
+    fs::write(
+        root.path().join("incan.toml"),
+        r#"[project]
+name = "root_lib"
+version = "0.1.0"
+
+[workspace]
+members = ["consumer"]
+default-members = ["consumer"]
+
+[workspace.rust-dependencies]
+itoa = "1"
+"#,
+    )?;
+    fs::write(
+        root.path().join("src/lib.incn"),
+        "pub def root_marker() -> None:\n  pass\n",
+    )?;
+
+    let consumer = root.path().join("consumer");
+    fs::create_dir_all(consumer.join("src"))?;
+    fs::create_dir_all(consumer.join("tests"))?;
+    fs::write(
+        consumer.join("incan.toml"),
+        r#"[project]
+name = "consumer"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[rust-dependencies]
+itoa = { workspace = true }
+"#,
+    )?;
+    fs::write(consumer.join("src/main.incn"), "def main() -> None:\n  pass\n")?;
+    fs::write(
+        consumer.join("tests/test_workspace_rust_dependency.incn"),
+        r#"from rust::itoa import Buffer
+from std.testing import test
+
+
+@test
+def test_workspace_rust_dependency_is_available() -> None:
+    assert True
+"#,
+    )?;
+
+    let lock_output = run_incan(root.path(), &["lock"])?;
+    assert_success(
+        &lock_output,
+        "rooted workspace lock with a member-owned test dependency",
+    );
+    let test_output = run_incan(
+        root.path(),
+        &[
+            "test",
+            "--member",
+            "consumer",
+            "--locked",
+            "--fail-on-empty",
+            "tests/test_workspace_rust_dependency.incn",
+        ],
+    )?;
+    assert_success(
+        &test_output,
+        "rooted workspace selected-member test with an inherited Rust dependency",
+    );
+    Ok(())
+}
+
 #[cfg(unix)]
 #[test]
 fn workspace_lock_concurrent_publishers_leave_one_parseable_root_lock() -> Result<(), Box<dyn std::error::Error>> {
