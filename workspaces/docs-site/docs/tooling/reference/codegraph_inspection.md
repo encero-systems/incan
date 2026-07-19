@@ -44,6 +44,27 @@ Every line is a standalone JSON object with a `record` discriminator. Current re
 - `reference`: source-level name references inside declaration bodies, including identifier, field, `self`, and surface-path forms. `target_id` points at an emitted declaration record for compiler-proven source identifiers, including local declarations and supported source imports within the exported graph. Unsupported, ambiguous, degraded, field, `self`, surface-path, external-package, and syntax-only cases keep `target_id: null`.
 - `call`: source-level call expressions inside declaration bodies, including function, method, constructor, and surface-symbol calls. `target_id` points at an emitted declaration record for compiler-proven source function and constructor calls, including local declarations, supported source imports, and facade reexports where the original declaration identity is known within the exported graph. Unsupported, ambiguous, degraded, method, surface-symbol, external-package, and syntax-only cases keep `target_id: null`.
 - `containment`: parent-child relationship between file, module, declaration, import, reference, or call records.
-- `diagnostic`: stable diagnostic code, phase, message, primary span, notes, hints, and explain command.
+- `diagnostic`: stable diagnostic code, severity, phase, compiler origin, message, primary span, notes, hints, optional structured expected/actual values, labelled related spans, and explain command.
 
 Paths and ids are deterministic for the same compiler version and filesystem layout. The schema does not promise that ids are stable across file moves, symbol renames, or future schema versions; consumers that persist the graph should store the schema version and compiler version with their index.
+
+### Diagnostic records
+
+Diagnostic records appear in tolerant exports produced with `--allow-errors`. They project the same compiler-owned diagnostic facts used by `incan check --format json` and the LSP; consumers should read the structured fields instead of reverse-engineering the human message.
+
+| Field                   | Contract                                                                                                              |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `code`                  | Stable public diagnostic identifier used by `incan explain`.                                                          |
+| `severity`              | Diagnostic level such as `error`, `warning`, or `hint`.                                                               |
+| `phase`                 | Compiler phase that detected the problem, such as parsing or typechecking.                                            |
+| `origin`                | Compiler subsystem that produced the fact. Legacy schema-v1 records without this field deserialize as `unknown`.      |
+| `message`               | Human-readable summary; not a machine-readable replacement for the other fields.                                      |
+| `primary_span`          | Primary source location with inclusive start and exclusive end byte offsets plus 1-based line and column positions.   |
+| `notes` and `hints`     | Additional explanation and suggested remedies.                                                                        |
+| `expected` and `actual` | Optional structured values or types for comparisons known to the compiler. The fields are omitted when unavailable.   |
+| `related_spans`         | Zero or more objects containing a secondary `span` and compiler-owned relationship `label`. Empty arrays are omitted. |
+| `explain`               | Exact command that opens the diagnostic's longer explanation.                                                         |
+| `provenance`            | `diagnostic` for compiler-owned diagnostic records.                                                                   |
+| `degraded`              | Always `true`; the export contains facts recovered in the presence of diagnostics.                                    |
+
+Codegraph spans include byte offsets because graph consumers often anchor directly into source buffers. Preserve the accompanying line and column values for display rather than trying to reconstruct them from bytes under an assumed encoding.

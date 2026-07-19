@@ -18,7 +18,6 @@
 //! - Validate trait bounds for derives
 //! - Replace codegen heuristics with proper trait-based dispatch
 
-use std::env;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -59,72 +58,7 @@ impl std::error::Error for PreludeError {}
 /// - Workspace-root: `stdlib/`
 /// - Crate-local: `crates/incan_stdlib/stdlib/`
 pub fn find_stdlib_dir() -> Option<PathBuf> {
-    // `incan build --lib` is valid from the built-in stdlib root itself. Recognize that layout before looking for a
-    // nested `stdlib/` directory so source imports resolve as `web/macros.incn`, not `stdlib/web/macros.incn`.
-    if let Ok(cwd) = env::current_dir()
-        && is_builtin_stdlib_source_dir(&cwd)
-    {
-        return Some(cwd);
-    }
-
-    // Try relative to current directory (development mode).
-    for candidate in ["crates/incan_stdlib/stdlib", "stdlib"] {
-        let path = Path::new(candidate);
-        if path.exists() && path.is_dir() {
-            return Some(path.to_path_buf());
-        }
-    }
-
-    // Try relative to executable location, including canonical symlink targets.
-    for exe_dir in crate::toolchain_layout::current_executable_search_bases() {
-        for rel in ["crates/incan_stdlib/stdlib", "stdlib"] {
-            let stdlib = exe_dir.join(rel);
-            if stdlib.exists() && stdlib.is_dir() {
-                return Some(stdlib);
-            }
-        }
-    }
-
-    // Try INCAN_STDLIB environment variable.
-    if let Ok(stdlib_path) = env::var("INCAN_STDLIB") {
-        let path = PathBuf::from(stdlib_path);
-        if path.exists() && path.is_dir() {
-            return Some(path);
-        }
-    }
-
-    // Also honor INCAN_STDLIB_DIR used by stdlib stub resolution.
-    if let Ok(stdlib_root) = env::var("INCAN_STDLIB_DIR")
-        && let Some(path) = stdlib_dir_from_root(PathBuf::from(stdlib_root))
-    {
-        return Some(path);
-    }
-
-    // Also honor INCAN_STDLIB_PATH used by installed-layout stdlib source lookups.
-    if let Ok(stdlib_root) = env::var("INCAN_STDLIB_PATH")
-        && let Some(path) = stdlib_dir_from_root(PathBuf::from(stdlib_root))
-    {
-        return Some(path);
-    }
-
-    None
-}
-
-/// Return whether `path` is the Incan built-in stdlib source root itself.
-fn is_builtin_stdlib_source_dir(path: &Path) -> bool {
-    path.is_dir() && path.join("incan.toml").is_file() && path.join("prelude.incn").is_file()
-}
-
-/// Resolve a stdlib directory from either a toolchain root containing `stdlib/` or the stdlib directory itself.
-fn stdlib_dir_from_root(root: PathBuf) -> Option<PathBuf> {
-    if root.exists() && root.is_dir() {
-        let nested = root.join("stdlib");
-        if nested.exists() && nested.is_dir() {
-            return Some(nested);
-        }
-        return Some(root);
-    }
-    None
+    crate::toolchain_layout::find_stdlib_source_dir()
 }
 
 /// Parse a single prelude trait file.
@@ -223,47 +157,4 @@ pub fn load_prelude() -> Result<Vec<ParsedModule>, PreludeError> {
     }
 
     Ok(prelude_modules)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{is_builtin_stdlib_source_dir, stdlib_dir_from_root};
-
-    #[test]
-    fn stdlib_dir_from_root_accepts_toolchain_root() -> Result<(), Box<dyn std::error::Error>> {
-        let tmp = tempfile::tempdir()?;
-        let toolchain_root = tmp.path().join("toolchain");
-        let stdlib_dir = toolchain_root.join("stdlib");
-        std::fs::create_dir_all(&stdlib_dir)?;
-
-        let found = stdlib_dir_from_root(toolchain_root).ok_or("expected nested stdlib directory")?;
-
-        assert!(found.ends_with("stdlib"));
-        Ok(())
-    }
-
-    #[test]
-    fn stdlib_dir_from_root_accepts_direct_stdlib_directory() -> Result<(), Box<dyn std::error::Error>> {
-        let tmp = tempfile::tempdir()?;
-        let stdlib_dir = tmp.path().join("stdlib");
-        std::fs::create_dir_all(&stdlib_dir)?;
-
-        let found = stdlib_dir_from_root(stdlib_dir).ok_or("expected direct stdlib directory")?;
-
-        assert!(found.ends_with("stdlib"));
-        Ok(())
-    }
-
-    #[test]
-    fn builtin_stdlib_source_root_requires_its_manifest_and_prelude() -> Result<(), Box<dyn std::error::Error>> {
-        let tmp = tempfile::tempdir()?;
-        let root = tmp.path().join("stdlib");
-        std::fs::create_dir_all(&root)?;
-        assert!(!is_builtin_stdlib_source_dir(&root));
-
-        std::fs::write(root.join("incan.toml"), "[project]\nname = \"incan_builtin_stdlib\"\n")?;
-        std::fs::write(root.join("prelude.incn"), "")?;
-        assert!(is_builtin_stdlib_source_dir(&root));
-        Ok(())
-    }
 }

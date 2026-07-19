@@ -108,19 +108,26 @@ Metadata preservation during copy preserves permissions plus modification and ac
 
 ## Crash-safe publication and advisory locks
 
-Publish an authoritative local file by writing a unique sibling staging file, synchronizing its handle, atomically replacing the target, then synchronizing the target directory:
+Publish an authoritative local file by creating an exclusively reserved temporary file beside the target, synchronizing its handle, atomically replacing the target, then synchronizing the target directory. `NamedTemporaryFile.try_new_with(...)` supplies the unique sibling name and removes the staged file automatically if a step before replacement fails:
 
 ```incan
+from std.fs import Path
+from std.tempfile import NamedTemporaryFile
+
 target = Path("incan.lock")
-staged = Path(".incan.lock.next")
-staged.write_bytes(rendered_lockfile)?
-staged_file = staged.open("rb")?
+guard = target.lock_exclusive()?
+staging = NamedTemporaryFile.try_new_with(".incan.lock-", ".tmp", Some(target.parent()))?
+staged_path = staging.path()
+staged_path.write_bytes(rendered_lockfile)?
+staged_file = staged_path.open("rb")?
 staged_file.sync()?
-staged.replace(target)?
+staged_path.replace(target)?
 target.parent().sync_directory()?
 ```
 
 Use `path.lock_shared()` or `path.lock_exclusive()` to acquire a blocking advisory `FileLock`; `try_lock_shared()` and `try_lock_exclusive()` return `Ok(None)` when a conflicting lock is held. Locks apply to a stable sibling lock entry and are released when their guard leaves scope. They coordinate cooperative processes only, so they are not an authorization or mandatory-locking mechanism. Do not hold a blocking file lock across unrelated work or asynchronous suspension.
+
+See [Publish a file without exposing partial contents](../../how-to/file_io.md#publish-a-file-without-exposing-partial-contents) for the complete workflow, failure behavior, and portability limits.
 
 ## File
 

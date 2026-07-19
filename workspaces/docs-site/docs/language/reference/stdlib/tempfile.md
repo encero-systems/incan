@@ -6,7 +6,7 @@
 from std.tempfile import NamedTemporaryFile, SpooledTemporaryFile, TemporaryDirectory
 ```
 
-Named file and directory creation is fallible because it reserves real host filesystem entries. Use `try_new()` for default acquisition and `try_new_with(prefix, suffix, dir)` for configured acquisition. Direct `NamedTemporaryFile(...)` and `TemporaryDirectory(...)` construction is ordinary infallible class construction and is not the resource-acquisition API. `SpooledTemporaryFile(max_size=...)` is infallible because it starts in memory and creates a temporary file only when it rolls over.
+Named file and directory creation is fallible because it reserves real host filesystem entries. Each acquisition chooses an unpredictable name and uses exclusive creation, so an existing entry is never opened as the new temporary resource. Use `try_new()` for default acquisition and `try_new_with(prefix, suffix, dir)` for configured acquisition. Direct `NamedTemporaryFile(...)` and `TemporaryDirectory(...)` construction is ordinary infallible class construction and is not the resource-acquisition API. `SpooledTemporaryFile(max_size=...)` is infallible because it starts in memory and creates a temporary file only when it rolls over.
 
 ## NamedTemporaryFile
 

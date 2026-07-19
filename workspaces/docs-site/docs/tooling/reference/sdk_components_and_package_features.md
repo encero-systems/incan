@@ -2,6 +2,8 @@
 
 Incan resolves checked libraries and official SDK artifacts through one provider plan. SDK components decide which official providers are enabled for a project, package features select additive package-owned facts and dependencies, imports determine which enabled providers are used, and private implementation facets tell the active backend what to link. These are separate layers.
 
+For a practical configuration and inspection workflow, read [Select SDK components and package features](../how-to/sdk_components_and_package_features.md).
+
 For the architectural path from canonical standard-library source to an installed provider used by a project, read [How SDK components become compiled providers](../explanation/compiled_sdk_provider_flow.md).
 
 ## Core distinctions
