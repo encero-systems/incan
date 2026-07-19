@@ -89,6 +89,7 @@ use incan_core::interop::{
 };
 use incan_core::lang::conventions;
 use incan_core::lang::decorators::{self as core_decorators, DecoratorId};
+use incan_core::lang::errors as runtime_errors;
 use incan_core::lang::surface::functions::SurfaceFnId;
 use incan_core::lang::surface::types as surface_types;
 use incan_core::lang::surface::types::{SurfaceTypeId, SurfaceTypeKind};
@@ -249,6 +250,10 @@ pub struct TypeChecker {
     pub(crate) type_aliases: HashMap<String, TypeAliasTarget>,
     /// Previous type-alias bindings changed while dependency imports are collected transactionally.
     dependency_import_type_alias_transaction: Option<HashMap<String, Option<TypeAliasTarget>>>,
+    /// Whether source annotation names should be validated during the semantic check pass.
+    validate_source_type_names: bool,
+    /// Unbound source annotation diagnostics already emitted in the current program check.
+    unknown_source_type_names_emitted: HashSet<(String, usize, usize)>,
     /// Declaration-order index for each local static binding.
     pub(crate) static_decl_positions: HashMap<String, usize>,
     /// Const evaluation state machine.
@@ -417,6 +422,8 @@ impl TypeChecker {
             current_module_function_symbols: HashMap::new(),
             type_aliases: HashMap::new(),
             dependency_import_type_alias_transaction: None,
+            validate_source_type_names: false,
+            unknown_source_type_names_emitted: HashSet::new(),
             static_decl_positions: HashMap::new(),
             const_eval_state: HashMap::new(),
             const_eval_cache: HashMap::new(),
@@ -3476,6 +3483,9 @@ impl TypeChecker {
 
     /// Resolve a type annotation and emit diagnostics for reserved or invalid type spellings.
     fn resolve_type_checked(&mut self, ty: &Spanned<Type>) -> ResolvedType {
+        if self.validate_source_type_names {
+            self.validate_source_type_annotation_names(&ty.node, ty.span);
+        }
         self.validate_stdlib_type_usage(ty);
         if let Type::Simple(name) = &ty.node
             && Self::reserved_numeric_type_name(name)
@@ -3502,6 +3512,75 @@ impl TypeChecker {
         }
         let resolved = resolve_type(&ty.node, &self.symbols);
         self.expand_type_aliases(resolved)
+    }
+
+    /// Reject unbound names in source-authored annotations after declaration collection is complete.
+    fn validate_source_type_annotation_names(&mut self, ty: &Type, span: Span) {
+        match ty {
+            Type::Simple(name) => self.validate_source_type_annotation_name(name, span),
+            Type::Generic(name, args) => {
+                self.validate_source_type_annotation_name(name, span);
+                for arg in args {
+                    self.validate_source_type_annotation_names(&arg.node, arg.span);
+                }
+            }
+            Type::ConstrainedPrimitive(name, _) => self.validate_source_type_annotation_name(name, span),
+            Type::Function(params, ret) => {
+                for param in params {
+                    self.validate_source_type_annotation_names(&param.node, param.span);
+                }
+                self.validate_source_type_annotation_names(&ret.node, ret.span);
+            }
+            Type::Ref(inner) | Type::RefMut(inner) => {
+                self.validate_source_type_annotation_names(&inner.node, inner.span);
+            }
+            Type::Tuple(items) => {
+                for item in items {
+                    self.validate_source_type_annotation_names(&item.node, item.span);
+                }
+            }
+            Type::Qualified(segments) => self.validate_source_qualified_type_annotation(segments, span),
+            Type::IntLiteral(_) | Type::Unit | Type::SelfType | Type::Infer => {}
+        }
+    }
+
+    /// Reject a qualified type path unless its root is an imported Rust binding.
+    fn validate_source_qualified_type_annotation(&mut self, segments: &[String], span: Span) {
+        if !matches!(
+            resolve_type(&Type::Qualified(segments.to_vec()), &self.symbols),
+            ResolvedType::Unknown
+        ) {
+            return;
+        }
+        if let Some(root) = segments.first() {
+            self.emit_unknown_source_type_annotation_name(root, span);
+        }
+    }
+
+    /// Emit one diagnostic when a simple source annotation name has no declaration in the active scope.
+    fn validate_source_type_annotation_name(&mut self, name: &str, span: Span) {
+        if name == "_"
+            || name == "Type"
+            || Self::reserved_numeric_type_name(name)
+            || runtime_errors::from_str(name).is_some()
+        {
+            return;
+        }
+        if !matches!(
+            resolve_type(&Type::Simple(name.to_string()), &self.symbols),
+            ResolvedType::TypeVar(_)
+        ) {
+            return;
+        }
+        self.emit_unknown_source_type_annotation_name(name, span);
+    }
+
+    /// Emit at most one unknown-symbol diagnostic for one source annotation occurrence.
+    fn emit_unknown_source_type_annotation_name(&mut self, name: &str, span: Span) {
+        let key = (name.to_string(), span.start, span.end);
+        if self.unknown_source_type_names_emitted.insert(key) {
+            self.errors.push(errors::unknown_symbol(name, span));
+        }
     }
 
     /// Return whether a simple type name is reserved for a parameterized numeric family.
@@ -4037,6 +4116,25 @@ impl TypeChecker {
         }
     }
 
+    /// Collect declarations in the shared order required for forward references before semantic validation begins.
+    fn collect_declarations_for_check(&mut self, declarations: &[Spanned<Declaration>]) {
+        for decl in declarations {
+            if !matches!(decl.node, Declaration::Alias(_) | Declaration::Partial(_)) {
+                self.collect_declaration(decl);
+            }
+        }
+        for decl in declarations {
+            if matches!(decl.node, Declaration::Alias(_)) {
+                self.collect_declaration(decl);
+            }
+        }
+        for decl in declarations {
+            if matches!(decl.node, Declaration::Partial(_)) {
+                self.collect_declaration(decl);
+            }
+        }
+    }
+
     /// Check a program and return errors if any.
     ///
     /// Runs the two-pass type-checking algorithm:
@@ -4074,6 +4172,8 @@ impl TypeChecker {
         preserve_dependency_semantics: bool,
     ) -> Result<(), Vec<CompileError>> {
         // Reset per-run caches.
+        self.validate_source_type_names = false;
+        self.unknown_source_type_names_emitted.clear();
         self.const_decls.clear();
         self.static_decls.clear();
         self.local_function_decls.clear();
@@ -4109,21 +4209,7 @@ impl TypeChecker {
 
         // First pass: collect concrete declarations, then aliases and partials after their possible targets are
         // available.
-        for decl in &program.declarations {
-            if !matches!(decl.node, Declaration::Alias(_) | Declaration::Partial(_)) {
-                self.collect_declaration(decl);
-            }
-        }
-        for decl in &program.declarations {
-            if matches!(decl.node, Declaration::Alias(_)) {
-                self.collect_declaration(decl);
-            }
-        }
-        for decl in &program.declarations {
-            if matches!(decl.node, Declaration::Partial(_)) {
-                self.collect_declaration(decl);
-            }
-        }
+        self.collect_declarations_for_check(&program.declarations);
 
         self.resolve_pending_trait_supertraits();
         self.finalize_supertrait_graph();
@@ -4132,6 +4218,7 @@ impl TypeChecker {
         self.collect_testing_fixture_names(program);
 
         // Second pass: check consts first so their resolved types are available to later checks.
+        self.validate_source_type_names = true;
         for decl in &program.declarations {
             if matches!(decl.node, Declaration::Const(_)) {
                 self.check_declaration(decl);
@@ -4147,6 +4234,7 @@ impl TypeChecker {
 
         // ---- RFC 023: validate rust.module() and @rust.extern rules ----
         self.validate_rust_module_and_extern(program);
+        self.validate_source_type_names = false;
 
         // Split fatal errors from non-fatal diagnostics.
         let all = std::mem::take(&mut self.errors);

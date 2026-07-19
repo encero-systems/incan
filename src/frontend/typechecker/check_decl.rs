@@ -12,6 +12,7 @@ use crate::frontend::testing_markers::{
 };
 use crate::frontend::typechecker::helpers::{collection_type_id, dict_ty, list_ty};
 
+use super::collect::decorators::resolve_decorator_id;
 use super::{DecoratedFunctionBindingInfo, DecoratedMethodBindingInfo, TestingFixtureInfo, TypeChecker, YieldContext};
 use incan_core::interop::{RustItemKind, RustItemMetadata, RustTraitAssoc};
 use incan_core::lang::decorators::{self, DecoratorId};
@@ -2086,13 +2087,29 @@ impl TypeChecker {
             Declaration::Trait(tr) => self.check_trait(tr),
             Declaration::Alias(_) => {} // Alias targets are validated during collection.
             Declaration::Partial(partial) => self.check_partial_decl(partial),
-            Declaration::TypeAlias(_) => {} // Type aliases are transparent; no body to check
+            Declaration::TypeAlias(alias) => self.check_type_alias(alias),
             Declaration::Newtype(nt) => self.check_newtype(nt),
             Declaration::Enum(en) => self.check_enum(en),
             Declaration::Function(func) => self.check_function(func, decl.span),
             Declaration::TestModule(test_module) => self.check_test_module(test_module),
             Declaration::Docstring(_) => {} // Docstrings don't need checking
         }
+    }
+
+    /// Validate a transparent alias target in the scope of its declared type parameters.
+    fn check_type_alias(&mut self, alias: &TypeAliasDecl) {
+        self.symbols.enter_scope(ScopeKind::Block);
+        for param in &alias.type_params {
+            self.symbols.define(Symbol {
+                name: param.name.clone(),
+                kind: SymbolKind::Type(TypeInfo::Builtin),
+                span: Span::default(),
+                scope: 0,
+            });
+        }
+        self.validate_type_param_bound_type_names(&alias.type_params);
+        let _ = self.resolve_type_checked(&alias.target);
+        self.symbols.exit_scope();
     }
 
     /// Validate preset expressions for a collected top-level partial declaration.
@@ -2261,9 +2278,10 @@ impl TypeChecker {
     /// Typecheck an inline test module declaration.
     fn check_test_module(&mut self, test_module: &TestModuleDecl) {
         self.symbols.enter_scope(ScopeKind::Block);
-        for decl in &test_module.body {
-            self.collect_declaration(decl);
-        }
+        let previous_validation_state = self.validate_source_type_names;
+        self.validate_source_type_names = false;
+        self.collect_declarations_for_check(&test_module.body);
+        self.validate_source_type_names = previous_validation_state;
         for decl in &test_module.body {
             self.check_declaration(decl);
         }
@@ -2767,6 +2785,16 @@ impl TypeChecker {
     fn check_class(&mut self, class: &ClassDecl) {
         self.symbols.enter_scope(ScopeKind::Class);
 
+        // Define type parameters before resolving class fields, trait adoptions, and method signatures.
+        for param in &class.type_params {
+            self.symbols.define(Symbol {
+                name: param.name.clone(),
+                kind: SymbolKind::Type(TypeInfo::Builtin),
+                span: Span::default(),
+                scope: 0,
+            });
+        }
+
         self.validate_decorators_rejecting_user_defined(&class.decorators, "class");
         // Validate @derive decorators
         self.validate_derives(&class.decorators);
@@ -2984,6 +3012,34 @@ impl TypeChecker {
     fn check_trait(&mut self, tr: &TraitDecl) {
         self.symbols.enter_scope(ScopeKind::Trait);
 
+        // Trait API annotations are collected before source names can be validated. Re-establish the trait's generic
+        // scope and revisit every declaration-only surface during the semantic pass.
+        let trait_type_params: Vec<String> = tr.type_params.iter().map(|param| param.name.clone()).collect();
+        for param in &tr.type_params {
+            self.symbols.define(Symbol {
+                name: param.name.clone(),
+                kind: SymbolKind::Type(TypeInfo::Builtin),
+                span: Span::default(),
+                scope: 0,
+            });
+        }
+        self.validate_type_param_bound_type_names(&tr.type_params);
+        for supertrait in &tr.traits {
+            for type_arg in &supertrait.node.type_args {
+                let _ = self.resolve_type_checked(type_arg);
+            }
+        }
+        for decorator in &tr.decorators {
+            if resolve_decorator_id(&decorator.node, &self.symbols) != Some(DecoratorId::Requires) {
+                continue;
+            }
+            for arg in &decorator.node.args {
+                if let DecoratorArg::Named(_, DecoratorArgValue::Type(ty)) = arg {
+                    let _ = self.resolve_type_checked(ty);
+                }
+            }
+        }
+
         self.validate_decorators_rejecting_user_defined(&tr.decorators, "trait");
         self.reject_rust_allow_on_unsupported_declaration(&tr.decorators, "trait");
         let requires_map: HashMap<String, ResolvedType> = self
@@ -3011,25 +3067,22 @@ impl TypeChecker {
 
         for method in &tr.methods {
             self.validate_decorators_allowing_user_defined(&method.node.decorators);
-            if method.node.body.is_some() {
-                let prev_method_seen = self.current_trait_missing_requires_emitted.take();
-                self.current_trait_missing_requires_emitted = Some(std::collections::HashSet::new());
-                // Trait default methods are checked against `Self` (the eventual adopter type), not against the trait
-                // name itself. This allows default bodies to reference adopter fields (validated at adoption sites via
-                // `@requires`).
-                let trait_type_params: Vec<String> = tr.type_params.iter().map(|tp| tp.name.clone()).collect();
-                self.check_method_with_self_ty(
-                    &method.node,
-                    ResolvedType::SelfType,
-                    &trait_type_params,
-                    &tr.type_params,
-                );
-                self.current_trait_missing_requires_emitted = prev_method_seen;
-            }
+            let prev_method_seen = self.current_trait_missing_requires_emitted.take();
+            self.current_trait_missing_requires_emitted = Some(std::collections::HashSet::new());
+            // Trait methods are checked against `Self` (the eventual adopter type). Abstract methods have no body, but
+            // their parameter, return, target, and generic-bound annotations still form part of the public trait API.
+            self.check_method_with_self_ty(
+                &method.node,
+                ResolvedType::SelfType,
+                &trait_type_params,
+                &tr.type_params,
+            );
+            self.current_trait_missing_requires_emitted = prev_method_seen;
             self.apply_user_defined_method_decorators(&method.node, &tr.name);
         }
         self.check_method_partials(&tr.name, &tr.method_partials);
         for property in &tr.properties {
+            let _ = self.resolve_type_checked(&property.node.return_type);
             if property.node.body.is_some() {
                 self.errors.push(errors::trait_property_body_not_supported(
                     &tr.name,
@@ -3220,6 +3273,7 @@ impl TypeChecker {
                 scope: 0,
             });
         }
+        self.validate_type_param_bound_type_names(&nt.type_params);
 
         self.validate_decorators_rejecting_user_defined(&nt.decorators, "newtype");
         self.validate_rust_derives(&nt.decorators, "newtype", nt.is_rusttype, &nt.traits);
@@ -4247,6 +4301,17 @@ impl TypeChecker {
                 )
             })
             .collect()
+    }
+
+    /// Revisit bound type arguments for declarations whose collected signatures otherwise have no semantic body pass.
+    fn validate_type_param_bound_type_names(&mut self, type_params: &[TypeParam]) {
+        for type_param in type_params {
+            for bound in &type_param.bounds {
+                for type_arg in &bound.type_args {
+                    let _ = self.resolve_type_checked(type_arg);
+                }
+            }
+        }
     }
 
     /// Validate a model, class, enum, or newtype method body using the concrete nominal owner as `self`.
