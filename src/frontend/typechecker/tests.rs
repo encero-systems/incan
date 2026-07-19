@@ -3357,6 +3357,7 @@ fn test_rust_owner_path_expands_crate_relative_signature_displays() {
 fn test_rust_never_return_is_bottom_compatible_issue381() {
     let checker = TypeChecker::new();
     let signature = RustFunctionSig {
+        type_params: Vec::new(),
         params: Vec::new(),
         return_type: "!".to_string(),
         is_async: false,

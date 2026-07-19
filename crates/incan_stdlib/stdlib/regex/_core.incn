@@ -7,8 +7,12 @@ replacement dispatch together.
 """
 
 from rust::regex import Regex as RustRegex, RegexBuilder
+from rust::incan_stdlib::strings import str_slice_byte_range, str_slice_from_byte_offset
 from std.regex._replacement import _expand_replacement
 from std.regex.types import Captures, CapturesIterator, Match, MatchIterator, SplitIterator, _offset_from_usize
+
+# Keep native byte-slice results in explicit `str` locals before `+=`; cold SDK codegen otherwise loses the Rust
+# `String` result type and emits invalid `String + String` (#896).
 
 
 pub model RegexError:
@@ -255,12 +259,11 @@ pub model Regex:
             text: Text to match.
 
         Returns:
-            `Some(Captures)` when group `0` starts at byte offset `0` and ends at `len(text)`, otherwise `None`.
+            `Some(Captures)` when group `0` starts at byte offset `0` and contains the entire input, otherwise `None`.
         """
         if let Some(caps) = self.captures(text):
             if let Some(full) = caps.full_match():
-                start, end = full.span()
-                if start == 0 and end == len(text):
+                if full.start() == 0 and full.as_str() == text:
                     return Some(caps)
         return None
 
@@ -332,11 +335,13 @@ pub model Regex:
             while let Some(caps) = captures.__next__():
                 if let Some(full) = caps.full_match():
                     start, end = full.span()
-                    out += text[last_end:start]
+                    unchanged: str = str_slice_byte_range(text, last_end, start)
+                    out += unchanged
                     out += repl(caps)
                     last_end = end
 
-            out += text[last_end:]
+            suffix: str = str_slice_from_byte_offset(text, last_end)
+            out += suffix
             return out
 
     def replacen(self, text: str, limit: int, repl: str | Callable[Captures, str]) -> str:
@@ -371,12 +376,14 @@ pub model Regex:
 
                 if let Some(full) = caps.full_match():
                     start, end = full.span()
-                    out += text[last_end:start]
+                    unchanged: str = str_slice_byte_range(text, last_end, start)
+                    out += unchanged
                     out += repl(caps)
                     last_end = end
                     replaced += 1
 
-            out += text[last_end:]
+            suffix: str = str_slice_from_byte_offset(text, last_end)
+            out += suffix
             return out
 
     def replace_literal(self, text: str, repl: str) -> str:
@@ -479,12 +486,14 @@ pub model Regex:
 
             if let Some(full) = caps.full_match():
                 start, end = full.span()
-                out += text[last_end:start]
+                unchanged: str = str_slice_byte_range(text, last_end, start)
+                out += unchanged
                 out += _string_replacement(repl, caps, literal)
                 last_end = end
                 replaced += 1
 
-        out += text[last_end:]
+        suffix: str = str_slice_from_byte_offset(text, last_end)
+        out += suffix
         return out
 
 

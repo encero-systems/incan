@@ -155,6 +155,43 @@ pub fn str_slice(
     Ok(out)
 }
 
+/// Slice a string between two UTF-8 byte offsets.
+///
+/// This is a narrow interop helper for host APIs, such as regex engines, whose spans are byte-based. Ordinary Incan
+/// string indexing and slicing remain Unicode-scalar based through [`str_char_at`] and [`str_slice`].
+///
+/// ## Parameters
+/// - `s`: String to slice.
+/// - `start`: Inclusive UTF-8 byte offset.
+/// - `end`: Exclusive UTF-8 byte offset.
+///
+/// ## Returns
+/// - `Ok(String)`: The requested byte range when both offsets are valid UTF-8 boundaries.
+/// - `Err(StringAccessError)`: If either offset is negative, out of range, not a character boundary, or reversed.
+pub fn str_slice_byte_range(s: &str, start: i64, end: i64) -> Result<String, StringAccessError> {
+    let start = usize::try_from(start).map_err(|_| StringAccessError::IndexOutOfRange)?;
+    let end = usize::try_from(end).map_err(|_| StringAccessError::IndexOutOfRange)?;
+    s.get(start..end)
+        .map(str::to_string)
+        .ok_or(StringAccessError::IndexOutOfRange)
+}
+
+/// Slice a string from one UTF-8 byte offset through the end.
+///
+/// ## Parameters
+/// - `s`: String to slice.
+/// - `start`: Inclusive UTF-8 byte offset.
+///
+/// ## Returns
+/// - `Ok(String)`: The suffix beginning at `start` when it is a valid UTF-8 boundary.
+/// - `Err(StringAccessError)`: If `start` is negative, out of range, or not a character boundary.
+pub fn str_slice_from_byte_offset(s: &str, start: i64) -> Result<String, StringAccessError> {
+    let start = usize::try_from(start).map_err(|_| StringAccessError::IndexOutOfRange)?;
+    s.get(start..)
+        .map(str::to_string)
+        .ok_or(StringAccessError::IndexOutOfRange)
+}
+
 // ---- String methods (shared policy) -------------------------------------------------------------
 
 /// Convert a string to uppercase.
@@ -294,4 +331,35 @@ pub fn fstring(parts: &[&str], args: &[String]) -> String {
     }
     out.push_str(parts.last().unwrap_or(&""));
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{StringAccessError, str_slice_byte_range, str_slice_from_byte_offset};
+
+    #[test]
+    fn byte_range_slices_preserve_utf8_boundaries() {
+        let text = "beforeé;31m";
+
+        assert_eq!(str_slice_byte_range(text, 0, 6), Ok("before".to_string()));
+        assert_eq!(str_slice_byte_range(text, 6, 8), Ok("é".to_string()));
+        assert_eq!(str_slice_from_byte_offset(text, 8), Ok(";31m".to_string()));
+    }
+
+    #[test]
+    fn byte_range_slices_reject_invalid_offsets() {
+        let text = "é";
+
+        for result in [
+            str_slice_byte_range(text, -1, 2),
+            str_slice_byte_range(text, 0, 3),
+            str_slice_byte_range(text, 0, 1),
+            str_slice_byte_range(text, 2, 0),
+            str_slice_from_byte_offset(text, -1),
+            str_slice_from_byte_offset(text, 1),
+            str_slice_from_byte_offset(text, 3),
+        ] {
+            assert_eq!(result, Err(StringAccessError::IndexOutOfRange));
+        }
+    }
 }

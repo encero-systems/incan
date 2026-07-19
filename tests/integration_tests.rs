@@ -6854,9 +6854,23 @@ async def main() -> None:
     }
 
     #[test]
-    fn test_run_std_regex_rfc059_surface() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_run_std_regex_rfc059_surface_from_cold_sdk_provider() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let source = tmp.path().join("std_regex_surface.incn");
+        fs::copy(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/valid/std_regex_surface.incn"),
+            &source,
+        )?;
+        let generated_project = tmp.path().join("target/incan/std_regex_surface");
+        let provider_store = tmp.path().join("sdk-provider-store");
+        let generated_cargo_target = tmp.path().join("generated-cargo-target");
+
         let output = incan_command()
-            .args(["run", "tests/fixtures/valid/std_regex_surface.incn"])
+            .current_dir(tmp.path())
+            .env("INCAN_INTERNAL_SDK_PROVIDER_STORE", &provider_store)
+            .env("INCAN_GENERATED_CARGO_TARGET_DIR", &generated_cargo_target)
+            .arg("run")
+            .arg(&source)
             .output()?;
 
         assert!(
@@ -6892,17 +6906,43 @@ async def main() -> None:
                 "$2, $1",
                 "x x three",
                 "$1 two",
+                "é@6:8|6:8",
+                "unicode-full",
+                ";31m",
+                ";31m",
+                ";31m",
+                ";31m",
+                ";31m",
+                ";31m",
+                ";31m",
+                ";31m",
+                ";31m",
+                "; !",
+                "; !",
+                "é|a",
+                "before ;31mafter",
+                "before|;31m",
+                "before|;31m",
+                "|;|!",
             ],
             "unexpected std.regex output:\n{stdout}"
         );
-        let consumer_core = Path::new("target/incan/std_regex_surface/src/__incan_std/regex/_core.rs");
+        let consumer_core = generated_project.join("src/__incan_std/regex/_core.rs");
         assert!(
             !consumer_core.exists(),
             "a compiled std.regex module must not be materialized in the consumer: {}",
             consumer_core.display()
         );
-        let artifact_root =
-            compiled_sdk_provider_artifact_root(Path::new("target/incan/std_regex_surface"), "incan_stdlib_data")?;
+        let artifact_root = fs::canonicalize(compiled_sdk_provider_artifact_root(
+            &generated_project,
+            "incan_stdlib_data",
+        )?)?;
+        let provider_store = fs::canonicalize(&provider_store)?;
+        assert!(
+            artifact_root.starts_with(&provider_store),
+            "std.regex should be compiled from the isolated cold SDK provider store: {}",
+            artifact_root.display()
+        );
         let generated_core = fs::read_to_string(artifact_root.join("src/regex/_core.rs"))?;
         for unexpected in [
             "RegexBuilder::new(&(pattern).to_string())",

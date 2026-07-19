@@ -9,7 +9,9 @@ use incan_core::strings::{
     StringAccessError, fstring as semantics_fstring, str_char_at as semantics_str_char_at,
     str_cmp as semantics_str_cmp, str_concat as semantics_str_concat, str_contains as semantics_str_contains,
     str_ends_with as semantics_str_ends_with, str_join as semantics_str_join, str_lower as semantics_str_lower,
-    str_replace as semantics_str_replace, str_slice as semantics_str_slice, str_split as semantics_str_split,
+    str_replace as semantics_str_replace, str_slice as semantics_str_slice,
+    str_slice_byte_range as semantics_str_slice_byte_range,
+    str_slice_from_byte_offset as semantics_str_slice_from_byte_offset, str_split as semantics_str_split,
     str_starts_with as semantics_str_starts_with, str_strip as semantics_str_strip, str_upper as semantics_str_upper,
 };
 
@@ -61,6 +63,35 @@ pub fn str_slice<S: AsRef<str>>(s: S, start: Option<i64>, end: Option<i64>, step
             // Should not happen because slice clamps; keep aligned if policy changes.
             raise(IncanError::string_index_out_of_range())
         }
+    }
+}
+
+/// Slice a string between UTF-8 byte offsets supplied by a host API.
+///
+/// Ordinary Incan slices use Unicode-scalar indices. This helper is for stdlib interop code that reconstructs strings
+/// from byte spans, such as `std.regex`.
+///
+/// ## Panics
+///
+/// - If either offset is invalid, out of range, reversed, or not a UTF-8 character boundary.
+pub fn str_slice_byte_range(s: &str, start: i64, end: i64) -> String {
+    match semantics_str_slice_byte_range(s, start, end) {
+        Ok(out) => out,
+        Err(StringAccessError::IndexOutOfRange) => raise(IncanError::string_index_out_of_range()),
+        Err(StringAccessError::SliceStepZero) => unreachable!("byte-range slices do not accept a step"),
+    }
+}
+
+/// Slice a string from a UTF-8 byte offset supplied by a host API through the end.
+///
+/// ## Panics
+///
+/// - If the offset is invalid, out of range, or not a UTF-8 character boundary.
+pub fn str_slice_from_byte_offset(s: &str, start: i64) -> String {
+    match semantics_str_slice_from_byte_offset(s, start) {
+        Ok(out) => out,
+        Err(StringAccessError::IndexOutOfRange) => raise(IncanError::string_index_out_of_range()),
+        Err(StringAccessError::SliceStepZero) => unreachable!("byte-offset slices do not accept a step"),
     }
 }
 
