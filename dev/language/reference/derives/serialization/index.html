@@ -6600,6 +6600,7 @@
 <span class="k">newtype</span> <span class="nc">Email</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
 </code></pre></div>
 <p>Newtypes serialize to/from their underlying type's JSON representation.</p>
+<p>When a newtype defines the canonical <code>from_underlying</code> validation hook or primitive constraints, JSON deserialization reconstructs through that checked ingress. Invalid JSON values return <code>Err</code> instead of creating an invalid nominal value.</p>
 <hr />
 <h2 id="dynamic-json-fields">Dynamic JSON fields<a class="headerlink" href="#dynamic-json-fields" title="Permanent link">&para;</a></h2>
 <p>Use <code>std.json.JsonValue</code> when one model field should remain dynamic while the rest of the model is typed:</p>
