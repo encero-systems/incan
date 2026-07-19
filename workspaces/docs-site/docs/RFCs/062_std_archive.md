@@ -1,6 +1,6 @@
 # RFC 062: `std.archive` — archive container creation and extraction
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-04-14
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -10,7 +10,7 @@
     - RFC 056 (`std.io` in-memory byte streams and binary parsing helpers)
     - RFC 061 (`std.compression` codec-based compression and decompression)
 - **Issue:** https://github.com/encero-systems/incan/issues/340
-- **RFC PR:** —
+- **RFC PR:** #859
 - **Written against:** v0.2
 - **Shipped in:** —
 

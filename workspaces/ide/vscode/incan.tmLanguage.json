@@ -616,7 +616,7 @@
     "keywords": {
       "patterns": [
         {
-          "match": "\\b(assert|break|case|continue|elif|else|for|if|loop|match|pass|return|while|yield)\\b",
+          "match": "\\b(assert|break|case|continue|elif|else|for|if|loop|match|pass|return|when|while|yield)\\b",
           "name": "keyword.control.flow.incan"
         },
         {

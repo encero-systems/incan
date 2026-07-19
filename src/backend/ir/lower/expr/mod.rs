@@ -11,6 +11,8 @@ mod comprehensions;
 mod helpers;
 mod patterns;
 
+use std::collections::HashMap;
+
 use super::super::TypedExpr;
 use super::super::expr::{
     BuiltinFn, CollectionMethodKind, IrCallArg, IrCallArgKind, IrDictEntry, IrExpr, IrExprKind, IrListEntry,
@@ -82,7 +84,7 @@ impl AstLowering {
             return None;
         }
 
-        let manifest_index = self.library_manifest_index.as_ref()?;
+        let manifest_index = self.provider_plan.as_deref()?.library_manifest_index();
         let matches = manifest_index
             .known_libraries()
             .into_iter()
@@ -762,12 +764,25 @@ impl AstLowering {
                 {
                     let receiver = self.lower_expr_spanned(l)?;
                     let arg_expr = self.lower_expr_spanned(r)?;
+                    let provider_crate = AstLowering::nominal_receiver_type_name(&receiver.ty)
+                        .and_then(|type_name| self.sdk_provider_crate_for_type(type_name));
                     let result_ty = self
                         .type_info
                         .as_ref()
                         .and_then(|info| info.expr_type(expr_span))
                         .map(|ty| self.lower_resolved_type(ty))
                         .unwrap_or(IrType::Unknown);
+                    let result_ty = provider_crate
+                        .as_deref()
+                        .map(|provider_crate| self.pub_external_type(provider_crate, result_ty.clone()))
+                        .unwrap_or(result_ty);
+                    let callable_signature = self.callable_signature_for_call_span(expr_span);
+                    let callable_signature = match (provider_crate.as_deref(), callable_signature) {
+                        (Some(provider_crate), Some(signature)) => {
+                            Some(self.compiled_provider_external_signature(provider_crate, signature))
+                        }
+                        (_, signature) => signature,
+                    };
                     (
                         IrExprKind::MethodCall {
                             receiver: Box::new(receiver),
@@ -779,7 +794,7 @@ impl AstLowering {
                                 kind: IrCallArgKind::Positional,
                                 expr: arg_expr,
                             }],
-                            callable_signature: self.callable_signature_for_call_span(expr_span),
+                            callable_signature,
                             arg_policy: MethodCallArgPolicy::Default,
                         },
                         result_ty,
@@ -1118,6 +1133,10 @@ impl AstLowering {
                     let imported_pub_method_signature = public_receiver_library.as_deref().and_then(|library| {
                         self.callable_signature_for_imported_pub_type_method(library, &receiver.ty, m)
                     });
+                    let compiled_provider_crate = AstLowering::nominal_receiver_type_name(&receiver.ty)
+                        .and_then(|type_name| self.sdk_provider_crate_for_type(type_name));
+                    let compiled_provider_method_signature =
+                        self.callable_signature_for_compiled_provider_type_method(&receiver.ty, m);
                     let call_site_signature = self.callable_signature_for_call_span(expr_span);
                     let std_logging_signature = if matches!(
                         &receiver.ty,
@@ -1129,7 +1148,9 @@ impl AstLowering {
                     };
                     let callable_signature = match (
                         std_logging_signature.or(call_site_signature),
-                        imported_type_method_signature.or(imported_pub_method_signature),
+                        imported_type_method_signature
+                            .or(imported_pub_method_signature)
+                            .or(compiled_provider_method_signature),
                     ) {
                         (Some(mut call_site), Some(imported)) => {
                             for (param, imported_param) in call_site.params.iter_mut().zip(imported.params.iter()) {
@@ -1144,8 +1165,18 @@ impl AstLowering {
                     };
                     let callable_signature = match (public_receiver_library.clone(), callable_signature) {
                         (Some(library), Some(signature)) => Some(self.pub_external_signature(&library, signature)),
-                        (_, signature) => signature,
+                        (None, Some(signature)) => match compiled_provider_crate.as_deref() {
+                            Some(provider_crate) => {
+                                Some(self.compiled_provider_external_signature(provider_crate, signature))
+                            }
+                            None => Some(signature),
+                        },
+                        (_, None) => None,
                     };
+                    let expr_ty = compiled_provider_crate
+                        .as_deref()
+                        .map(|provider_crate| self.pub_external_type(provider_crate, expr_ty.clone()))
+                        .unwrap_or(expr_ty);
                     // Unknown method - keep as string-based call
                     (
                         IrExprKind::MethodCall {
@@ -1446,9 +1477,18 @@ impl AstLowering {
                         (p.node.name.clone(), ty)
                     })
                     .collect();
+                let mut closure_read_counts = HashMap::new();
+                self.count_expr_ident_reads(&body.node, &mut closure_read_counts);
+                self.remaining_ident_reads.push(closure_read_counts);
                 self.non_linear_context_depth += 1;
+                self.closure_param_scopes.push((
+                    self.non_linear_context_depth,
+                    param_pairs.iter().map(|(name, _)| name.clone()).collect(),
+                ));
                 let body_ir_result = self.lower_expr_spanned(body);
+                let _ = self.closure_param_scopes.pop();
                 self.non_linear_context_depth -= 1;
+                let _ = self.remaining_ident_reads.pop();
                 let body_ir = body_ir_result?;
                 let ret_ty = body_ir.ty.clone();
                 let param_tys: Vec<IrType> = param_pairs.iter().map(|(_, t)| t.clone()).collect();

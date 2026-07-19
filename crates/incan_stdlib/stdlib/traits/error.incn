@@ -3,7 +3,7 @@ Error trait for custom error types used with Result[T, E]
 """
 
 
-trait Error:
+pub trait Error:
     """
     Error trait - Base trait for custom error types in Result[T, E]
     

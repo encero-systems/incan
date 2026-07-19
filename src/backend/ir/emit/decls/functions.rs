@@ -7,7 +7,10 @@ use std::collections::{HashMap, HashSet};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
-use incan_core::lang::conventions;
+use incan_core::lang::{
+    conventions,
+    traits::{self as core_traits, TraitId},
+};
 
 use super::super::super::decl::{IrRustAttrArg, IrRustLintAllow};
 use super::super::super::expr::{
@@ -500,7 +503,6 @@ impl<'a> IrEmitter<'a> {
                 }
             })
             .collect();
-
         *self.current_function_return_type.borrow_mut() = Some(func.return_type.clone());
         let body_stmts = self.emit_stmts(&func.body)?;
         *self.current_function_return_type.borrow_mut() = None;
@@ -638,6 +640,17 @@ impl<'a> IrEmitter<'a> {
                 quote! { #pname: #pty }
             })
             .collect();
+        // Proc-macro decorator markers deliberately do not forward their parameters to a Rust function. Prefix their
+        // generated bindings so artifact consumers remain warning-clean under `-D warnings`.
+        let unused_params: Vec<TokenStream> = func
+            .params
+            .iter()
+            .map(|p| {
+                let pname = Self::rust_ident(&format!("_{}", p.name));
+                let pty = self.emit_type(&p.ty);
+                quote! { #pname: #pty }
+            })
+            .collect();
 
         // Build the fully-qualified call path: `incan_stdlib::testing::fail`.
         let path_segments: Vec<_> = module_path.split("::").collect();
@@ -684,7 +697,7 @@ impl<'a> IrEmitter<'a> {
                 return Ok(quote! {
                     #(#doc_attrs)*
                     #(#lint_allows)*
-                    #vis #async_kw fn #name #generics (#(#params),*) {
+                    #vis #async_kw fn #name #generics (#(#unused_params),*) {
                         incan_stdlib::errors::__private::raise_runtime_misuse(#panic_message)
                     }
                 });
@@ -694,7 +707,7 @@ impl<'a> IrEmitter<'a> {
             return Ok(quote! {
                 #(#doc_attrs)*
                 #(#lint_allows)*
-                #vis #async_kw fn #name #generics (#(#params),*) -> #ret_ty {
+                #vis #async_kw fn #name #generics (#(#unused_params),*) -> #ret_ty {
                     incan_stdlib::errors::__private::raise_runtime_misuse(#panic_message)
                 }
             });
@@ -958,10 +971,17 @@ impl<'a> IrEmitter<'a> {
         trait_decl: &super::super::super::decl::IrTrait,
     ) -> Result<TokenStream, EmitError> {
         let name = format_ident!("{}", &trait_decl.name);
+        let iterator_trait_name = core_traits::as_str(TraitId::Iterator);
+        let iterator_trait = format_ident!("{iterator_trait_name}");
+        let sum_trait = format_ident!("{}", core_traits::as_str(TraitId::Sum));
         let methods: Vec<TokenStream> = trait_decl
             .methods
             .iter()
-            .map(|m| self.emit_trait_method(m))
+            .map(|m| {
+                let iterator_sum_bound =
+                    (trait_decl.name == iterator_trait_name && m.name == "sum").then(|| quote! { T: #sum_trait<T> });
+                self.emit_trait_method_with_where(m, iterator_sum_bound)
+            })
             .collect::<Result<_, _>>()?;
 
         // RFC 023 / RFC 042: trait-level generics and direct supertrait bounds.
@@ -979,6 +999,17 @@ impl<'a> IrEmitter<'a> {
             let rest = bound_tokens.iter().skip(1).map(|b| quote! { + #b });
             quote! { : #first #(#rest)* }
         };
+        let iterator_mut_forwarding = if trait_decl.name == iterator_trait_name {
+            quote! {
+                impl<T, I: #iterator_trait<T> + ?Sized> #iterator_trait<T> for &mut I {
+                    fn __next__(&mut self) -> Option<T> {
+                        (**self).__next__()
+                    }
+                }
+            }
+        } else {
+            quote! {}
+        };
 
         // Note: trait items are emitted as `pub trait` regardless of Incan visibility so generated single-file crates
         // keep stdlib and user traits addressable at crate root (matches pre–RFC-042 emission).
@@ -987,6 +1018,7 @@ impl<'a> IrEmitter<'a> {
             pub trait #name #generics #supertrait_colon {
                 #(#methods)*
             }
+            #iterator_mut_forwarding
         })
     }
 
@@ -994,6 +1026,15 @@ impl<'a> IrEmitter<'a> {
     pub(in crate::backend::ir::emit) fn emit_trait_method(
         &self,
         func: &super::super::super::decl::IrFunction,
+    ) -> Result<TokenStream, EmitError> {
+        self.emit_trait_method_with_where(func, None)
+    }
+
+    /// Emit a trait method with an optional method-local Rust bound.
+    fn emit_trait_method_with_where(
+        &self,
+        func: &super::super::super::decl::IrFunction,
+        extra_where_bound: Option<TokenStream>,
     ) -> Result<TokenStream, EmitError> {
         let name = Self::rust_ident(&func.name);
         let used_names = Self::collect_function_used_names(func);
@@ -1031,11 +1072,14 @@ impl<'a> IrEmitter<'a> {
         // RFC 023: emit generic type parameters with trait bounds.
         let generics = self.emit_type_params(&func.type_params);
         let has_self_receiver = func.params.iter().any(|param| param.is_self);
-        let sized_where = if !has_self_receiver && Self::trait_method_return_mentions_self(&func.return_type) {
-            quote! { where Self: Sized }
-        } else {
-            quote! {}
-        };
+        let mut where_bounds = Vec::new();
+        if !has_self_receiver && Self::trait_method_return_mentions_self(&func.return_type) {
+            where_bounds.push(quote! { Self: Sized });
+        }
+        if let Some(extra_where_bound) = extra_where_bound {
+            where_bounds.push(extra_where_bound);
+        }
+        let where_clause = (!where_bounds.is_empty()).then(|| quote! { where #(#where_bounds),* });
 
         if func.body.is_empty() {
             let lint_allows = self.emit_rust_lint_allows(&func.lint_allows);
@@ -1043,7 +1087,7 @@ impl<'a> IrEmitter<'a> {
             Ok(quote! {
                 #(#doc_attrs)*
                 #(#lint_allows)*
-                fn #name #generics (#(#params),*) #ret #sized_where;
+                fn #name #generics (#(#params),*) #ret #where_clause;
             })
         } else {
             *self.current_function_return_type.borrow_mut() = Some(func.return_type.clone());
@@ -1055,7 +1099,7 @@ impl<'a> IrEmitter<'a> {
             Ok(quote! {
                 #(#doc_attrs)*
                 #(#lint_allows)*
-                fn #name #generics (#(#params),*) #ret #sized_where {
+                fn #name #generics (#(#params),*) #ret #where_clause {
                     #(#body_stmts)*
                 }
             })

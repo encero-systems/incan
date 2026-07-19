@@ -32,6 +32,10 @@ fn run_incan(current_dir: &Path, args: &[&str]) -> Result<Output, Box<dyn std::e
             "INCAN_GENERATED_CARGO_TARGET_DIR",
             Path::new(env!("CARGO_MANIFEST_DIR")).join("target/incan_generated_shared_target"),
         )
+        .env(
+            "INCAN_INTERNAL_SDK_PROVIDER_STORE",
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("target/incan_test_sdk_provider_store"),
+        )
         .output()?)
 }
 
@@ -256,6 +260,155 @@ fn generated_library_and_pub_dependency_consumer_artifacts_match_baseline() -> R
         !generated_main_rs.contains("pub use widgets::make_widget;"),
         "private pub:: item import should not become a public Rust reexport, got:\n{generated_main_rs}"
     );
+
+    Ok(())
+}
+
+#[test]
+fn path_dependency_artifact_rebuilds_for_a_b_a_feature_projections() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let library_root = tmp.path().join("feature_library");
+    let library_src = library_root.join("src");
+    fs::create_dir_all(&library_src)?;
+    fs::write(
+        library_root.join("incan.toml"),
+        r#"[project]
+name = "feature_library"
+version = "0.1.0"
+
+[project.features]
+alpha = []
+beta = []
+"#,
+    )?;
+    fs::write(
+        library_src.join("lib.incn"),
+        r#"when feature("alpha"):
+    pub def alpha_value() -> str:
+        return "alpha"
+
+when feature("beta"):
+    pub def beta_value() -> str:
+        return "beta"
+"#,
+    )?;
+
+    let consumer_root = tmp.path().join("feature_consumer");
+    let consumer_src = consumer_root.join("src");
+    fs::create_dir_all(&consumer_src)?;
+    fs::write(
+        consumer_root.join("incan.toml"),
+        r#"[project]
+name = "feature_consumer"
+version = "0.1.0"
+
+[project.features]
+alpha = ["feature_library/alpha"]
+beta = ["feature_library/beta"]
+
+[dependencies]
+feature_library = { path = "../feature_library", default-features = false }
+"#,
+    )?;
+    let main_path = consumer_src.join("main.incn");
+    fs::write(
+        &main_path,
+        r#"from pub::feature_library import alpha_value
+
+def main() -> None:
+    println(alpha_value())
+"#,
+    )?;
+    let main_arg = main_path
+        .to_str()
+        .ok_or("consumer source path was not valid UTF-8")?
+        .to_string();
+    let manifest_path = library_root.join("target/lib/feature_library.incnlib");
+    let generated_library_path = library_root.join("target/lib/src/lib.rs");
+
+    let disabled_output_dir = consumer_root.join("out_disabled");
+    let disabled_output_arg = disabled_output_dir
+        .to_str()
+        .ok_or("disabled-feature output path was not valid UTF-8")?
+        .to_string();
+    let disabled = run_incan(
+        &consumer_root,
+        &["build", "--no-default-features", &main_arg, &disabled_output_arg],
+    )?;
+    assert!(
+        !disabled.status.success(),
+        "disabled dependency feature should reject its gated export"
+    );
+    let disabled_stderr = String::from_utf8_lossy(&disabled.stderr);
+    assert!(
+        disabled_stderr.contains("`alpha_value` from `pub::feature_library` requires disabled package feature(s)")
+            && disabled_stderr.contains("features = [\"alpha\"]"),
+        "expected package-feature remedy rather than a generic missing export:\n{disabled_stderr}"
+    );
+
+    for (feature, expected, unexpected) in [
+        ("alpha", "\"alpha\".to_string()", "\"beta\".to_string()"),
+        ("beta", "\"beta\".to_string()", "\"alpha\".to_string()"),
+        ("alpha", "\"alpha\".to_string()", "\"beta\".to_string()"),
+    ] {
+        fs::write(
+            &main_path,
+            format!(
+                "from pub::feature_library import {feature}_value\n\ndef main() -> None:\n    println({feature}_value())\n"
+            ),
+        )?;
+        let output_dir = consumer_root.join(format!("out_{feature}"));
+        let output_arg = output_dir
+            .to_str()
+            .ok_or("consumer output path was not valid UTF-8")?
+            .to_string();
+        let output = run_incan(
+            &consumer_root,
+            &[
+                "build",
+                "--no-default-features",
+                "--features",
+                feature,
+                &main_arg,
+                &output_arg,
+            ],
+        )?;
+        assert_success(
+            &output,
+            &format!("incan build consumer with dependency feature {feature}"),
+        );
+
+        let artifact = LibraryManifest::read_from_path(&manifest_path)?;
+        assert_eq!(
+            artifact.contract_metadata.provider.active_features,
+            std::collections::BTreeSet::from([feature.to_string()]),
+            "dependency artifact must carry the exact active feature projection"
+        );
+        for conditioned_feature in ["alpha", "beta"] {
+            assert!(
+                artifact
+                    .contract_metadata
+                    .provider
+                    .fact_requirements
+                    .iter()
+                    .any(|requirement| {
+                        requirement.identity == format!("main::{conditioned_feature}_value")
+                            && requirement.required_features
+                                == std::collections::BTreeSet::from([conditioned_feature.to_string()])
+                    }),
+                "artifact projection `{feature}` must preserve the inactive `{conditioned_feature}` fact for inspection"
+            );
+        }
+        let generated_library = fs::read_to_string(&generated_library_path)?;
+        assert!(
+            generated_library.contains(expected),
+            "feature `{feature}` dependency artifact should contain `{expected}`:\n{generated_library}"
+        );
+        assert!(
+            !generated_library.contains(unexpected),
+            "feature `{feature}` dependency artifact retained stale projection `{unexpected}`:\n{generated_library}"
+        );
+    }
 
     Ok(())
 }

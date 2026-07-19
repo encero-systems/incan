@@ -402,6 +402,23 @@ mod tests {
     }
 
     #[test]
+    fn test_format_source_preserves_field_and_index_augmented_assignment() -> Result<(), FormatError> {
+        let source = r#"model Counter:
+    value: int
+
+    def increment(mut self) -> None:
+        self.value += 1
+
+
+def increment_first(mut values: list[int]) -> None:
+    values[0] += 1
+"#;
+
+        assert_eq!(format_source(source)?, source);
+        Ok(())
+    }
+
+    #[test]
     fn test_format_source_rest_params_and_call_unpacking() -> Result<(), FormatError> {
         let source = r#"def collect(prefix: str, *items: int, **labels: str) -> int:
   return collect(prefix,*items,**labels)
@@ -2653,6 +2670,33 @@ trait Named:
 
     def name(self, prefix: str) -> str
 "#;
+        assert_eq!(formatted, expected);
+        assert_eq!(format_source(&formatted)?, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_feature_conditions_are_typed_and_idempotent() -> Result<(), FormatError> {
+        let source = r#"when feature("pretty") and feature("json"):
+  from std.json import JsonValue
+  pub def render(value: JsonValue) -> str:
+    return "json"
+
+pub def always() -> str:
+  return "always"
+"#;
+        let expected = r#"when feature("json") and feature("pretty"):
+    from std.json import JsonValue
+
+    pub def render(value: JsonValue) -> str:
+        return "json"
+
+
+pub def always() -> str:
+    return "always"
+"#;
+
+        let formatted = format_source(source)?;
         assert_eq!(formatted, expected);
         assert_eq!(format_source(&formatted)?, expected);
         Ok(())

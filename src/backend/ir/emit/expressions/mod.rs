@@ -1315,7 +1315,12 @@ impl<'a> IrEmitter<'a> {
                         }
                     })
                     .collect();
-                let b = self.emit_expr(body)?;
+                let b = match &expr.ty {
+                    IrType::Function { ret, .. } => {
+                        self.emit_expr_for_use(body, ValueUseSite::ReturnValue { target_ty: Some(ret) })?
+                    }
+                    _ => self.emit_expr(body)?,
+                };
                 Ok(quote! { |#(#param_tokens),*| #b })
             }
 
@@ -1450,7 +1455,8 @@ impl<'a> IrEmitter<'a> {
                         Ok(emitted)
                     }
                     IrInteropCoercionKind::RustTypeUnwrap => Ok(quote! { #inner_tokens }),
-                    IrInteropCoercionKind::RustBorrow { mutable } => Ok(if *mutable {
+                    IrInteropCoercionKind::RustBorrow { mutable }
+                    | IrInteropCoercionKind::TraitObjectBorrow { mutable } => Ok(if *mutable {
                         quote! { &mut #inner_tokens }
                     } else {
                         quote! { &#inner_tokens }
@@ -1515,6 +1521,72 @@ mod tests {
             }],
             return_type,
         }
+    }
+
+    /// Build the imported-trait associated call shape used by `Read.by_ref(value)` regressions.
+    fn read_by_ref_call(receiver_name: &str, receiver_ty: IrType) -> TypedExpr {
+        TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "Read".to_string(),
+                        access: VarAccess::Copy,
+                        ref_kind: VarRefKind::ExternalRustName,
+                    },
+                    IrType::Trait("std::io::Read".to_string()),
+                )),
+                method: "by_ref".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: vec![IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: TypedExpr::new(
+                        IrExprKind::Var {
+                            name: receiver_name.to_string(),
+                            access: VarAccess::Read,
+                            ref_kind: VarRefKind::Value,
+                        },
+                        receiver_ty,
+                    ),
+                }],
+                callable_signature: None,
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            IrType::Unknown,
+        )
+    }
+
+    #[test]
+    fn read_by_ref_receiver_borrows_owned_reader_without_dereference() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let emitted = emitter
+            .emit_expr(&read_by_ref_call("input", IrType::Struct("std::io::Stdin".to_string())))
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+
+        assert_eq!(rendered, "Read :: by_ref (& mut input)");
+        Ok(())
+    }
+
+    #[test]
+    fn read_by_ref_receiver_reborrows_through_refmut_guard() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let emitted = emitter
+            .emit_expr(&read_by_ref_call(
+                "cursor",
+                IrType::NamedGeneric(
+                    "std::cell::RefMut".to_string(),
+                    vec![IrType::Struct("std::io::Cursor<Vec<u8>>".to_string())],
+                ),
+            ))
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+
+        assert_eq!(rendered, "Read :: by_ref (& mut * cursor)");
+        Ok(())
     }
 
     #[test]
@@ -3757,7 +3829,7 @@ mod tests {
     }
 
     #[test]
-    fn known_iterator_terminal_methods_emit_incan_next_loops() -> Result<(), String> {
+    fn known_iterator_terminal_methods_emit_incan_next_loops_except_source_owned_sum() -> Result<(), String> {
         let registry = FunctionRegistry::new();
         let emitter = IrEmitter::new(&registry);
 
@@ -3867,8 +3939,8 @@ mod tests {
 
         let sum_rendered = render(IteratorMethodKind::Sum, Vec::new())?;
         assert!(
-            sum_rendered.contains("collection :: Iterator :: __next__")
-                && sum_rendered.contains("__incan_sum += __incan_item"),
+            sum_rendered.contains("collection :: Iterator :: sum (& mut __incan_iterator_sum)")
+                && !sum_rendered.contains("__incan_sum += __incan_item"),
             "unexpected sum emission: {sum_rendered}"
         );
 

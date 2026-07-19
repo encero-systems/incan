@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::frontend::ast::{
     CallArg, ClassDecl, Declaration, Decorator, DecoratorArg, DecoratorArgValue, DictEntry, EnumDecl, Expr, FieldDecl,
-    FunctionDecl, ImportDecl, ImportItem, ImportKind, ListEntry, MethodDecl, ModelDecl, NewtypeDecl, Program, Span,
-    Spanned, Statement, TraitDecl, TypeAliasDecl, Visibility,
+    FunctionDecl, ImportDecl, ImportItem, ImportKind, ListEntry, MethodAliasDecl, MethodDecl, ModelDecl, NewtypeDecl,
+    Program, Span, Spanned, Statement, TraitDecl, TypeAliasDecl, Visibility,
 };
 use crate::frontend::decorator_resolution;
 use crate::frontend::diagnostics::CompileError;
@@ -28,7 +28,7 @@ use crate::library_manifest::{
     FieldExport, FieldRequirementExport, FunctionExport, MethodExport, ModelExport, NewtypeConstraintExport,
     NewtypeExport, ParamExport, PartialExport, PartialPresetExport, PartialTargetKindExport, PresetDictEntryExport,
     PresetModelFieldExport, PresetValueExport, ReceiverExport, TraitExport, TypeAliasExport, TypeBoundExport,
-    TypeParamExport, TypeRef, params_from_checked, type_ref_from_resolved,
+    TypeParamExport, TypeRef, param_default_from_checked, params_from_checked, type_ref_from_resolved,
 };
 
 pub const CHECKED_API_METADATA_SCHEMA_VERSION: u32 = 1;
@@ -256,6 +256,9 @@ pub struct ApiPartial {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ApiMethod {
     pub name: String,
+    /// Canonical method targeted by this same-type alias, when this entry projects an alias rather than a body.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alias_of: Option<String>,
     pub anchor: SourceAnchor,
     pub docstring: Option<String>,
     /// Parsed structured docstring sections, when a docstring is present.
@@ -342,7 +345,7 @@ pub(crate) fn partial_export_from_api(partial: &ApiPartial) -> PartialExport {
 pub(crate) fn method_export_from_api(method: &ApiMethod) -> MethodExport {
     MethodExport {
         name: method.name.clone(),
-        alias_of: None,
+        alias_of: method.alias_of.clone(),
         type_params: method.type_params.clone(),
         receiver: method.receiver.clone(),
         params: method.params.clone(),
@@ -678,7 +681,12 @@ pub fn collect_checked_api_metadata(
                     declarations.push(ApiDeclaration::Partial(api_partial(export, decl.span, &module_path)));
                 }
             }
-            Declaration::Import(import) if public(import.visibility) => {
+            // Module-level `from ... import ...` bindings are part of a module's public surface, including facade
+            // modules such as `std.web` whose `prelude.incn` consists entirely of re-exports. Rust imports remain an
+            // implementation detail unless explicitly declared `pub`.
+            Declaration::Import(import)
+                if matches!(import.kind, ImportKind::From { .. }) || public(import.visibility) =>
+            {
                 declarations.extend(
                     api_aliases(import, decl.span, &module_path)
                         .into_iter()
@@ -968,7 +976,14 @@ fn api_model(
         trait_adoptions: export.trait_adoptions.iter().map(type_bound).collect(),
         derives: export.derives.clone(),
         fields: fields_in_source_order(&model.fields, &export.fields),
-        methods: methods(&model.methods, &export.methods, checker, module_path, &export.name),
+        methods: methods(
+            &model.methods,
+            &model.method_aliases,
+            &export.methods,
+            checker,
+            module_path,
+            &export.name,
+        ),
     }
 }
 
@@ -993,7 +1008,14 @@ fn api_class(
         trait_adoptions: export.trait_adoptions.iter().map(type_bound).collect(),
         derives: export.derives.clone(),
         fields: fields_in_source_order(&class.fields, &export.fields),
-        methods: methods(&class.methods, &export.methods, checker, module_path, &export.name),
+        methods: methods(
+            &class.methods,
+            &class.method_aliases,
+            &export.methods,
+            checker,
+            module_path,
+            &export.name,
+        ),
     }
 }
 
@@ -1021,11 +1043,19 @@ fn api_trait(
                 name: name.clone(),
                 ty: type_ref_from_resolved(ty),
                 has_default: false,
+                default: None,
                 alias: None,
                 description: None,
             })
             .collect(),
-        methods: methods(&trait_decl.methods, &export.methods, checker, module_path, &export.name),
+        methods: methods(
+            &trait_decl.methods,
+            &trait_decl.method_aliases,
+            &export.methods,
+            checker,
+            module_path,
+            &export.name,
+        ),
     }
 }
 
@@ -1071,7 +1101,14 @@ fn api_enum(
                 target: alias.target.clone(),
             })
             .collect(),
-        methods: methods(&enum_decl.methods, &export.methods, checker, module_path, &export.name),
+        methods: methods(
+            &enum_decl.methods,
+            &[],
+            &export.methods,
+            checker,
+            module_path,
+            &export.name,
+        ),
         derives: export.derives.clone(),
     }
 }
@@ -1103,7 +1140,14 @@ fn api_newtype(
             .map(NewtypeConstraintExport::from_checked)
             .collect(),
         implicit_coercion_enabled: export.implicit_coercion_enabled,
-        methods: methods(&newtype.methods, &export.methods, checker, module_path, &export.name),
+        methods: methods(
+            &newtype.methods,
+            &newtype.method_aliases,
+            &export.methods,
+            checker,
+            module_path,
+            &export.name,
+        ),
     }
 }
 
@@ -1193,6 +1237,7 @@ fn aliases_from_items(
 /// Pair AST method declarations with checked method metadata for documentation output.
 fn methods(
     ast_methods: &[Spanned<MethodDecl>],
+    ast_aliases: &[Spanned<MethodAliasDecl>],
     checked_methods: &[CheckedMethod],
     checker: &TypeChecker,
     module_path: &[String],
@@ -1228,6 +1273,7 @@ fn methods(
         };
         out.push(ApiMethod {
             name: callable.name.clone(),
+            alias_of: checked.alias_of.clone(),
             anchor: callable.anchor.clone(),
             docstring_sections: parse_docstring(docstring.as_deref()),
             docstring,
@@ -1239,6 +1285,33 @@ fn methods(
             is_async: callable.is_async,
             has_body: checked.has_body,
         });
+    }
+    for alias in ast_aliases {
+        let Some(candidates) = checked_by_name.get_mut(alias.node.name.as_str()) else {
+            continue;
+        };
+        while let Some(checked) = candidates.pop_front() {
+            if checked.alias_of.as_deref() != Some(alias.node.target.as_str()) {
+                continue;
+            }
+            out.push(ApiMethod {
+                name: checked.name.clone(),
+                alias_of: checked.alias_of.clone(),
+                anchor: anchor(module_path, &format!("{owner}.{}", checked.name), alias.span),
+                docstring: None,
+                docstring_sections: None,
+                decorators: Vec::new(),
+                type_params: type_params(&checked.type_params),
+                receiver: checked.receiver.map(|receiver| match receiver {
+                    crate::frontend::ast::Receiver::Immutable => ReceiverExport::Immutable,
+                    crate::frontend::ast::Receiver::Mutable => ReceiverExport::Mutable,
+                }),
+                params: params_from_checked(&checked.params, &checked.param_defaults),
+                return_type: type_ref_from_resolved(&checked.return_type),
+                is_async: checked.is_async,
+                has_body: checked.has_body,
+            });
+        }
     }
     out
 }
@@ -1338,6 +1411,7 @@ fn field(field: &crate::frontend::library_exports::CheckedField) -> FieldExport 
         name: field.name.clone(),
         ty: type_ref_from_resolved(&field.ty),
         has_default: field.has_default,
+        default: field.default.as_ref().and_then(param_default_from_checked),
         alias: field.alias.clone(),
         description: field.description.clone(),
     }
@@ -2771,6 +2845,7 @@ pub class Writer:
         let checker = typechecker::TypeChecker::new();
         let api_methods = methods(
             &class.methods,
+            &class.method_aliases,
             &checked_methods,
             &checker,
             &["demo".to_string()],
@@ -2857,6 +2932,7 @@ pub class Parser:
         let checker = typechecker::TypeChecker::new();
         let api_methods = methods(
             &class.methods,
+            &class.method_aliases,
             &checked_methods,
             &checker,
             &["demo".to_string()],
@@ -2975,6 +3051,51 @@ pub model Order with Labelled:
         assert_eq!(
             model.methods[0].docstring.as_deref().map(str::trim),
             Some("Return the display label.")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn checked_api_metadata_preserves_same_type_method_aliases() -> Result<(), String> {
+        let source = r#"
+pub model Measurements:
+    value: int
+
+    def average(self) -> int:
+        return self.value
+
+    mean = alias average
+"#;
+        let metadata = metadata_for(source).map_err(|errs| format!("{errs:?}"))?;
+        let model = metadata
+            .declarations
+            .iter()
+            .find_map(|declaration| match declaration {
+                ApiDeclaration::Model(model) => Some(model),
+                _ => None,
+            })
+            .ok_or_else(|| "expected model metadata".to_string())?;
+        let mean = model
+            .methods
+            .iter()
+            .find(|method| method.name == "mean")
+            .ok_or_else(|| "expected method alias metadata".to_string())?;
+        assert_eq!(mean.alias_of.as_deref(), Some("average"));
+        assert_eq!(mean.anchor.id, "demo::Measurements.mean");
+        assert_eq!(mean.params.len(), 0);
+        assert_eq!(
+            mean.return_type,
+            TypeRef::Named {
+                name: "int".to_string()
+            }
+        );
+        assert_eq!(
+            model_export_from_api(model)
+                .methods
+                .iter()
+                .find(|method| method.name == "mean")
+                .and_then(|method| method.alias_of.as_deref()),
+            Some("average")
         );
         Ok(())
     }

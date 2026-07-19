@@ -27,6 +27,10 @@ fn run_incan(current_dir: &Path, args: &[&str]) -> Result<Output, Box<dyn std::e
             "INCAN_GENERATED_CARGO_TARGET_DIR",
             Path::new(env!("CARGO_MANIFEST_DIR")).join("target/incan_generated_shared_target"),
         )
+        .env(
+            "INCAN_INTERNAL_SDK_PROVIDER_STORE",
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("target/incan_test_sdk_provider_store"),
+        )
         .output()?)
 }
 

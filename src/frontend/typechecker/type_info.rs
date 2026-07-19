@@ -509,6 +509,11 @@ pub enum RustArgCoercionKind {
         /// Whether Rust requires an exclusive mutable borrow.
         mutable: bool,
     },
+    /// Rust metadata requires a trait-object reference, so preserve the required borrow shape at emission.
+    TraitObjectBorrow {
+        /// Whether Rust requires an exclusive `&mut dyn Trait` borrow.
+        mutable: bool,
+    },
 }
 
 /// Lowering metadata for one Rust-boundary call argument.

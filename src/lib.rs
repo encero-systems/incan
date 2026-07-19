@@ -16,6 +16,7 @@
 pub mod backend;
 #[cfg(feature = "cli")]
 pub mod cli;
+pub(crate) mod compiled_sdk;
 pub mod dependency_resolver;
 pub mod format;
 pub mod frontend;
@@ -27,11 +28,13 @@ pub mod manifest;
 pub mod numeric;
 pub mod numeric_adapters;
 pub mod project_lifecycle;
+pub mod provider;
 #[cfg(feature = "rust_inspect")]
 pub mod rust_inspect;
 pub(crate) mod semantics_registry;
 pub(crate) mod toolchain_layout;
 pub mod version;
+pub mod workspace;
 
 pub use frontend::ast;
 pub use frontend::diagnostics;

@@ -8,7 +8,7 @@ read and write capabilities. The hooks are the implementation methods.
 """
 
 
-trait Index[K, V]:
+pub trait Index[K, V]:
     """
     Index trait - Canonical capability name for `obj[key]` read access
     Hook: __getitem__(self, key: K) -> V
@@ -52,7 +52,7 @@ trait Index[K, V]:
     def __getitem__(self, key: K) -> V: ...
 
 
-trait IndexMut[K, V]:
+pub trait IndexMut[K, V]:
     """
     IndexMut trait - Canonical capability name for `obj[key] = value`
     Hook: __setitem__(self, key: K, value: V) -> None
@@ -83,7 +83,7 @@ trait IndexMut[K, V]:
     def __setitem__(self, key: K, value: V) -> None: ...
 
 
-trait Sliceable[T]:
+pub trait Sliceable[T]:
     """
     Sliceable trait - Enables Python-style slicing: obj[start:end:step]
     

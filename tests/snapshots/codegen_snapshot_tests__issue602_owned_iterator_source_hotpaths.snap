@@ -60,19 +60,11 @@ fn generator_one_shot() -> incan_stdlib::iter::Generator<i64> {
 }
 fn collect_reused(values: Vec<i64>) -> i64 {
     let total = {
-        let mut __incan_iter = crate::__incan_std::derives::collection::ListIterator {
+        let mut __incan_iterator_sum = crate::__incan_std::derives::collection::ListIterator {
             items: (values).clone(),
             index: 0i64,
         };
-        let mut __incan_sum: i64 = 0i64;
-        loop {
-            match crate::__incan_std::derives::collection::Iterator::__next__(
-                &mut __incan_iter,
-            ) {
-                Some(__incan_item) => __incan_sum += __incan_item,
-                None => break __incan_sum,
-            }
-        }
+        crate::__incan_std::derives::collection::Iterator::sum(&mut __incan_iterator_sum)
     };
     let first = *incan_stdlib::collections::list_get(&values, (0) as i64);
     return total + first;

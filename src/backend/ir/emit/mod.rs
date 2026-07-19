@@ -33,15 +33,22 @@ use std::collections::{HashMap, HashSet};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
-use super::decl::{IrDeclKind, IrEnumValue, IrEnumValueType, IrStruct, VariantFields, Visibility};
-use super::expr::TypedExpr;
-use super::types::{IR_UNION_TYPE_NAME, IrType};
+use super::decl::{FunctionParam, IrDeclKind, IrEnumValue, IrEnumValueType, IrStruct, VariantFields, Visibility};
+use super::expr::{IrDictEntry, IrExprKind, IrListEntry, Literal as IrLiteral, TypedExpr};
+use super::types::{IR_UNION_TYPE_NAME, IrType, Mutability};
 use super::{FunctionRegistry, FunctionSignature, IrProgram};
+use crate::frontend::api_metadata::{
+    ApiDeclaration, class_export_from_api, enum_export_from_api, function_export_from_api, model_export_from_api,
+    newtype_export_from_api,
+};
 use crate::frontend::library_manifest_index::{LibraryManifestIndex, LibraryManifestIndexEntry};
 use crate::frontend::symbols::ResolvedType;
-use crate::library_manifest::{FieldExport, TypeParamExport, TypeRef, resolved_type_from_manifest_type_ref};
-use incan_core::lang::rust_keywords;
+use crate::library_manifest::{
+    FieldExport, LibraryManifest, MethodExport, NewtypeExport, ParamDefaultExport, ParamKindExport, TypeRef,
+    resolved_type_from_manifest_type_ref,
+};
 use incan_core::lang::types::collections::{self, CollectionTypeId};
+use incan_core::lang::{rust_keywords, stdlib};
 
 /// Value-enum metadata loaded from a `.incnlib` dependency for consumer-side trait bridges.
 #[derive(Debug, Clone)]
@@ -69,35 +76,6 @@ pub(crate) struct ExternalOrdinalCustomKey {
     pub has_ordinal_hash: bool,
     /// Whether the producer exported an explicit `ordinal_bytes_equal` method.
     pub has_ordinal_bytes_equal: bool,
-}
-
-/// Public dependency type that needs the consumer crate's source-owned `TryFrom[str]` identity.
-#[derive(Debug, Clone)]
-pub(crate) struct ExternalStringTryFromType {
-    /// Dependency key used as the generated Rust crate alias.
-    pub dependency_key: String,
-    /// Exported public type name.
-    pub name: String,
-    /// Checked generic parameters and declaration bounds in source order.
-    pub type_params: Vec<TypeParamExport>,
-    /// Conversion path proven by checked library metadata.
-    pub kind: ExternalStringTryFromKind,
-}
-
-/// Consumer-side conversion path for one external type.
-#[derive(Debug, Clone)]
-pub(crate) enum ExternalStringTryFromKind {
-    /// Forward through the producer crate's canonical source-owned trait identity.
-    Explicit,
-    /// Parse an underlying value and construct the producer's newtype.
-    Newtype {
-        /// Wrapped type parsed before constructing the outer newtype.
-        underlying: TypeRef,
-        /// Checked producer validation hook, which takes precedence over serialized predicates.
-        checked_constructor: Option<String>,
-        /// Checked producer predicates used only when no validation hook exists.
-        constraints: Vec<crate::frontend::symbols::NewtypePrimitiveConstraint>,
-    },
 }
 
 /// Cross-module callable-name resolver metadata keyed by a concrete function-pointer signature.
@@ -276,8 +254,6 @@ pub struct IrEmitter<'a> {
     emit_std_ordinal_value_enum_impls: bool,
     /// Whether local newtypes should receive compiler-provided `TryFrom[str]` impls.
     emit_std_string_try_from_newtype_impls: bool,
-    /// Public dependency types that need this crate's local `TryFrom[str]` trait identity.
-    external_string_try_from_types: Vec<ExternalStringTryFromType>,
     /// Public value enums imported from `.incnlib` dependencies that need this crate's local `OrdinalKey`.
     external_ordinal_value_enums: Vec<ExternalOrdinalValueEnum>,
     /// Public user-authored key types imported from `.incnlib` dependencies that need this crate's local `OrdinalKey`.
@@ -340,6 +316,13 @@ pub struct IrEmitter<'a> {
     const_string_literals: std::collections::HashMap<String, String>,
     /// Map of type name -> module path segments for dependency modules.
     type_module_paths: HashMap<String, Vec<String>>,
+    /// Provider module paths owned by linked compiled SDK providers.
+    ///
+    /// These paths do not use the consumer-only `__incan_std` namespace, so generated support fast paths need an
+    /// explicit ownership marker rather than inferring ownership from a short module name such as `collections`.
+    compiled_sdk_module_paths: HashSet<Vec<String>>,
+    /// Nominal type names published by each linked compiled SDK provider module.
+    compiled_sdk_type_module_paths: HashMap<String, HashSet<Vec<String>>>,
     /// Type names that are declared in multiple modules (ambiguous).
     ambiguous_type_names: HashSet<String>,
     /// Map of value name -> module path segments for dependency modules.
@@ -381,6 +364,8 @@ pub struct IrEmitter<'a> {
     ///
     /// Used to avoid recursively forcing the module-wide static init helper while generating static initializer code.
     in_static_initializer: RefCell<bool>,
+    /// Whether this program emits an RFC 088 `.sum()` call that needs local newtype `Sum` implementations.
+    iterator_sum_used: RefCell<bool>,
     /// Whether canonical calls to internal modules should be emitted with explicit `crate::...` paths.
     ///
     /// Normal imported calls use ordinary local bindings and imports. Default argument expressions are different: they
@@ -428,7 +413,6 @@ impl<'a> IrEmitter<'a> {
             preserve_public_items: true,
             emit_std_ordinal_value_enum_impls: false,
             emit_std_string_try_from_newtype_impls: false,
-            external_string_try_from_types: Vec::new(),
             external_ordinal_value_enums: Vec::new(),
             external_ordinal_custom_keys: Vec::new(),
             public_ordinal_type_identities: HashMap::new(),
@@ -458,6 +442,8 @@ impl<'a> IrEmitter<'a> {
             in_return_context: RefCell::new(false),
             const_string_literals: std::collections::HashMap::new(),
             type_module_paths: HashMap::new(),
+            compiled_sdk_module_paths: HashSet::new(),
+            compiled_sdk_type_module_paths: HashMap::new(),
             ambiguous_type_names: HashSet::new(),
             value_module_paths: HashMap::new(),
             ambiguous_value_names: HashSet::new(),
@@ -470,6 +456,7 @@ impl<'a> IrEmitter<'a> {
             imported_static_init_bindings: RefCell::new(HashSet::new()),
             imported_static_module_init_bindings: RefCell::new(Vec::new()),
             in_static_initializer: RefCell::new(false),
+            iterator_sum_used: RefCell::new(false),
             qualify_internal_canonical_paths: RefCell::new(false),
             qualify_union_types_from_crate: false,
             generated_union_types: HashMap::new(),
@@ -1003,11 +990,6 @@ impl<'a> IrEmitter<'a> {
         self.emit_std_string_try_from_newtype_impls = enabled;
     }
 
-    /// Set checked dependency metadata for consumer-side `TryFrom[str]` adapters.
-    pub(crate) fn set_external_string_try_from_types(&mut self, types: Vec<ExternalStringTryFromType>) {
-        self.external_string_try_from_types = types;
-    }
-
     /// Set value-enum metadata loaded from `.incnlib` dependencies for consumer-side `OrdinalKey` impls.
     pub(crate) fn set_external_ordinal_value_enums(&mut self, enums: Vec<ExternalOrdinalValueEnum>) {
         self.external_ordinal_value_enums = enums;
@@ -1140,8 +1122,21 @@ impl<'a> IrEmitter<'a> {
         if name.contains("::") || self.ambiguous_type_names.contains(name) {
             return None;
         }
-        let module_path = self.type_module_paths.get(name)?;
-        self.emit_dependency_item_path(module_path, name)
+        if let Some(module_path) = self.type_module_paths.get(name) {
+            return self.emit_dependency_item_path(module_path, name);
+        }
+
+        // Crate-root anonymous unions are emitted before module-local imports. A split compiled provider can collect
+        // a union whose payload is owned by another SDK component, so qualify the payload through the shared provider
+        // facade instead of relying on a bare type name being in scope at the crate root.
+        let module_paths = self.compiled_sdk_type_module_paths.get(name)?;
+        if module_paths.len() != 1 {
+            return None;
+        }
+        let module_path = module_paths.iter().next()?;
+        let mut facade_path = vec!["__incan_std".to_string()];
+        facade_path.extend(module_path.iter().cloned());
+        self.emit_dependency_item_path(&facade_path, name)
     }
 
     /// Emit a dependency-qualified value path when a local value name is ambiguous.
@@ -1208,6 +1203,202 @@ impl<'a> IrEmitter<'a> {
                     self.register_manifest_constructor_metadata(&class.name, &class.fields);
                 }
             }
+        }
+    }
+
+    /// Seed nominal method and enum metadata from one compiled SDK-provider manifest.
+    ///
+    /// Built-in stdlib consumers intentionally do not materialize provider source modules. The artifact manifest is
+    /// therefore the sole metadata source for whether a receiver uses Incan call semantics and whether a member is an
+    /// enum variant rather than a Rust field access.
+    pub(crate) fn seed_sdk_provider_manifest_metadata(&mut self, manifest: &LibraryManifest) {
+        self.seed_compiled_provider_export_metadata(
+            &manifest.exports.models,
+            &manifest.exports.classes,
+            &manifest.exports.enums,
+            &manifest.exports.newtypes,
+        );
+
+        // The aggregate artifact's top-level export list describes its crate facade, while its checked API records
+        // the public declarations of every `std.*` provider module. Consumers must use that artifact-owned API
+        // instead of reopening the provider source modules.
+        let Some(api) = manifest.contract_metadata.api.as_ref() else {
+            return;
+        };
+        self.compiled_sdk_module_paths
+            .extend(api.modules.iter().map(|module| module.module_path.clone()));
+        let mut models = Vec::new();
+        let mut classes = Vec::new();
+        let mut enums = Vec::new();
+        let mut newtypes = Vec::new();
+        let mut functions = Vec::new();
+        for module in &api.modules {
+            for declaration in &module.declarations {
+                let nominal_name = match declaration {
+                    ApiDeclaration::Model(model) => Some(model.name.as_str()),
+                    ApiDeclaration::Class(class) => Some(class.name.as_str()),
+                    ApiDeclaration::Enum(enum_) => Some(enum_.name.as_str()),
+                    ApiDeclaration::Newtype(newtype) => Some(newtype.name.as_str()),
+                    _ => None,
+                };
+                if let Some(name) = nominal_name {
+                    self.compiled_sdk_type_module_paths
+                        .entry(name.to_string())
+                        .or_default()
+                        .insert(module.module_path.clone());
+                }
+                match declaration {
+                    ApiDeclaration::Model(model) => models.push(model_export_from_api(model)),
+                    ApiDeclaration::Class(class) => classes.push(class_export_from_api(class)),
+                    ApiDeclaration::Enum(enum_) => enums.push(enum_export_from_api(enum_)),
+                    ApiDeclaration::Newtype(newtype) => newtypes.push(newtype_export_from_api(newtype)),
+                    ApiDeclaration::Function(function) => functions.push(function_export_from_api(function)),
+                    _ => {}
+                }
+            }
+        }
+        self.seed_compiled_provider_export_metadata(&models, &classes, &enums, &newtypes);
+        self.seed_compiled_provider_factory_metadata(&functions, &models, &classes);
+    }
+
+    /// Set provider module paths when a caller already derived them from the artifact entrypoint or manifest.
+    pub(crate) fn set_compiled_sdk_module_paths(&mut self, paths: HashSet<Vec<String>>) {
+        self.compiled_sdk_module_paths = paths;
+    }
+
+    /// Return whether a dependency module is supplied by a linked compiled SDK provider.
+    pub(in crate::backend::ir::emit) fn is_compiled_sdk_module_path(&self, module: &[String]) -> bool {
+        self.compiled_sdk_module_paths.contains(module)
+    }
+
+    /// Return whether an emitted `__incan_std.*` path is supplied by a linked compiled SDK provider.
+    pub(in crate::backend::ir::emit) fn is_compiled_sdk_emission_path(&self, path: &[String]) -> bool {
+        path.first().map(String::as_str) == Some(stdlib::INCAN_STD_NAMESPACE)
+            && self.is_compiled_sdk_module_path(&path[1..])
+    }
+
+    /// Return whether a named type is owned by the direct crate-root projection of a compiled stdlib provider module.
+    pub(in crate::backend::ir::emit) fn is_compiled_sdk_type_in_module(
+        &self,
+        type_name: &str,
+        source_module: &str,
+    ) -> bool {
+        let Some(artifact_module) = source_module.strip_prefix("std.") else {
+            return false;
+        };
+        let expected = artifact_module.split('.');
+        self.compiled_sdk_type_module_paths
+            .get(type_name)
+            .is_some_and(|modules| {
+                modules
+                    .iter()
+                    .any(|module| module.iter().map(String::as_str).eq(expected.clone()))
+            })
+    }
+
+    /// Seed nominal metadata represented by one artifact export surface.
+    fn seed_compiled_provider_export_metadata(
+        &mut self,
+        models: &[crate::library_manifest::ModelExport],
+        classes: &[crate::library_manifest::ClassExport],
+        enums: &[crate::library_manifest::EnumExport],
+        newtypes: &[NewtypeExport],
+    ) {
+        for model in models {
+            self.register_manifest_constructor_metadata(&model.name, &model.fields);
+            self.register_manifest_method_metadata(&model.name, &model.methods, &model.type_params);
+        }
+        for class in classes {
+            self.register_manifest_constructor_metadata(&class.name, &class.fields);
+            self.register_manifest_method_metadata(&class.name, &class.methods, &class.type_params);
+        }
+        for enum_ in enums {
+            for variant in &enum_.variants {
+                let fields = variant
+                    .fields
+                    .iter()
+                    .map(Self::manifest_type_ref_to_ir_type)
+                    .collect::<Vec<_>>();
+                self.enum_variant_fields.insert(
+                    (enum_.name.clone(), variant.name.clone()),
+                    if fields.is_empty() {
+                        VariantFields::Unit
+                    } else {
+                        VariantFields::Tuple(fields)
+                    },
+                );
+            }
+            for alias in &enum_.variant_aliases {
+                self.enum_variant_aliases
+                    .insert((enum_.name.clone(), alias.name.clone()), alias.target.clone());
+            }
+            self.register_manifest_method_metadata(&enum_.name, &enum_.methods, &enum_.type_params);
+        }
+        // Newtypes carry method bodies just like models and classes. Consumers do not lower the provider source, so
+        // their artifact metadata must participate in the same Incan ownership planning as every other nominal type.
+        for newtype in newtypes {
+            self.register_manifest_method_metadata(&newtype.name, &newtype.methods, &newtype.type_params);
+        }
+    }
+
+    /// Project factory method metadata onto its public constructor identity.
+    fn seed_compiled_provider_factory_metadata(
+        &mut self,
+        functions: &[crate::library_manifest::FunctionExport],
+        models: &[crate::library_manifest::ModelExport],
+        classes: &[crate::library_manifest::ClassExport],
+    ) {
+        // Public factories such as `BytesIO()` can expose an otherwise-internal nominal return type. Call lowering
+        // preserves the public factory identity at some consumer boundaries, so project the returned type's method
+        // metadata onto that identity as well. This is manifest data, not a source-module fallback.
+        for function in functions {
+            let IrType::Struct(returned_name) = Self::manifest_type_ref_to_ir_type(&function.return_type) else {
+                continue;
+            };
+            if let Some(model) = models.iter().find(|model| model.name == returned_name) {
+                self.register_manifest_method_metadata(&function.name, &model.methods, &model.type_params);
+            }
+            if let Some(class) = classes.iter().find(|class| class.name == returned_name) {
+                self.register_manifest_method_metadata(&function.name, &class.methods, &class.type_params);
+            }
+        }
+    }
+
+    /// Register method-call metadata reconstructed from one `.incnlib` nominal export.
+    fn register_manifest_method_metadata(
+        &mut self,
+        owner: &str,
+        methods: &[MethodExport],
+        type_params: &[crate::library_manifest::TypeParamExport],
+    ) {
+        for method in methods {
+            let key = (owner.to_string(), method.name.clone());
+            self.method_signatures.insert(
+                key.clone(),
+                FunctionSignature {
+                    params: method
+                        .params
+                        .iter()
+                        .map(|param| FunctionParam {
+                            name: param.name.clone(),
+                            ty: Self::manifest_type_ref_to_ir_type(&param.ty),
+                            mutability: Mutability::Immutable,
+                            is_self: false,
+                            kind: match param.kind {
+                                ParamKindExport::Normal => crate::frontend::ast::ParamKind::Normal,
+                                ParamKindExport::RestPositional => crate::frontend::ast::ParamKind::RestPositional,
+                                ParamKindExport::RestKeyword => crate::frontend::ast::ParamKind::RestKeyword,
+                            },
+                            // Call-site defaults are already lowered from the manifest when the call is resolved.
+                            // This cache is for Rust ownership and variant emission only.
+                            default: None,
+                        })
+                        .collect(),
+                    return_type: Self::manifest_type_ref_to_ir_type(&method.return_type),
+                },
+            );
+            self.method_signature_type_params
+                .insert(key, type_params.iter().map(|param| param.name.clone()).collect());
         }
     }
 
@@ -1305,7 +1496,16 @@ impl<'a> IrEmitter<'a> {
                 .iter()
                 .map(|field| (field.name.clone(), Self::manifest_type_ref_to_ir_type(&field.ty)))
                 .collect(),
-            field_defaults: HashMap::new(),
+            field_defaults: fields
+                .iter()
+                .filter_map(|field| {
+                    field
+                        .default
+                        .as_ref()
+                        .and_then(Self::manifest_default_to_ir_expr)
+                        .map(|default| (field.name.clone(), default))
+                })
+                .collect(),
             field_aliases: fields
                 .iter()
                 .filter_map(|field| {
@@ -1334,6 +1534,48 @@ impl<'a> IrEmitter<'a> {
                 .insert((name.to_string(), field.name.clone()), field.alias.clone());
             self.struct_field_descriptions
                 .insert((name.to_string(), field.name.clone()), field.description.clone());
+        }
+    }
+
+    /// Convert manifest-safe field defaults into the IR required by artifact-backed constructors.
+    fn manifest_default_to_ir_expr(default: &ParamDefaultExport) -> Option<TypedExpr> {
+        match default {
+            ParamDefaultExport::Int(value) => Some(TypedExpr::new(IrExprKind::Int(*value), IrType::Int)),
+            ParamDefaultExport::Float(value) => value
+                .parse::<f64>()
+                .ok()
+                .map(|value| TypedExpr::new(IrExprKind::Float(value), IrType::Float)),
+            ParamDefaultExport::Bool(value) => Some(TypedExpr::new(IrExprKind::Bool(*value), IrType::Bool)),
+            ParamDefaultExport::String(value) => Some(TypedExpr::new(
+                IrExprKind::Literal(IrLiteral::StaticStr(value.clone())),
+                IrType::StaticStr,
+            )),
+            ParamDefaultExport::Bytes(value) => Some(TypedExpr::new(IrExprKind::Bytes(value.clone()), IrType::Bytes)),
+            ParamDefaultExport::None => Some(TypedExpr::new(IrExprKind::None, IrType::Unit)),
+            ParamDefaultExport::List(values) => Some(TypedExpr::new(
+                IrExprKind::List(
+                    values
+                        .iter()
+                        .map(|value| Self::manifest_default_to_ir_expr(value).map(IrListEntry::Element))
+                        .collect::<Option<Vec<_>>>()?,
+                ),
+                IrType::List(Box::new(IrType::Unknown)),
+            )),
+            ParamDefaultExport::Dict(entries) => Some(TypedExpr::new(
+                IrExprKind::Dict(
+                    entries
+                        .iter()
+                        .map(|entry| {
+                            Some(IrDictEntry::Pair(
+                                Self::manifest_default_to_ir_expr(&entry.key)?,
+                                Box::new(Self::manifest_default_to_ir_expr(&entry.value)?),
+                            ))
+                        })
+                        .collect::<Option<Vec<_>>>()?,
+                ),
+                IrType::Dict(Box::new(IrType::Unknown), Box::new(IrType::Unknown)),
+            )),
+            ParamDefaultExport::ConstRef(_) | ParamDefaultExport::Call { .. } | ParamDefaultExport::Unsupported => None,
         }
     }
 
@@ -1392,7 +1634,7 @@ impl<'a> IrEmitter<'a> {
                     ),
                     Some(CollectionTypeId::Tuple) => IrType::Tuple(args),
                     Some(id) => IrType::NamedGeneric(collections::as_str(id).to_string(), args),
-                    None if name == IR_UNION_TYPE_NAME => IrType::NamedGeneric(name.clone(), args),
+                    None if name == IR_UNION_TYPE_NAME => Self::canonical_manifest_union_type(args),
                     None if args.is_empty() => IrType::Struct(name.clone()),
                     None => IrType::NamedGeneric(name.clone(), args),
                 }
@@ -1412,6 +1654,39 @@ impl<'a> IrEmitter<'a> {
             ResolvedType::RefMut(inner) => IrType::RefMut(Box::new(Self::resolved_type_to_ir_type(inner))),
             ResolvedType::RustPath(path) => IrType::Struct(path.clone()),
             ResolvedType::CallSiteInfer | ResolvedType::Unknown => IrType::Unknown,
+        }
+    }
+
+    /// Reconstruct the canonical anonymous-union shape used by AST lowering.
+    ///
+    /// Artifact metadata stores the source `Union[...]` spelling. Its generated Rust wrapper name is stable only
+    /// after flattening, ordering, and optional-`None` normalization match the lowering path exactly.
+    fn canonical_manifest_union_type(members: Vec<IrType>) -> IrType {
+        let mut has_none = false;
+        let mut flattened = Vec::new();
+        for member in members {
+            match member {
+                IrType::Unit => has_none = true,
+                IrType::NamedGeneric(name, nested) if name == IR_UNION_TYPE_NAME => flattened.extend(nested),
+                member => flattened.push(member),
+            }
+        }
+        flattened.sort_by_key(IrType::rust_name);
+        flattened.dedup();
+        if has_none {
+            return match flattened.as_slice() {
+                [] => IrType::Unit,
+                [only] => IrType::Option(Box::new(only.clone())),
+                _ => IrType::Option(Box::new(IrType::NamedGeneric(
+                    IR_UNION_TYPE_NAME.to_string(),
+                    flattened,
+                ))),
+            };
+        }
+        match flattened.as_slice() {
+            [] => IrType::Unknown,
+            [only] => only.clone(),
+            _ => IrType::NamedGeneric(IR_UNION_TYPE_NAME.to_string(), flattened),
         }
     }
 

@@ -7,3 +7,70 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+/// Callable trait for zero-argument callables
+/// Python equivalent: __call__(self) -> R
+///
+/// Example:
+///
+/// ```ignore
+/// model Counter with Callable0[int]:
+///     value: int
+///
+///     def __call__(self) -> int:
+///         result = self.value
+///         self.value += 1
+///         return result
+///
+/// counter = Counter(value=0)
+/// println(counter())  # 0
+/// println(counter())  # 1
+/// println(counter())  # 2
+/// ```
+pub trait Callable0<R> {
+    fn __call__(&self) -> R;
+}
+/// Callable trait for single-argument callables
+/// Python equivalent: __call__(self, arg) -> R
+///
+/// Example:
+///
+/// ```ignore
+/// model Multiplier with Callable1[int, int]:
+///     factor: int
+///
+///     def __call__(self, x: int) -> int:
+///         return x * self.factor
+///
+/// double = Multiplier(factor=2)
+/// triple = Multiplier(factor=3)
+///
+/// println(double(5))   # 10
+/// println(triple(5))   # 15
+/// ```
+pub trait Callable1<A, R> {
+    fn __call__(&self, arg: A) -> R;
+}
+/// Callable trait for two-argument callables
+/// Python equivalent: __call__(self, a, b) -> R
+///
+/// Example:
+///
+/// ```ignore
+/// model BinaryOp with Callable2[int, int, int]:
+///     op_name: str
+///
+///     def __call__(self, a: int, b: int) -> int:
+///         match self.op_name:
+///             "add" => return a + b
+///             "mul" => return a * b
+///             _ => return 0
+///
+/// add_op = BinaryOp(op_name="add")
+/// mul_op = BinaryOp(op_name="mul")
+///
+/// println(add_op(3, 4))  # 7
+/// println(mul_op(3, 4))  # 12
+/// ```
+pub trait Callable2<A, B, R> {
+    fn __call__(&self, a: A, b: B) -> R;
+}

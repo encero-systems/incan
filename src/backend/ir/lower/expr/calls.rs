@@ -23,9 +23,10 @@ use crate::frontend::symbols::{CallableParam, NewtypePrimitiveConstraint, Resolv
 use crate::frontend::typechecker::{FixedUnpackPlan, RustArgCoercionKind, ValidatedNewtypeCoercionMode};
 use crate::frontend::typechecker::{IdentKind, ResolvedOperatorKind};
 use crate::library_manifest::{
-    FunctionExport, MethodExport, ParamDefaultCallArgExport, ParamDefaultCallSignatureExport, ParamDefaultExport,
-    ParamExport, ParamKindExport,
+    FunctionExport, LibraryManifest, MethodExport, ParamDefaultCallArgExport, ParamDefaultCallSignatureExport,
+    ParamDefaultExport, ParamExport, ParamKindExport,
 };
+use crate::provider::{ProviderModuleResolution, ProviderRecord};
 use incan_core::lang::keywords::{self, KeywordId};
 use incan_core::lang::stdlib;
 use incan_core::lang::stdlib::{STDLIB_BUILTINS, STDLIB_ROOT};
@@ -194,7 +195,7 @@ impl AstLowering {
     ) -> Option<Vec<String>> {
         let mut path = self.imported_field_base_path(receiver)?;
         match path.first().map(String::as_str) {
-            Some(stdlib::STDLIB_ROOT) if stdlib::is_known_stdlib_module(&path) => {}
+            Some(stdlib::STDLIB_ROOT) if self.is_provider_or_legacy_stdlib_module(&path) => {}
             Some("pub") => {
                 let library = path.get(1)?;
                 self.pub_function_export(library, method_name)?;
@@ -205,9 +206,32 @@ impl AstLowering {
         Some(path)
     }
 
+    /// Resolve stdlib module ownership through the active provider catalog, retaining the compiler registry only for
+    /// legacy source-only sessions and the provider bootstrap that produces the checked SDK artifacts.
+    fn is_provider_or_legacy_stdlib_module(&self, module_path: &[String]) -> bool {
+        let Some(provider_plan) = self.provider_plan.as_deref() else {
+            return stdlib::is_known_stdlib_module(module_path);
+        };
+        match provider_plan.resolve_module(module_path) {
+            ProviderModuleResolution::Active(_) => true,
+            ProviderModuleResolution::Unknown if provider_plan.bootstrap_owns_sdk_module(module_path) => {
+                // The bootstrap grant authorizes one top-level namespace; it does not turn imported types and values
+                // beneath that root into modules. Until the publisher emits its checked exact claims, source discovery
+                // remains the narrow authority for deciding whether this exact path denotes a module.
+                stdlib::is_known_stdlib_module(module_path)
+            }
+            ProviderModuleResolution::Unknown if !provider_plan.has_sdk_catalog() => {
+                stdlib::is_known_stdlib_module(module_path)
+            }
+            ProviderModuleResolution::Disabled(_)
+            | ProviderModuleResolution::Unavailable(_)
+            | ProviderModuleResolution::Unknown => false,
+        }
+    }
+
     /// Fetch the public function export or projected alias export that backs an imported public callable.
     fn pub_function_export(&self, library: &str, function_name: &str) -> Option<FunctionExport> {
-        let index = self.library_manifest_index.as_ref()?;
+        let index = self.provider_plan.as_deref()?.library_manifest_index();
         let LibraryManifestIndexEntry::Loaded { manifest, .. } = index.get(library)? else {
             return None;
         };
@@ -516,11 +540,138 @@ impl AstLowering {
             return Ok(None);
         };
         let module_path = &path[..path.len() - 1];
+        if let Some(provider_crate) = self.sdk_provider_crate_for_module(module_path)
+            && let Some(manifest) = self.sdk_provider_manifest_for_module(module_path)
+            && let Some(method) = Self::api_method_export_for_pub_type(manifest, type_name, method_name)
+        {
+            let signature = self.callable_signature_from_compiled_provider_method_export(&provider_crate, &method);
+            return Ok(Some(
+                self.compiled_provider_external_signature(&provider_crate, signature),
+            ));
+        }
         let mut cache = crate::frontend::typechecker::stdlib_loader::StdlibAstCache::new();
-        let Some(method) = cache.lookup_type_method_decl(module_path, type_name, method_name) else {
-            return Ok(None);
-        };
-        self.callable_signature_from_stdlib_method_decl(&method).map(Some)
+        if let Some(method) = cache.lookup_type_method_decl(module_path, type_name, method_name) {
+            return self.callable_signature_from_stdlib_method_decl(&method).map(Some);
+        }
+        Ok(None)
+    }
+
+    /// Return the checked SDK provider manifest that owns one exact canonical `std.*` module.
+    fn sdk_provider_manifest_for_module(&self, module_path: &[String]) -> Option<&LibraryManifest> {
+        self.provider_plan
+            .as_deref()?
+            .active_sdk_provider_for_module(module_path)?
+            .manifest
+            .as_deref()
+    }
+
+    /// Return the generated Rust crate that owns one compiled SDK module's nominal artifact types.
+    fn sdk_provider_crate_for_module(&self, module_path: &[String]) -> Option<String> {
+        let provider = self
+            .provider_plan
+            .as_deref()?
+            .active_sdk_provider_for_module(module_path)?;
+        Some(Self::sdk_provider_rust_dependency_key(provider))
+    }
+
+    /// Return the Rust-import-safe dependency key for one compiled or in-memory SDK provider.
+    ///
+    /// Installed providers always carry the exact generated crate key in artifact metadata. Source-backed compiler
+    /// tests have no physical artifact, so their provider package spelling follows Cargo's hyphen normalization.
+    fn sdk_provider_rust_dependency_key(provider: &ProviderRecord) -> String {
+        provider
+            .artifact
+            .as_ref()
+            .map(|artifact| artifact.dependency_key.clone())
+            .unwrap_or_else(|| provider.identity.name.replace('-', "_"))
+    }
+
+    /// Return the unique active SDK provider manifest that declares one nominal type.
+    fn sdk_provider_manifest_for_type(&self, type_name: &str) -> Option<&LibraryManifest> {
+        let mut matches = self
+            .provider_plan
+            .as_deref()?
+            .active_sdk_records()
+            .filter_map(|provider| provider.manifest.as_deref())
+            .filter(|manifest| {
+                manifest.exports.models.iter().any(|model| model.name == type_name)
+                    || manifest.exports.classes.iter().any(|class| class.name == type_name)
+                    || manifest.exports.enums.iter().any(|enum_| enum_.name == type_name)
+                    || manifest
+                        .exports
+                        .newtypes
+                        .iter()
+                        .any(|newtype| newtype.name == type_name)
+                    || manifest.contract_metadata.api.iter().any(|api| {
+                        api.modules.iter().flat_map(|module| &module.declarations).any(|declaration| {
+                            matches!(declaration, ApiDeclaration::Model(model) if model.name == type_name)
+                                || matches!(declaration, ApiDeclaration::Class(class) if class.name == type_name)
+                                || matches!(declaration, ApiDeclaration::Enum(enum_) if enum_.name == type_name)
+                                || matches!(declaration, ApiDeclaration::Newtype(newtype) if newtype.name == type_name)
+                        })
+                    })
+            });
+        let manifest = matches.next()?;
+        matches.next().is_none().then_some(manifest)
+    }
+
+    /// Return the unique compiled SDK provider crate that owns one nominal type.
+    pub(in crate::backend::ir::lower) fn sdk_provider_crate_for_type(&self, type_name: &str) -> Option<String> {
+        if self.struct_names.contains_key(type_name)
+            || self.enum_names.contains_key(type_name)
+            || self.class_decls.contains_key(type_name)
+            || self.trait_decls.contains_key(type_name)
+            || self.newtype_construction.contains_key(type_name)
+            || self.source_type_alias_targets.contains_key(type_name)
+        {
+            return None;
+        }
+        let mut matches = self
+            .provider_plan
+            .as_deref()?
+            .active_sdk_records()
+            .filter(|provider| {
+                provider.manifest.as_deref().is_some_and(|manifest| {
+                    manifest.exports.models.iter().any(|model| model.name == type_name)
+                        || manifest.exports.classes.iter().any(|class| class.name == type_name)
+                        || manifest.exports.enums.iter().any(|enum_| enum_.name == type_name)
+                        || manifest.exports.newtypes.iter().any(|newtype| newtype.name == type_name)
+                        || manifest.contract_metadata.api.iter().any(|api| {
+                            api.modules.iter().flat_map(|module| &module.declarations).any(|declaration| {
+                                matches!(declaration, ApiDeclaration::Model(model) if model.name == type_name)
+                                    || matches!(declaration, ApiDeclaration::Class(class) if class.name == type_name)
+                                    || matches!(declaration, ApiDeclaration::Enum(enum_) if enum_.name == type_name)
+                                    || matches!(declaration, ApiDeclaration::Newtype(newtype) if newtype.name == type_name)
+                            })
+                        })
+                })
+            });
+        let provider = matches.next()?;
+        if matches.next().is_some() {
+            return None;
+        }
+        Some(Self::sdk_provider_rust_dependency_key(provider))
+    }
+
+    /// Resolve a compiled-stdlib method signature from a typed receiver, including artifact-owned defaults.
+    ///
+    /// Calls on local values such as `path.open("rb")` no longer retain the import expression that introduced
+    /// `Path`, so import-path-only lookup cannot recover its omitted arguments. The checked artifact metadata is the
+    /// canonical source for these consumer calls.
+    pub(in crate::backend::ir::lower) fn callable_signature_for_compiled_provider_type_method(
+        &mut self,
+        receiver_ty: &IrType,
+        method_name: &str,
+    ) -> Option<FunctionSignature> {
+        let type_name = Self::nominal_receiver_type_name(receiver_ty)?;
+        if self.struct_names.contains_key(type_name) || self.enum_names.contains_key(type_name) {
+            return None;
+        }
+        let provider_crate = self.sdk_provider_crate_for_type(type_name)?;
+        let manifest = self.sdk_provider_manifest_for_type(type_name)?;
+        let method = Self::api_method_export_for_pub_type(manifest, type_name, method_name)?;
+        let signature = self.callable_signature_from_compiled_provider_method_export(&provider_crate, &method);
+        Some(self.compiled_provider_external_signature(&provider_crate, signature))
     }
 
     /// Resolve an imported public dependency model/class method signature from the provider manifest.
@@ -531,7 +682,7 @@ impl AstLowering {
         method_name: &str,
     ) -> Option<FunctionSignature> {
         let type_name = Self::nominal_receiver_type_name(receiver_ty)?;
-        let manifest_index = self.library_manifest_index.as_ref()?;
+        let manifest_index = self.provider_plan.as_deref()?.library_manifest_index();
         let LibraryManifestIndexEntry::Loaded { manifest, .. } = manifest_index.get(library)? else {
             return None;
         };
@@ -638,7 +789,7 @@ impl AstLowering {
     }
 
     /// Return the nominal receiver type name used for manifest method lookup.
-    fn nominal_receiver_type_name(receiver_ty: &IrType) -> Option<&str> {
+    pub(in crate::backend::ir::lower) fn nominal_receiver_type_name(receiver_ty: &IrType) -> Option<&str> {
         match receiver_ty {
             IrType::Struct(name) | IrType::Enum(name) | IrType::NamedGeneric(name, _) => {
                 Some(name.rsplit("::").next().unwrap_or(name))
@@ -671,6 +822,243 @@ impl AstLowering {
         }
     }
 
+    /// Rebuild an artifact-backed stdlib method signature without reopening provider source modules.
+    fn callable_signature_from_compiled_provider_method_export(
+        &mut self,
+        provider_crate: &str,
+        method: &MethodExport,
+    ) -> FunctionSignature {
+        FunctionSignature {
+            params: method
+                .params
+                .iter()
+                .map(|param| {
+                    let kind = param_kind_from_manifest(param.kind);
+                    FunctionParam {
+                        name: param.name.clone(),
+                        ty: Self::lower_param_container_type(
+                            kind,
+                            self.lower_resolved_type(&crate::library_manifest::resolved_type_from_manifest_type_ref(
+                                &param.ty,
+                            )),
+                        ),
+                        mutability: Mutability::Immutable,
+                        is_self: false,
+                        kind,
+                        default: self.lower_compiled_provider_param_default(provider_crate, param),
+                    }
+                })
+                .collect(),
+            return_type: self.lower_resolved_type(&crate::library_manifest::resolved_type_from_manifest_type_ref(
+                &method.return_type,
+            )),
+        }
+    }
+
+    /// Rebuild an artifact-backed stdlib function signature without reopening provider source modules.
+    fn callable_signature_from_compiled_provider_function_export(
+        &mut self,
+        provider_crate: &str,
+        function: &FunctionExport,
+    ) -> FunctionSignature {
+        FunctionSignature {
+            params: function
+                .params
+                .iter()
+                .map(|param| {
+                    let kind = param_kind_from_manifest(param.kind);
+                    FunctionParam {
+                        name: param.name.clone(),
+                        ty: Self::lower_param_container_type(
+                            kind,
+                            self.lower_resolved_type(&crate::library_manifest::resolved_type_from_manifest_type_ref(
+                                &param.ty,
+                            )),
+                        ),
+                        mutability: Mutability::Immutable,
+                        is_self: false,
+                        kind,
+                        default: self.lower_compiled_provider_param_default(provider_crate, param),
+                    }
+                })
+                .collect(),
+            return_type: self.lower_resolved_type(&crate::library_manifest::resolved_type_from_manifest_type_ref(
+                &function.return_type,
+            )),
+        }
+    }
+
+    /// Lower manifest-safe literal defaults for a compiled stdlib method call.
+    fn lower_compiled_provider_param_default(
+        &mut self,
+        provider_crate: &str,
+        param: &ParamExport,
+    ) -> Option<TypedExpr> {
+        match param.default.as_ref() {
+            Some(ParamDefaultExport::Unsupported) | None => None,
+            Some(default) if default.is_materializable() => {
+                self.lower_compiled_provider_default_expr(provider_crate, default)
+            }
+            Some(_) => None,
+        }
+    }
+
+    /// Keep artifact-owned defaults in consumer IR without loading the stdlib source AST.
+    fn lower_compiled_provider_default_expr(
+        &mut self,
+        provider_crate: &str,
+        default: &ParamDefaultExport,
+    ) -> Option<TypedExpr> {
+        match default {
+            ParamDefaultExport::Int(value) => Some(TypedExpr::new(IrExprKind::Int(*value), IrType::Int)),
+            ParamDefaultExport::Float(value) => value
+                .parse::<f64>()
+                .ok()
+                .map(|value| TypedExpr::new(IrExprKind::Float(value), IrType::Float)),
+            ParamDefaultExport::Bool(value) => Some(TypedExpr::new(IrExprKind::Bool(*value), IrType::Bool)),
+            ParamDefaultExport::String(value) => Some(TypedExpr::new(
+                IrExprKind::Literal(IrLiteral::StaticStr(value.clone())),
+                IrType::StaticStr,
+            )),
+            ParamDefaultExport::Bytes(value) => Some(TypedExpr::new(IrExprKind::Bytes(value.clone()), IrType::Bytes)),
+            ParamDefaultExport::None => Some(TypedExpr::new(IrExprKind::None, IrType::Unit)),
+            ParamDefaultExport::List(values) => Some(TypedExpr::new(
+                IrExprKind::List(
+                    values
+                        .iter()
+                        .map(|value| {
+                            self.lower_compiled_provider_default_expr(provider_crate, value)
+                                .map(IrListEntry::Element)
+                        })
+                        .collect::<Option<Vec<_>>>()?,
+                ),
+                IrType::List(Box::new(IrType::Unknown)),
+            )),
+            ParamDefaultExport::Dict(entries) => Some(TypedExpr::new(
+                IrExprKind::Dict(
+                    entries
+                        .iter()
+                        .map(|entry| {
+                            Some(IrDictEntry::Pair(
+                                self.lower_compiled_provider_default_expr(provider_crate, &entry.key)?,
+                                Box::new(self.lower_compiled_provider_default_expr(provider_crate, &entry.value)?),
+                            ))
+                        })
+                        .collect::<Option<Vec<_>>>()?,
+                ),
+                IrType::Dict(Box::new(IrType::Unknown), Box::new(IrType::Unknown)),
+            )),
+            ParamDefaultExport::ConstRef(path) => self.compiled_provider_path_expr(provider_crate, path),
+            ParamDefaultExport::Call { path, args, signature } => {
+                self.lower_compiled_provider_default_call(provider_crate, path, args, signature.as_ref())
+            }
+            ParamDefaultExport::Unsupported => None,
+        }
+    }
+
+    /// Build an artifact-qualified value path such as `provider::__incan_std::logging::Level::WARN`.
+    fn compiled_provider_path_expr(&self, provider_crate: &str, path: &[String]) -> Option<TypedExpr> {
+        if path.is_empty() {
+            return None;
+        }
+        let mut expr = TypedExpr::new(
+            IrExprKind::Var {
+                name: provider_crate.to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::ExternalName,
+            },
+            IrType::Unknown,
+        );
+        for segment in std::iter::once(stdlib::INCAN_STD_NAMESPACE).chain(
+            path.iter()
+                .map(String::as_str)
+                .skip_while(|segment| *segment == stdlib::STDLIB_ROOT),
+        ) {
+            expr = TypedExpr::new(
+                IrExprKind::Field {
+                    object: Box::new(expr),
+                    field: segment.to_string(),
+                },
+                IrType::Unknown,
+            );
+        }
+        Some(expr)
+    }
+
+    /// Lower an artifact-owned call default with its checked signature and provider-qualified callee path.
+    fn lower_compiled_provider_default_call(
+        &mut self,
+        provider_crate: &str,
+        path: &[String],
+        args: &[ParamDefaultCallArgExport],
+        signature: Option<&ParamDefaultCallSignatureExport>,
+    ) -> Option<TypedExpr> {
+        path.last()?;
+        let callable_signature = signature.map(|signature| {
+            let signature = FunctionSignature {
+                params: signature
+                    .params
+                    .iter()
+                    .map(|param| {
+                        let kind = param_kind_from_manifest(param.kind);
+                        FunctionParam {
+                            name: param.name.clone(),
+                            ty: Self::lower_param_container_type(
+                                kind,
+                                self.lower_resolved_type(
+                                    &crate::library_manifest::resolved_type_from_manifest_type_ref(&param.ty),
+                                ),
+                            ),
+                            mutability: Mutability::Immutable,
+                            is_self: false,
+                            kind,
+                            default: self.lower_compiled_provider_param_default(provider_crate, param),
+                        }
+                    })
+                    .collect(),
+                return_type: self.lower_resolved_type(&crate::library_manifest::resolved_type_from_manifest_type_ref(
+                    &signature.return_type,
+                )),
+            };
+            self.compiled_provider_external_signature(provider_crate, signature)
+        });
+        let return_type = callable_signature
+            .as_ref()
+            .map(|signature| signature.return_type.clone())
+            .unwrap_or(IrType::Unknown);
+        let args = args
+            .iter()
+            .map(|arg| {
+                Some(IrCallArg {
+                    name: arg.name.clone(),
+                    kind: if arg.name.is_some() {
+                        IrCallArgKind::Named
+                    } else {
+                        IrCallArgKind::Positional
+                    },
+                    expr: self.lower_compiled_provider_default_expr(provider_crate, &arg.value)?,
+                })
+            })
+            .collect::<Option<Vec<_>>>()?;
+        let func = self.compiled_provider_path_expr(provider_crate, path)?;
+        let mut canonical_path = vec![stdlib::STDLIB_ROOT.to_string()];
+        canonical_path.extend(
+            path.iter()
+                .cloned()
+                .skip_while(|segment| segment == stdlib::STDLIB_ROOT),
+        );
+        Some(TypedExpr::new(
+            IrExprKind::Call {
+                func: Box::new(func),
+                type_args: Vec::new(),
+                args,
+                callable_signature,
+                canonical_path: Some(canonical_path),
+            },
+            return_type,
+        ))
+    }
+
     /// Resolve the signature for an imported stdlib function by its canonical import path.
     ///
     /// Lowered stdlib modules may import private helpers from sibling stdlib modules. Those helpers are not in the
@@ -688,6 +1076,31 @@ impl AstLowering {
             return Ok(None);
         };
         let module_path = &path[..path.len() - 1];
+        if let Some(provider_crate) = self.sdk_provider_crate_for_module(module_path)
+            && let Some(manifest) = self.sdk_provider_manifest_for_module(module_path)
+            && let Some(api) = manifest.contract_metadata.api.as_ref()
+        {
+            let provider_module_path = if module_path.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT) {
+                &module_path[1..]
+            } else {
+                module_path
+            };
+            if let Some(module) = api
+                .modules
+                .iter()
+                .find(|module| module.module_path == provider_module_path)
+                && let Some(function) = module
+                    .declarations
+                    .iter()
+                    .find_map(|declaration| Self::api_function_export_for_declaration(declaration, function_name))
+            {
+                let signature =
+                    self.callable_signature_from_compiled_provider_function_export(&provider_crate, &function);
+                return Ok(Some(
+                    self.compiled_provider_external_signature(&provider_crate, signature),
+                ));
+            }
+        }
         let mut cache = crate::frontend::typechecker::stdlib_loader::StdlibAstCache::new();
         let Some(func) = cache.lookup_function_decl(module_path, function_name) else {
             return Ok(None);
@@ -1921,6 +2334,7 @@ impl AstLowering {
                     IrInteropCoercionKind::RustTypeUnwrap
                 }
             }
+            RustArgCoercionKind::TraitObjectBorrow { mutable } => IrInteropCoercionKind::TraitObjectBorrow { mutable },
         };
         Ok(TypedExpr::new(
             IrExprKind::InteropCoerce {
@@ -2309,19 +2723,39 @@ impl AstLowering {
                 None
             }
         });
-        let callable_signature = match (imported_pub_library, callable_signature) {
-            (Some(library), Some(signature)) => Some(self.pub_external_signature(library, signature)),
-            (_, signature) => signature,
+        let imported_sdk_provider_crate = imported_callee_path.as_deref().and_then(|path| {
+            (path.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT) && path.len() >= 2)
+                .then(|| self.sdk_provider_crate_for_module(&path[..path.len() - 1]))
+                .flatten()
+        });
+        let callable_signature = match (
+            imported_pub_library,
+            imported_sdk_provider_crate.as_deref(),
+            callable_signature,
+        ) {
+            (Some(library), _, Some(signature)) => Some(self.pub_external_signature(library, signature)),
+            (None, Some(provider_crate), Some(signature)) => {
+                Some(self.compiled_provider_external_signature(provider_crate, signature))
+            }
+            (_, _, signature) => signature,
         };
         if let (Some(library), Some(signature)) = (imported_pub_library, callable_signature.as_ref()) {
             func.ty = self.pub_external_function_type(library, signature);
+        } else if let (Some(provider_crate), Some(signature)) =
+            (imported_sdk_provider_crate.as_deref(), callable_signature.as_ref())
+        {
+            func.ty = IrType::Function {
+                params: signature.params.iter().map(|param| param.ty.clone()).collect(),
+                ret: Box::new(self.pub_external_type(provider_crate, signature.return_type.clone())),
+            };
         }
 
         let ret_ty = if let IrType::Function { ret, .. } = &func.ty {
             let ret_ty = (**ret).clone();
-            match imported_pub_library {
-                Some(library) => self.pub_external_type(library, ret_ty),
-                None => ret_ty,
+            match (imported_pub_library, imported_sdk_provider_crate.as_deref()) {
+                (Some(library), _) => self.pub_external_type(library, ret_ty),
+                (None, Some(provider_crate)) => self.pub_external_type(provider_crate, ret_ty),
+                (None, None) => ret_ty,
             }
         } else {
             IrType::Unknown
@@ -2749,7 +3183,7 @@ fn param_kind_from_manifest(kind: ParamKindExport) -> ast::ParamKind {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::{BTreeSet, HashMap};
     use std::sync::Arc;
 
     use super::AstLowering;
@@ -2770,11 +3204,13 @@ mod tests {
     use crate::frontend::symbols::ResolvedType;
     use crate::frontend::typechecker::{RustArgCoercionInfo, RustArgCoercionKind, TypeCheckInfo};
     use crate::library_manifest::{
-        AliasExport, ExportIdentity, ExportIdentityKind, ExportIdentityProjection, FunctionExport,
-        LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION, LibraryExports, LibraryIdentityGraph, LibraryManifest, ParamExport,
-        ParamKindExport, TypeRef,
+        AliasExport, CompiledProviderMetadata, ExportIdentity, ExportIdentityKind, ExportIdentityProjection,
+        FunctionExport, LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION, LibraryExports, LibraryIdentityGraph, LibraryManifest,
+        ParamDefaultExport, ParamExport, ParamKindExport, ProviderModuleClaim, TypeRef,
     };
+    use crate::provider::ProviderPlan;
     use incan_core::interop::CoercionPolicy;
+    use incan_core::lang::surface::constructors::{self, ConstructorId};
 
     fn mk_edge(
         direction: InteropDirection,
@@ -2870,7 +3306,7 @@ mod tests {
             },
         )]));
         let mut lowering = AstLowering::new();
-        lowering.set_library_manifest_index(Some(Arc::new(index)));
+        lowering.set_provider_plan(Some(Arc::new(ProviderPlan::for_library_index(index))));
 
         let signature = lowering
             .callable_signature_for_imported_pub_path(&[
@@ -2882,6 +3318,101 @@ mod tests {
 
         assert_eq!(signature.params[0].ty, IrType::String);
         assert_eq!(signature.return_type, IrType::String);
+        Ok(())
+    }
+
+    #[test]
+    fn compiled_provider_signature_uses_artifact_api_and_preserves_union_owner() -> Result<(), String> {
+        let provider_name = "artifact_only_provider";
+        let mut manifest = LibraryManifest::new(provider_name, "0.5.0");
+        manifest.contract_metadata.provider = CompiledProviderMetadata {
+            namespace_claims: vec![ProviderModuleClaim {
+                module_path: vec!["artifact_only".to_string()],
+                required_features: BTreeSet::new(),
+            }],
+            ..CompiledProviderMetadata::default()
+        };
+        manifest.contract_metadata.api = Some(CheckedApiMetadataPackage {
+            schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+            package: None,
+            modules: vec![CheckedApiMetadata {
+                schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+                module_path: vec!["artifact_only".to_string()],
+                declarations: vec![ApiDeclaration::Function(ApiFunction {
+                    name: "consume".to_string(),
+                    anchor: SourceAnchor {
+                        id: "artifact_only.consume".to_string(),
+                        span: SourceSpan { start: 0, end: 0 },
+                    },
+                    docstring: None,
+                    docstring_sections: None,
+                    decorators: Vec::new(),
+                    type_params: Vec::new(),
+                    params: vec![ParamExport {
+                        name: "value".to_string(),
+                        ty: TypeRef::Applied {
+                            name: "Union".to_string(),
+                            args: vec![
+                                TypeRef::Named {
+                                    name: "int".to_string(),
+                                },
+                                TypeRef::Named {
+                                    name: "str".to_string(),
+                                },
+                            ],
+                        },
+                        kind: ParamKindExport::Normal,
+                        has_default: true,
+                        default: Some(ParamDefaultExport::ConstRef(vec![
+                            "artifact_only".to_string(),
+                            "Defaults".to_string(),
+                            "VALUE".to_string(),
+                        ])),
+                    }],
+                    return_type: TypeRef::Named {
+                        name: constructors::as_str(ConstructorId::None).to_string(),
+                    },
+                    is_async: false,
+                })],
+            }],
+        });
+        let mut lowering = AstLowering::new();
+        lowering.set_provider_plan(Some(Arc::new(ProviderPlan::for_in_memory_sdk_manifest(
+            LibraryManifestIndex::default(),
+            manifest,
+        ))));
+
+        let signature = lowering
+            .callable_signature_for_imported_stdlib_path(&[
+                "std".to_string(),
+                "artifact_only".to_string(),
+                "consume".to_string(),
+            ])
+            .map_err(|error| error.message)?
+            .ok_or_else(|| "expected compiled provider API signature".to_string())?;
+
+        assert!(matches!(
+            &signature.params[0].ty,
+            IrType::ExternalUnion { library, .. } if library == provider_name
+        ));
+        assert!(
+            signature.params[0].default.is_some(),
+            "artifact-owned const defaults must survive without provider source"
+        );
+
+        lowering.import_aliases.insert(
+            "artifact".to_string(),
+            vec!["std".to_string(), "artifact_only".to_string()],
+        );
+        assert_eq!(
+            lowering.imported_module_function_callee_path(&Expr::Ident("artifact".to_string()), "consume"),
+            Some(vec![
+                "std".to_string(),
+                "artifact_only".to_string(),
+                "consume".to_string()
+            ]),
+            "module-qualified calls must use provider claims rather than the compiler's legacy stdlib registry"
+        );
         Ok(())
     }
 

@@ -1,0 +1,18 @@
+type Amount = newtype float
+
+type PositiveCount = newtype int:
+    def from_underlying(value: int) -> Result[PositiveCount, ValidationError]:
+        if value <= 0:
+            return Err(ValidationError("positive count required"))
+        return Ok(PositiveCount(value))
+
+def main() -> None:
+    ints = [1, 2, 3]
+    floats = [1.25, 2.5]
+    amounts = [Amount(1.25), Amount(2.5)]
+    positive_counts = [PositiveCount(1), PositiveCount(2)]
+
+    println(ints.iter().sum())
+    println(floats.iter().sum())
+    println(amounts.iter().sum().0)
+    println(positive_counts.iter().sum().0)

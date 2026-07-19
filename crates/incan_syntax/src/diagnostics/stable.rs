@@ -25,6 +25,38 @@ pub enum DiagnosticPhase {
     Unknown,
 }
 
+/// Compiler subsystem that produced a diagnostic fact.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DiagnosticOrigin {
+    /// Lexer tokenization.
+    Lexer,
+    /// Parser or syntax validation.
+    Parser,
+    /// Import, module, or package resolution.
+    ImportResolver,
+    /// Type checking and semantic validation.
+    Typechecker,
+    /// CLI or surrounding tooling.
+    Tooling,
+    /// The producer is not known precisely enough yet.
+    Unknown,
+}
+
+impl DiagnosticOrigin {
+    /// Return the stable lowercase origin label for non-Serde consumers.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DiagnosticOrigin::Lexer => "lexer",
+            DiagnosticOrigin::Parser => "parser",
+            DiagnosticOrigin::ImportResolver => "import_resolver",
+            DiagnosticOrigin::Typechecker => "typechecker",
+            DiagnosticOrigin::Tooling => "tooling",
+            DiagnosticOrigin::Unknown => "unknown",
+        }
+    }
+}
+
 impl DiagnosticPhase {
     /// Return the stable lowercase phase label used by human text and non-Serde call sites.
     pub fn as_str(self) -> &'static str {
@@ -86,6 +118,15 @@ pub struct DiagnosticSpan {
     pub end: DiagnosticPosition,
 }
 
+/// One compiler-owned related location in a structured diagnostic fact.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DiagnosticRelatedSpan {
+    /// The secondary source span.
+    pub span: DiagnosticSpan,
+    /// Why this source span is related to the primary diagnostic.
+    pub label: String,
+}
+
 /// Machine-readable diagnostic payload.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct StableDiagnostic {
@@ -95,6 +136,8 @@ pub struct StableDiagnostic {
     pub severity: &'static str,
     /// Compiler or tooling phase that produced this diagnostic.
     pub phase: DiagnosticPhase,
+    /// Compiler subsystem that produced the fact.
+    pub origin: DiagnosticOrigin,
     /// User-facing diagnostic message.
     pub message: String,
     /// Primary source span for editors and structured tooling.
@@ -103,8 +146,15 @@ pub struct StableDiagnostic {
     pub notes: Vec<String>,
     /// Suggested fixes or hints carried by the compiler diagnostic.
     pub hints: Vec<String>,
-    /// Related spans reserved for diagnostics that can point at secondary source locations.
-    pub related_spans: Vec<DiagnosticSpan>,
+    /// Structured expected value or type when available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected: Option<String>,
+    /// Structured actual value or type when available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actual: Option<String>,
+    /// Related compiler-owned source locations.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub related_spans: Vec<DiagnosticRelatedSpan>,
     /// Command users can run to read the catalog explanation for `code`.
     pub explain: String,
 }
@@ -167,6 +217,57 @@ const IMPORT: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     docs_url: Some("https://encero-systems.github.io/incan/language/reference/modules/"),
 };
 
+const SDK_COMPONENT_DISABLED: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-I0101",
+    title: "SDK component disabled",
+    severity: "error",
+    phase: "import",
+    summary: "A known SDK provider owns the imported module, but the project did not enable its component.",
+    explanation: "The active SDK knows which component owns the module, but the resolved project profile and component refinements exclude that component. Imports report use; they do not change project SDK composition.",
+    examples: &["from std.web import App  # with the minimal SDK profile"],
+    common_causes: &[
+        "The project selected `minimal` without adding the required component.",
+        "The component was explicitly excluded under `[sdk]`.",
+    ],
+    fixes: &[
+        "Add the named component to `[sdk].components`.",
+        "Select an SDK profile that enables the component.",
+    ],
+    docs_url: Some("https://encero-systems.github.io/incan/tooling/reference/sdk_components_and_package_features/"),
+};
+
+const SDK_COMPONENT_UNAVAILABLE: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-I0102",
+    title: "SDK component unavailable",
+    severity: "error",
+    phase: "import",
+    summary: "The project enabled an SDK component whose provider payload is absent from the active installation.",
+    explanation: "Project enablement and installed availability are separate. Compilation never downloads a missing component, so the active SDK installation must already contain the named provider payload.",
+    examples: &["from std.fs import Path  # with a minimal SDK installation that omits stdlib-system"],
+    common_causes: &[
+        "The installed SDK distribution does not contain the selected component.",
+        "A project created against a fuller SDK is being built with a smaller installation.",
+    ],
+    fixes: &["Install an SDK distribution containing the named component, then rerun the command."],
+    docs_url: Some("https://encero-systems.github.io/incan/tooling/reference/sdk_components_and_package_features/"),
+};
+
+const PACKAGE_FEATURE_DISABLED: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-I0103",
+    title: "Package feature disabled",
+    severity: "error",
+    phase: "import",
+    summary: "The imported package declaration exists only in a public feature projection that is not active.",
+    explanation: "Incan package features are additive package-owned selections. The provider manifest retains the conditioned fact so the compiler can name the required feature without reparsing dependency source.",
+    examples: &["from pub::reporting import JsonReport  # reporting/json is disabled"],
+    common_causes: &[
+        "The dependency disabled default features and did not request the required feature.",
+        "The requested declaration belongs to another additive feature set.",
+    ],
+    fixes: &["Add the suggested public feature set to the dependency declaration in `incan.toml`."],
+    docs_url: Some("https://encero-systems.github.io/incan/tooling/reference/sdk_components_and_package_features/"),
+};
+
 const TOOLING: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     code: "INCAN-C0001",
     title: "CLI or tooling error",
@@ -206,7 +307,16 @@ const UNKNOWN: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     docs_url: Some("https://encero-systems.github.io/incan/tooling/reference/cli_reference/"),
 };
 
-const CATALOG: &[DiagnosticCatalogEntry] = &[PARSER_SYNTAX, TYPECHECK, IMPORT, TOOLING, UNKNOWN];
+const CATALOG: &[DiagnosticCatalogEntry] = &[
+    PARSER_SYNTAX,
+    TYPECHECK,
+    IMPORT,
+    SDK_COMPONENT_DISABLED,
+    SDK_COMPONENT_UNAVAILABLE,
+    PACKAGE_FEATURE_DISABLED,
+    TOOLING,
+    UNKNOWN,
+];
 
 /// Look up a public diagnostic explanation entry.
 pub fn explain(code: &str) -> Option<&'static DiagnosticCatalogEntry> {
@@ -220,6 +330,9 @@ pub fn catalog_entries() -> &'static [DiagnosticCatalogEntry] {
 
 /// Select the stable public code for a compiler diagnostic.
 pub fn code_for_error(error: &CompileError, phase: DiagnosticPhase) -> &'static str {
+    if let Some(code) = error.stable_code() {
+        return code;
+    }
     match phase {
         DiagnosticPhase::Lex | DiagnosticPhase::Parse => PARSER_SYNTAX.code,
         DiagnosticPhase::Typecheck => TYPECHECK.code,
@@ -263,16 +376,43 @@ pub fn stable_diagnostic(
         code,
         severity,
         phase,
+        origin: origin_for_phase(phase),
         message: error.message.clone(),
-        primary_span: DiagnosticSpan {
-            file: file_name.to_string(),
-            start: position_for_offset(source, error.span.start),
-            end: position_for_offset(source, error.span.end.max(error.span.start + 1)),
-        },
+        primary_span: diagnostic_span(file_name, source, error.span),
         notes: error.notes.clone(),
         hints: error.hints.clone(),
-        related_spans: Vec::new(),
+        expected: error.expected().map(str::to_owned),
+        actual: error.actual().map(str::to_owned),
+        related_spans: error
+            .related_spans()
+            .iter()
+            .map(|related| DiagnosticRelatedSpan {
+                span: diagnostic_span(file_name, source, related.span),
+                label: related.label.clone(),
+            })
+            .collect(),
         explain: format!("incan explain {code}"),
+    }
+}
+
+/// Select the stable producer identity for one compiler pipeline phase.
+fn origin_for_phase(phase: DiagnosticPhase) -> DiagnosticOrigin {
+    match phase {
+        DiagnosticPhase::Lex => DiagnosticOrigin::Lexer,
+        DiagnosticPhase::Parse => DiagnosticOrigin::Parser,
+        DiagnosticPhase::Typecheck => DiagnosticOrigin::Typechecker,
+        DiagnosticPhase::Import => DiagnosticOrigin::ImportResolver,
+        DiagnosticPhase::Tooling => DiagnosticOrigin::Tooling,
+        DiagnosticPhase::Unknown => DiagnosticOrigin::Unknown,
+    }
+}
+
+/// Convert a compiler byte span into the public source-span projection.
+fn diagnostic_span(file_name: &str, source: &str, span: Span) -> DiagnosticSpan {
+    DiagnosticSpan {
+        file: file_name.to_string(),
+        start: position_for_offset(source, span.start),
+        end: position_for_offset(source, span.end.max(span.start + 1)),
     }
 }
 
@@ -305,6 +445,7 @@ fn spans_overlap(left: Span, right: Span) -> bool {
 #[cfg(test)]
 mod tests {
     use crate::ast::{ImportDecl, ImportKind, Spanned, Visibility};
+    use crate::diagnostics::errors;
 
     use super::*;
 
@@ -335,5 +476,39 @@ mod tests {
             phase_for_typecheck_span(&program, Span::new(42, 44)),
             DiagnosticPhase::Typecheck
         );
+    }
+
+    #[test]
+    fn stable_diagnostic_preserves_structured_facts_and_related_spans() {
+        let error = CompileError::type_error("type mismatch".to_string(), Span::new(8, 13))
+            .with_expected_actual("int", "str")
+            .with_related_span(Span::new(0, 7), "Function parameter declared here");
+        let diagnostic = stable_diagnostic("main.incn", "takes_x\n\"text\"\n", &error, DiagnosticPhase::Typecheck);
+
+        assert_eq!(diagnostic.origin, DiagnosticOrigin::Typechecker);
+        assert_eq!(diagnostic.expected.as_deref(), Some("int"));
+        assert_eq!(diagnostic.actual.as_deref(), Some("str"));
+        assert_eq!(diagnostic.related_spans.len(), 1);
+        assert_eq!(diagnostic.related_spans[0].label, "Function parameter declared here");
+        assert_eq!(diagnostic.related_spans[0].span.start.offset, 0);
+    }
+
+    #[test]
+    fn provider_import_failures_use_distinct_stable_codes() {
+        let disabled = errors::sdk_component_disabled("std.web", "stdlib-web", Span::default());
+        let unavailable = errors::sdk_component_unavailable("std.web", "stdlib-web", "incan@0.5.0", Span::default());
+        let gated = errors::pub_library_symbol_requires_features(
+            "JsonReport",
+            "reporting",
+            &[vec!["json".to_string()]],
+            Span::default(),
+        );
+
+        assert_eq!(code_for_error(&disabled, DiagnosticPhase::Import), "INCAN-I0101");
+        assert_eq!(code_for_error(&unavailable, DiagnosticPhase::Import), "INCAN-I0102");
+        assert_eq!(code_for_error(&gated, DiagnosticPhase::Import), "INCAN-I0103");
+        for code in ["INCAN-I0101", "INCAN-I0102", "INCAN-I0103"] {
+            assert!(explain(code).is_some(), "{code} must have a catalog explanation");
+        }
     }
 }

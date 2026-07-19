@@ -2148,6 +2148,20 @@ pub enum Token with Convert[int], Convert[float]:
     }
 
     #[test]
+    fn test_cache_lookup_preserves_io_model_constructor_metadata() -> Result<(), Box<dyn std::error::Error>> {
+        let mut cache = StdlibAstCache::new();
+        let path = vec!["std".to_string(), "io".to_string()];
+        let io_error = cache
+            .lookup_type(&path, "IoError")
+            .ok_or("std.io IoError should resolve through the source metadata cache")?;
+        assert!(
+            matches!(io_error, TypeInfo::Model(_)),
+            "std.io IoError should preserve model constructor metadata, got {io_error:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_std_fs_path_lookup_uses_ast_cache_not_web_surface_type() -> Result<(), Box<dyn std::error::Error>> {
         let source = r#"
 from rust::std::path import PathBuf as RustPathBuf

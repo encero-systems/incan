@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 
 fn incan_binary() -> PathBuf {
     if let Ok(path) = std::env::var("CARGO_BIN_EXE_incan") {
@@ -36,11 +36,16 @@ fn run_incan_with_env_and_removed(
     envs: &[(&str, &str)],
     removed_envs: &[&str],
 ) -> Result<Output, Box<dyn std::error::Error>> {
-    let mut command = Command::new(incan_binary());
+    let mut command = configured_incan_command(current_dir, args);
     for key in removed_envs {
         command.env_remove(key);
     }
-    Ok(command
+    Ok(command.envs(envs.iter().copied()).output()?)
+}
+
+fn configured_incan_command(current_dir: &Path, args: &[&str]) -> Command {
+    let mut command = Command::new(incan_binary());
+    command
         .args(args)
         .current_dir(current_dir)
         .env("CARGO_NET_OFFLINE", "true")
@@ -57,8 +62,11 @@ fn run_incan_with_env_and_removed(
             "INCAN_GENERATED_CARGO_TARGET_DIR",
             Path::new(env!("CARGO_MANIFEST_DIR")).join("target/incan_generated_shared_target"),
         )
-        .envs(envs.iter().copied())
-        .output()?)
+        .env(
+            "INCAN_INTERNAL_SDK_PROVIDER_STORE",
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("target/incan_test_sdk_provider_store"),
+        );
+    command
 }
 
 #[cfg(unix)]
@@ -84,6 +92,10 @@ fn run_incan_with_os_env(
         .env(
             "INCAN_GENERATED_CARGO_TARGET_DIR",
             Path::new(env!("CARGO_MANIFEST_DIR")).join("target/incan_generated_shared_target"),
+        )
+        .env(
+            "INCAN_INTERNAL_SDK_PROVIDER_STORE",
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("target/incan_test_sdk_provider_store"),
         )
         .env(key, value)
         .output()?)
@@ -152,6 +164,144 @@ def main() -> Result[None, str]:
     let output = run_incan(tmp.path(), &["run", main_path.to_str().ok_or("non-utf8 main path")?])?;
     assert_success(&output, "incan run with a synchronous Result-returning main");
     assert_eq!(String::from_utf8(output.stdout)?, "fallible entrypoint\n");
+    Ok(())
+}
+
+#[test]
+fn rust_read_by_ref_borrows_owned_receiver_issue878() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "rust_read_by_ref_owned_receiver", "")?;
+    fs::write(
+        &main_path,
+        r#"from rust::std::io import Read, stdin
+
+
+def main() -> None:
+    mut input = stdin()
+    _ = Read.by_ref(input)
+"#,
+    )?;
+    let main_arg = main_path.to_str().ok_or("non-utf8 main path")?;
+
+    let lock_output = run_incan(tmp.path(), &["lock", main_arg])?;
+    assert_success(&lock_output, "incan lock for Read.by_ref owned receiver");
+    let build_output = run_incan(tmp.path(), &["build", main_arg, "--locked"])?;
+    assert_success(&build_output, "incan build for Read.by_ref owned receiver");
+
+    let generated = fs::read_to_string(
+        tmp.path()
+            .join("target/incan/rust_read_by_ref_owned_receiver/src/main.rs"),
+    )?;
+    assert!(
+        generated.contains("Read::by_ref(&mut input)"),
+        "owned Rust trait receiver must be borrowed without dereference:\n{generated}"
+    );
+    assert!(
+        !generated.contains("Read::by_ref(&mut *input)"),
+        "owned Rust trait receiver must not use the guard reborrow shape:\n{generated}"
+    );
+    Ok(())
+}
+
+#[test]
+fn rust_trait_object_method_arguments_borrow_by_metadata_issue832() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(
+        tmp.path(),
+        "rust_trait_object_borrow_arguments",
+        r#"
+
+[rust-dependencies]
+duck_adapter = { path = "rust/duck_adapter" }
+"#,
+    )?;
+    fs::write(
+        &main_path,
+        r#"from rust::duck_adapter import InterleavedOwned, Processor
+
+def main() -> None:
+  mut processor = Processor.new()
+  input_frames: usize = 3
+  empty_frames: usize = 0
+  input = InterleavedOwned.new(input_frames)
+  mut output = InterleavedOwned.new(empty_frames)
+  println(processor.process_into_buffer(input, output))
+"#,
+    )?;
+
+    let helper_src = tmp.path().join("rust").join("duck_adapter").join("src");
+    fs::create_dir_all(&helper_src)?;
+    fs::write(
+        helper_src
+            .parent()
+            .ok_or("duck adapter source directory had no parent")?
+            .join("Cargo.toml"),
+        r#"[package]
+name = "duck_adapter"
+version = "0.1.0"
+edition = "2021"
+"#,
+    )?;
+    fs::write(
+        helper_src.join("lib.rs"),
+        r#"pub trait Adapter {
+    fn frames(&self) -> usize;
+}
+
+pub trait AdapterMut: Adapter {
+    fn set_frames(&mut self, frames: usize);
+}
+
+pub struct InterleavedOwned {
+    frames: usize,
+}
+
+impl InterleavedOwned {
+    pub fn new(frames: usize) -> Self {
+        Self { frames }
+    }
+}
+
+impl Adapter for InterleavedOwned {
+    fn frames(&self) -> usize {
+        self.frames
+    }
+}
+
+impl AdapterMut for InterleavedOwned {
+    fn set_frames(&mut self, frames: usize) {
+        self.frames = frames;
+    }
+}
+
+pub struct Processor;
+
+impl Processor {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn process_into_buffer(&mut self, input: &dyn Adapter, output: &mut dyn AdapterMut) -> usize {
+        output.set_frames(input.frames());
+        output.frames()
+    }
+}
+"#,
+    )?;
+
+    let output = run_incan(tmp.path(), &["run"])?;
+    assert_success(&output, "Rust trait-object method argument borrowing");
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "3");
+
+    let generated = fs::read_to_string(
+        tmp.path()
+            .join("target/incan/rust_trait_object_borrow_arguments/src/main.rs"),
+    )?;
+    let compact_generated: String = generated.chars().filter(|ch| !ch.is_whitespace()).collect();
+    assert!(
+        compact_generated.contains("process_into_buffer(&input,&mutoutput)"),
+        "trait-object argument borrows must survive generated Rust:\n{generated}"
+    );
     Ok(())
 }
 
@@ -246,7 +396,6 @@ pub use writer::Writer;
         compact_generated.contains("writer.view_value(&header)"),
         "concrete shared-reference argument must preserve its generated Rust borrow:\n{generated}"
     );
-
     Ok(())
 }
 
@@ -261,6 +410,793 @@ fn parse_jsonl_stdout(output: &Output) -> Result<Vec<serde_json::Value>, Box<dyn
         .filter(|line| !line.trim().is_empty())
         .map(|line| Ok(serde_json::from_str(line)?))
         .collect()
+}
+
+#[cfg(unix)]
+#[test]
+fn concurrent_sdk_provider_publication_reuses_one_complete_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "concurrent_sdk_provider_publication", "")?;
+    let store = tmp.path().join("provider-store");
+    let main_arg = main_path.to_str().ok_or("main path was not valid UTF-8")?;
+    let store_arg = store.to_str().ok_or("provider-store path was not valid UTF-8")?;
+
+    let mut first = configured_incan_command(tmp.path(), &["check", main_arg]);
+    first
+        .env("INCAN_INTERNAL_SDK_PROVIDER_STORE", store_arg)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut second = configured_incan_command(tmp.path(), &["check", main_arg]);
+    second
+        .env("INCAN_INTERNAL_SDK_PROVIDER_STORE", store_arg)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let first = first.spawn()?;
+    let second = second.spawn()?;
+    let first = first.wait_with_output()?;
+    let second = second.wait_with_output()?;
+    assert_success(&first, "first concurrent SDK provider publication");
+    assert_success(&second, "second concurrent SDK provider publication");
+
+    let entries = fs::read_dir(&store)?.collect::<Result<Vec<_>, _>>()?;
+    assert!(
+        entries
+            .iter()
+            .all(|entry| !entry.file_name().to_string_lossy().starts_with(".staging-")),
+        "successful concurrent publication must not leave private staging directories"
+    );
+    let artifact_roots = entries
+        .into_iter()
+        .filter(|entry| entry.file_type().is_ok_and(|file_type| file_type.is_dir()))
+        .map(|entry| entry.path())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        artifact_roots.len(),
+        1,
+        "identical concurrent producers must publish and reuse one immutable identity: {artifact_roots:?}"
+    );
+    let inventory_path = artifact_roots
+        .first()
+        .ok_or("concurrent provider publication did not produce an artifact root")?
+        .join("sdk-inventory.json");
+    let inventory = incan::provider::SdkInventory::read_from_path(&inventory_path)?;
+    inventory.validate_compiler_version(incan::version::INCAN_VERSION)?;
+    assert!(
+        inventory.components.values().all(|component| component.available),
+        "the reused full-profile provider identity must contain every component"
+    );
+    Ok(())
+}
+
+#[test]
+fn compiled_sdk_providers_replace_consumer_fs_source_closure() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "compiled_sdk_provider_glob", "")?;
+    fs::write(
+        &main_path,
+        r#"from std.fs.glob import matches
+from std.fs.locking import try_exclusive
+from std.fs.path import Path
+
+def main() -> None:
+  payload = b"artifact"
+  target = Path("target/compiled-stdlib-artifact.bin")
+  match target.write_bytes(payload):
+    Ok(_) => pass
+    Err(_) => pass
+  match target.read_bytes():
+    Ok(data) => assert data == payload
+    Err(_) => pass
+  match try_exclusive("target/compiled-stdlib-artifact.bin"):
+    Ok(_) => pass
+    Err(_) => pass
+  println(matches("routes/users.incn", "routes/*.incn"))
+  println(Path("routes/users.incn").name())
+"#,
+    )?;
+    let output_dir = tmp.path().join("generated");
+    let main_arg = main_path.to_string_lossy();
+    let output_arg = output_dir.to_string_lossy();
+    let output = run_incan(tmp.path(), &["build", &main_arg, &output_arg])?;
+    assert_success(&output, "incan build with compiled std.fs artifact");
+
+    let cargo_toml = fs::read_to_string(output_dir.join("Cargo.toml"))?;
+    assert!(
+        cargo_toml.contains("[dependencies.incan_stdlib_system]")
+            && !cargo_toml.contains("[dependencies.incan_stdlib_core]"),
+        "consumer must link only the directly used compiled SDK provider; component dependencies remain transitive:\n\
+         {cargo_toml}"
+    );
+    assert!(
+        !cargo_toml.contains("[dependencies.incan_stdlib_data]")
+            && !cargo_toml.contains("[dependencies.incan_stdlib_web]"),
+        "filesystem-only consumers must not link unrelated SDK providers:\n{cargo_toml}"
+    );
+    assert!(
+        !output_dir.join("src/__incan_std").exists(),
+        "migrated std.fs source closure must not be materialized into the consumer"
+    );
+    let main_rust = fs::read_to_string(output_dir.join("src/main.rs"))?;
+    assert!(
+        main_rust.contains("pub use incan_stdlib_system::__incan_std::*;")
+            && main_rust.contains("pub use crate::__incan_std::fs::glob::matches;"),
+        "generated consumer must route the stable std.fs facade through its compiled provider:\n{main_rust}"
+    );
+    assert!(
+        main_rust.contains("pub use crate::__incan_std::fs::path::Path;"),
+        "generated consumer must construct types through the stable provider facade:\n{main_rust}"
+    );
+    assert!(
+        main_rust.contains("crate::__incan_std::fs::locking::try_exclusive"),
+        "manifest-discovered stdlib modules must call through the stable provider facade:\n{main_rust}"
+    );
+    assert!(
+        main_rust.contains("target.write_bytes(payload.clone())"),
+        "compiled newtype method metadata must preserve Incan ownership semantics:\n{main_rust}"
+    );
+
+    let codegraph = run_incan(tmp.path(), &["inspect", "codegraph", &main_arg, "--format", "jsonl"])?;
+    assert_success(&codegraph, "incan inspect codegraph with compiled std.fs metadata");
+    Ok(())
+}
+
+#[test]
+fn compiled_sdk_providers_preserve_facade_imports() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "compiled_sdk_provider_web_facade", "")?;
+    fs::write(
+        &main_path,
+        r#"from std.fs import Path as FsPath
+from std.telemetry import TraceId
+from std.traits import TryFrom
+from std.web import App, route, Response, Json, GET
+
+def main() -> None:
+  pass
+"#,
+    )?;
+
+    let output = run_incan(
+        tmp.path(),
+        &["check", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(&output, "incan check with compiled stdlib facade metadata");
+    Ok(())
+}
+
+#[test]
+fn compiled_sdk_providers_keep_serde_trait_imports_out_of_consumers() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "compiled_sdk_provider_serde", "")?;
+    fs::write(
+        &main_path,
+        r#"from std.serde.json import Serialize
+
+def main() -> None:
+  println("serde trait metadata is available")
+"#,
+    )?;
+    let output_dir = tmp.path().join("generated");
+    let main_arg = main_path.to_string_lossy();
+    let output_arg = output_dir.to_string_lossy();
+    let output = run_incan(tmp.path(), &["build", &main_arg, &output_arg])?;
+    assert_success(&output, "incan build with compiled std.serde.json artifact");
+
+    assert!(
+        !output_dir.join("src/__incan_std").exists(),
+        "compiled std.serde.json must not be materialized into the consumer"
+    );
+    let cargo_toml = fs::read_to_string(output_dir.join("Cargo.toml"))?;
+    assert!(
+        cargo_toml.contains("[dependencies.incan_stdlib_data]"),
+        "consumer must link the compiled stdlib data provider:\n{cargo_toml}"
+    );
+
+    let tests_dir = tmp.path().join("tests");
+    fs::create_dir_all(&tests_dir)?;
+    fs::write(
+        tests_dir.join("test_artifact.incn"),
+        r#"from std.fs.locking import try_exclusive
+from std.fs.path import Path
+from std.testing import assert_eq
+
+def test_artifact_path() -> None:
+  assert_eq(Path("routes/users.incn").name(), "users.incn")
+  match try_exclusive("target/test-artifact.lock"):
+    Ok(_) => pass
+    Err(_) => pass
+"#,
+    )?;
+    let minimal_test = run_incan(tmp.path(), &["test", "--sdk-profile", "minimal"])?;
+    assert_failure(&minimal_test, "incan test with disabled SDK components");
+    let minimal_test_output = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&minimal_test.stdout),
+        String::from_utf8_lossy(&minimal_test.stderr)
+    );
+    assert!(
+        minimal_test_output.contains("disabled")
+            && (minimal_test_output.contains("stdlib-system") || minimal_test_output.contains("stdlib-testing")),
+        "minimal test projection should identify its disabled component:\n{minimal_test_output}"
+    );
+
+    let test_output = run_incan(tmp.path(), &["test"])?;
+    assert_success(&test_output, "incan test with compiled std.fs artifact");
+    let mut generated_test_harnesses = 0;
+    for entry in fs::read_dir(tmp.path().join("target/incan_tests"))? {
+        let entry = entry?;
+        if entry.file_type()?.is_dir() {
+            generated_test_harnesses += 1;
+            assert!(
+                !entry.path().join("src/__incan_std").exists(),
+                "migrated std.fs source closure must not be materialized into a generated test harness: {}",
+                entry.path().display()
+            );
+        }
+    }
+    assert!(
+        generated_test_harnesses > 0,
+        "incan test did not create a generated test harness"
+    );
+    Ok(())
+}
+
+#[test]
+fn data_component_owns_hashing_without_linking_the_codecs_provider() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(
+        tmp.path(),
+        "data_component_hashing",
+        "\n\n[sdk]\nprofile = \"minimal\"\ncomponents = [\"stdlib-data\"]\n",
+    )?;
+    fs::write(
+        &main_path,
+        r#"from std.collections import OrdinalMap
+
+def main() -> None:
+  println("data provider linked")
+"#,
+    )?;
+    let output_dir = tmp.path().join("generated");
+    let main_arg = main_path.to_string_lossy();
+    let output_arg = output_dir.to_string_lossy();
+    let build = run_incan(tmp.path(), &["build", &main_arg, &output_arg])?;
+    assert_success(&build, "data-only SDK component generated-Rust build");
+
+    let cargo_toml = fs::read_to_string(output_dir.join("Cargo.toml"))?;
+    assert!(cargo_toml.contains("[dependencies.incan_stdlib_data]"));
+    assert!(
+        !cargo_toml.contains("[dependencies.incan_stdlib_codecs]"),
+        "the data provider must not link compression dependencies through the codecs provider:\n{cargo_toml}"
+    );
+    assert!(
+        !output_dir.join("src/__incan_std").exists(),
+        "data-only consumers must use the compiled provider without materializing stdlib source"
+    );
+
+    let hash_probe = tmp.path().join("src/hash_probe.incn");
+    fs::write(
+        &hash_probe,
+        r#"from std.hash import sha256
+
+def main() -> None:
+  pass
+"#,
+    )?;
+    let probe = run_incan(
+        tmp.path(),
+        &[
+            "check",
+            hash_probe.to_str().ok_or("hash probe path was not valid UTF-8")?,
+        ],
+    )?;
+    assert_success(&probe, "public std.hash import from the enabled data component");
+
+    let compression_probe = tmp.path().join("src/compression_probe.incn");
+    fs::write(
+        &compression_probe,
+        r#"from std.compression import gzip
+
+def main() -> None:
+  pass
+"#,
+    )?;
+    let compression = run_incan(
+        tmp.path(),
+        &[
+            "check",
+            compression_probe
+                .to_str()
+                .ok_or("compression probe path was not valid UTF-8")?,
+        ],
+    )?;
+    assert_failure(&compression, "public std.compression import with codecs disabled");
+    let diagnostic = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&compression.stdout),
+        String::from_utf8_lossy(&compression.stderr)
+    );
+    assert!(
+        diagnostic.contains("stdlib-compression") && diagnostic.contains("disabled"),
+        "disabled public compression imports must identify the component selection remedy:\n{diagnostic}"
+    );
+    Ok(())
+}
+
+#[test]
+fn workspace_inspect_reports_deterministic_scope_and_stale_member_locks() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::write(
+        root.path().join("incan.toml"),
+        r#"
+[project]
+name = "root"
+
+[workspace]
+members = ["packages/*"]
+default-members = ["zebra", "alpha"]
+"#,
+    )?;
+    for name in ["alpha", "zebra"] {
+        let member_root = root.path().join("packages").join(name);
+        fs::create_dir_all(member_root.join("src"))?;
+        fs::write(
+            member_root.join("incan.toml"),
+            format!("[project]\nname = \"{name}\"\n"),
+        )?;
+    }
+    fs::write(root.path().join("packages/zebra/incan.lock"), "obsolete member lock")?;
+
+    let default_output = run_incan(root.path(), &["workspace", "inspect", "--format", "json"])?;
+    assert_success(&default_output, "workspace inspect from root");
+    let default_report = parse_json_stdout(&default_output)?;
+    assert_eq!(default_report["schema_version"], 1);
+    assert_eq!(default_report["selected_scope"]["origin"], "default_members");
+    assert_eq!(default_report["selected_scope"]["members"][0]["name"], "alpha");
+    assert_eq!(default_report["selected_scope"]["members"][1]["name"], "zebra");
+    assert_eq!(
+        default_report["lock"]["stale_member_local_locks"]
+            .as_array()
+            .map(Vec::len),
+        Some(1)
+    );
+
+    let current_member_output = run_incan(
+        &root.path().join("packages/zebra/src"),
+        &["workspace", "inspect", "--format", "json"],
+    )?;
+    assert_success(&current_member_output, "workspace inspect from member");
+    let current_member_report = parse_json_stdout(&current_member_output)?;
+    assert_eq!(current_member_report["selected_scope"]["origin"], "current_member");
+    assert_eq!(current_member_report["selected_scope"]["members"][0]["name"], "zebra");
+
+    let all_output = run_incan(
+        root.path(),
+        &["workspace", "inspect", "--format", "json", "--workspace"],
+    )?;
+    assert_success(&all_output, "workspace inspect --workspace");
+    let all_report = parse_json_stdout(&all_output)?;
+    assert_eq!(all_report["selected_scope"]["origin"], "workspace");
+    assert_eq!(
+        all_report["selected_scope"]["members"].as_array().map(Vec::len),
+        Some(3)
+    );
+    Ok(())
+}
+
+#[test]
+fn workspace_lock_is_published_once_at_the_root_from_any_member() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::write(
+        root.path().join("incan.toml"),
+        r#"
+[workspace]
+members = ["packages/*"]
+
+[workspace.rust-dependencies]
+itoa = "1"
+"#,
+    )?;
+    for name in ["alpha", "zebra"] {
+        let member_root = root.path().join("packages").join(name);
+        fs::create_dir_all(member_root.join("src"))?;
+        fs::write(
+            member_root.join("incan.toml"),
+            format!(
+                "[project]\nname = \"{name}\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n\n[project.features]\ndefault = [\"{name}\"]\n{name} = []\n{}",
+                if name == "alpha" {
+                    "\n[rust-dependencies]\nitoa = { workspace = true }\n"
+                } else {
+                    ""
+                },
+            ),
+        )?;
+        fs::write(
+            member_root.join("src/main.incn"),
+            if name == "alpha" {
+                "from rust::itoa import Buffer\n\ndef main() -> None:\n  println(\"workspace lock\")\n"
+            } else {
+                "def main() -> None:\n  println(\"workspace lock\")\n"
+            },
+        )?;
+    }
+
+    let output = run_incan(&root.path().join("packages/alpha"), &["lock"])?;
+    assert_success(&output, "incan lock from workspace member");
+    let root_lock = root.path().join("incan.lock");
+    assert!(root_lock.is_file(), "workspace root lock was not written");
+    let lock_contents = fs::read_to_string(&root_lock)?;
+    assert!(
+        lock_contents.contains("itoa"),
+        "inherited member dependency was omitted from root lock"
+    );
+    let lock = incan::lockfile::IncanLock::load(&root_lock)?;
+    let member_roots = lock
+        .semantic
+        .workspace_members
+        .iter()
+        .map(|member| member.member_root.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(member_roots, vec!["packages/alpha", "packages/zebra"]);
+    let member_features = lock
+        .semantic
+        .workspace_members
+        .iter()
+        .map(|member| {
+            member
+                .packages
+                .first()
+                .map(|package| package.active_features.iter().cloned().collect::<Vec<_>>())
+                .unwrap_or_default()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        member_features,
+        vec![
+            vec!["alpha".to_string(), "default".to_string()],
+            vec!["default".to_string(), "zebra".to_string()]
+        ]
+    );
+    let inspect_output = run_incan(
+        &root.path().join("packages/alpha"),
+        &["workspace", "inspect", "--format", "json", "--workspace"],
+    )?;
+    assert_success(&inspect_output, "workspace inspect after semantic lock publication");
+    let inspect_report = parse_json_stdout(&inspect_output)?;
+    assert_eq!(
+        inspect_report["lock"]["state"]["semantic"]["workspace_members"]
+            .as_array()
+            .map(Vec::len),
+        Some(2)
+    );
+    assert!(
+        !root.path().join("packages/alpha/incan.lock").exists()
+            && !root.path().join("packages/zebra/incan.lock").exists(),
+        "workspace members must not receive authoritative lockfiles"
+    );
+    for name in ["alpha", "zebra"] {
+        let build_output = run_incan(&root.path().join("packages").join(name), &["build", "--locked"])?;
+        assert_success(
+            &build_output,
+            &format!("incan build --locked from workspace member {name}"),
+        );
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn workspace_lock_concurrent_publishers_leave_one_parseable_root_lock() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::write(
+        root.path().join("incan.toml"),
+        "[workspace]\nmembers = [\"packages/*\"]\n",
+    )?;
+    for name in ["alpha", "zebra"] {
+        let member_root = root.path().join("packages").join(name);
+        fs::create_dir_all(member_root.join("src"))?;
+        fs::write(
+            member_root.join("incan.toml"),
+            format!(
+                "[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"
+            ),
+        )?;
+        fs::write(member_root.join("src/main.incn"), "def main() -> None:\n  pass\n")?;
+    }
+
+    let stdlib = Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib/stdlib");
+    let generated_target = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/incan_generated_shared_target");
+    let spawn_lock = |member: &str| -> Result<std::process::Child, Box<dyn std::error::Error>> {
+        Ok(Command::new(incan_binary())
+            .arg("lock")
+            .current_dir(root.path().join("packages").join(member))
+            .env("CARGO_NET_OFFLINE", "true")
+            .env("INCAN_NO_BANNER", "1")
+            .env("INCAN_STDLIB", &stdlib)
+            .env("INCAN_STDLIB_DIR", &stdlib)
+            .env("INCAN_HOME", root.path().join(".incan-home"))
+            .env("INCAN_GENERATED_CARGO_TARGET_DIR", &generated_target)
+            .spawn()?)
+    };
+    let left = spawn_lock("alpha")?;
+    let right = spawn_lock("zebra")?;
+    let left_output = left.wait_with_output()?;
+    let right_output = right.wait_with_output()?;
+    assert_success(&left_output, "first concurrent workspace lock publisher");
+    assert_success(&right_output, "second concurrent workspace lock publisher");
+
+    let lock_path = root.path().join("incan.lock");
+    let lock = incan::lockfile::IncanLock::load(&lock_path)?;
+    assert!(!lock.deps_fingerprint.is_empty());
+    assert!(
+        fs::read_dir(root.path())?
+            .filter_map(Result::ok)
+            .all(|entry| !entry.file_name().to_string_lossy().contains(".incan-stage-")),
+        "failed workspace lock publication left a private staging file behind"
+    );
+    Ok(())
+}
+
+#[test]
+fn workspace_fmt_fans_out_in_member_order_without_changing_single_project_semantics()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::write(
+        root.path().join("incan.toml"),
+        "[workspace]\nmembers = [\"packages/*\"]\n",
+    )?;
+    for name in ["zebra", "alpha"] {
+        let member_root = root.path().join("packages").join(name);
+        fs::create_dir_all(member_root.join("src"))?;
+        fs::write(
+            member_root.join("incan.toml"),
+            format!("[project]\nname = \"{name}\"\n"),
+        )?;
+        fs::write(
+            member_root.join("src/main.incn"),
+            "def main() -> None:\n  println(\"formatted\")\n",
+        )?;
+    }
+
+    let output = run_incan(root.path(), &["fmt", "--workspace"])?;
+    assert_success(&output, "workspace fmt --workspace");
+    let stdout = String::from_utf8(output.stdout)?;
+    let alpha = stdout
+        .find("workspace member alpha")
+        .ok_or("alpha formatting output missing")?;
+    let zebra = stdout
+        .find("workspace member zebra")
+        .ok_or("zebra formatting output missing")?;
+    assert!(
+        alpha < zebra,
+        "workspace formatter did not use deterministic member order:\n{stdout}"
+    );
+    Ok(())
+}
+
+#[test]
+fn workspace_check_fans_out_with_one_member_scoped_json_report() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::write(
+        root.path().join("incan.toml"),
+        "[workspace]\nmembers = [\"packages/*\"]\n",
+    )?;
+    for (name, source) in [
+        ("zebra", "def main() -> None:\n  println(\"zebra\")\n"),
+        ("alpha", "def main() -> None:\n  println(\"alpha\")\n"),
+    ] {
+        let member_root = root.path().join("packages").join(name);
+        fs::create_dir_all(member_root.join("src"))?;
+        fs::write(
+            member_root.join("incan.toml"),
+            format!("[project]\nname = \"{name}\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"),
+        )?;
+        fs::write(member_root.join("src/main.incn"), source)?;
+    }
+
+    let output = run_incan(root.path(), &["check", "--workspace", "--format", "json"])?;
+    assert_success(&output, "workspace check --workspace");
+    let report = parse_json_stdout(&output)?;
+    assert_eq!(report["schema_version"], "incan.workspace.check.v1");
+    assert_eq!(report["ok"], true);
+    assert_eq!(report["workspace"]["selected_scope"]["origin"], "workspace");
+    assert_eq!(report["results"][0]["member"]["name"], "alpha");
+    assert_eq!(report["results"][1]["member"]["name"], "zebra");
+    assert_eq!(report["results"][0]["report"]["ok"], true);
+    assert_eq!(report["results"][1]["report"]["ok"], true);
+
+    let member_output = run_incan(root.path(), &["check", "--member", "zebra", "--format", "json"])?;
+    assert_success(&member_output, "workspace check --member");
+    let member_report = parse_json_stdout(&member_output)?;
+    assert_eq!(
+        member_report["workspace"]["selected_scope"]["origin"],
+        "explicit_members"
+    );
+    assert_eq!(member_report["results"].as_array().map(Vec::len), Some(1));
+    assert_eq!(member_report["results"][0]["member"]["name"], "zebra");
+    Ok(())
+}
+
+#[test]
+fn workspace_test_fans_out_with_member_identity_in_jsonl() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::write(
+        root.path().join("incan.toml"),
+        "[workspace]\nmembers = [\"packages/*\"]\n",
+    )?;
+    for name in ["zebra", "alpha"] {
+        let member_root = root.path().join("packages").join(name);
+        fs::create_dir_all(member_root.join("tests"))?;
+        fs::create_dir_all(member_root.join("src"))?;
+        fs::write(
+            member_root.join("incan.toml"),
+            format!("[project]\nname = \"{name}\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"),
+        )?;
+        fs::write(member_root.join("src/main.incn"), "def main() -> None:\n  pass\n")?;
+        fs::write(
+            member_root.join("tests/test_member.incn"),
+            format!("from std.testing import test\n\n@test\ndef test_{name}() -> None:\n  assert True\n"),
+        )?;
+    }
+
+    let output = run_incan(root.path(), &["test", "--workspace", "--format", "json"])?;
+    assert_success(&output, "workspace test --workspace --format json");
+    let records = parse_jsonl_stdout(&output)?;
+    assert_eq!(records[0]["event"], "workspace_scope");
+    assert_eq!(records[0]["workspace"]["selected_scope"]["origin"], "workspace");
+    let member_names = records
+        .iter()
+        .filter(|record| record.get("test_id").is_some())
+        .map(|record| record["workspace"]["member"]["name"].as_str().unwrap_or_default())
+        .collect::<Vec<_>>();
+    assert_eq!(member_names, vec!["alpha", "zebra"]);
+    assert!(
+        records
+            .iter()
+            .filter(|record| record.get("summary").is_some())
+            .all(|record| record["workspace"]["root"].is_string())
+    );
+    Ok(())
+}
+
+#[test]
+fn workspace_build_fans_out_with_one_aggregate_json_report() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::write(
+        root.path().join("incan.toml"),
+        "[workspace]\nmembers = [\"packages/*\"]\n\n[workspace.rust-dependencies]\nitoa = \"1\"\n",
+    )?;
+    for name in ["zebra", "alpha"] {
+        let member_root = root.path().join("packages").join(name);
+        fs::create_dir_all(member_root.join("src"))?;
+        fs::write(
+            member_root.join("incan.toml"),
+            format!(
+                "[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n{}",
+                if name == "alpha" {
+                    "\n[rust-dependencies]\nitoa = { workspace = true }\n"
+                } else {
+                    ""
+                }
+            ),
+        )?;
+        fs::write(
+            member_root.join("src/main.incn"),
+            if name == "alpha" {
+                "from rust::itoa import Buffer\n\ndef main() -> None:\n  println(\"alpha\")\n".to_string()
+            } else {
+                format!("def main() -> None:\n  println(\"{name}\")\n")
+            },
+        )?;
+    }
+
+    let output = run_incan(root.path(), &["build", "--workspace", "--report", "json"])?;
+    assert_success(&output, "workspace build --workspace --report json");
+    let report = parse_json_stdout(&output)?;
+    assert_eq!(report["schema_version"], "incan.workspace.build.v1");
+    assert_eq!(report["ok"], true);
+    assert_eq!(report["workspace"]["selected_scope"]["origin"], "workspace");
+    assert_eq!(report["results"][0]["member"]["name"], "alpha");
+    assert_eq!(report["results"][1]["member"]["name"], "zebra");
+    assert_eq!(report["results"][0]["report"]["workspace"]["member_name"], "alpha");
+    assert_eq!(report["results"][1]["report"]["workspace"]["member_name"], "zebra");
+    assert!(
+        report["results"][0]["report"]["dependencies"]["rust"]
+            .as_array()
+            .is_some_and(|dependencies| dependencies.iter().any(|dependency| dependency["crate_name"] == "itoa"))
+    );
+    Ok(())
+}
+
+#[test]
+fn workspace_run_and_version_require_one_explicit_member() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::write(
+        root.path().join("incan.toml"),
+        "[workspace]\nmembers = [\"packages/*\"]\n",
+    )?;
+    for name in ["zebra", "alpha"] {
+        let member_root = root.path().join("packages").join(name);
+        fs::create_dir_all(member_root.join("src"))?;
+        fs::write(
+            member_root.join("incan.toml"),
+            format!(
+                "[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"
+            ),
+        )?;
+        fs::write(
+            member_root.join("src/main.incn"),
+            format!("def main() -> None:\n  println(\"{name}\")\n"),
+        )?;
+    }
+
+    let run_output = run_incan(root.path(), &["run", "--member", "alpha"])?;
+    assert_success(&run_output, "workspace run --member alpha");
+    assert_eq!(String::from_utf8(run_output.stdout)?, "alpha\n");
+
+    let multi_run = run_incan(root.path(), &["run", "--workspace"])?;
+    assert!(
+        !multi_run.status.success(),
+        "workspace run unexpectedly accepted multiple members"
+    );
+    assert!(
+        String::from_utf8(multi_run.stderr)?.contains("incan run requires exactly one workspace member"),
+        "workspace run did not explain the one-member requirement"
+    );
+
+    let version_output = run_incan(root.path(), &["version", "patch", "--member", "alpha"])?;
+    assert_success(&version_output, "workspace version --member alpha");
+    let alpha_manifest = fs::read_to_string(root.path().join("packages/alpha/incan.toml"))?;
+    let zebra_manifest = fs::read_to_string(root.path().join("packages/zebra/incan.toml"))?;
+    assert!(alpha_manifest.contains("version = \"0.1.1\""));
+    assert!(zebra_manifest.contains("version = \"0.1.0\""));
+    Ok(())
+}
+
+#[test]
+fn workspace_env_fragments_are_inherited_only_through_explicit_member_extends() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = tempfile::tempdir()?;
+    fs::write(
+        root.path().join("incan.toml"),
+        r#"
+[workspace]
+members = ["packages/member"]
+
+[workspace.envs.ci]
+env-vars = { ROOT = "1", SHARED = "workspace" }
+
+[workspace.envs.ci.scripts]
+test = ["incan", "test"]
+"#,
+    )?;
+    let member_root = root.path().join("packages/member");
+    fs::create_dir_all(member_root.join("src"))?;
+    fs::write(
+        member_root.join("incan.toml"),
+        r#"
+[project]
+name = "member"
+
+[tool.incan.envs.ci]
+extends = ["workspace:ci"]
+env-vars = { SHARED = "member", MEMBER = "1" }
+"#,
+    )?;
+
+    let output = run_incan(&member_root, &["env", "show", "ci", "--format", "json"])?;
+    assert_success(&output, "workspace env inheritance");
+    let report = parse_json_stdout(&output)?;
+    assert_eq!(
+        report["overlay_chain"],
+        serde_json::json!(["project", "default", "workspace:ci", "ci"])
+    );
+    assert_eq!(report["env_vars"]["ROOT"], "1");
+    assert_eq!(report["env_vars"]["SHARED"], "member");
+    assert_eq!(report["env_vars"]["MEMBER"], "1");
+    assert_eq!(report["scripts"]["test"], serde_json::json!(["incan", "test"]));
+    Ok(())
 }
 
 #[test]
@@ -562,10 +1498,10 @@ def main() -> None:
             "bool:false\n",
             "i8-overflow:invalid_value\n",
             "u8-negative:invalid_value\n",
-            "environment variable `INCAN_ENVIRON_BAD_F64` could not be parsed or validated as `float`\n",
+            "environment variable `INCAN_ENVIRON_BAD_F64` could not be parsed or validated as `the requested type`\n",
             "bool-invalid:invalid_value\n",
             "invalid_value:INCAN_ENVIRON_BAD_INTEGER\n",
-            "environment variable `INCAN_ENVIRON_REDACTED` could not be parsed or validated as `int`\n",
+            "environment variable `INCAN_ENVIRON_REDACTED` could not be parsed or validated as `the requested type`\n",
             "missing\n",
         ),
     );
@@ -815,13 +1751,13 @@ def main() -> None:
 }
 
 fn assert_codegraph_v04_record_contract(records: &[serde_json::Value]) {
-    assert!(!records.is_empty(), "codegraph export should include a header record");
+    assert!(!records.is_empty(), "codegraph export should include snapshot metadata");
     assert_eq!(records[0]["record"], serde_json::json!("header"));
     assert_eq!(records[0]["schema_version"], serde_json::json!(1));
     assert_eq!(records[0]["languages"], serde_json::json!(["incan"]));
     assert!(
         records[0]["degraded"].is_boolean(),
-        "codegraph header should carry degraded state: {}",
+        "codegraph snapshot metadata should carry degraded state: {}",
         records[0]
     );
 
@@ -1076,6 +2012,119 @@ fn check_json_reports_typechecker_diagnostics() -> Result<(), Box<dyn std::error
     Ok(())
 }
 
+#[test]
+fn diagnostic_facts_keep_related_spans_and_type_payloads_across_cli_and_codegraph()
+-> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let source_path = tmp.path().join("main.incn");
+    fs::write(
+        &source_path,
+        r#"model Wire:
+    id [alias="wire"]: int
+    label [alias="wire"]: str
+
+def accept(value: int) -> None:
+    pass
+
+def main() -> None:
+    accept(value=1, value=2)
+    accept("text")
+"#,
+    )?;
+    let source_arg = source_path.to_str().ok_or("source path was not valid UTF-8")?;
+
+    let check = run_incan(tmp.path(), &["check", source_arg, "--format", "json"])?;
+    assert_failure(&check, "incan check should emit diagnostic facts");
+    let check_json = parse_json_stdout(&check)?;
+    let cli_diagnostics = check_json["diagnostics"]
+        .as_array()
+        .ok_or("expected CLI diagnostics array")?;
+    let cli_alias = cli_diagnostics
+        .iter()
+        .find(|diagnostic| {
+            diagnostic["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("Duplicate alias"))
+        })
+        .ok_or("expected duplicate alias diagnostic")?;
+    let cli_duplicate_arg = cli_diagnostics
+        .iter()
+        .find(|diagnostic| {
+            diagnostic["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("Duplicate argument"))
+        })
+        .ok_or("expected duplicate argument diagnostic")?;
+    let cli_mismatch = cli_diagnostics
+        .iter()
+        .find(|diagnostic| {
+            diagnostic["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("Argument 'value' of 'accept'"))
+        })
+        .ok_or("expected call argument type mismatch diagnostic")?;
+
+    assert_eq!(cli_alias["origin"], serde_json::json!("typechecker"));
+    assert_eq!(
+        cli_alias["related_spans"][0]["label"],
+        serde_json::json!("First field alias 'wire'")
+    );
+    assert_eq!(
+        cli_duplicate_arg["related_spans"][0]["label"],
+        serde_json::json!("First argument named 'value'")
+    );
+    assert_eq!(cli_mismatch["expected"], serde_json::json!("int"));
+    assert_eq!(cli_mismatch["actual"], serde_json::json!("str"));
+
+    let codegraph = run_incan(
+        tmp.path(),
+        &[
+            "inspect",
+            "codegraph",
+            source_arg,
+            "--format",
+            "jsonl",
+            "--allow-errors",
+        ],
+    )?;
+    assert_success(&codegraph, "tolerant codegraph should project diagnostic facts");
+    let records = parse_jsonl_stdout(&codegraph)?;
+    let graph_alias = records
+        .iter()
+        .find(|record| record["record"] == serde_json::json!("diagnostic") && record["message"] == cli_alias["message"])
+        .ok_or("expected duplicate alias codegraph diagnostic")?;
+    let graph_duplicate_arg = records
+        .iter()
+        .find(|record| {
+            record["record"] == serde_json::json!("diagnostic") && record["message"] == cli_duplicate_arg["message"]
+        })
+        .ok_or("expected duplicate argument codegraph diagnostic")?;
+    let graph_mismatch = records
+        .iter()
+        .find(|record| {
+            record["record"] == serde_json::json!("diagnostic") && record["message"] == cli_mismatch["message"]
+        })
+        .ok_or("expected type mismatch codegraph diagnostic")?;
+
+    assert_eq!(graph_alias["origin"], cli_alias["origin"]);
+    assert_eq!(
+        graph_alias["related_spans"][0]["label"],
+        cli_alias["related_spans"][0]["label"]
+    );
+    assert_eq!(
+        graph_alias["related_spans"][0]["span"]["start"],
+        cli_alias["related_spans"][0]["span"]["start"]["offset"]
+    );
+    assert_eq!(
+        graph_duplicate_arg["related_spans"][0]["label"],
+        cli_duplicate_arg["related_spans"][0]["label"]
+    );
+    assert_eq!(graph_mismatch["expected"], cli_mismatch["expected"]);
+    assert_eq!(graph_mismatch["actual"], cli_mismatch["actual"]);
+
+    Ok(())
+}
+
 #[cfg(feature = "rust_inspect")]
 #[test]
 fn rust_std_result_interop_supports_try_operator_issue801() -> Result<(), Box<dyn std::error::Error>> {
@@ -1307,6 +2356,18 @@ fn build_report_json_describes_executable_build() -> Result<(), Box<dyn std::err
         })
     }));
     assert_eq!(report["cargo"]["offline"], serde_json::json!(true));
+    assert!(report["semantic"]["packages"].as_array().is_some());
+    assert!(report["semantic"]["feature_edges"].as_array().is_some());
+    assert!(report["semantic"]["providers"].as_array().is_some_and(|providers| {
+        !providers.is_empty()
+            && providers.iter().all(|provider| {
+                provider["identity"].is_string()
+                    && provider["participation"].is_string()
+                    && provider["provenance"].is_object()
+                    && provider["implementation_facets"].is_array()
+                    && provider["backend_requirements"].is_array()
+            })
+    }));
     assert!(report["artifacts"].as_array().is_some_and(|artifacts| {
         artifacts.iter().any(|artifact| {
             artifact["kind"] == serde_json::json!("binary") && artifact["exists"] == serde_json::json!(true)
@@ -1685,6 +2746,395 @@ pub def entrypoint() -> int:
             })
             && record["provenance"] == serde_json::json!("checked")
     }));
+
+    Ok(())
+}
+
+#[test]
+fn inspect_codegraph_projects_the_selected_incan_package_features() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(
+        tmp.path(),
+        "feature_graph_demo",
+        r#"
+
+[project.features]
+alpha = []
+beta = []
+"#,
+    )?;
+    fs::write(
+        &main_path,
+        r#"when feature("alpha"):
+    pub def alpha_entrypoint() -> str:
+        return "alpha"
+
+when feature("beta"):
+    pub def beta_entrypoint() -> str:
+        return "beta"
+"#,
+    )?;
+    let main_arg = main_path.to_str().ok_or("main path was not valid UTF-8")?;
+
+    for (selected, expected, excluded) in [
+        ("alpha", "alpha_entrypoint", "beta_entrypoint"),
+        ("beta", "beta_entrypoint", "alpha_entrypoint"),
+    ] {
+        let output = run_incan(
+            tmp.path(),
+            &[
+                "inspect",
+                "codegraph",
+                main_arg,
+                "--format",
+                "jsonl",
+                "--no-default-features",
+                "--features",
+                selected,
+            ],
+        )?;
+        assert_success(&output, &format!("codegraph projection for package feature {selected}"));
+        let records = parse_jsonl_stdout(&output)?;
+        let header = records.first().ok_or("codegraph did not emit a header")?;
+        let semantic_context = header["semantic_contexts"]
+            .as_array()
+            .and_then(|contexts| contexts.first())
+            .ok_or("codegraph header did not project semantic context")?;
+        let package = semantic_context["packages"]
+            .as_array()
+            .and_then(|packages| packages.first())
+            .ok_or("codegraph semantic context did not project package features")?;
+        assert_eq!(package["active_features"], serde_json::json!([selected]));
+        assert!(semantic_context["providers"].as_array().is_some_and(|providers| {
+            providers.iter().any(|provider| {
+                provider["provenance"]["kind"] == serde_json::json!("sdk")
+                    && provider["enabled"] == serde_json::json!(true)
+                    && provider["manifest_path"].as_str().is_some()
+            })
+        }));
+        assert!(records.iter().any(|record| {
+            record["record"] == serde_json::json!("declaration") && record["name"] == serde_json::json!(expected)
+        }));
+        assert!(
+            records.iter().all(|record| {
+                record["record"] != serde_json::json!("declaration") || record["name"] != serde_json::json!(excluded)
+            }),
+            "codegraph for `{selected}` retained inactive declaration `{excluded}`"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn transient_sdk_profile_is_shared_by_check_and_provider_inspection() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "sdk_profile_override", "")?;
+    let main_arg = main_path.to_str().ok_or("main path was not valid UTF-8")?;
+
+    let minimal_core = run_incan(tmp.path(), &["check", main_arg, "--sdk-profile", "minimal"])?;
+    assert_success(
+        &minimal_core,
+        "minimal SDK profile check using only core language surface",
+    );
+    let minimal_codegraph = run_incan(
+        tmp.path(),
+        &[
+            "inspect",
+            "codegraph",
+            main_arg,
+            "--format",
+            "jsonl",
+            "--sdk-profile",
+            "minimal",
+        ],
+    )?;
+    assert_success(
+        &minimal_codegraph,
+        "minimal SDK profile codegraph using only core language surface",
+    );
+
+    fs::write(
+        &main_path,
+        r#"from std.fs.path import Path
+
+def main() -> None:
+    _ = Path("profile")
+"#,
+    )?;
+
+    let minimal = run_incan(tmp.path(), &["check", main_arg, "--sdk-profile", "minimal"])?;
+    assert_failure(&minimal, "minimal SDK profile check using std.fs");
+    let minimal_stderr = String::from_utf8_lossy(&minimal.stderr);
+    assert!(
+        minimal_stderr.contains("stdlib-system") && minimal_stderr.contains("disabled"),
+        "minimal profile should diagnose the disabled std.fs component:\n{minimal_stderr}"
+    );
+    let minimal_json = run_incan(
+        tmp.path(),
+        &["check", main_arg, "--format", "json", "--sdk-profile", "minimal"],
+    )?;
+    assert_failure(&minimal_json, "minimal SDK profile JSON diagnostic using std.fs");
+    let minimal_json = parse_json_stdout(&minimal_json)?;
+    assert_eq!(minimal_json["diagnostics"][0]["code"], serde_json::json!("INCAN-I0101"));
+
+    let default = run_incan(tmp.path(), &["check", main_arg, "--sdk-profile", "default"])?;
+    assert_success(&default, "default SDK profile check using std.fs");
+
+    for command in ["build", "run"] {
+        let output = run_incan(tmp.path(), &[command, main_arg, "--sdk-profile", "minimal"])?;
+        assert_failure(&output, &format!("{command} using disabled std.fs component"));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("stdlib-system") && stderr.contains("disabled"),
+            "{command} should use the transient provider projection:\n{stderr}"
+        );
+    }
+
+    let inspection = run_incan(
+        tmp.path(),
+        &[
+            "inspect",
+            "providers",
+            main_arg,
+            "--format",
+            "json",
+            "--sdk-profile",
+            "minimal",
+        ],
+    )?;
+    assert_success(&inspection, "provider inspection with transient minimal SDK profile");
+    let report = parse_json_stdout(&inspection)?;
+    assert_eq!(report["sdk"]["profile"], serde_json::json!("minimal"));
+    let components = report["sdk"]["components"]
+        .as_array()
+        .ok_or("provider report did not contain SDK components")?;
+    let system = components
+        .iter()
+        .find(|component| component["id"] == serde_json::json!("stdlib-system"))
+        .ok_or("provider report did not contain stdlib-system")?;
+    assert_eq!(system["available"], serde_json::json!(true));
+    assert_eq!(system["enabled"], serde_json::json!(false));
+    let providers = report["providers"]
+        .as_array()
+        .ok_or("provider report did not contain providers")?;
+    let system_provider = providers
+        .iter()
+        .find(|provider| provider["provenance"]["component_id"] == serde_json::json!("stdlib-system"))
+        .ok_or("provider report did not contain the stdlib-system provider")?;
+    assert_eq!(system_provider["available"], serde_json::json!(true));
+    assert_eq!(system_provider["enabled"], serde_json::json!(false));
+    assert_eq!(system_provider["used"], serde_json::json!(false));
+    assert!(system_provider["provider_dependencies"].is_array());
+
+    Ok(())
+}
+
+#[test]
+fn lock_and_feature_inspection_record_transient_semantic_selections() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(
+        tmp.path(),
+        "semantic_selection_lock",
+        r#"
+
+[project.features]
+default = ["alpha"]
+alpha = []
+beta = []
+"#,
+    )?;
+    let main_arg = main_path.to_str().ok_or("main path was not valid UTF-8")?;
+    let selection_args = [
+        "--no-default-features",
+        "--features",
+        "beta",
+        "--sdk-profile",
+        "minimal",
+    ];
+
+    let inspection = run_incan(
+        tmp.path(),
+        &[
+            "inspect",
+            "features",
+            main_arg,
+            "--format",
+            "json",
+            selection_args[0],
+            selection_args[1],
+            selection_args[2],
+            selection_args[3],
+            selection_args[4],
+        ],
+    )?;
+    assert_success(&inspection, "feature inspection with transient semantic selections");
+    let report = parse_json_stdout(&inspection)?;
+    let package = report["packages"]
+        .as_array()
+        .and_then(|packages| packages.first())
+        .ok_or("feature report did not contain the root package")?;
+    assert_eq!(package["active_features"], serde_json::json!(["beta"]));
+    assert_eq!(package["reasons"]["beta"][0]["kind"], serde_json::json!("requested"));
+
+    let lock = run_incan(
+        tmp.path(),
+        &[
+            "lock",
+            main_arg,
+            selection_args[0],
+            selection_args[1],
+            selection_args[2],
+            selection_args[3],
+            selection_args[4],
+        ],
+    )?;
+    assert_success(&lock, "semantic lock generation with transient selections");
+    let lock: toml::Value = toml::from_str(&fs::read_to_string(tmp.path().join("incan.lock"))?)?;
+    assert_eq!(lock["semantic"]["sdk"]["profile"].as_str(), Some("minimal"));
+    let locked_package = lock["semantic"]["packages"]
+        .as_array()
+        .and_then(|packages| packages.first())
+        .ok_or("semantic lock did not contain the root package")?;
+    assert_eq!(
+        locked_package["active_features"].as_array(),
+        Some(&vec![toml::Value::String("beta".to_string())])
+    );
+
+    Ok(())
+}
+
+#[test]
+fn locked_build_rejects_package_feature_or_sdk_projection_drift() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(
+        tmp.path(),
+        "semantic_lock_drift",
+        r#"
+
+[project.features]
+alpha = []
+beta = []
+"#,
+    )?;
+    let main_arg = main_path.to_str().ok_or("main path was not valid UTF-8")?;
+
+    let lock = run_incan(
+        tmp.path(),
+        &[
+            "lock",
+            main_arg,
+            "--no-default-features",
+            "--features",
+            "alpha",
+            "--sdk-profile",
+            "minimal",
+        ],
+    )?;
+    assert_success(&lock, "lock semantic alpha/minimal projection");
+
+    for (feature, profile) in [("beta", "minimal"), ("alpha", "default")] {
+        let build = run_incan(
+            tmp.path(),
+            &[
+                "build",
+                main_arg,
+                "--locked",
+                "--no-default-features",
+                "--features",
+                feature,
+                "--sdk-profile",
+                profile,
+            ],
+        )?;
+        assert_failure(
+            &build,
+            &format!("locked build with drifted {feature}/{profile} projection"),
+        );
+        let stderr = String::from_utf8_lossy(&build.stderr);
+        assert!(
+            stderr.contains("incan.lock")
+                && stderr.contains("out of date")
+                && stderr.contains("package-feature or SDK-profile"),
+            "locked projection drift should fail as stale lock state:\n{stderr}"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn codegraph_importer_example_consumes_compiler_jsonl_issue776() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let source_dir = tmp.path().join("source");
+    fs::create_dir_all(&source_dir)?;
+    fs::write(
+        source_dir.join("incan.toml"),
+        r#"[project]
+name = "codegraph_importer_source"
+version = "0.1.0"
+"#,
+    )?;
+    let source_main = source_dir.join("main.incn");
+    fs::write(
+        &source_main,
+        r#"pub def greet(name: str) -> str:
+    return f"hello {name}"
+
+def main() -> None:
+    println(greet("Incan"))
+"#,
+    )?;
+
+    let graph = run_incan(
+        &source_dir,
+        &[
+            "inspect",
+            "codegraph",
+            source_main.to_str().ok_or("source path was not valid UTF-8")?,
+            "--format",
+            "jsonl",
+        ],
+    )?;
+    assert_success(&graph, "compiler codegraph export for importer example");
+    let graph_records = parse_jsonl_stdout(&graph)?;
+    assert_codegraph_v04_record_contract(&graph_records);
+
+    let importer_dir = tmp.path().join("importer");
+    let importer_src = importer_dir.join("src");
+    fs::create_dir_all(&importer_src)?;
+    fs::write(
+        importer_dir.join("incan.toml"),
+        include_str!("../examples/pro/codegraph_importer/incan.toml"),
+    )?;
+    fs::write(
+        importer_src.join("importer.incn"),
+        include_str!("../examples/pro/codegraph_importer/src/importer.incn"),
+    )?;
+    fs::write(
+        importer_src.join("main.incn"),
+        include_str!("../examples/pro/codegraph_importer/src/main.incn"),
+    )?;
+    fs::write(importer_dir.join("codegraph.jsonl"), &graph.stdout)?;
+
+    let first = run_incan(&importer_dir, &["run", "src/main.incn"])?;
+    assert_success(&first, "Incan-authored codegraph importer example");
+    let second = run_incan(&importer_dir, &["run", "src/main.incn"])?;
+    assert_success(&second, "second Incan-authored codegraph importer example");
+    assert_eq!(first.stdout, second.stdout, "importer summary must be deterministic");
+
+    let summary = parse_json_stdout(&first)?;
+    assert_eq!(summary["schema_version"], serde_json::json!(1));
+    assert_eq!(summary["mode"], serde_json::json!("strict"));
+    assert_eq!(summary["metadata_record_count"], serde_json::json!(1));
+    assert!(
+        summary["fact_count"].as_i64().is_some_and(|count| count > 0),
+        "importer must observe compiler-owned graph facts: {summary}"
+    );
+    assert!(
+        summary["declaration_count"].as_i64().is_some_and(|count| count > 0),
+        "importer must preserve declaration records without parsing source itself: {summary}"
+    );
 
     Ok(())
 }
@@ -3047,16 +4497,20 @@ edition = "2021"
     let default_lock_output = run_incan(tmp.path(), &["lock"])?;
     assert_success(&default_lock_output, "default incan lock");
 
-    let test_after_default_lock = run_incan(tmp.path(), &["test"])?;
-    assert_success(&test_after_default_lock, "incan test after default lock");
-    assert_no_stale_warning(&test_after_default_lock, "incan test after default lock");
+    let test_after_default_lock = run_incan(tmp.path(), &["test", "--locked"])?;
+    assert_success(&test_after_default_lock, "incan test --locked after default lock");
+    assert_no_stale_warning(&test_after_default_lock, "incan test --locked after default lock");
 
     let extra_after_default_lock = run_incan(
         tmp.path(),
-        &["run", extra_path.to_str().ok_or("extra path was not valid UTF-8")?],
+        &[
+            "run",
+            "--locked",
+            extra_path.to_str().ok_or("extra path was not valid UTF-8")?,
+        ],
     )?;
-    assert_success(&extra_after_default_lock, "incan run extra after default lock");
-    assert_no_stale_warning(&extra_after_default_lock, "incan run extra after default lock");
+    assert_success(&extra_after_default_lock, "incan run --locked extra after default lock");
+    assert_no_stale_warning(&extra_after_default_lock, "incan run --locked extra after default lock");
 
     let extra_lock_output = run_incan(
         tmp.path(),
@@ -3066,15 +4520,42 @@ edition = "2021"
 
     let extra_after_extra_lock = run_incan(
         tmp.path(),
-        &["run", extra_path.to_str().ok_or("extra path was not valid UTF-8")?],
+        &[
+            "run",
+            "--locked",
+            extra_path.to_str().ok_or("extra path was not valid UTF-8")?,
+        ],
     )?;
-    assert_success(&extra_after_extra_lock, "incan run extra after extra lock");
-    assert_no_stale_warning(&extra_after_extra_lock, "incan run extra after extra lock");
+    assert_success(&extra_after_extra_lock, "incan run --locked extra after extra lock");
+    assert_no_stale_warning(&extra_after_extra_lock, "incan run --locked extra after extra lock");
 
-    let test_after_extra_lock = run_incan(tmp.path(), &["test"])?;
-    assert_success(&test_after_extra_lock, "incan test after extra lock");
-    assert_no_stale_warning(&test_after_extra_lock, "incan test after extra lock");
+    let test_after_extra_lock = run_incan(tmp.path(), &["test", "--locked"])?;
+    assert_success(&test_after_extra_lock, "incan test --locked after extra lock");
+    assert_no_stale_warning(&test_after_extra_lock, "incan test --locked after extra lock");
 
+    Ok(())
+}
+
+#[test]
+fn run_generated_lock_is_accepted_by_test_locked() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let _main_path = write_minimal_project(tmp.path(), "cli_run_then_locked_test", "")?;
+    let tests_dir = tmp.path().join("tests");
+    fs::create_dir_all(&tests_dir)?;
+    fs::write(
+        tests_dir.join("test_main.incn"),
+        r#"from std.testing import assert_eq
+
+def test_answer() -> None:
+  assert_eq(6 * 7, 42)
+"#,
+    )?;
+
+    let run_output = run_incan(tmp.path(), &["run"])?;
+    assert_success(&run_output, "incan run that generates the project lock");
+
+    let test_output = run_incan(tmp.path(), &["test", "--locked"])?;
+    assert_success(&test_output, "incan test --locked after incan run");
     Ok(())
 }
 
@@ -3559,6 +5040,85 @@ where
         String::from_utf8_lossy(&output.stdout).trim(),
         "callbacks-built",
         "unexpected borrowed-slice callback output"
+    );
+    Ok(())
+}
+
+#[test]
+fn rust_method_into_bound_keeps_string_argument_inferable_issue804() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(
+        tmp.path(),
+        "cli_rust_method_into_bound",
+        r#"
+
+[rust-dependencies.into_method_helper]
+path = "rust/into_method_helper"
+"#,
+    )?;
+    fs::write(
+        &main_path,
+        r#"from rust::into_method_helper import Tokenizer
+
+def main() -> None:
+  tokenizer = Tokenizer.new()
+  println(tokenizer.encode("hello world", false))
+"#,
+    )?;
+
+    let helper_src = tmp.path().join("rust").join("into_method_helper").join("src");
+    fs::create_dir_all(&helper_src)?;
+    fs::write(
+        helper_src
+            .parent()
+            .ok_or("into_method_helper src has no parent")?
+            .join("Cargo.toml"),
+        r#"[package]
+name = "into_method_helper"
+version = "0.1.0"
+edition = "2021"
+"#,
+    )?;
+    fs::write(
+        helper_src.join("lib.rs"),
+        r#"pub struct Tokenizer;
+
+impl Tokenizer {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn encode<E: Into<String>>(&self, input: E, uppercase: bool) -> String {
+        let text = input.into();
+        if uppercase {
+            text.to_uppercase()
+        } else {
+            text
+        }
+    }
+}
+"#,
+    )?;
+
+    let output = run_incan(
+        tmp.path(),
+        &["run", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(&output, "incan run with a Rust Into-bound method argument");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "hello world",
+        "Rust Into-bound method should receive the original string type"
+    );
+
+    let generated = fs::read_to_string(tmp.path().join("target/incan/cli_rust_method_into_bound/src/main.rs"))?;
+    assert!(
+        generated.contains("tokenizer.encode(\"hello world\", false)"),
+        "unresolved Rust method generic should preserve the string literal shape, got:\n{generated}"
+    );
+    assert!(
+        !generated.contains("tokenizer.encode(\"hello world\".into(), false)"),
+        "unresolved Rust method generic must not emit an ambiguous `.into()`, got:\n{generated}"
     );
     Ok(())
 }
@@ -5496,6 +7056,51 @@ def main() -> None:
 }
 
 #[test]
+fn build_locked_map_err_string_literal_closure_issue880() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "map_err_string_literal_closure_issue880", "")?;
+    fs::write(
+        &main_path,
+        r#"from std.json import JsonValue
+
+def parse(source: str) -> Result[JsonValue, str]:
+    return JsonValue.parse(source).map_err((_error) => "malformed_json")
+
+def main() -> None:
+    match parse("{"):
+        Ok(_) => println("unexpected")
+        Err(error) => println(error)
+"#,
+    )?;
+
+    let lock_output = run_incan(
+        tmp.path(),
+        &["lock", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(&lock_output, "incan lock for map_err closure issue880");
+
+    let build_output = run_incan(
+        tmp.path(),
+        &[
+            "build",
+            "--locked",
+            main_path.to_str().ok_or("main path was not valid UTF-8")?,
+        ],
+    )?;
+    assert_success(&build_output, "incan build --locked for map_err closure issue880");
+
+    let generated = fs::read_to_string(
+        tmp.path()
+            .join("target/incan/map_err_string_literal_closure_issue880/src/main.rs"),
+    )?;
+    assert!(
+        generated.contains("map_err(|_error| \"malformed_json\".to_string())"),
+        "expected generated Rust to own the map_err closure literal, got:\n{generated}"
+    );
+    Ok(())
+}
+
+#[test]
 fn build_inline_fstring_rust_string_variant_issue716() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let helper_dir = tmp.path().join("rust").join("tiny_error");
@@ -7168,6 +8773,85 @@ def test_generic_callable_name_ignores_unrelated_signatures() -> None:
     assert_success(
         &test_output,
         "incan test for scoped generic callable-name planning issue701",
+    );
+    Ok(())
+}
+
+#[test]
+fn build_metadata_free_into_bound_tokenizer_encode_issue804() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let helper_dir = tmp.path().join("rust").join("tokenizers");
+    fs::create_dir_all(helper_dir.join("src"))?;
+    fs::write(
+        helper_dir.join("Cargo.toml"),
+        "[package]\nname = \"tokenizers\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    fs::write(
+        helper_dir.join("src").join("lib.rs"),
+        r#"pub struct Tokenizer;
+
+pub struct EncodeInput<'a>(&'a str);
+
+impl<'a> From<&'a str> for EncodeInput<'a> {
+    fn from(value: &'a str) -> Self {
+        Self(value)
+    }
+}
+
+impl Tokenizer {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn encode<'a, E>(&self, value: E, _add_special_tokens: bool) -> Result<(), ()>
+    where
+        E: Into<EncodeInput<'a>>,
+    {
+        let _ = value.into();
+        Ok(())
+    }
+}
+"#,
+    )?;
+    let main_path = write_minimal_project(
+        tmp.path(),
+        "metadata_free_into_bound_tokenizer_encode_issue804",
+        r#"
+[rust-dependencies]
+tokenizers = { path = "rust/tokenizers" }
+"#,
+    )?;
+    fs::write(
+        &main_path,
+        r#"from rust::tokenizers import Tokenizer
+
+def main() -> None:
+    tokenizer = Tokenizer.new()
+    literal = tokenizer.encode("literal", False)
+    text = "variable"
+    variable = tokenizer.encode(text, False)
+"#,
+    )?;
+
+    let build_output = run_incan(
+        tmp.path(),
+        &["build", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(
+        &build_output,
+        "incan build for metadata-free Into-bound tokenizer encode issue804",
+    );
+    let generated = fs::read_to_string(
+        tmp.path()
+            .join("target/incan/metadata_free_into_bound_tokenizer_encode_issue804/src/main.rs"),
+    )?;
+    assert!(
+        generated.contains("tokenizer.encode(\"literal\", false)"),
+        "literal must preserve its direct &str shape, got:\n{generated}"
+    );
+    assert!(
+        generated.contains("tokenizer.encode((text).as_str(), false)"),
+        "owned Incan strings must become &str for the Into-bound method, got:\n{generated}"
     );
     Ok(())
 }

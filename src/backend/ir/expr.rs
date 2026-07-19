@@ -443,6 +443,11 @@ pub enum IrInteropCoercionKind {
         /// Whether the Rust parameter requires `&mut` rather than a shared reference.
         mutable: bool,
     },
+    /// Borrow a value for a Rust trait-object parameter (`&dyn Trait` or `&mut dyn Trait`).
+    TraitObjectBorrow {
+        /// Whether Rust requires an exclusive mutable borrow.
+        mutable: bool,
+    },
 }
 
 /// Literal values for generated code
