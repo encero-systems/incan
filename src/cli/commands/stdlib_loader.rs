@@ -180,69 +180,16 @@ fn load_stdlib_module(path: &[String]) -> CliResult<StdlibModule> {
 
 /// Find the absolute path to a stdlib `.incn` file.
 ///
-/// Searches in the following locations (in order):
-/// 1. `$INCAN_STDLIB_DIR/<path>` (explicit override, runtime env var)
-/// 2. Workspace crate (compile-time): `$CARGO_MANIFEST_DIR/crates/incan_stdlib/<path>`
-/// 3. paths relative to the current executable, including installed toolchain layouts
-/// 4. CWD crate-relative: `crates/incan_stdlib/<path>`
-/// 5. CWD relative: `<path>`
-/// 6. Installed stdlib (runtime env var): `$INCAN_STDLIB_PATH/<path>`
-///
-/// Returns an error if the file cannot be found in any location.
+/// The shared toolchain-layout resolver gives explicit overrides priority, then considers the active source workspace,
+/// current project, executable-relative toolchain, and installed layout. Returns an error if the selected stdlib does
+/// not contain the requested file.
 fn find_stdlib_file(relative_path: &str) -> CliResult<PathBuf> {
-    // 1. Explicit override root (runtime)
-    if let Ok(dir) = std::env::var("INCAN_STDLIB_DIR") {
-        let p = PathBuf::from(dir).join(relative_path);
-        if p.exists() {
-            return Ok(p);
-        }
-    }
-
-    // 2. Development build: workspace-relative (compile-time path)
-    // CARGO_MANIFEST_DIR is the workspace root (where `incan` crate's Cargo.toml lives)
-    let workspace_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("crates/incan_stdlib")
-        .join(relative_path);
-    if workspace_path.exists() {
-        return Ok(workspace_path);
-    }
-
-    // 3. Relative to executable location, covering installed toolchains, symlinked launchers, and local target builds.
-    for base in crate::toolchain_layout::current_executable_search_bases() {
-        let crate_local = base.join("crates/incan_stdlib").join(relative_path);
-        if crate_local.exists() {
-            return Ok(crate_local);
-        }
-        let local = base.join(relative_path);
-        if local.exists() {
-            return Ok(local);
-        }
-    }
-
-    // 4-5. Relative to current working directory
-    if let Ok(cwd) = std::env::current_dir() {
-        let crate_local = cwd.join("crates/incan_stdlib").join(relative_path);
-        if crate_local.exists() {
-            return Ok(crate_local);
-        }
-        let local = cwd.join(relative_path);
-        if local.exists() {
-            return Ok(local);
-        }
-    }
-
-    // 6. Installed stdlib path (runtime, for production installs)
-    if let Ok(stdlib_root) = std::env::var("INCAN_STDLIB_PATH") {
-        let installed_path = PathBuf::from(stdlib_root).join(relative_path);
-        if installed_path.exists() {
-            return Ok(installed_path);
-        }
-    }
-
-    Err(CliError::failure(format!(
-        "Stdlib file not found: {} (searched INCAN_STDLIB_DIR, workspace, cwd, and INCAN_STDLIB_PATH)",
-        relative_path
-    )))
+    crate::toolchain_layout::find_stdlib_source_file(relative_path).ok_or_else(|| {
+        CliError::failure(format!(
+            "Stdlib file not found: {} (searched explicit overrides, workspace, executable, cwd, and installed layout)",
+            relative_path
+        ))
+    })
 }
 
 /// Extract all top-level import statements from a program.

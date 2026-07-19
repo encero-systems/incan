@@ -2,6 +2,8 @@
 
 This guide shows the practical project workflow: create a project, keep project metadata in `incan.toml`, bump the project version, and run repeatable commands through named environments.
 
+For repositories containing several Incan projects, use [Work with a multi-project workspace](workspaces.md) to configure members, select command scope, share dependency declarations, and publish one root lock.
+
 ## Create a project
 
 Use `incan new` when you want the CLI to create a new project directory:
