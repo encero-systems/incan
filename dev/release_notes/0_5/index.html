@@ -6425,6 +6425,7 @@
 </ul>
 <h2 id="bugfixes">Bugfixes<a class="headerlink" href="#bugfixes" title="Permanent link">&para;</a></h2>
 <ul>
+<li><strong>Workspaces</strong>: Rooted workspace library artifacts now retain the selected project's identity across Cargo package, Cargo library, and <code>.incnlib</code> metadata, while removing self-dependencies even with explicit output overrides so external consumers can compile the published package (#909).</li>
 <li><strong>Workspaces</strong>: Root library dependency preparation now targets exactly that project and leaves canonical lock publication to its parent command, preventing fresh rooted workspaces from recursively spawning <code>incan build --lib</code> until the machine is exhausted (#908).</li>
 <li><strong>Workspaces</strong>: Rooted-workspace entrypoints and tests now resolve through their deepest owning member, so selected member builds retain both direct and inherited Rust dependency versions (#907).</li>
 <li><strong>Workspaces</strong>: Canonical workspace locks now rebase nested package roots and feature edges into workspace-relative coordinates, keeping cross-member semantic state and fingerprints portable across checkout locations (#906).</li>
