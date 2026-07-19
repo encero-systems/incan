@@ -10,10 +10,7 @@ use super::super::super::decl::{
     IrEnum, IrEnumValue, IrEnumValueType, IrStruct, IrTypeParam, StructField, VariantFields,
 };
 use super::super::super::types::IrType;
-use super::super::{EmitError, IrEmitter};
-
-const SERDE_SERIALIZE_DERIVE: &str = "serde::Serialize";
-const SERDE_DESERIALIZE_DERIVE: &str = "serde::Deserialize";
+use super::super::{EmitError, IrEmitter, SERDE_DESERIALIZE_DERIVE, SERDE_SERIALIZE_DERIVE};
 
 impl<'a> IrEmitter<'a> {
     /// Emit a field-level expectation for private generated fields that must remain present for Incan semantics even
@@ -36,11 +33,23 @@ impl<'a> IrEmitter<'a> {
         let name = Self::rust_ident(&s.name);
         let vis = self.emit_visibility(&s.visibility);
 
+        let is_tuple_struct =
+            !s.fields.is_empty() && s.fields.iter().all(|f| f.name.chars().all(|c| c.is_ascii_digit()));
+        let checked_deserialize_plan = is_tuple_struct
+            .then(|| self.newtype_construction.get(&s.name))
+            .flatten()
+            .filter(|plan| {
+                s.derives.iter().any(|derive| derive == SERDE_DESERIALIZE_DERIVE)
+                    && (plan.checked_constructor.is_some() || !plan.constraints.is_empty())
+            });
+
         let derives: Vec<TokenStream> = s
             .derives
             .iter()
             // `Validate` is an Incan semantic derive (not a Rust derive macro).
             .filter(|d| derives::from_str(d.as_str()) != Some(DeriveId::Validate))
+            // Validated newtypes must reconstruct through their checked ingress rather than Serde's tuple derive.
+            .filter(|d| checked_deserialize_plan.is_none() || d.as_str() != SERDE_DESERIALIZE_DERIVE)
             .map(|d| match derives::from_str(d.as_str()) {
                 _ if d == derives::FIELD_INFO_DERIVE_NAME => quote! { incan_derive::FieldInfo },
                 _ if d == derives::INCAN_CLASS_DERIVE_NAME => quote! { incan_derive::IncanClass },
@@ -79,9 +88,6 @@ impl<'a> IrEmitter<'a> {
             .iter()
             .any(|d| d == SERDE_SERIALIZE_DERIVE || d == SERDE_DESERIALIZE_DERIVE);
 
-        let is_tuple_struct =
-            !s.fields.is_empty() && s.fields.iter().all(|f| f.name.chars().all(|c| c.is_ascii_digit()));
-
         // RFC 023: emit generic type parameters with trait bounds (declaration) and bare names (type positions).
         let generics = self.emit_type_params(&s.type_params);
         let generics_bare = self.emit_type_params_bare(&s.type_params);
@@ -115,10 +121,65 @@ impl<'a> IrEmitter<'a> {
             // Note: Constructor generation for newtypes is deferred until trait bound propagation
             // is implemented properly. For now, users must construct newtypes directly.
             let constructor_impl = quote! {};
+            let checked_deserialize_impl = if let Some(plan) = checked_deserialize_plan {
+                let deserialize_generics = self.emit_deserialize_type_params(&plan.type_params);
+                let underlying = self.emit_type(&plan.underlying);
+                let mut deserializer_name = "__IncanDeserializer".to_string();
+                while plan
+                    .type_params
+                    .iter()
+                    .any(|type_param| type_param.name == deserializer_name)
+                {
+                    deserializer_name.push('_');
+                }
+                let deserializer = Self::rust_ident(&deserializer_name);
+                let construction = if let Some(constructor) = &plan.checked_constructor {
+                    let constructor = Self::rust_ident(constructor);
+                    quote! {
+                        Self::#constructor(parsed).map_err(|error| serde::de::Error::custom(error))
+                    }
+                } else {
+                    let float_underlying = Self::newtype_underlying_is_float(&plan.underlying);
+                    let predicates = plan
+                        .constraints
+                        .iter()
+                        .map(|constraint| {
+                            Self::newtype_constraint_predicate(constraint, float_underlying, quote! { parsed })
+                        })
+                        .collect::<Vec<_>>();
+                    quote! {
+                        if #(#predicates)&&* {
+                            Ok(Self(parsed))
+                        } else {
+                            Err(serde::de::Error::custom(format!(
+                                "{} validation failed",
+                                stringify!(#name)
+                            )))
+                        }
+                    }
+                };
+                quote! {
+                    impl #deserialize_generics serde::Deserialize<'de> for #name #generics_bare
+                    where
+                        #underlying: serde::Deserialize<'de>,
+                    {
+                        fn deserialize<#deserializer>(deserializer: #deserializer) -> Result<Self, #deserializer::Error>
+                        where
+                            #deserializer: serde::Deserializer<'de>,
+                        {
+                            let parsed = <#underlying as serde::Deserialize<'de>>::deserialize(deserializer)?;
+                            #construction
+                        }
+                    }
+                }
+            } else {
+                quote! {}
+            };
 
             Ok(quote! {
                 #struct_def
                 #constructor_impl
+                #checked_deserialize_impl
                 #reflection_impls
             })
         } else {

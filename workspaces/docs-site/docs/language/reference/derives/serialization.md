@@ -169,6 +169,8 @@ newtype Email(str)
 
 Newtypes serialize to/from their underlying type's JSON representation.
 
+When a newtype defines the canonical `from_underlying` validation hook or primitive constraints, JSON deserialization reconstructs through that checked ingress. Invalid JSON values return `Err` instead of creating an invalid nominal value.
+
 ---
 
 ## Dynamic JSON fields

@@ -42,7 +42,7 @@ use super::super::expr::{
 use super::super::stmt::AssignTarget;
 use super::super::types::{IR_UNION_TYPE_NAME, IrType};
 use super::super::{FunctionRegistry, FunctionSignature, IrDecl, IrProgram, IrStmt, IrStmtKind, TypedExpr};
-use super::{CallableNameUseFacts, EmitError, GeneratedUseAnalysis, IrEmitter};
+use super::{CallableNameUseFacts, EmitError, GeneratedUseAnalysis, IrEmitter, SERDE_DESERIALIZE_DERIVE};
 
 struct OrdinalValueEnumBridgeSpec {
     type_path: TokenStream,
@@ -155,6 +155,27 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                         .or_default()
                         .push(impl_block);
                 }
+            }
+        }
+
+        // Checked Serde deserialization is compiler-generated rather than visible in the source IR. Retain and scan
+        // the canonical validation hook exactly as if the generated implementation had called it in source.
+        for (name, plan) in &program.newtype_construction {
+            let Some(constructor) = &plan.checked_constructor else {
+                continue;
+            };
+            let derives_deserialize = analyzer.declarations_by_name.get(name).is_some_and(|decl| {
+                matches!(
+                    &decl.kind,
+                    IrDeclKind::Struct(strukt)
+                        if strukt.derives.iter().any(|derive| derive == SERDE_DESERIALIZE_DERIVE)
+                )
+            });
+            if derives_deserialize {
+                analyzer
+                    .analysis
+                    .used_methods
+                    .insert((name.clone(), constructor.clone()));
             }
         }
 
@@ -1728,9 +1749,10 @@ impl<'a> IrEmitter<'a> {
     }
 
     /// Emit one constrained-newtype predicate against the parsed underlying value.
-    fn string_try_from_constraint_predicate(
+    pub(in crate::backend::ir::emit) fn newtype_constraint_predicate(
         constraint: &NewtypePrimitiveConstraint,
         float_underlying: bool,
+        value: TokenStream,
     ) -> TokenStream {
         let literal = if float_underlying {
             let value = proc_macro2::Literal::f64_unsuffixed(constraint.value as f64);
@@ -1740,15 +1762,15 @@ impl<'a> IrEmitter<'a> {
             quote! { #value }
         };
         match constraint.key {
-            TypeConstraintKey::Ge => quote! { parsed >= #literal },
-            TypeConstraintKey::Gt => quote! { parsed > #literal },
-            TypeConstraintKey::Le => quote! { parsed <= #literal },
-            TypeConstraintKey::Lt => quote! { parsed < #literal },
+            TypeConstraintKey::Ge => quote! { #value >= #literal },
+            TypeConstraintKey::Gt => quote! { #value > #literal },
+            TypeConstraintKey::Le => quote! { #value <= #literal },
+            TypeConstraintKey::Lt => quote! { #value < #literal },
         }
     }
 
     /// Return whether a newtype underlying type uses a floating-point Rust representation.
-    fn string_try_from_underlying_is_float(underlying: &IrType) -> bool {
+    pub(in crate::backend::ir::emit) fn newtype_underlying_is_float(underlying: &IrType) -> bool {
         matches!(underlying, IrType::Float)
             || matches!(
                 underlying,
@@ -1802,11 +1824,13 @@ impl<'a> IrEmitter<'a> {
                         .map_err(|_| format!("{} validation failed", stringify!(#name)))
                 }
             } else if !plan.constraints.is_empty() {
-                let float_underlying = Self::string_try_from_underlying_is_float(&plan.underlying);
+                let float_underlying = Self::newtype_underlying_is_float(&plan.underlying);
                 let predicates = plan
                     .constraints
                     .iter()
-                    .map(|constraint| Self::string_try_from_constraint_predicate(constraint, float_underlying))
+                    .map(|constraint| {
+                        Self::newtype_constraint_predicate(constraint, float_underlying, quote! { parsed })
+                    })
                     .collect::<Vec<_>>();
                 quote! {
                     if #(#predicates)&&* {

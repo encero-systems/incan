@@ -229,6 +229,28 @@ impl<'a> IrEmitter<'a> {
         quote! { < #(#params),* > }
     }
 
+    /// Emit an impl parameter list prefixed by Serde's deserialization lifetime.
+    pub(super) fn emit_deserialize_type_params(&self, type_params: &[super::super::decl::IrTypeParam]) -> TokenStream {
+        let params: Vec<TokenStream> = type_params
+            .iter()
+            .map(|tp| {
+                let name = format_ident!("{}", &tp.name);
+                if tp.bounds.is_empty() {
+                    quote! { #name }
+                } else {
+                    let bounds: Vec<TokenStream> = tp.bounds.iter().map(|b| self.emit_trait_bound(b)).collect();
+                    quote! { #name: #(#bounds)+* }
+                }
+            })
+            .collect();
+
+        if params.is_empty() {
+            quote! { <'de> }
+        } else {
+            quote! { <'de, #(#params),*> }
+        }
+    }
+
     /// Emit bare type parameter names without bounds: `<T, E>`.
     ///
     /// Used in type-application positions (return types, `impl Foo<T>`) where Rust does not allow trait bounds — only

@@ -27,6 +27,11 @@ mod types;
 
 pub use errors::EmitError;
 
+/// Rust derive path emitted for Serde serialization.
+pub(super) const SERDE_SERIALIZE_DERIVE: &str = "serde::Serialize";
+/// Rust derive path emitted for Serde deserialization.
+pub(super) const SERDE_DESERIALIZE_DERIVE: &str = "serde::Deserialize";
+
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
