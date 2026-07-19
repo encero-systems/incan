@@ -57,6 +57,7 @@ RFC 015 already has envs and scripts. RFC 075 lets capabilities advertise toolin
 - Allowing package install or import to run arbitrary setup hooks.
 - Defining exact syntax for every action kind in v1.
 - Defining AI model execution semantics in full. RFC 080 owns AI assets and model metadata.
+- Defining no-std/freestanding target profiles, kernel support, unsafe/layout controls, panic strategy, or allocator strategy. Action capability and receipt metadata may inform those later RFCs, but this RFC is not the freestanding/kernel RFC.
 - Requiring every project script to be converted to a typed action immediately.
 
 ## Guide-level explanation

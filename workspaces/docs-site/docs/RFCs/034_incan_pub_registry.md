@@ -314,6 +314,8 @@ If verification fails, `incan build` refuses to use the package and emits a clea
 | Dependency confusion | `pub::` import prefix makes origin unambiguous (RFC 031) |
 | Supply chain audit | Every publish recorded in Sigstore Rekor transparency log — public, append-only, external |
 
+RFC 079 generalizes this package-level integrity model for the wider `incan.pub` artifact graph. Package versions remain immutable artifacts covered by checksums and publisher signatures. Wider registry state such as yanks, advisories, ownership transfers, metadata updates, and graph relationships should be modeled as signed registry events over those immutable artifacts, not as a blockchain-backed core ledger.
+
 ### Consumer resolution flow
 
 When `incan build` encounters a registry dependency:

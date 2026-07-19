@@ -37,13 +37,13 @@ The near-term roadmap is therefore split into six release lanes:
 
 ### 0.4 Release: tooling, inspection, and first contact
 
-The 0.4 release direction is:
+The 0.4 release established the first-contact and inspection baseline:
 
 > 0.3 made real programs credible. 0.4 makes the stack tryable.
 
-The release is deliberately not a broad language/runtime reopening. It should make Incan easier to install, start, inspect, diagnose, and debug without requiring users or agents to clone the repository or reverse-engineer compiler internals. The release succeeds when a new evaluator can install Incan, create a starter project, understand failures through stable diagnostics, inspect generated artifacts and semantic graph facts, and see where Incan fits in the Encero stack.
+The release was deliberately not a broad language/runtime reopening. It made Incan easier to install, start, inspect, diagnose, and debug without requiring users or agents to clone the repository or reverse-engineer compiler internals. The release baseline is that a new evaluator can install Incan, create a starter project, understand failures through stable diagnostics, inspect generated artifacts and semantic graph facts, and see where Incan fits in the Encero stack.
 
-0.4 should land in seven stages:
+0.4 landed across seven stages:
 
 1. Scope guard, direction notes, and RFC inspectability prompts.
 2. Boundary identity and compact release-parity fixtures.
@@ -55,7 +55,7 @@ The release is deliberately not a broad language/runtime reopening. It should ma
 
 #### Release-gating work
 
-These issues define the minimum coherent 0.4 release surface:
+These issues defined the minimum coherent 0.4 release surface:
 
 - [#223](https://github.com/encero-systems/incan/issues/223): umbrella delivery issue for the tooling, inspection, and first-contact release.
 - [#554](https://github.com/encero-systems/incan/issues/554): release direction notes and scope guard.
@@ -80,7 +80,7 @@ No current 0.4 milestone item remains in this bucket. Generated-library preheat 
 
 #### Explicit 0.4 exclusions
 
-The following are design constraints and future lanes, not 0.4 implementation slices unless the milestone is deliberately changed:
+The following were kept as design constraints and future lanes, not 0.4 implementation slices:
 
 - RFC 037 `std.web` and RFC 066 `std.http` implementation work.
 - Source-local feature metadata beyond maintaining the generated feature inventory for public 0.4 capabilities.
