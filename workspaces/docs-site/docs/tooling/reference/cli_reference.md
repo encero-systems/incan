@@ -612,7 +612,7 @@ Resolves all dependencies (manifest + inline + test files) and generates or upda
 
 If `FILE` is omitted, uses the `[project.scripts].main` entry from `incan.toml`.
 
-Inside a workspace, `incan lock` always resolves every member's effective dependencies and publishes the one canonical root `incan.lock`, even when invoked from one member. It does not create or consume member-local locks. Cooperative publishers serialize generation and publication with a stable sibling advisory lock and replace the completed root lock atomically after synchronizing its staged contents.
+Inside a workspace, `incan lock` always resolves every member's effective dependencies and publishes the one canonical root `incan.lock`, even when invoked from one member. It does not create or consume member-local locks. Cooperative publishers serialize generation and publication with a stable advisory lock under compiler-owned `target/incan_lock` state and replace the completed root lock atomically after synchronizing its staged contents. If a legacy project-root `.incan.lock.incan.lock` already exists, new compilers acquire it before the hidden guard so an older compiler still using that inode remains serialized. A project without the legacy sidecar uses the new protocol directly; do not start an older compiler concurrently after removing that legacy file.
 
 Because the lock refresh covers every member, command-local `--features`, `--no-default-features`, `--all-features`, and `--sdk-profile` selections apply to every member projection in that refresh. A requested public feature must therefore be declared by each workspace member; use member manifests for different persistent per-member selections.
 

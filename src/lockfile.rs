@@ -20,6 +20,7 @@ use crate::provider::{
 
 const LOCKFILE_FORMAT_VERSION: u32 = 2;
 const LEGACY_LOCKFILE_FORMAT_VERSION: u32 = 1;
+const PUBLICATION_LOCK_STATE_DIR: &str = "target/incan_lock";
 
 #[derive(Debug, thiserror::Error)]
 pub enum LockfileError {
@@ -61,6 +62,12 @@ pub struct IncanLock {
     pub cargo_features: CargoFeatureSelection,
     pub semantic: SemanticLockState,
     pub cargo_lock_payload: String,
+}
+
+/// Advisory guards retained for one canonical lockfile publication critical section.
+pub(crate) struct PublicationLock {
+    _legacy: Option<File>,
+    _active: File,
 }
 
 /// Backend-neutral graph inputs whose resolution can change checking or generated output.
@@ -151,11 +158,11 @@ impl IncanLock {
         parse_lockfile(&content, path)
     }
 
-    /// Render and crash-safely publish this lockfile at `path` using the RFC 112 sibling-lock protocol.
+    /// Render and crash-safely publish this lockfile at `path` using the RFC 112 publication protocol.
     ///
     /// The method stages complete contents beside the destination, synchronizes them, atomically replaces the target,
-    /// then requests parent-directory synchronization. Concurrent cooperative publishers serialize on a stable sibling
-    /// lock entry, so callers either observe the prior complete lockfile or the new complete lockfile.
+    /// then requests parent-directory synchronization. Concurrent cooperative publishers serialize on a stable lock in
+    /// compiler-owned target state, so callers either observe the prior complete lockfile or the new complete lockfile.
     pub fn write(&self, path: &Path) -> Result<(), LockfileError> {
         let publication_lock = acquire_publication_lock(path).map_err(|e| LockfileError::Write {
             path: path.to_path_buf(),
@@ -164,11 +171,15 @@ impl IncanLock {
         self.write_while_locked(path, &publication_lock)
     }
 
-    /// Publish this lockfile while the caller retains the matching RFC 112 sibling lock.
+    /// Publish this lockfile while the caller retains the matching RFC 112 publication lock.
     ///
     /// Workspace lock generation holds this guard across resolution and Cargo lockfile generation as well as the final
     /// publish, preventing concurrent commands from sharing the generated-project staging directory.
-    pub(crate) fn write_while_locked(&self, path: &Path, publication_lock: &File) -> Result<(), LockfileError> {
+    pub(crate) fn write_while_locked(
+        &self,
+        path: &Path,
+        publication_lock: &PublicationLock,
+    ) -> Result<(), LockfileError> {
         let raw = RawIncanLock {
             incan: RawIncanMeta {
                 format: self.format,
@@ -432,12 +443,12 @@ fn digest_bytes(bytes: &[u8]) -> String {
     format!("sha256:{}", hex::encode(hasher.finalize()))
 }
 
-/// Publish a complete lockfile while holding the stable sibling lock identity specified by RFC 112.
+/// Publish a complete lockfile while holding the stable publication-lock identity specified by RFC 112.
 ///
 /// This is compiler-host infrastructure: `incan lock` runs before any user program exists, so it cannot invoke the
-/// generated Incan `std.fs` library directly. The operation intentionally mirrors its public recipe—exclusive sibling
+/// generated Incan `std.fs` library directly. The operation intentionally mirrors its public recipe—exclusive stable
 /// lock, same-directory exclusive staging, content synchronization, atomic replacement, then parent synchronization.
-fn publish_lockfile(path: &Path, content: &[u8], _publication_lock: &File) -> io::Result<()> {
+fn publish_lockfile(path: &Path, content: &[u8], _publication_lock: &PublicationLock) -> io::Result<()> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let (staged_path, mut staged_file) = create_staged_lockfile(path)?;
 
@@ -456,16 +467,23 @@ fn publish_lockfile(path: &Path, content: &[u8], _publication_lock: &File) -> io
     result
 }
 
-/// Retain the sibling lock descriptor for the entire publication critical section.
-pub(crate) fn acquire_publication_lock(path: &Path) -> io::Result<File> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    let file_name = path.file_name().ok_or_else(|| {
+/// Retain the compiler-owned lock descriptor for the entire publication critical section.
+///
+/// The persistent advisory-lock file lives below `target/incan_lock`, which is already compiler-owned ignored state,
+/// rather than beside `incan.lock` in the project root. When an older compiler has already created the legacy sibling,
+/// new compilers acquire that inode first and retain it alongside the active guard. This preserves mixed-version
+/// exclusion without creating or unlinking legacy project-root state on clean projects. A project with no legacy inode
+/// is an intentional protocol cutover: an older compiler started later cannot discover the new hidden guard.
+pub(crate) fn acquire_publication_lock(path: &Path) -> io::Result<PublicationLock> {
+    let legacy = acquire_legacy_publication_lock_if_present(path)?;
+    let lock_path = publication_lock_path(path)?;
+    let lock_parent = lock_path.parent().ok_or_else(|| {
         io::Error::new(
             ErrorKind::InvalidInput,
-            "lockfile publication requires a target path with a final component",
+            "lockfile publication state requires a parent directory",
         )
     })?;
-    let lock_path = parent.join(format!(".{}.incan.lock", file_name.to_string_lossy()));
+    fs::create_dir_all(lock_parent)?;
     let file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -473,7 +491,48 @@ pub(crate) fn acquire_publication_lock(path: &Path) -> io::Result<File> {
         .truncate(false)
         .open(lock_path)?;
     file.lock()?;
-    Ok(file)
+    Ok(PublicationLock {
+        _legacy: legacy,
+        _active: file,
+    })
+}
+
+/// Resolve the stable compiler-owned advisory-lock path for one published lockfile.
+fn publication_lock_path(path: &Path) -> io::Result<PathBuf> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = path.file_name().ok_or_else(|| {
+        io::Error::new(
+            ErrorKind::InvalidInput,
+            "lockfile publication requires a target path with a final component",
+        )
+    })?;
+    Ok(parent
+        .join(PUBLICATION_LOCK_STATE_DIR)
+        .join(format!(".{}.publication.lock", file_name.to_string_lossy())))
+}
+
+/// Acquire the old project-root guard when it already exists, without creating or unlinking that inode.
+fn acquire_legacy_publication_lock_if_present(path: &Path) -> io::Result<Option<File>> {
+    let legacy_path = legacy_publication_lock_path(path)?;
+    let file = match OpenOptions::new().read(true).write(true).open(legacy_path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    file.lock()?;
+    Ok(Some(file))
+}
+
+/// Resolve the sibling advisory-lock path used by compilers predating issue #912.
+fn legacy_publication_lock_path(path: &Path) -> io::Result<PathBuf> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = path.file_name().ok_or_else(|| {
+        io::Error::new(
+            ErrorKind::InvalidInput,
+            "lockfile publication requires a target path with a final component",
+        )
+    })?;
+    Ok(parent.join(format!(".{}.incan.lock", file_name.to_string_lossy())))
 }
 
 /// Create one unique same-directory staging file, guaranteeing that rename uses the target filesystem.
@@ -737,6 +796,12 @@ mod tests {
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
+    const PUBLICATION_LOCK_HELPER_MODE_ENV: &str = "INCAN_TEST_PUBLICATION_LOCK_HELPER_MODE";
+    const PUBLICATION_LOCK_HELPER_PATH_ENV: &str = "INCAN_TEST_PUBLICATION_LOCK_HELPER_PATH";
+    const PUBLICATION_LOCK_HELPER_ATTEMPT_ENV: &str = "INCAN_TEST_PUBLICATION_LOCK_HELPER_ATTEMPT";
+    const PUBLICATION_LOCK_HELPER_READY_ENV: &str = "INCAN_TEST_PUBLICATION_LOCK_HELPER_READY";
+    const PUBLICATION_LOCK_HELPER_RELEASE_ENV: &str = "INCAN_TEST_PUBLICATION_LOCK_HELPER_RELEASE";
+
     fn sample_spec(name: &str, features: Vec<&str>) -> DependencySpec {
         DependencySpec {
             crate_name: name.to_string(),
@@ -747,6 +812,222 @@ mod tests {
             optional: false,
             package: None,
         }
+    }
+
+    /// Run the child side of deterministic cross-process publication-lock tests.
+    #[test]
+    fn publication_lock_process_helper() -> TestResult {
+        let Some(mode) = std::env::var_os(PUBLICATION_LOCK_HELPER_MODE_ENV) else {
+            return Ok(());
+        };
+        let lock_path = required_helper_path(PUBLICATION_LOCK_HELPER_PATH_ENV)?;
+        let attempt_path = required_helper_path(PUBLICATION_LOCK_HELPER_ATTEMPT_ENV)?;
+        let ready_path = required_helper_path(PUBLICATION_LOCK_HELPER_READY_ENV)?;
+        let release_path = required_helper_path(PUBLICATION_LOCK_HELPER_RELEASE_ENV)?;
+        let mode = mode.to_string_lossy();
+
+        fs::write(&attempt_path, b"attempt")?;
+        let (_legacy_guard, _active_guard) = if mode == "legacy-holder" {
+            let file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(legacy_publication_lock_path(&lock_path)?)?;
+            file.lock()?;
+            (Some(file), None)
+        } else {
+            (None, Some(acquire_publication_lock(&lock_path)?))
+        };
+        fs::write(&ready_path, b"ready")?;
+
+        if mode.ends_with("holder") {
+            wait_for_helper_path(&release_path, std::time::Duration::from_secs(10))?;
+        }
+        Ok(())
+    }
+
+    /// Read one required helper path from the child-process environment.
+    fn required_helper_path(key: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        std::env::var_os(key)
+            .map(PathBuf::from)
+            .ok_or_else(|| format!("missing required publication-lock helper environment variable {key}").into())
+    }
+
+    /// Wait for one helper-process synchronization path with a bounded timeout.
+    fn wait_for_helper_path(path: &Path, timeout: std::time::Duration) -> TestResult {
+        let started = std::time::Instant::now();
+        while !path.exists() {
+            if started.elapsed() >= timeout {
+                return Err(format!("timed out waiting for publication-lock helper path {}", path.display()).into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        Ok(())
+    }
+
+    /// Spawn this unit-test binary as one OS-process publication-lock helper.
+    fn spawn_publication_lock_helper(
+        mode: &str,
+        lock_path: &Path,
+        attempt_path: &Path,
+        ready_path: &Path,
+        release_path: &Path,
+    ) -> Result<std::process::Child, Box<dyn std::error::Error>> {
+        Ok(std::process::Command::new(std::env::current_exe()?)
+            .args([
+                "--exact",
+                "lockfile::tests::publication_lock_process_helper",
+                "--nocapture",
+            ])
+            .env(PUBLICATION_LOCK_HELPER_MODE_ENV, mode)
+            .env(PUBLICATION_LOCK_HELPER_PATH_ENV, lock_path)
+            .env(PUBLICATION_LOCK_HELPER_ATTEMPT_ENV, attempt_path)
+            .env(PUBLICATION_LOCK_HELPER_READY_ENV, ready_path)
+            .env(PUBLICATION_LOCK_HELPER_RELEASE_ENV, release_path)
+            .spawn()?)
+    }
+
+    /// Require one child helper to exit successfully within a bounded interval.
+    fn wait_for_helper_success(
+        child: &mut std::process::Child,
+        timeout: std::time::Duration,
+        context: &str,
+    ) -> TestResult {
+        let started = std::time::Instant::now();
+        loop {
+            if let Some(status) = child.try_wait()? {
+                return if status.success() {
+                    Ok(())
+                } else {
+                    Err(format!("{context} failed with status {status}").into())
+                };
+            }
+            if started.elapsed() >= timeout {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("{context} did not exit within {timeout:?}").into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    /// Prove two new compiler processes contend on the same hidden advisory-lock inode.
+    #[test]
+    fn publication_lock_blocks_a_second_process_until_release() -> TestResult {
+        let project = tempfile::tempdir()?;
+        let lock_path = project.path().join("incan.lock");
+        let holder_attempt = project.path().join("holder.attempt");
+        let holder_ready = project.path().join("holder.ready");
+        let contender_attempt = project.path().join("contender.attempt");
+        let contender_ready = project.path().join("contender.ready");
+        let release = project.path().join("release");
+        let mut holder =
+            spawn_publication_lock_helper("active-holder", &lock_path, &holder_attempt, &holder_ready, &release)?;
+        if let Err(error) = wait_for_helper_path(&holder_ready, std::time::Duration::from_secs(10)) {
+            let _ = holder.kill();
+            let _ = holder.wait();
+            return Err(error);
+        }
+
+        let mut contender = spawn_publication_lock_helper(
+            "active-contender",
+            &lock_path,
+            &contender_attempt,
+            &contender_ready,
+            &release,
+        )?;
+        if let Err(error) = wait_for_helper_path(&contender_attempt, std::time::Duration::from_secs(10)) {
+            let _ = fs::write(&release, b"release");
+            let _ = holder.kill();
+            let _ = holder.wait();
+            let _ = contender.kill();
+            let _ = contender.wait();
+            return Err(error);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        let contender_was_blocked = !contender_ready.exists();
+        fs::write(&release, b"release")?;
+
+        let holder_result = wait_for_helper_success(
+            &mut holder,
+            std::time::Duration::from_secs(10),
+            "active publication-lock holder",
+        );
+        let contender_result = wait_for_helper_success(
+            &mut contender,
+            std::time::Duration::from_secs(10),
+            "active publication-lock contender",
+        );
+        holder_result?;
+        contender_result?;
+        assert!(
+            contender_was_blocked,
+            "the contender acquired the active guard before release"
+        );
+        Ok(())
+    }
+
+    /// Prove a new compiler waits on a pre-existing lock held through the legacy protocol.
+    #[test]
+    fn publication_lock_coordinates_with_an_existing_legacy_process() -> TestResult {
+        let project = tempfile::tempdir()?;
+        let lock_path = project.path().join("incan.lock");
+        fs::write(legacy_publication_lock_path(&lock_path)?, [])?;
+        let holder_attempt = project.path().join("legacy-holder.attempt");
+        let holder_ready = project.path().join("legacy-holder.ready");
+        let contender_attempt = project.path().join("active-contender.attempt");
+        let contender_ready = project.path().join("active-contender.ready");
+        let release = project.path().join("legacy-release");
+        let mut holder =
+            spawn_publication_lock_helper("legacy-holder", &lock_path, &holder_attempt, &holder_ready, &release)?;
+        if let Err(error) = wait_for_helper_path(&holder_ready, std::time::Duration::from_secs(10)) {
+            let _ = holder.kill();
+            let _ = holder.wait();
+            return Err(error);
+        }
+
+        let mut contender = spawn_publication_lock_helper(
+            "active-contender",
+            &lock_path,
+            &contender_attempt,
+            &contender_ready,
+            &release,
+        )?;
+        if let Err(error) = wait_for_helper_path(&contender_attempt, std::time::Duration::from_secs(10)) {
+            let _ = fs::write(&release, b"release");
+            let _ = holder.kill();
+            let _ = holder.wait();
+            let _ = contender.kill();
+            let _ = contender.wait();
+            return Err(error);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        let contender_was_blocked = !contender_ready.exists();
+        fs::write(&release, b"release")?;
+
+        let holder_result = wait_for_helper_success(
+            &mut holder,
+            std::time::Duration::from_secs(10),
+            "legacy publication-lock holder",
+        );
+        let contender_result = wait_for_helper_success(
+            &mut contender,
+            std::time::Duration::from_secs(10),
+            "mixed-version publication-lock contender",
+        );
+        holder_result?;
+        contender_result?;
+        assert!(
+            contender_was_blocked,
+            "the new compiler did not wait for the existing legacy guard"
+        );
+        assert!(
+            project
+                .path()
+                .join("target/incan_lock/.incan.lock.publication.lock")
+                .is_file(),
+            "the new compiler must acquire its active hidden guard after the legacy guard releases"
+        );
+        Ok(())
     }
 
     #[test]
@@ -850,6 +1131,43 @@ mod tests {
         assert_eq!(loaded.deps_fingerprint, "sha256:deadbeef");
         assert_eq!(loaded.cargo_features.cargo_features, vec!["alpha".to_string()]);
         assert!(loaded.cargo_lock_payload.contains("package"));
+        Ok(())
+    }
+
+    #[test]
+    fn publication_lock_lives_in_compiler_owned_target_state() -> TestResult {
+        let project = tempfile::tempdir()?;
+        let lock_path = project.path().join("incan.lock");
+
+        drop(acquire_publication_lock(&lock_path)?);
+        drop(acquire_publication_lock(&lock_path)?);
+
+        assert!(
+            project
+                .path()
+                .join("target/incan_lock/.incan.lock.publication.lock")
+                .is_file()
+        );
+        assert!(
+            !project.path().join(".incan.lock.incan.lock").exists(),
+            "lock publication must not create a persistent project-root sidecar"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn publication_lock_does_not_unlink_a_legacy_lock_inode() -> TestResult {
+        let project = tempfile::tempdir()?;
+        let lock_path = project.path().join("incan.lock");
+        let legacy_lock_path = project.path().join(".incan.lock.incan.lock");
+        fs::write(&legacy_lock_path, [])?;
+
+        drop(acquire_publication_lock(&lock_path)?);
+
+        assert!(
+            legacy_lock_path.is_file(),
+            "a new compiler must not unlink an inode that an older compiler may still hold"
+        );
         Ok(())
     }
 

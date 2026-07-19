@@ -4,7 +4,7 @@
 //! Used by both `incan lock` and the build pipeline.
 
 use std::collections::BTreeSet;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -23,8 +23,8 @@ use crate::frontend::ast::{Declaration, ImportKind};
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::{diagnostics, lexer, parser};
 use crate::lockfile::{
-    CargoFeatureSelection, IncanLock, SemanticLockState, compute_resolved_fingerprint, semantic_lock_state,
-    workspace_semantic_lock_state,
+    CargoFeatureSelection, IncanLock, PublicationLock, SemanticLockState, compute_resolved_fingerprint,
+    semantic_lock_state, workspace_semantic_lock_state,
 };
 use crate::manifest::{DependencySpec, ProjectManifest};
 use crate::provider::{
@@ -1598,7 +1598,7 @@ pub(crate) fn generate_lockfile(
     cargo_features: &CargoFeatureSelection,
     cargo_policy: &CargoPolicy,
     semantic: &SemanticLockState,
-    publication_lock: Option<&File>,
+    publication_lock: Option<&PublicationLock>,
     #[cfg(feature = "rust_inspect")] rust_inspect_query_paths: &[String],
 ) -> CliResult<IncanLock> {
     let lock_path = project_root.join("incan.lock");

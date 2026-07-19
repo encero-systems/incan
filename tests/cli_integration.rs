@@ -1527,6 +1527,16 @@ fn workspace_lock_concurrent_publishers_leave_one_parseable_root_lock() -> Resul
     let lock = incan::lockfile::IncanLock::load(&lock_path)?;
     assert!(!lock.deps_fingerprint.is_empty());
     assert!(
+        root.path()
+            .join("target/incan_lock/.incan.lock.publication.lock")
+            .is_file(),
+        "concurrent publishers must share one stable compiler-owned publication lock"
+    );
+    assert!(
+        !root.path().join(".incan.lock.incan.lock").exists(),
+        "concurrent lock publication must not leave a persistent project-root sidecar"
+    );
+    assert!(
         fs::read_dir(root.path())?
             .filter_map(Result::ok)
             .all(|entry| !entry.file_name().to_string_lossy().contains(".incan-stage-")),
