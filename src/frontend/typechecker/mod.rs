@@ -247,6 +247,8 @@ pub struct TypeChecker {
     pub(crate) current_module_function_symbols: HashMap<String, SymbolId>,
     /// Transparent source type aliases, keyed by their local type name.
     pub(crate) type_aliases: HashMap<String, TypeAliasTarget>,
+    /// Previous type-alias bindings changed while dependency imports are collected transactionally.
+    dependency_import_type_alias_transaction: Option<HashMap<String, Option<TypeAliasTarget>>>,
     /// Declaration-order index for each local static binding.
     pub(crate) static_decl_positions: HashMap<String, usize>,
     /// Const evaluation state machine.
@@ -313,6 +315,8 @@ pub struct TypeChecker {
     /// Tracks which `pub::` libraries have already seeded the internal transitive semantic caches for this checker
     /// run.
     pub(crate) cached_pub_libraries: HashSet<String>,
+    /// Whether a manual [`Self::import_module`] call prepared dependency-only semantics for the next program check.
+    dependency_semantics_pending: bool,
     /// Module path for the program being checked (if known).
     pub(crate) current_module_path: Option<Vec<String>>,
     /// Source import aliases with declaration origins known from the dependency import graph.
@@ -412,6 +416,7 @@ impl TypeChecker {
             local_function_decls: HashMap::new(),
             current_module_function_symbols: HashMap::new(),
             type_aliases: HashMap::new(),
+            dependency_import_type_alias_transaction: None,
             static_decl_positions: HashMap::new(),
             const_eval_state: HashMap::new(),
             const_eval_cache: HashMap::new(),
@@ -431,6 +436,7 @@ impl TypeChecker {
             transitive_stdlib_stub_types: HashMap::new(),
             transitive_stdlib_stub_traits: HashMap::new(),
             cached_pub_libraries: HashSet::new(),
+            dependency_semantics_pending: false,
             current_module_path: None,
             source_import_targets: HashMap::new(),
             declared_crate_names: None,
@@ -4051,6 +4057,22 @@ impl TypeChecker {
     /// For multi-module projects, call [`import_module`](Self::import_module) first to populate dependency symbols,
     /// or use [`check_with_imports`](Self::check_with_imports) to import dependencies first.
     pub fn check_program(&mut self, program: &Program) -> Result<(), Vec<CompileError>> {
+        let preserve_dependency_semantics = std::mem::take(&mut self.dependency_semantics_pending);
+        self.check_program_internal(program, preserve_dependency_semantics)
+    }
+
+    /// Check one program while retaining semantic-only type metadata collected from its dependency imports.
+    fn check_program_with_dependency_semantics(&mut self, program: &Program) -> Result<(), Vec<CompileError>> {
+        self.dependency_semantics_pending = false;
+        self.check_program_internal(program, true)
+    }
+
+    /// Shared program checker with explicit control over dependency-only semantic caches.
+    fn check_program_internal(
+        &mut self,
+        program: &Program,
+        preserve_dependency_semantics: bool,
+    ) -> Result<(), Vec<CompileError>> {
         // Reset per-run caches.
         self.const_decls.clear();
         self.static_decls.clear();
@@ -4071,10 +4093,12 @@ impl TypeChecker {
         self.surface_context = SurfaceContext::from_program(program);
         self.import_aliases = self.surface_context.import_aliases().clone();
         self.supertrait_closure.clear();
-        self.transitive_pub_types.clear();
-        self.public_library_type_identities.clear();
-        self.transitive_pub_traits.clear();
-        self.cached_pub_libraries.clear();
+        if !preserve_dependency_semantics {
+            self.transitive_pub_types.clear();
+            self.public_library_type_identities.clear();
+            self.transitive_pub_traits.clear();
+            self.cached_pub_libraries.clear();
+        }
         self.validate_alias_declarations(program);
 
         // `check_with_imports` / `import_module` can queue supertrait bounds while collecting dependency ASTs.
@@ -4150,6 +4174,17 @@ impl TypeChecker {
         self.surface_context = SurfaceContext::from_program(module_ast);
         self.import_aliases = self.surface_context.import_aliases().clone();
 
+        // Imports are lexical rather than exported, but public declaration signatures may depend on their exact type
+        // metadata. Collect them temporarily, then restore only the names they introduced after the public surface has
+        // been cached.
+        self.begin_dependency_import_binding_transaction();
+        for decl in &module_ast.declarations {
+            if matches!(decl.node, Declaration::Import(_)) {
+                self.collect_declaration(decl);
+            }
+        }
+        let (imported_symbol_bindings, imported_type_alias_bindings) =
+            self.finish_dependency_import_binding_transaction();
         // Collect only public declarations from the imported module.
         for decl in &module_ast.declarations {
             if is_public_decl(decl) && !matches!(decl.node, Declaration::Alias(_) | Declaration::Partial(_)) {
@@ -4170,6 +4205,28 @@ impl TypeChecker {
         self.register_dependency_derivable_metadata(_module_name, module_ast);
         self.cache_dependency_direct_member_symbols(_module_name, module_ast, true);
         self.cache_dependency_member_symbols(_module_name, module_ast, true);
+        let owned_names = module_ast
+            .declarations
+            .iter()
+            .filter(|decl| is_public_decl(decl))
+            .filter_map(declaration_name)
+            .collect::<HashSet<_>>();
+        let owned_type_alias_names = module_ast
+            .declarations
+            .iter()
+            .filter(|decl| is_public_decl(decl))
+            .filter_map(|decl| match &decl.node {
+                Declaration::TypeAlias(alias) => Some(alias.name.as_str()),
+                _ => None,
+            })
+            .collect::<HashSet<_>>();
+        self.restore_dependency_import_bindings(
+            imported_symbol_bindings,
+            imported_type_alias_bindings,
+            &owned_names,
+            &owned_type_alias_names,
+        );
+        self.dependency_semantics_pending = true;
         self.surface_context = previous_surface_context;
         self.import_aliases = previous_import_aliases;
         self.current_module_function_symbols = previous_module_function_symbols;
@@ -4186,8 +4243,22 @@ impl TypeChecker {
         self.surface_context = SurfaceContext::from_program(module_ast);
         self.import_aliases = self.surface_context.import_aliases().clone();
 
+        // Dependency imports must be available while its declarations are collected so public signatures retain exact
+        // provider-owned type metadata. They still belong only to the dependency's lexical scope, so remember which
+        // root bindings they introduce and restore those names before the consumer program is collected.
+        self.begin_dependency_import_binding_transaction();
         for decl in &module_ast.declarations {
-            if !matches!(decl.node, Declaration::Alias(_) | Declaration::Partial(_)) {
+            if matches!(decl.node, Declaration::Import(_)) {
+                self.collect_declaration(decl);
+            }
+        }
+        let (imported_symbol_bindings, imported_type_alias_bindings) =
+            self.finish_dependency_import_binding_transaction();
+        for decl in &module_ast.declarations {
+            if !matches!(
+                decl.node,
+                Declaration::Import(_) | Declaration::Alias(_) | Declaration::Partial(_)
+            ) {
                 self.collect_declaration(decl);
             }
         }
@@ -4205,9 +4276,83 @@ impl TypeChecker {
         self.register_dependency_derivable_metadata(_module_name, module_ast);
         self.cache_dependency_direct_member_symbols(_module_name, module_ast, false);
         self.cache_dependency_member_symbols(_module_name, module_ast, false);
+        let owned_names = module_ast
+            .declarations
+            .iter()
+            .filter_map(declaration_name)
+            .collect::<HashSet<_>>();
+        let owned_type_alias_names = module_ast
+            .declarations
+            .iter()
+            .filter_map(|decl| match &decl.node {
+                Declaration::TypeAlias(alias) => Some(alias.name.as_str()),
+                _ => None,
+            })
+            .collect::<HashSet<_>>();
+        self.restore_dependency_import_bindings(
+            imported_symbol_bindings,
+            imported_type_alias_bindings,
+            &owned_names,
+            &owned_type_alias_names,
+        );
+        self.dependency_semantics_pending = true;
         self.surface_context = previous_surface_context;
         self.import_aliases = previous_import_aliases;
         self.current_module_function_symbols = previous_module_function_symbols;
+    }
+
+    /// Start a narrow transaction for source-visible bindings mutated while dependency imports are collected.
+    fn begin_dependency_import_binding_transaction(&mut self) {
+        self.symbols.begin_current_scope_binding_transaction();
+        debug_assert!(self.dependency_import_type_alias_transaction.is_none());
+        self.dependency_import_type_alias_transaction = Some(HashMap::new());
+    }
+
+    /// Finish the dependency import transaction and return the previous values of only the bindings it changed.
+    fn finish_dependency_import_binding_transaction(
+        &mut self,
+    ) -> (
+        HashMap<String, Option<SymbolId>>,
+        HashMap<String, Option<TypeAliasTarget>>,
+    ) {
+        (
+            self.symbols.finish_current_scope_binding_transaction(),
+            self.dependency_import_type_alias_transaction.take().unwrap_or_default(),
+        )
+    }
+
+    /// Record one type-alias binding before a dependency import changes it.
+    fn record_dependency_import_type_alias_before_change(&mut self, name: &str) {
+        let previous = self.type_aliases.get(name).cloned();
+        if let Some(transaction) = &mut self.dependency_import_type_alias_transaction {
+            transaction.entry(name.to_string()).or_insert(previous);
+        }
+    }
+
+    /// Remove dependency-lexical imports from the consumer scope while retaining dependency-owned declarations.
+    fn restore_dependency_import_bindings(
+        &mut self,
+        imported_symbol_bindings: HashMap<String, Option<SymbolId>>,
+        imported_type_alias_bindings: HashMap<String, Option<TypeAliasTarget>>,
+        owned_names: &HashSet<&str>,
+        owned_type_alias_names: &HashSet<&str>,
+    ) {
+        for (name, previous_binding) in imported_symbol_bindings {
+            if owned_names.contains(name.as_str()) {
+                continue;
+            }
+            self.symbols.restore_current_scope_binding(&name, previous_binding);
+        }
+        for (name, previous_alias) in imported_type_alias_bindings {
+            if owned_type_alias_names.contains(name.as_str()) {
+                continue;
+            }
+            if let Some(previous_alias) = previous_alias {
+                self.type_aliases.insert(name, previous_alias);
+            } else {
+                self.type_aliases.remove(&name);
+            }
+        }
     }
 
     /// Rebuild exact dependency-member caches after all dependency modules have been collected.
@@ -4635,6 +4780,11 @@ impl TypeChecker {
         program: &Program,
         dependencies: &[(&str, &Program)],
     ) -> Result<(), Vec<CompileError>> {
+        self.dependency_semantics_pending = false;
+        self.transitive_pub_types.clear();
+        self.public_library_type_identities.clear();
+        self.transitive_pub_traits.clear();
+        self.cached_pub_libraries.clear();
         self.dependency_exports.clear();
         self.dependency_member_symbols.clear();
         self.dependency_member_partial_projections.clear();
@@ -4662,7 +4812,7 @@ impl TypeChecker {
         self.refresh_dependency_member_symbols(dependencies, true);
 
         // Then check the main program
-        self.check_program(program)
+        self.check_program_with_dependency_semantics(program)
     }
 
     /// Check a program with dependencies, but allow importing private items.
@@ -4674,6 +4824,11 @@ impl TypeChecker {
         program: &Program,
         dependencies: &[(&str, &Program)],
     ) -> Result<(), Vec<CompileError>> {
+        self.dependency_semantics_pending = false;
+        self.transitive_pub_types.clear();
+        self.public_library_type_identities.clear();
+        self.transitive_pub_traits.clear();
+        self.cached_pub_libraries.clear();
         // Skip populating dependency exports so visibility checks are bypassed.
         self.dependency_exports.clear();
         self.dependency_member_symbols.clear();
@@ -4692,7 +4847,7 @@ impl TypeChecker {
             self.import_module_all(dep_ast, name);
         }
         self.refresh_dependency_member_symbols(dependencies, false);
-        self.check_program(program)
+        self.check_program_with_dependency_semantics(program)
     }
 
     // ========================================================================

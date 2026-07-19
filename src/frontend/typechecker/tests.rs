@@ -15451,6 +15451,91 @@ def wrong_provider() -> Widget:
 }
 
 #[test]
+fn test_dependency_import_does_not_leak_pub_bindings_into_consumer_issue898() {
+    let dependency = parse_program(
+        r#"
+from pub::mylib import Widget, make_widget
+
+pub def bridge() -> Widget:
+  return make_widget("ok")
+"#,
+        "#898 dependency",
+    );
+    let consumer = parse_program(
+        r#"
+from pub::mylib import Widget, make_widget
+from bridge import bridge
+
+def build() -> Widget:
+  _ = make_widget("direct")
+  return bridge()
+"#,
+        "#898 consumer",
+    );
+    let mut public_checker = TypeChecker::new();
+    public_checker.set_library_manifest_index(library_index_with_mylib_exports());
+    public_checker.import_module(&dependency, "bridge");
+
+    let public_result = public_checker.check_program(&consumer);
+
+    assert!(
+        public_result.is_ok(),
+        "public dependency-local bindings must not collide with explicit consumer imports, got: {:?}",
+        public_result.err()
+    );
+
+    let mut private_checker = TypeChecker::new();
+    private_checker.set_library_manifest_index(library_index_with_mylib_exports());
+    let private_result = private_checker.check_with_imports_allow_private(&consumer, &[("bridge", &dependency)]);
+
+    assert!(
+        private_result.is_ok(),
+        "private dependency-local bindings must not collide with explicit consumer imports, got: {:?}",
+        private_result.err()
+    );
+}
+
+#[test]
+fn test_dependency_import_does_not_leak_pub_type_alias_into_consumer_issue898() {
+    let dependency = parse_program(
+        r#"
+from pub::mylib import WidgetAlias, make_widget
+
+pub def bridge() -> WidgetAlias:
+  return make_widget("ok")
+"#,
+        "#898 alias dependency",
+    );
+    let consumer = parse_program(
+        r#"
+from pub::mylib import WidgetAlias
+from bridge import bridge
+
+def build() -> WidgetAlias:
+  return bridge()
+"#,
+        "#898 alias consumer",
+    );
+    let mut checker = TypeChecker::new();
+    checker.set_library_manifest_index(library_index_with_mylib_exports());
+    checker.import_module(&dependency, "bridge");
+
+    assert!(
+        !checker.type_aliases.contains_key("WidgetAlias"),
+        "the dependency's imported type alias must be removed before checking the consumer"
+    );
+    assert!(
+        checker.symbols.lookup("WidgetAlias").is_none(),
+        "the dependency's imported type-alias symbol must be removed before checking the consumer"
+    );
+
+    assert!(
+        checker.check_program(&consumer).is_ok(),
+        "the consumer must be able to import the same alias explicitly after the dependency transaction"
+    );
+}
+
+#[test]
 fn test_pub_import_module_alias_resolves_manifest_exports() {
     let source = r#"
 import pub::mylib as lib
