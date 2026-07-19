@@ -4,8 +4,14 @@
 use incan::frontend::typechecker::{ConstValue, TypeCheckInfo};
 use incan::frontend::{lexer, parser, typechecker};
 use incan_core::errors::IncanError;
-use incan_core::strings::{StringAccessError, str_char_at, str_concat, str_contains, str_slice};
-use incan_stdlib::strings::{str_concat as rt_str_concat, str_index as rt_str_index, str_slice as rt_str_slice};
+use incan_core::strings::{
+    StringAccessError, str_char_at, str_concat, str_contains, str_slice, str_slice_byte_range,
+    str_slice_from_byte_offset,
+};
+use incan_stdlib::strings::{
+    str_concat as rt_str_concat, str_index as rt_str_index, str_slice as rt_str_slice,
+    str_slice_byte_range as rt_str_slice_byte_range, str_slice_from_byte_offset as rt_str_slice_from_byte_offset,
+};
 
 fn run_const_eval_with_info(src: &str) -> Result<TypeCheckInfo, Vec<String>> {
     let tokens = lexer::lex(src).map_err(|errs| errs.into_iter().map(|e| e.message).collect::<Vec<_>>())?;
@@ -62,6 +68,10 @@ fn semantics_vs_runtime_index_and_slice() -> Result<(), StringAccessError> {
         str_slice(s, Some(-2), None, None)?
     );
 
+    // Host byte-span reconstruction remains separate from ordinary Unicode-scalar slices.
+    assert_eq!(rt_str_slice_byte_range(s, 1, 3), str_slice_byte_range(s, 1, 3)?);
+    assert_eq!(rt_str_slice_from_byte_offset(s, 3), str_slice_from_byte_offset(s, 3)?);
+
     // Methods parity
     assert_eq!(incan_stdlib::strings::str_upper("héllo"), "HÉLLO");
     assert_eq!(incan_stdlib::strings::str_lower("HÉLLO"), "héllo");
@@ -90,6 +100,18 @@ fn runtime_index_panics_on_oob() {
 #[should_panic(expected = "ValueError: slice step cannot be zero")]
 fn runtime_slice_panics_on_zero_step() {
     let _ = rt_str_slice("abc", None, None, Some(0));
+}
+
+#[test]
+#[should_panic(expected = "IndexError: string index out of range")]
+fn runtime_byte_range_panics_on_mid_codepoint() {
+    let _ = rt_str_slice_byte_range("é", 0, 1);
+}
+
+#[test]
+#[should_panic(expected = "IndexError: string index out of range")]
+fn runtime_byte_suffix_panics_on_mid_codepoint() {
+    let _ = rt_str_slice_from_byte_offset("é", 1);
 }
 
 #[test]

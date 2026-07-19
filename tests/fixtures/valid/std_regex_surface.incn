@@ -15,6 +15,10 @@ def show_span(value: Option[Tuple[int, int]]) -> str:
 def flip_name(caps: Captures) -> str:
     return f"{show(caps.group('last'))}, {show(caps.group('first'))}"
 
+def blank_match(_caps: Captures) -> str:
+    """Return one space for callable replacement coverage."""
+    return " "
+
 def run() -> Result[None, RegexError]:
     flags = Regex("^alpha$", ignore_case=true, multiline=true, dotall=true, verbose=true)?
     println(flags.is_match("ALPHA"))
@@ -75,6 +79,47 @@ def run() -> Result[None, RegexError]:
     println(name_re.replace_all_literal("Ada Lovelace", "$2, $1"))
     println(word_re.replacen("one two three", 2, "x"))
     println(word_re.replacen_literal("one two", 1, "$1"))
+
+    unicode_re = Regex("é")?
+    match unicode_re.find("beforeéafter"):
+        Some(found) =>
+            span_start, span_end = found.span()
+            println(f"{found.as_str()}@{found.start()}:{found.end()}|{span_start}:{span_end}")
+        None => println("missing-unicode-find")
+    match unicode_re.full_match("é"):
+        Some(_) => println("unicode-full")
+        None => println("missing-unicode-full")
+    println(unicode_re.replace("é;31m", " "))
+    println(unicode_re.replace_all("é;31m", " "))
+    println(unicode_re.replacen("é;31m", 1, " "))
+    println(unicode_re.replace_literal("é;31m", " "))
+    println(unicode_re.replace_all_literal("é;31m", " "))
+    println(unicode_re.replacen_literal("é;31m", 1, " "))
+    println(unicode_re.replace("é;31m", blank_match))
+    println(unicode_re.replace_all("é;31m", blank_match))
+    println(unicode_re.replacen("é;31m", 1, blank_match))
+    println(unicode_re.replace_all("é;é!", " "))
+    println(unicode_re.replace_all("é;é!", blank_match))
+    println(comma_re.replace_all("é,a", "|"))
+
+    control_re = Regex("\\p{Cc}")?
+    # U+009B is intentionally literal here so this is the exact C1 regression from #893.
+    println(control_re.replace_all("before;31mafter", " "))
+
+    mut unicode_parts: list[str] = []
+    for part in unicode_re.split("beforeé;31m"):
+        unicode_parts.append(part)
+    println("|".join(unicode_parts))
+
+    mut limited_unicode_parts: list[str] = []
+    for part in unicode_re.splitn("beforeé;31m", 2):
+        limited_unicode_parts.append(part)
+    println("|".join(limited_unicode_parts))
+
+    mut repeated_unicode_parts: list[str] = []
+    for part in unicode_re.split("é;é!"):
+        repeated_unicode_parts.append(part)
+    println("|".join(repeated_unicode_parts))
     return Ok(None)
 
 def main() -> None:

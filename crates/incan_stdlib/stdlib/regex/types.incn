@@ -7,6 +7,7 @@ Incan callers: matches, capture sets, and iterators over collected results.
 
 from std.derives.collection import Iterator
 from std.derives.copying import Clone
+from rust::incan_stdlib::strings import str_slice_byte_range, str_slice_from_byte_offset
 
 
 @derive(Clone)
@@ -271,19 +272,19 @@ pub model SplitIterator with Iterator[str]:
         if self.limit > 0 and self.produced >= self.limit - 1:
             self.done = true
             self.produced += 1
-            return Some(self.text[self.last_end:])
+            return Some(str_slice_from_byte_offset(self.text, self.last_end))
 
         match self.matches.__next__():
             Some(found) =>
                 start, end = found.span()
-                part = self.text[self.last_end:start]
+                part = str_slice_byte_range(self.text, self.last_end, start)
                 self.last_end = end
                 self.produced += 1
                 return Some(part)
             None =>
                 self.done = true
                 self.produced += 1
-                return Some(self.text[self.last_end:])
+                return Some(str_slice_from_byte_offset(self.text, self.last_end))
 
 
 pub def _offset_from_usize(value: usize) -> int:
