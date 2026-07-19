@@ -1169,15 +1169,19 @@ fn dependency_artifact_skips_canonical_lock(artifact_only: bool, sdk_provider_bu
     artifact_only && !sdk_provider_build
 }
 
-/// Remove path dependencies that point back to the generated library crate itself.
+/// Remove path dependencies that point back to the selected project's generated library crate.
 ///
 /// A rooted workspace lock includes the root library as a dependency of its consumers. That aggregate dependency is
 /// valid for the synthetic lock/preheat package, but the selected root library artifact cannot depend on its own
-/// `target/lib` crate after adopting the producer's Cargo package identity.
-fn remove_generated_library_self_dependencies(resolved: &mut ResolvedDependencies, out_dir: &Path) {
-    let canonical_out_dir = fs::canonicalize(out_dir).unwrap_or_else(|_| out_dir.to_path_buf());
+/// canonical `target/lib` crate after adopting the producer's Cargo package identity. This comparison deliberately
+/// uses the project-owned artifact path rather than a command-specific output override.
+fn remove_generated_library_self_dependencies(resolved: &mut ResolvedDependencies, project_root: &Path) {
+    let artifact_root = project_root.join("target/lib");
+    let canonical_artifact_root = fs::canonicalize(&artifact_root).unwrap_or(artifact_root);
     let points_to_generated_crate = |spec: &DependencySpec| match &spec.source {
-        DependencySource::Path { path } => fs::canonicalize(path).unwrap_or_else(|_| path.clone()) == canonical_out_dir,
+        DependencySource::Path { path } => {
+            fs::canonicalize(path).unwrap_or_else(|_| path.clone()) == canonical_artifact_root
+        }
         DependencySource::Registry | DependencySource::Git { .. } => false,
     };
     resolved.dependencies.retain(|spec| !points_to_generated_crate(spec));
@@ -1602,7 +1606,7 @@ fn prepare_library_project(
     generator.set_cargo_policy_flags(cargo_command_flags(&cargo_policy, &cargo_features));
     let resolved_dependencies_for_preheat = resolved.clone();
     let project_requirements_for_preheat = project_requirements.clone();
-    remove_generated_library_self_dependencies(&mut resolved, &out_dir);
+    remove_generated_library_self_dependencies(&mut resolved, &project_root);
     let rust_dependencies = resolved.dependencies.clone();
     let rust_dev_dependencies = resolved.dev_dependencies.clone();
     let report_draft = BuildReportDraft {
@@ -2671,6 +2675,38 @@ mod tests {
         assert!(dependency_artifact_skips_canonical_lock(true, false));
         assert!(!dependency_artifact_skips_canonical_lock(true, true));
         assert!(!dependency_artifact_skips_canonical_lock(false, false));
+    }
+
+    #[test]
+    fn rooted_library_removes_selected_project_self_dependency_issue909() -> Result<(), Box<dyn std::error::Error>> {
+        let project_root = tempfile::tempdir()?;
+        let artifact_root = project_root.path().join("target/lib");
+        let external_root = project_root.path().join("external/artifact");
+        fs::create_dir_all(&artifact_root)?;
+        fs::create_dir_all(&external_root)?;
+        let path_dependency = |crate_name: &str, path: PathBuf| DependencySpec {
+            crate_name: crate_name.to_string(),
+            version: None,
+            features: Vec::new(),
+            default_features: true,
+            source: DependencySource::Path { path },
+            optional: false,
+            package: None,
+        };
+        let mut resolved = ResolvedDependencies {
+            dependencies: vec![
+                path_dependency("root_lib", artifact_root.clone()),
+                path_dependency("external", external_root),
+            ],
+            dev_dependencies: vec![path_dependency("root_lib_dev_alias", artifact_root)],
+        };
+
+        remove_generated_library_self_dependencies(&mut resolved, project_root.path());
+
+        assert_eq!(resolved.dependencies.len(), 1);
+        assert_eq!(resolved.dependencies[0].crate_name, "external");
+        assert!(resolved.dev_dependencies.is_empty());
+        Ok(())
     }
 
     #[test]
