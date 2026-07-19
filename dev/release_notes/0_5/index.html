@@ -6431,6 +6431,7 @@
 <li><strong>Compiler</strong>: Rust interop now preserves callable bounds such as <code>FnMut(&amp;mut T, &amp;U)</code> when checking generic callback parameters, so by-value Incan callbacks are rejected at typecheck instead of reaching Rust codegen with an invalid borrowed callback shape (#805).</li>
 <li><strong>Compiler</strong>: Generic value-reflection bounds are preserved for impl-method-owned type parameters, and direct dependency-module generation now typechecks before lowering so root Rust trait imports stay available in generated module tests (#819, #827).</li>
 <li><strong>Compiler</strong>: Rust interop now preserves inspected <code>&amp;dyn Trait</code> and <code>&amp;mut dyn Trait</code> parameter shapes through typechecking, lowering, and generated Rust, including a source-level diagnostic when an exclusive borrow requires an Incan <code>mut</code> binding (#832).</li>
+<li><strong>Compiler</strong>: Rust interop now preserves the diverging <code>!</code> return type as an internal bottom type, so combining Rust and source-module imports no longer causes unrelated return-type mismatches in modules that call diverging Rust helpers (#381).</li>
 </ul>
 
 
