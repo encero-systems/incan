@@ -37,7 +37,7 @@ use crate::library_manifest::{
     ProviderModuleClaim, digest_provider_artifact,
 };
 use crate::lockfile::{CargoFeatureSelection, semantic_lock_state};
-use crate::manifest::ProjectManifest;
+use crate::manifest::{DependencySource, DependencySpec, ProjectManifest};
 use crate::provider::{
     FeatureSelection, PackageFeatureGraph, PackageFeaturePlan, ProviderPlan, SDK_PROVIDER_BUILD_ENV,
 };
@@ -135,7 +135,7 @@ struct InlineCommandProject {
 struct PreparedLibraryProject {
     generator: ProjectGenerator,
     project_root: PathBuf,
-    cargo_package_name: String,
+    lock_cargo_package_name: String,
     rust_edition: Option<String>,
     out_dir: PathBuf,
     manifest_path: PathBuf,
@@ -1169,6 +1169,23 @@ fn dependency_artifact_skips_canonical_lock(artifact_only: bool, sdk_provider_bu
     artifact_only && !sdk_provider_build
 }
 
+/// Remove path dependencies that point back to the generated library crate itself.
+///
+/// A rooted workspace lock includes the root library as a dependency of its consumers. That aggregate dependency is
+/// valid for the synthetic lock/preheat package, but the selected root library artifact cannot depend on its own
+/// `target/lib` crate after adopting the producer's Cargo package identity.
+fn remove_generated_library_self_dependencies(resolved: &mut ResolvedDependencies, out_dir: &Path) {
+    let canonical_out_dir = fs::canonicalize(out_dir).unwrap_or_else(|_| out_dir.to_path_buf());
+    let points_to_generated_crate = |spec: &DependencySpec| match &spec.source {
+        DependencySource::Path { path } => fs::canonicalize(path).unwrap_or_else(|_| path.clone()) == canonical_out_dir,
+        DependencySource::Registry | DependencySource::Git { .. } => false,
+    };
+    resolved.dependencies.retain(|spec| !points_to_generated_crate(spec));
+    resolved
+        .dev_dependencies
+        .retain(|spec| !points_to_generated_crate(spec));
+}
+
 /// Validate a library project and generate its Rust project without running Cargo.
 #[allow(clippy::too_many_arguments)] // Library preparation receives the same independent CLI selection axes.
 fn prepare_library_project(
@@ -1326,7 +1343,7 @@ fn prepare_library_project(
     resolved = lock_resolution.resolved;
     project_requirements = lock_resolution.project_requirements;
     let lock_payload_for_typecheck = lock_resolution.cargo_lock_payload;
-    let cargo_package_name = lock_resolution.cargo_package_name;
+    let lock_cargo_package_name = lock_resolution.cargo_package_name;
     record_timing(&mut timings_ms, "library_resolve_lock_payload", lock_start);
     let should_preheat_library_dependencies = lock_payload_for_typecheck.is_some()
         && (!resolved.dependencies.is_empty() || !project_requirements.stdlib_features.is_empty());
@@ -1337,7 +1354,7 @@ fn prepare_library_project(
         let rust_inspect_manifest_dir = prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {
             project_root: &project_root,
             project_name: project_name.as_str(),
-            cargo_package_name: &cargo_package_name,
+            cargo_package_name: &lock_cargo_package_name,
             rust_edition: manifest.build.as_ref().and_then(|build| build.rust_edition.clone()),
             resolved: &resolved,
             project_requirements: &project_requirements,
@@ -1568,7 +1585,10 @@ fn prepare_library_project(
         codegen.add_module_with_path_segments(&module.name, &module.ast, module.path_segments.clone());
     }
     let mut generator = ProjectGenerator::new(&out_dir, project_name.as_str(), false);
-    generator.set_package_name(Some(cargo_package_name.clone()));
+    // Canonical workspace locking uses a synthetic package name so every member resolves one shared Cargo graph.
+    // A published library artifact instead has an identity contract across Cargo.toml, `[lib]`, and `.incnlib`, so
+    // its generated Cargo package must retain the selected producer project's name.
+    generator.set_package_name(Some(project_name.clone()));
     generator.set_package_metadata(Some(project_version.clone()), project_license);
     generator.set_provider_plan(&provider_plan);
     generator.set_cargo_target_dir_override(generated_cargo_target_dir.map(Path::to_path_buf));
@@ -1580,10 +1600,11 @@ fn prepare_library_project(
     codegen.set_rust_inspect_manifest_dir(rust_inspect_manifest_dir.clone());
     generator.set_cargo_lock_payload(lock_payload_for_typecheck);
     generator.set_cargo_policy_flags(cargo_command_flags(&cargo_policy, &cargo_features));
-    let rust_dependencies = resolved.dependencies.clone();
-    let rust_dev_dependencies = resolved.dev_dependencies.clone();
     let resolved_dependencies_for_preheat = resolved.clone();
     let project_requirements_for_preheat = project_requirements.clone();
+    remove_generated_library_self_dependencies(&mut resolved, &out_dir);
+    let rust_dependencies = resolved.dependencies.clone();
+    let rust_dev_dependencies = resolved.dev_dependencies.clone();
     let report_draft = BuildReportDraft {
         mode: BuildReportMode::Library,
         profile: "release".to_string(),
@@ -1653,7 +1674,7 @@ fn prepare_library_project(
     Ok(PreparedLibraryProject {
         generator,
         project_root,
-        cargo_package_name,
+        lock_cargo_package_name,
         rust_edition,
         out_dir,
         manifest_path,
@@ -2395,7 +2416,7 @@ pub(crate) fn build_library_report(
         run_generated_library_dependency_preheat(GeneratedLibraryDependencyPreheatRequest {
             project_root: &prepared.project_root,
             lock_dir: &prepared.project_root.join("target").join("incan_lock"),
-            project_name: &prepared.cargo_package_name,
+            project_name: &prepared.lock_cargo_package_name,
             rust_edition: prepared.rust_edition.clone(),
             resolved: &prepared.resolved_dependencies,
             project_requirements: &prepared.project_requirements,

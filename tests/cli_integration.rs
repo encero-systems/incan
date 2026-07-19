@@ -1382,6 +1382,108 @@ root_lib = { workspace = true }
 
 #[cfg(unix)]
 #[test]
+fn rooted_workspace_library_artifact_uses_selected_project_identity_issue909() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("src"))?;
+    fs::write(
+        root.path().join("incan.toml"),
+        r#"[project]
+name = "root_lib"
+version = "0.1.0"
+
+[project.scripts]
+library = "src/lib.incn"
+"#,
+    )?;
+    fs::write(
+        root.path().join("src/lib.incn"),
+        "pub def answer() -> int:\n  return 42\n",
+    )?;
+
+    let warmup = run_incan(root.path(), &["build", "--lib"])?;
+    assert_success(&warmup, "standalone SDK and library artifact warmup");
+    fs::remove_dir_all(root.path().join("target/lib"))?;
+    fs::remove_file(root.path().join("incan.lock"))?;
+
+    fs::write(
+        root.path().join("incan.toml"),
+        r#"[project]
+name = "root_lib"
+version = "0.1.0"
+
+[project.scripts]
+library = "src/lib.incn"
+
+[workspace]
+members = ["consumer"]
+default-members = ["root_lib", "consumer"]
+
+[workspace.dependencies]
+root_lib = { path = "." }
+"#,
+    )?;
+    let consumer = root.path().join("consumer");
+    fs::create_dir_all(consumer.join("src"))?;
+    fs::write(
+        consumer.join("incan.toml"),
+        r#"[project]
+name = "consumer"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+root_lib = { workspace = true }
+"#,
+    )?;
+    fs::write(
+        consumer.join("src/main.incn"),
+        "from pub::root_lib import answer\n\n\ndef main() -> None:\n  println(answer())\n",
+    )?;
+
+    let (lock_output, timed_out) = run_incan_with_timeout(root.path(), &["lock"], std::time::Duration::from_secs(60))?;
+    assert!(
+        !timed_out,
+        "rooted workspace lock exceeded its bounded artifact-preparation window\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&lock_output.stdout),
+        String::from_utf8_lossy(&lock_output.stderr)
+    );
+    assert_success(&lock_output, "fresh rooted workspace lock generation");
+
+    // The first lock prepares the previously missing root artifact, which currently changes the semantic fingerprint.
+    // Refresh once so this regression reaches the independent library package-identity boundary from #909.
+    let lock_refresh = run_incan(root.path(), &["lock"])?;
+    assert_success(
+        &lock_refresh,
+        "rooted workspace lock refresh after artifact preparation",
+    );
+
+    let library_output = run_incan(root.path(), &["build", "--lib", "--member", "root_lib", "--locked"])?;
+    assert_success(&library_output, "selected rooted library build");
+
+    let cargo_toml: toml::Value = toml::from_str(&fs::read_to_string(root.path().join("target/lib/Cargo.toml"))?)?;
+    assert_eq!(cargo_toml["package"]["name"].as_str(), Some("root_lib"));
+    assert_eq!(cargo_toml["lib"]["name"].as_str(), Some("root_lib"));
+    assert!(
+        cargo_toml["dependencies"].get("root_lib").is_none(),
+        "the rooted library artifact must not depend on its own generated crate"
+    );
+    assert!(root.path().join("target/lib/root_lib.incnlib").is_file());
+
+    let consumer_lock_refresh = run_incan(root.path(), &["lock"])?;
+    assert_success(
+        &consumer_lock_refresh,
+        "rooted workspace lock refresh after selected library rebuild",
+    );
+    let consumer_output = run_incan(&consumer, &["run", "src/main.incn", "--locked"])?;
+    assert_success(&consumer_output, "consumer of the freshly rebuilt root library");
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
 fn workspace_lock_concurrent_publishers_leave_one_parseable_root_lock() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     fs::write(
