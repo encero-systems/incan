@@ -6643,7 +6643,7 @@
 <tr>
 <td><code>SemanticModuleSnapshot</code></td>
 <td>Bundled HIR plus semantic facts for one module.</td>
-<td>Intended for inspection and future middle-end handoff fixtures before backend cutover.</td>
+<td>Produced by <code>CompilationSession</code>; codegraph reads checked source-target facts from it, while legacy lowering inputs remain until Body IR owns every lowering query.</td>
 </tr>
 </tbody>
 </table>

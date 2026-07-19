@@ -5890,6 +5890,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#current-v05-adoption" class="md-nav__link">
+    <span class="md-ellipsis">
+      Current v0.5 adoption
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#not-allowed-without-explicit-maintainer-approval" class="md-nav__link">
     <span class="md-ellipsis">
       Not allowed without explicit maintainer approval
@@ -6396,6 +6405,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#current-v05-adoption" class="md-nav__link">
+    <span class="md-ellipsis">
+      Current v0.5 adoption
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#not-allowed-without-explicit-maintainer-approval" class="md-nav__link">
     <span class="md-ellipsis">
       Not allowed without explicit maintainer approval
@@ -6515,6 +6533,9 @@
 </tbody>
 </table>
 <p>Do not use the template as bureaucracy. Use it to prevent backend-only fixes from becoming hidden architecture.</p>
+<h2 id="current-v05-adoption">Current v0.5 adoption<a class="headerlink" href="#current-v05-adoption" title="Permanent link">&para;</a></h2>
+<p><code>CompilationSession</code> now owns one checked analysis result for executable builds, generated-Rust inspection, and codegraph inspection. That result bundles the lowering inputs and source-backed stdlib metadata still required by the current backend with a <code>SemanticModuleSnapshot</code> per module. The build paths pass that analysis into <code>IrCodegen</code> rather than asking codegen to typecheck the same source again, and codegraph resolves checked call/reference targets from semantic facts rather than <code>TypeCheckInfo</code> directly.</p>
+<p>The remaining internal <code>IrCodegen</code> typecheck fallback is deliberate and narrow: it serves direct backend API callers that do not yet supply a session analysis. Its owner is <a href="https://github.com/encero-systems/incan/issues/225">#225</a>; remove it when those callers supply session analysis and Body IR owns the lowering-specific queries that facts do not yet model. It must not receive new semantic decisions.</p>
 <h2 id="not-allowed-without-explicit-maintainer-approval">Not allowed without explicit maintainer approval<a class="headerlink" href="#not-allowed-without-explicit-maintainer-approval" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Adding new source semantics only in an emitter branch.</li>
