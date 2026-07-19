@@ -1455,7 +1455,8 @@ impl<'a> IrEmitter<'a> {
                         Ok(emitted)
                     }
                     IrInteropCoercionKind::RustTypeUnwrap => Ok(quote! { #inner_tokens }),
-                    IrInteropCoercionKind::TraitObjectBorrow { mutable } => Ok(if *mutable {
+                    IrInteropCoercionKind::RustBorrow { mutable }
+                    | IrInteropCoercionKind::TraitObjectBorrow { mutable } => Ok(if *mutable {
                         quote! { &mut #inner_tokens }
                     } else {
                         quote! { &#inner_tokens }

@@ -469,10 +469,11 @@ impl TypeChecker {
 
             if info.is_rusttype
                 && let ResolvedType::RustPath(path) = &info.underlying
-                && let Some(meta) = self.rust_item_metadata_for_path(path)
+                && let Some(meta) = self.rust_item_metadata_for_method_call(path, name)
                 && let RustItemKind::Type(type_info) = &meta.kind
             {
-                rust_inspect_available = type_info.metadata_completeness.has_methods();
+                rust_inspect_available = type_info.metadata_completeness.has_methods()
+                    || type_info.methods.iter().any(|method| method.name == name);
                 for method in type_info.methods.iter().filter(|m| m.name == name) {
                     let has_receiver = Self::rust_signature_has_receiver(&method.signature);
                     let receiver = if has_receiver { Some(Receiver::Immutable) } else { None };
@@ -3109,7 +3110,7 @@ impl TypeChecker {
     }
 
     /// Return whether Rust type metadata proves the backing type implements the requested trait path.
-    fn rust_type_metadata_implements_trait(
+    pub(in crate::frontend::typechecker) fn rust_type_metadata_implements_trait(
         type_metadata: &RustItemMetadata,
         trait_path: &str,
         trait_definition_path: Option<&str>,

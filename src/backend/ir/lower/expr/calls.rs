@@ -2323,6 +2323,7 @@ impl AstLowering {
                 rust_target: coercion.rust_target_type,
             },
             RustArgCoercionKind::RustTypeUnwrap => IrInteropCoercionKind::RustTypeUnwrap,
+            RustArgCoercionKind::Borrow { mutable } => IrInteropCoercionKind::RustBorrow { mutable },
             RustArgCoercionKind::RustTypeInterop => {
                 if let Some((adapter, adapter_kind)) = self.lower_rusttype_interop_adapter(&from_ty, &target_ty)? {
                     IrInteropCoercionKind::AdapterCall {
@@ -3187,7 +3188,7 @@ mod tests {
 
     use super::AstLowering;
     use crate::backend::ir::decl::IrDeclKind;
-    use crate::backend::ir::expr::{IrExprKind, MethodCallArgPolicy, VarRefKind};
+    use crate::backend::ir::expr::{IrExprKind, IrInteropCoercionKind, MethodCallArgPolicy, VarRefKind};
     use crate::backend::ir::stmt::IrStmtKind;
     use crate::backend::ir::types::IrType;
     use crate::frontend::api_metadata::{
@@ -3617,6 +3618,52 @@ mod tests {
                     ),
                     "expected preserved lookup method args to skip rust arg coercion wrapping, got {args:?}"
                 );
+            }
+            other => return Err(format!("expected MethodCall lowering, got {other:?}")),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn lower_method_call_applies_required_concrete_borrow_despite_arg_shape_hint() -> Result<(), String> {
+        let receiver_span = Span::new(0, 5);
+        let arg_span = Span::new(10, 16);
+        let mut type_info = TypeCheckInfo::default();
+        type_info.record_regular_method_arg_shape(receiver_span, "append_data");
+        type_info.rust.arg_coercions.insert(
+            (arg_span.start, arg_span.end),
+            RustArgCoercionInfo {
+                rust_target_type: "&mut demo::Header".to_string(),
+                target_type: ResolvedType::RefMut(Box::new(ResolvedType::RustPath("demo::Header".to_string()))),
+                kind: RustArgCoercionKind::Borrow { mutable: true },
+            },
+        );
+
+        let mut lowering = AstLowering::new_with_type_info(type_info);
+        let expr = Expr::MethodCall(
+            Box::new(Spanned::new(Expr::Ident("builder".to_string()), receiver_span)),
+            "append_data".to_string(),
+            Vec::new(),
+            vec![CallArg::Positional(Spanned::new(
+                Expr::Ident("header".to_string()),
+                arg_span,
+            ))],
+        );
+
+        let lowered = lowering
+            .lower_expr(&expr, Span::new(0, 100))
+            .map_err(|err| format!("expected successful lowering, got {err:?}"))?;
+
+        match lowered.kind {
+            IrExprKind::MethodCall { arg_policy, args, .. } => {
+                assert_eq!(arg_policy, MethodCallArgPolicy::PreserveShape);
+                assert!(matches!(
+                    args.first().map(|arg| &arg.expr.kind),
+                    Some(IrExprKind::InteropCoerce {
+                        kind: IrInteropCoercionKind::RustBorrow { mutable: true },
+                        ..
+                    })
+                ));
             }
             other => return Err(format!("expected MethodCall lowering, got {other:?}")),
         }

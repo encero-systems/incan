@@ -1010,6 +1010,90 @@ impl NestedFrame {
     Ok(())
 }
 
+/// Complete metadata extraction must retain declared mutable-reference parameter shape rather than trusting the
+/// rust-analyzer display, which can erase `mut` from ordinary reference parameters.
+#[test]
+fn complete_dependency_metadata_preserves_mutable_reference_parameters() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let root = tmp.path().join("root");
+    let dep = tmp.path().join("source-dep");
+    fs::create_dir_all(root.join("src"))?;
+    fs::create_dir_all(dep.join("src"))?;
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"root\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nsource-dep = { path = \"../source-dep\" }\n",
+    )?;
+    fs::write(root.join("src").join("lib.rs"), "pub fn keep() {}\n")?;
+    fs::write(
+        dep.join("Cargo.toml"),
+        "[package]\nname = \"source-dep\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\nname = \"source_dep\"\n",
+    )?;
+    fs::write(
+        dep.join("src").join("lib.rs"),
+        r#"
+pub struct Header;
+mod writer {
+    use super::Header;
+
+    pub struct Builder;
+
+    impl Builder {
+        /// Append one header through a mutable reference parameter.
+        pub fn append_data(&mut self, header: &mut Header) {
+            let _ = header;
+        }
+    }
+}
+
+pub use writer::Builder;
+"#,
+    )?;
+
+    let source_cache = RustMetadataCache::new();
+    let source_metadata = source_cache.get_or_extract(&root, "source_dep::Builder", &|_| ())?;
+    let RustItemKind::Type(source_type_info) = &source_metadata.kind else {
+        return Err("expected source dependency Builder metadata".into());
+    };
+    assert!(
+        !source_type_info.metadata_completeness.has_methods(),
+        "syntax-derived method indexes must not claim an authoritative full method surface"
+    );
+    let source_append_data = source_type_info
+        .methods
+        .iter()
+        .find(|method| method.name == "append_data")
+        .ok_or("expected source-derived append_data method metadata")?;
+    assert_eq!(
+        source_append_data.signature.params[1].type_display,
+        "&mut source_dep::Header"
+    );
+    let source_inner = source_cache
+        .inner
+        .lock()
+        .map_err(|_| std::io::Error::other("poisoned source metadata cache"))?;
+    assert!(
+        source_inner.workspaces.is_empty(),
+        "source-derived inherent method metadata should not load a rust-analyzer workspace"
+    );
+    drop(source_inner);
+
+    let complete_cache = RustMetadataCache::new();
+    let metadata = complete_cache.get_or_extract_complete(&root, "source_dep::Builder", &|_| ())?;
+    let RustItemKind::Type(type_info) = &metadata.kind else {
+        return Err("expected complete source dependency Builder metadata".into());
+    };
+    let append_data = type_info
+        .methods
+        .iter()
+        .find(|method| method.name == "append_data")
+        .ok_or("expected append_data method metadata")?;
+    assert_eq!(
+        append_data.signature.params[1].type_display,
+        "&mut super::Header"
+    );
+    Ok(())
+}
+
 /// Source metadata indexes are shared inside one cache instance, but path normalization depends on the consuming root.
 #[test]
 fn dependency_source_metadata_index_is_keyed_by_root_facing_reexports() -> Result<(), Box<dyn std::error::Error>> {

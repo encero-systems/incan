@@ -2199,6 +2199,95 @@ fn collect_source_public_reexport_paths(
     public_reexports
 }
 
+/// Collect public inherent methods recursively from one source item list without loading rust-analyzer.
+#[allow(clippy::too_many_arguments)]
+fn collect_source_inherent_methods_in_items<'a>(
+    items: impl Iterator<Item = ast::Item> + Clone + 'a,
+    module_path: &[String],
+    parent_aliases: &HashMap<String, String>,
+    crate_name: &str,
+    external_crates: &HashSet<String>,
+    preferred_external_paths: &HashMap<String, String>,
+    public_reexports: &HashMap<String, String>,
+    methods_by_type: &mut HashMap<String, Vec<RustMethodSig>>,
+    seen: &mut HashSet<(String, String)>,
+) {
+    let items = items.collect::<Vec<_>>();
+    let aliases = source_items_import_aliases(
+        items.iter().cloned(),
+        crate_name,
+        module_path,
+        external_crates,
+        preferred_external_paths,
+        parent_aliases,
+    );
+    let ctx = SourceMetadataContext {
+        crate_name,
+        module_path,
+        external_crates,
+        aliases: &aliases,
+        preferred_external_paths,
+        source_public_reexports: public_reexports,
+    };
+    for item in items {
+        match item {
+            ast::Item::Impl(impl_item) if impl_item.trait_().is_none() => {
+                let Some(self_ty) = impl_item.self_ty() else {
+                    continue;
+                };
+                let receiver_type = ctx.type_display(self_ty.syntax().text().to_string().as_str());
+                let Some(assoc_items) = impl_item.assoc_item_list() else {
+                    continue;
+                };
+                for assoc in assoc_items.assoc_items() {
+                    let ast::AssocItem::Fn(function) = assoc else {
+                        continue;
+                    };
+                    if !ast_visibility_is_public(function.visibility()) {
+                        continue;
+                    }
+                    let Some(name) = function.name() else {
+                        continue;
+                    };
+                    let name = generated_source_name(name.to_string().as_str());
+                    if !seen.insert((receiver_type.clone(), name.clone())) {
+                        continue;
+                    }
+                    methods_by_type
+                        .entry(receiver_type.clone())
+                        .or_default()
+                        .push(RustMethodSig {
+                            name,
+                            signature: source_function_signature(&function, &ctx, Some(receiver_type.as_str())),
+                        });
+                }
+            }
+            ast::Item::Module(module) => {
+                let Some(item_list) = module.item_list() else {
+                    continue;
+                };
+                let Some(name) = module.name() else {
+                    continue;
+                };
+                let mut nested_module_path = module_path.to_vec();
+                nested_module_path.push(generated_source_name(name.to_string().as_str()));
+                collect_source_inherent_methods_in_items(
+                    item_list.items(),
+                    &nested_module_path,
+                    &aliases,
+                    crate_name,
+                    external_crates,
+                    preferred_external_paths,
+                    public_reexports,
+                    methods_by_type,
+                    seen,
+                );
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Build dependency-source metadata indexes without loading rust-analyzer.
 fn build_source_metadata_indexes(
     source_root: &Path,
@@ -2231,48 +2320,17 @@ fn build_source_metadata_indexes(
     let mut methods_by_type: HashMap<String, Vec<RustMethodSig>> = HashMap::new();
     let mut seen = HashSet::new();
     for file in &files {
-        let ctx = SourceMetadataContext {
+        collect_source_inherent_methods_in_items(
+            file.parsed.items(),
+            &file.module_path,
+            &file.aliases,
             crate_name,
-            module_path: &file.module_path,
             external_crates,
-            aliases: &file.aliases,
             preferred_external_paths,
-            source_public_reexports: &public_reexports,
-        };
-        for item in file.parsed.items() {
-            let ast::Item::Impl(impl_item) = item else {
-                continue;
-            };
-            let Some(self_ty) = impl_item.self_ty() else {
-                continue;
-            };
-            let receiver_type = ctx.type_display(self_ty.syntax().text().to_string().as_str());
-            let Some(assoc_items) = impl_item.assoc_item_list() else {
-                continue;
-            };
-            for assoc in assoc_items.assoc_items() {
-                let ast::AssocItem::Fn(function) = assoc else {
-                    continue;
-                };
-                if !ast_visibility_is_public(function.visibility()) {
-                    continue;
-                }
-                let Some(name) = function.name() else {
-                    continue;
-                };
-                let name = generated_source_name(name.to_string().as_str());
-                if !seen.insert((receiver_type.clone(), name.clone())) {
-                    continue;
-                }
-                methods_by_type
-                    .entry(receiver_type.clone())
-                    .or_default()
-                    .push(RustMethodSig {
-                        name,
-                        signature: source_function_signature(&function, &ctx, Some(receiver_type.as_str())),
-                    });
-            }
-        }
+            &public_reexports,
+            &mut methods_by_type,
+            &mut seen,
+        );
     }
     for methods in methods_by_type.values_mut() {
         methods.sort_by(|left, right| left.name.cmp(&right.name));
@@ -3556,6 +3614,7 @@ impl WorkspaceExtractionRoute {
 enum ExtractionPolicy {
     FastOnly,
     Full,
+    Complete,
 }
 
 /// Return whether an extraction error is a route miss that can fall through to the next route.
@@ -3764,53 +3823,55 @@ fn extract_in_workspace_set(
                 "status=miss owner_hint=true",
             );
         }
-        let source_started = Instant::now();
-        if let Some(meta) = dependency_source_metadata(
-            inner,
-            root,
-            &dep_root,
-            canonical_path,
-            registry_src_roots,
-            &preferred_external_paths,
-        ) {
+        if policy != ExtractionPolicy::Complete {
+            let source_started = Instant::now();
+            if let Some(meta) = dependency_source_metadata(
+                inner,
+                root,
+                &dep_root,
+                canonical_path,
+                registry_src_roots,
+                &preferred_external_paths,
+            ) {
+                log_timing_stage(
+                    timing_enabled,
+                    root,
+                    canonical_path,
+                    "extract.dependency.source",
+                    source_started.elapsed(),
+                    "status=hit",
+                );
+                return Ok(meta);
+            }
             log_timing_stage(
                 timing_enabled,
                 root,
                 canonical_path,
                 "extract.dependency.source",
                 source_started.elapsed(),
-                "status=hit",
+                "status=miss",
             );
-            return Ok(meta);
-        }
-        log_timing_stage(
-            timing_enabled,
-            root,
-            canonical_path,
-            "extract.dependency.source",
-            source_started.elapsed(),
-            "status=miss",
-        );
-        let generated_started = Instant::now();
-        if let Some(meta) = generated_out_dir_metadata(root, &dep_root, canonical_path, &include_owners) {
+            let generated_started = Instant::now();
+            if let Some(meta) = generated_out_dir_metadata(root, &dep_root, canonical_path, &include_owners) {
+                log_timing_stage(
+                    timing_enabled,
+                    root,
+                    canonical_path,
+                    "extract.dependency.generated_out_dir",
+                    generated_started.elapsed(),
+                    "status=hit",
+                );
+                return Ok(meta);
+            }
             log_timing_stage(
                 timing_enabled,
                 root,
                 canonical_path,
                 "extract.dependency.generated_out_dir",
                 generated_started.elapsed(),
-                "status=hit",
+                "status=miss",
             );
-            return Ok(meta);
         }
-        log_timing_stage(
-            timing_enabled,
-            root,
-            canonical_path,
-            "extract.dependency.generated_out_dir",
-            generated_started.elapsed(),
-            "status=miss",
-        );
         if policy == ExtractionPolicy::FastOnly {
             return Err(RustMetadataError::PathNotResolved(canonical_path.to_string()));
         }
@@ -3857,33 +3918,35 @@ fn extract_in_workspace_set(
             .get(root)
             .cloned()
             .unwrap_or_default();
-        let source_started = Instant::now();
-        if let Some(meta) = dependency_source_metadata(
-            inner,
-            root,
-            root,
-            canonical_path,
-            registry_src_roots,
-            &preferred_external_paths,
-        ) {
+        if policy != ExtractionPolicy::Complete {
+            let source_started = Instant::now();
+            if let Some(meta) = dependency_source_metadata(
+                inner,
+                root,
+                root,
+                canonical_path,
+                registry_src_roots,
+                &preferred_external_paths,
+            ) {
+                log_timing_stage(
+                    timing_enabled,
+                    root,
+                    canonical_path,
+                    "extract.root.source",
+                    source_started.elapsed(),
+                    "status=hit",
+                );
+                return Ok(meta);
+            }
             log_timing_stage(
                 timing_enabled,
                 root,
                 canonical_path,
                 "extract.root.source",
                 source_started.elapsed(),
-                "status=hit",
+                "status=miss",
             );
-            return Ok(meta);
         }
-        log_timing_stage(
-            timing_enabled,
-            root,
-            canonical_path,
-            "extract.root.source",
-            source_started.elapsed(),
-            "status=miss",
-        );
     }
 
     if policy == ExtractionPolicy::FastOnly {
@@ -4143,6 +4206,82 @@ impl RustMetadataCache {
     ) -> Result<Arc<RustItemMetadata>, RustMetadataError> {
         self.get_or_extract_inner(manifest_dir, canonical_path, None, progress, true)
             .map(|access| access.metadata)
+    }
+
+    /// Return complete metadata for a canonical Rust path, replacing a cached partial source fallback when needed.
+    ///
+    /// Fast source extraction does not guarantee inherent method signatures. A compiler path that needs them can opt
+    /// into this targeted refresh without invalidating unrelated metadata in the manifest.
+    pub fn get_or_extract_complete(
+        &self,
+        manifest_dir: &Path,
+        canonical_path: &str,
+        progress: &(dyn Fn(String) + Sync),
+    ) -> Result<Arc<RustItemMetadata>, RustMetadataError> {
+        self.get_or_extract_complete_inner(manifest_dir, canonical_path, progress)
+            .map(|access| access.metadata)
+    }
+
+    /// Run complete semantic extraction and replace metadata for this one canonical path.
+    fn get_or_extract_complete_inner(
+        &self,
+        manifest_dir: &Path,
+        canonical_path: &str,
+        progress: &(dyn Fn(String) + Sync),
+    ) -> Result<CacheAccess, RustMetadataError> {
+        let root = manifest_dir.canonicalize()?;
+        let timing_enabled = rust_inspect_timing_enabled();
+        let mut trace = CallTrace::new(timing_enabled, &root, canonical_path);
+        let mut inner = self.inner.lock().map_err(|e| RustMetadataError::LoadWorkspace {
+            path: root.clone(),
+            message: format!("metadata cache lock poisoned: {e}"),
+        })?;
+        let disk_load_started = Instant::now();
+        let disk_report = ensure_disk_cache_loaded(&mut inner, &root)?;
+        log_timing_stage(
+            timing_enabled,
+            &root,
+            canonical_path,
+            "disk_cache.ensure_loaded",
+            disk_load_started.elapsed(),
+            disk_report.detail().as_str(),
+        );
+        let mut last_err = None;
+        for candidate in canonical_path_candidates(canonical_path) {
+            match extract_in_workspace_set(
+                &mut inner,
+                &root,
+                candidate.as_str(),
+                None,
+                progress,
+                timing_enabled,
+                ExtractionPolicy::Complete,
+            ) {
+                Ok(mut metadata) => {
+                    metadata.canonical_path = canonical_path.to_owned();
+                    let metadata = Arc::new(metadata);
+                    insert_cached_item(&mut inner, &root, Arc::clone(&metadata));
+                    if let Err(err) = persist_item_to_disk_cache(&inner, &root) {
+                        tracing::warn!(
+                            root = %root.display(),
+                            query = %canonical_path,
+                            error = %err,
+                            "failed to persist rust-inspect disk cache after complete extraction"
+                        );
+                    }
+                    trace.set_outcome(CacheAccessOutcome::Extracted.trace_label());
+                    return Ok(CacheAccess {
+                        metadata,
+                        outcome: CacheAccessOutcome::Extracted,
+                    });
+                }
+                Err(err) => last_err = Some(err),
+            }
+        }
+        let err = last_err
+            .unwrap_or_else(|| RustMetadataError::CrateNotFound(crate_name_for_path(canonical_path).to_string()));
+        trace.set_outcome("miss.complete");
+        Err(err)
     }
 
     /// Return metadata for a canonical Rust path while deferring disk-cache persistence to the caller.

@@ -26,7 +26,7 @@ use crate::frontend::ast::{self, Spanned};
 use crate::frontend::library_manifest_index::LibraryManifestIndexEntry;
 use crate::frontend::partial_projection::{PartialPresetRef, merge_named_partial_args};
 use crate::frontend::typechecker::{
-    IdentKind, PartialProjectionTargetKind, ResolvedMethodDispatch, ResolvedOperatorKind,
+    IdentKind, PartialProjectionTargetKind, ResolvedMethodDispatch, ResolvedOperatorKind, RustArgCoercionKind,
 };
 use incan_core::interop::RustCollectionFamily;
 use incan_core::lang::magic_methods::{self, MagicMethodId};
@@ -1038,14 +1038,20 @@ impl AstLowering {
                 let lowered_type_args = self.lower_call_site_type_args(expr_span, type_args);
                 let method_name = self.resolve_method_rebinding(&receiver.ty, m);
                 let arg_policy = self.regular_method_call_arg_policy(o.span, &receiver, &method_name, &args_ir);
-                if !matches!(arg_policy, MethodCallArgPolicy::PreserveShape) {
-                    for (arg_ir, arg_ast) in args_ir.iter_mut().zip(args.iter()) {
-                        let arg_span = match arg_ast {
-                            ast::CallArg::Positional(expr)
-                            | ast::CallArg::Named(_, expr)
-                            | ast::CallArg::PositionalUnpack(expr)
-                            | ast::CallArg::KeywordUnpack(expr) => expr.span,
-                        };
+                for (arg_ir, arg_ast) in args_ir.iter_mut().zip(args.iter()) {
+                    let arg_span = match arg_ast {
+                        ast::CallArg::Positional(expr)
+                        | ast::CallArg::Named(_, expr)
+                        | ast::CallArg::PositionalUnpack(expr)
+                        | ast::CallArg::KeywordUnpack(expr) => expr.span,
+                    };
+                    let has_required_concrete_borrow = self.type_info.as_ref().is_some_and(|info| {
+                        matches!(
+                            info.rust_arg_coercion(arg_span).map(|coercion| coercion.kind),
+                            Some(RustArgCoercionKind::Borrow { .. })
+                        )
+                    });
+                    if !matches!(arg_policy, MethodCallArgPolicy::PreserveShape) || has_required_concrete_borrow {
                         arg_ir.expr = self.wrap_with_rust_arg_coercion(arg_ir.expr.clone(), arg_span)?;
                     }
                 }

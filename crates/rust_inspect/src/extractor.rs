@@ -592,11 +592,24 @@ fn type_shape_contains_unknown(shape: &RustTypeShape) -> bool {
 fn source_function_param_type_text(f: Function, param: &ra_ap_hir::Param<'_>, db: &RootDatabase) -> Option<String> {
     let source = f.source(db)?;
     let param_list = source.value.param_list()?;
+    let source_params = param_list.params().collect::<Vec<_>>();
+    if let Some(name) = param.name(db) {
+        let source_param = source_params.iter().find(|source_param| {
+            source_param.pat().is_some_and(|pattern| {
+                let pattern = pattern.to_string();
+                let pattern = pattern.trim();
+                pattern.strip_prefix("mut ").unwrap_or(pattern) == name.as_str()
+            })
+        });
+        if let Some(source_param) = source_param {
+            return source_param.ty().map(|ty| ty.to_string());
+        }
+    }
     let self_offset = usize::from(param_list.self_param().is_some());
     if param.index() < self_offset {
         return None;
     }
-    let source_param = param_list.params().nth(param.index() - self_offset)?;
+    let source_param = source_params.get(param.index() - self_offset)?;
     source_param.ty().map(|ty| ty.to_string())
 }
 
@@ -645,11 +658,15 @@ fn extract_function_sig(f: Function, db: &RootDatabase, dt: DisplayTarget) -> Ru
             let mut type_display = function_sig_type_display(p.ty(), db, dt);
             if let Some(source_type_display) = source_function_param_type_display(f, &p, db) {
                 let source_is_callable_bound = rust_display_is_callable_bound(source_type_display.as_str());
+                let source_is_mut_borrow =
+                    source_borrow_kind(source_type_display.as_str()).is_some_and(|(is_mut, _)| is_mut);
+                let display_is_mut_borrow = source_borrow_kind(type_display.as_str()).is_some_and(|(is_mut, _)| is_mut);
                 if source_is_callable_bound
                     || type_shape_contains_unknown(&shape)
                     || p.ty().contains_unknown()
                     || type_display.contains('?')
                     || (source_type_display.starts_with('&') && !type_display.starts_with('&'))
+                    || (source_is_mut_borrow && !display_is_mut_borrow)
                 {
                     type_display = source_type_display;
                 }

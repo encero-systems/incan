@@ -305,6 +305,100 @@ impl Processor {
     Ok(())
 }
 
+#[test]
+fn rust_concrete_reference_arguments_borrow_by_metadata_issue861() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(
+        tmp.path(),
+        "rust_concrete_reference_arguments",
+        r#"
+
+[rust-dependencies]
+mut_ref_probe = { path = "rust/mut_ref_probe" }
+"#,
+    )?;
+    fs::write(
+        &main_path,
+        r#"from rust::mut_ref_probe import Header, Writer
+
+def main() -> None:
+  mut writer = Writer.new()
+  mut header = Header.new()
+  println(writer.mutate(header, 1))
+  println(writer.view_value(header))
+"#,
+    )?;
+
+    let helper_src = tmp.path().join("rust").join("mut_ref_probe").join("src");
+    fs::create_dir_all(&helper_src)?;
+    fs::write(
+        helper_src
+            .parent()
+            .ok_or("mutable-reference probe source directory had no parent")?
+            .join("Cargo.toml"),
+        r#"[package]
+name = "mut_ref_probe"
+version = "0.1.0"
+edition = "2021"
+"#,
+    )?;
+    fs::write(
+        helper_src.join("lib.rs"),
+        r#"pub struct Header {
+    value: usize,
+}
+
+impl Header {
+    pub fn new() -> Self {
+        Self { value: 0 }
+    }
+}
+
+pub mod writer {
+    use super::Header;
+
+    pub struct Writer;
+
+    impl Writer {
+        pub fn new() -> Self {
+            Self
+        }
+
+        pub fn mutate<T>(&mut self, header: &mut Header, _value: T) -> usize {
+            header.value += 1;
+            header.value
+        }
+
+        pub fn view_value(&self, header: &Header) -> usize {
+            header.value
+        }
+    }
+}
+
+pub use writer::Writer;
+"#,
+    )?;
+
+    let output = run_incan(tmp.path(), &["run"])?;
+    assert_success(&output, "Rust concrete-reference argument borrowing");
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "1\n1\n");
+
+    let generated = fs::read_to_string(
+        tmp.path()
+            .join("target/incan/rust_concrete_reference_arguments/src/main.rs"),
+    )?;
+    let compact_generated: String = generated.chars().filter(|ch| !ch.is_whitespace()).collect();
+    assert!(
+        compact_generated.contains("writer.mutate(&mutheader,1)"),
+        "generic method concrete mutable-reference argument must preserve its generated Rust borrow:\n{generated}"
+    );
+    assert!(
+        compact_generated.contains("writer.view_value(&header)"),
+        "concrete shared-reference argument must preserve its generated Rust borrow:\n{generated}"
+    );
+    Ok(())
+}
+
 fn parse_json_stdout(output: &Output) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     Ok(serde_json::from_slice(&output.stdout)?)
 }
