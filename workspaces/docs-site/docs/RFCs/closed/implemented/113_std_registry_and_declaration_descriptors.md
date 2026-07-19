@@ -367,6 +367,7 @@ Rejected because metadata already names stronger contract, evidence, lifecycle, 
 - **Typechecker / symbol resolution:** must resolve `std.registry` identities, validate registry key and descriptor types, enforce structural values, preserve declaration subjects, and report duplicate or inaccessible registrations.
 - **Runtime / lowering / emission:** must preserve ordinary typed runtime registry behavior for loaded modules without changing described declarations' callable or nominal semantics.
 - **Stdlib / Runtime (`incan_stdlib`):** must provide `Registry[K, T]`, registry-entry handles, `@describe`, explicit compilation-unit/package subject forms, and structural key/descriptor support appropriate for ordinary Incan authors.
+- **SDK provider:** `stdlib-core` must publish `std.registry` and the source-owned capability catalogue so minimal, default, and full SDK profiles share the same checked registry contract.
 - **Checked metadata and package artifacts:** must carry complete checked registry entries, identities, descriptor structure, visibility, provenance, and degraded states.
 - **CLI / inspection tooling:** must provide deterministic registry inspection and actionable diagnostics without invoking user module initialization.
 - **Formatter:** must format description decorators and descriptor expressions deterministically.

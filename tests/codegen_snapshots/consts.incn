@@ -3,13 +3,20 @@
 const A: int = 1 + 2 * 3
 const S: FrozenStr = "hello"
 const L: FrozenList[int] = [1, 2, 3]
+const TEXTS: FrozenList[str] = ["alpha", "beta"]
 const D: FrozenDict[FrozenStr, int] = {"a": 1, "b": 2}
 const T = ("x", 42)
+
+model Metadata:
+    pub canonical_forms: FrozenList[str]
+
+static METADATA: Metadata = Metadata(canonical_forms=TEXTS)
 
 def main() -> None:
     # Just reference a few to keep them "used"
     print(A)
     print(S)
     print(L.len())
+    print(METADATA.canonical_forms.len())
     print(D.len())
     print(T)

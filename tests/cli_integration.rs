@@ -9028,12 +9028,16 @@ def test_loaded_entries_keep_checked_description_shape() -> None:
     Ok(())
 }
 
-/// RFC 113: compiling an application must typecheck the Incan-authored standard registry implementation, including the
-/// compiler-reserved helper boundary.
+/// RFC 113: the mandatory core provider must supply the Incan-authored registry implementation, including the
+/// compiler-reserved helper boundary, to a minimal-profile consumer.
 #[test]
-fn build_std_registry_consumer_compiles_the_source_stdlib() -> Result<(), Box<dyn std::error::Error>> {
+fn build_std_registry_consumer_uses_compiled_core_provider() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
-    let main_path = write_minimal_project(tmp.path(), "std_registry_source_build", "")?;
+    let main_path = write_minimal_project(
+        tmp.path(),
+        "std_registry_provider_build",
+        "\n\n[sdk]\nprofile = \"minimal\"\n",
+    )?;
     let src_dir = main_path.parent().ok_or("main path had no parent")?;
     fs::write(
         src_dir.join("feature.incn"),
@@ -9068,7 +9072,10 @@ def main() -> None:
         tmp.path(),
         &["build", main_path.to_str().ok_or("main path was not valid UTF-8")?],
     )?;
-    assert_success(&output, "build of an std.registry source consumer");
+    assert_success(
+        &output,
+        "minimal-profile build using std.registry from the compiled core provider",
+    );
     Ok(())
 }
 
