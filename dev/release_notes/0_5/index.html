@@ -6423,6 +6423,7 @@
 </ul>
 <h2 id="bugfixes">Bugfixes<a class="headerlink" href="#bugfixes" title="Permanent link">&para;</a></h2>
 <ul>
+<li><strong>Compiler</strong>: Class-field privacy now survives checked metadata and compiled package boundaries. Named construction through a compiled package uses an exact package-owned constructor bridge—including aliases, inherited fields, and provider-owned defaults—while later private member access receives an Incan diagnostic instead of a Rust privacy failure; older manifests without field visibility retain their compatible public behavior (#883).</li>
 <li><strong>Compiler</strong>: String literals returned from closures now materialize owned Incan <code>str</code> values, so <code>Result.map_err</code> and other closure consumers generate Rust <code>String</code> values instead of borrowed <code>&amp;str</code> values (#880).</li>
 <li><strong>Compiler</strong>: Imported mutable Rust trait receivers now distinguish owned values from dereferenceable guards, so calls such as <code>Read.by_ref(input)</code> emit a valid direct borrow for <code>Stdin</code> while stdlib <code>RefMut</code> readers retain their required reborrow (#878).</li>
 <li><strong>Compiler</strong>: Rust interop method calls with inferred <code>Into</code>-bound generic parameters now keep string literals in an inferable shape instead of generating ambiguous <code>.into()</code> calls (#804).</li>
