@@ -227,10 +227,8 @@ pub struct IrCodegen<'a> {
     stdlib_cache: StdlibAstCache,
     /// Main-module facts supplied by the owning compilation session.
     ///
-    /// Direct backend API callers may omit this temporarily; that fallback is
-    /// removed when every caller constructs its lowering request from a
-    /// [`CompilationSession`](crate::cli::commands::common::CompilationSession)
-    /// analysis (#225).
+    /// Direct backend API callers may omit this temporarily; that fallback is removed when every caller constructs its
+    /// lowering request from a compilation-session analysis (#225).
     prechecked_main_type_info: Option<TypeCheckInfo>,
     /// Dependency facts from the same session analysis, keyed by module identity.
     prechecked_dependency_type_info: HashMap<Vec<String>, TypeCheckInfo>,
@@ -552,8 +550,8 @@ impl<'a> IrCodegen<'a> {
 
     /// Supply the checked lowering inputs owned by one compilation session.
     ///
-    /// Production command paths use this to prevent lowering from rechecking
-    /// source after diagnostics and semantic facts have already been produced.
+    /// Production command paths use this to prevent lowering from rechecking source after diagnostics and semantic
+    /// facts have already been produced.
     pub(crate) fn set_prechecked_type_info(
         &mut self,
         main: TypeCheckInfo,
