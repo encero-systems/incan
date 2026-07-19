@@ -3837,7 +3837,7 @@ fn typecheck_diagnostic_phase(module: &ParsedModule, span: Span) -> diagnostics:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::frontend::typechecker;
+    use crate::frontend::typechecker::{self, IdentKind};
     use crate::library_manifest::{LibraryManifest, ProviderFeatureMetadata, ProviderModuleClaim, VocabExports};
     use std::path::Path;
 
@@ -5016,6 +5016,106 @@ def main() -> Result[None, str]:
             )
             .into());
         }
+        Ok(())
+    }
+
+    #[test]
+    fn session_analysis_keeps_crate_root_facade_class_reexports_as_types() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path();
+        let source_root = project_root.join("src");
+        let session_root = source_root.join("session");
+        std::fs::create_dir_all(&session_root)?;
+        std::fs::write(
+            project_root.join("incan.toml"),
+            "[project]\nname = \"crate_root_facade\"\nversion = \"0.1.0\"\n",
+        )?;
+        std::fs::write(session_root.join("types.incn"), "pub class Session:\n    pub id: int\n")?;
+        std::fs::write(
+            session_root.join("mod.incn"),
+            "pub from crate.session.types import Session\n",
+        )?;
+        let main_path = source_root.join("main.incn");
+        let main_source = "from session import Session\n\ndef main() -> None:\n    session = Session(id=1)\n";
+        std::fs::write(&main_path, main_source)?;
+
+        let session = CompilationSession::discover_with_feature_selection(&main_path, &FeatureSelection::default())?;
+        let modules = collect_modules_detailed_with_session(main_path.clone(), &session)
+            .map_err(|failure| failure.render_human())?;
+        let module_idx_by_key = module_key_index(&modules);
+        let facade_index = modules
+            .iter()
+            .position(|module| module.file_path.ends_with("src/session/mod.incn"))
+            .ok_or("expected the session facade module")?;
+        let facade_dependencies = imported_module_deps_for_with_index(&modules, facade_index, &module_idx_by_key);
+        assert!(
+            facade_dependencies.iter().any(|(name, _)| *name == "session_types"),
+            "crate-root imports must contribute their source dependency to the session analysis closure; got: {:?}",
+            facade_dependencies
+                .iter()
+                .map(|(name, _)| (*name).to_string())
+                .collect::<Vec<_>>()
+        );
+
+        let analysis = session
+            .analyze_modules(
+                &modules,
+                #[cfg(feature = "rust_inspect")]
+                None,
+            )
+            .map_err(|failure| failure.render_human())?;
+        let callee_start = main_source.find("Session(id=1)").ok_or("expected constructor call")?;
+        assert_eq!(
+            analysis
+                .type_info_for_path(&main_path)
+                .ok_or("expected main session analysis")?
+                .ident_kind(Span::new(callee_start, callee_start + "Session".len())),
+            Some(IdentKind::TypeName),
+            "a public facade re-export of a crate-root class must stay a class constructor in shared session facts"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn dependency_closure_includes_crate_root_module_imports() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path();
+        let source_root = project_root.join("src");
+        let types_root = source_root.join("types");
+        std::fs::create_dir_all(&types_root)?;
+        std::fs::write(
+            project_root.join("incan.toml"),
+            "[project]\nname = \"crate_root_module_import\"\nversion = \"0.1.0\"\n",
+        )?;
+        std::fs::write(types_root.join("user.incn"), "pub class User:\n    pub id: int\n")?;
+        let consumer_path = source_root.join("consumer.incn");
+        std::fs::write(
+            &consumer_path,
+            "import crate.types.user\n\npub def consume() -> None:\n    pass\n",
+        )?;
+        let main_path = source_root.join("main.incn");
+        std::fs::write(
+            &main_path,
+            "from consumer import consume\n\ndef main() -> None:\n    consume()\n",
+        )?;
+
+        let session = CompilationSession::discover_with_feature_selection(&main_path, &FeatureSelection::default())?;
+        let modules = collect_modules_detailed_with_session(main_path.clone(), &session)
+            .map_err(|failure| failure.render_human())?;
+        let module_idx_by_key = module_key_index(&modules);
+        let consumer_index = modules
+            .iter()
+            .position(|module| module.file_path.ends_with("src/consumer.incn"))
+            .ok_or("expected the consumer module")?;
+        let dependencies = imported_module_deps_for_with_index(&modules, consumer_index, &module_idx_by_key);
+        assert!(
+            dependencies.iter().any(|(name, _)| *name == "types_user"),
+            "crate-root module imports must contribute their source dependency to the closure; got: {:?}",
+            dependencies
+                .iter()
+                .map(|(name, _)| (*name).to_string())
+                .collect::<Vec<_>>()
+        );
         Ok(())
     }
 
