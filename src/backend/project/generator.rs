@@ -7,6 +7,7 @@
 //! - [`super::cargo_toml`] — `Cargo.toml` rendering (`generate_cargo_toml`, `format_dependency_spec`)
 //! - [`super::runner`] — `build()`, `run()`, `run_with_cwd()` and result types
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io;
@@ -17,6 +18,7 @@ use crate::manifest::DependencySpec;
 use crate::provider::{ProviderPlan, SDK_PROVIDER_BUILD_ENV};
 use incan_core::lang::{rust_keywords, stdlib};
 use sha2::{Digest as _, Sha256};
+use toml_edit::{DocumentMut, Item, value};
 
 const MOD_INSERT_MARKER: &str = "// __INCAN_INSERT_MODS__";
 pub(crate) const GENERATED_CARGO_TARGET_DIR_ENV: &str = "INCAN_GENERATED_CARGO_TARGET_DIR";
@@ -65,6 +67,10 @@ pub struct ProjectGenerator {
     pub(super) name: String,
     /// Optional Cargo package name when it should differ from the generated target name.
     pub(super) package_name: Option<String>,
+    /// Optional project version to use for the generated Cargo package.
+    pub(super) package_version: Option<String>,
+    /// Optional SPDX license identifier or expression for the generated Cargo package.
+    pub(super) package_license: Option<String>,
     /// Whether this is a binary (true) or library (false)
     pub(super) is_binary: bool,
     /// Enabled stdlib feature flags for the generated project (for example `json`, `async`, `web`).
@@ -107,6 +113,8 @@ impl ProjectGenerator {
             output_dir: output_dir.as_ref().to_path_buf(),
             name: name.to_string(),
             package_name: None,
+            package_version: None,
+            package_license: None,
             is_binary,
             stdlib_features: Vec::new(),
             dependencies: Vec::new(),
@@ -137,6 +145,22 @@ impl ProjectGenerator {
     /// Override the Cargo package name while preserving the generated Rust target name.
     pub fn set_package_name(&mut self, package_name: Option<String>) {
         self.package_name = package_name;
+    }
+
+    /// Set optional authored project metadata for the generated Cargo package.
+    pub fn set_package_metadata(&mut self, version: Option<String>, license: Option<String>) {
+        self.package_version = version;
+        self.package_license = license;
+    }
+
+    /// Return the Cargo package name selected for the generated manifest and lockfile root.
+    pub(super) fn cargo_package_name(&self) -> &str {
+        self.package_name.as_deref().unwrap_or(&self.name)
+    }
+
+    /// Return the authored Cargo package version or the compiler-version fallback.
+    pub(super) fn cargo_package_version(&self) -> &str {
+        self.package_version.as_deref().unwrap_or(crate::version::INCAN_VERSION)
     }
 
     /// Set resolved Rust dependencies.
@@ -794,7 +818,44 @@ impl ProjectGenerator {
         let Some(payload) = &self.cargo_lock_payload else {
             return Ok(false);
         };
-        Self::write_file_if_changed(&self.output_dir.join("Cargo.lock"), payload)
+        let payload = self.cargo_lock_payload_for_package(payload)?;
+        Self::write_file_if_changed(&self.output_dir.join("Cargo.lock"), payload.as_ref())
+    }
+
+    /// Align the source-less Cargo.lock root entry with this generated package's version.
+    ///
+    /// Canonical Incan locks resolve dependencies through an internal package identity. Generated application and
+    /// library manifests can carry an authored project version, and Cargo treats a root-version difference as a lock
+    /// mutation under `--locked` or `--frozen`. Rewriting only the matching source-less root entry preserves the
+    /// resolved dependency closure while making the materialized lock agree with its generated manifest.
+    fn cargo_lock_payload_for_package<'a>(&self, payload: &'a str) -> io::Result<Cow<'a, str>> {
+        let mut document = payload
+            .parse::<DocumentMut>()
+            .map_err(|error| io::Error::other(format!("failed to parse generated Cargo.lock payload: {error}")))?;
+        let package_name = self.cargo_package_name();
+        let package_version = self.cargo_package_version();
+        let mut changed = false;
+
+        if let Some(packages) = document.get_mut("package").and_then(Item::as_array_of_tables_mut) {
+            for package in packages.iter_mut() {
+                let matches_root =
+                    package.get("name").and_then(Item::as_str) == Some(package_name) && package.get("source").is_none();
+                if !matches_root {
+                    continue;
+                }
+                if package.get("version").and_then(Item::as_str) != Some(package_version) {
+                    package["version"] = value(package_version);
+                    changed = true;
+                }
+                break;
+            }
+        }
+
+        if changed {
+            Ok(Cow::Owned(document.to_string()))
+        } else {
+            Ok(Cow::Borrowed(payload))
+        }
     }
 }
 
@@ -1186,6 +1247,47 @@ mod tests {
             !stale_module.exists(),
             "artifact-owned modules discovered from the manifest must be removed from reused consumer projects"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn cargo_lock_payload_uses_generated_package_version() -> Result<(), Box<dyn std::error::Error>> {
+        let mut generator = ProjectGenerator::new("/tmp/generated_lock_metadata", "generated_target", true);
+        generator.set_package_name(Some("locked_root".to_string()));
+        generator.set_package_metadata(Some("1.2.3".to_string()), None);
+        let payload = r#"version = 4
+
+[[package]]
+name = "locked_root"
+version = "0.5.0-dev.8"
+
+[[package]]
+name = "locked_root"
+version = "9.9.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+"#;
+
+        let rewritten = generator.cargo_lock_payload_for_package(payload)?;
+        let lock: toml::Value = toml::from_str(rewritten.as_ref())?;
+        let packages = lock
+            .get("package")
+            .and_then(toml::Value::as_array)
+            .ok_or("rewritten Cargo.lock had no package array")?;
+        let root_version = packages
+            .iter()
+            .find(|package| package.get("source").is_none())
+            .and_then(|package| package.get("version"))
+            .and_then(toml::Value::as_str)
+            .ok_or("rewritten Cargo.lock had no source-less root version")?;
+        let registry_version = packages
+            .iter()
+            .find(|package| package.get("source").is_some())
+            .and_then(|package| package.get("version"))
+            .and_then(toml::Value::as_str)
+            .ok_or("rewritten Cargo.lock had no registry package version")?;
+
+        assert_eq!(root_version, "1.2.3");
+        assert_eq!(registry_version, "9.9.9");
         Ok(())
     }
 

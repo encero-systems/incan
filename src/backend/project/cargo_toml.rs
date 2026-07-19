@@ -20,7 +20,7 @@ use crate::manifest::{DependencySource, DependencySpec, GitReference};
 use super::INCAN_STDLIB_CRATE_NAME;
 use super::generator::{ProjectGenerator, is_sdk_provider_build};
 
-/// Incan compiler version stamped into generated `Cargo.toml` files.
+/// Incan compiler version stamped into generated `Cargo.toml` files and used as the package-version fallback.
 pub(crate) const INCAN_VERSION: &str = crate::version::INCAN_VERSION;
 
 // ============================================================================
@@ -50,6 +50,8 @@ struct PackageSection {
     name: String,
     version: String,
     edition: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    license: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -223,7 +225,7 @@ impl ProjectGenerator {
     /// The output is valid TOML by construction.
     pub(super) fn generate_cargo_toml(&self) -> io::Result<String> {
         let edition = self.rust_edition.as_deref().unwrap_or("2021").to_string();
-        let package_name = self.package_name.as_deref().unwrap_or(&self.name).to_string();
+        let package_name = self.cargo_package_name().to_string();
 
         // ---- Resolve toolchain-owned support crates for generated Rust projects ----
         let stdlib_path = toolchain_crate_path(INCAN_STDLIB_CRATE_NAME);
@@ -337,8 +339,9 @@ impl ProjectGenerator {
         let manifest = CargoManifest {
             package: PackageSection {
                 name: package_name,
-                version: INCAN_VERSION.to_string(),
+                version: self.cargo_package_version().to_string(),
                 edition,
+                license: self.package_license.clone(),
             },
             workspace: toml::Table::new(), // empty — opt out of parent workspace
             dependencies: deps,
@@ -402,7 +405,7 @@ mod tests {
     use crate::backend::project::generator::ProjectGenerator;
     use crate::manifest::{DependencySource, DependencySpec};
 
-    use super::path_dependency;
+    use super::{INCAN_VERSION, path_dependency};
 
     fn parsed_manifest(toml: &str) -> Result<toml::Value, Box<dyn std::error::Error>> {
         Ok(toml::from_str(toml)?)
@@ -504,6 +507,43 @@ mod tests {
             PathBuf::from(support_path).is_absolute(),
             "ordinary generated projects should keep stable absolute toolchain paths"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn cargo_toml_uses_authored_project_package_metadata() -> Result<(), Box<dyn std::error::Error>> {
+        let mut generator = ProjectGenerator::new("/tmp/test_project_metadata", "project_metadata", true);
+        generator.set_package_metadata(Some("1.2.3".to_string()), Some("MIT OR Apache-2.0".to_string()));
+
+        let manifest = parsed_manifest(&generator.generate_cargo_toml()?)?;
+        let package = manifest
+            .get("package")
+            .and_then(toml::Value::as_table)
+            .ok_or("generated Cargo.toml missing [package] table")?;
+
+        assert_eq!(package.get("version").and_then(toml::Value::as_str), Some("1.2.3"));
+        assert_eq!(
+            package.get("license").and_then(toml::Value::as_str),
+            Some("MIT OR Apache-2.0")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn cargo_toml_defaults_to_compiler_package_metadata() -> Result<(), Box<dyn std::error::Error>> {
+        let generator = ProjectGenerator::new("/tmp/test_default_metadata", "default_metadata", true);
+
+        let manifest = parsed_manifest(&generator.generate_cargo_toml()?)?;
+        let package = manifest
+            .get("package")
+            .and_then(toml::Value::as_table)
+            .ok_or("generated Cargo.toml missing [package] table")?;
+
+        assert_eq!(
+            package.get("version").and_then(toml::Value::as_str),
+            Some(INCAN_VERSION)
+        );
+        assert!(package.get("license").is_none());
         Ok(())
     }
 
