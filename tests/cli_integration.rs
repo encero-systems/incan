@@ -69,6 +69,35 @@ fn configured_incan_command(current_dir: &Path, args: &[&str]) -> Command {
     command
 }
 
+/// Run one Unix CLI probe in its own process group so recursive subprocess regressions can be terminated together.
+#[cfg(unix)]
+fn run_incan_with_timeout(
+    current_dir: &Path,
+    args: &[&str],
+    timeout: std::time::Duration,
+) -> Result<(Output, bool), Box<dyn std::error::Error>> {
+    use std::os::unix::process::CommandExt;
+
+    let mut command = configured_incan_command(current_dir, args);
+    command.process_group(0).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command.spawn()?;
+    let started = std::time::Instant::now();
+    loop {
+        if child.try_wait()?.is_some() {
+            return Ok((child.wait_with_output()?, false));
+        }
+        if started.elapsed() >= timeout {
+            let process_group = format!("-{}", child.id());
+            let killed_group = Command::new("kill").args(["-TERM", process_group.as_str()]).status()?;
+            if !killed_group.success() {
+                child.kill()?;
+            }
+            return Ok((child.wait_with_output()?, true));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+}
+
 #[cfg(unix)]
 fn run_incan_with_os_env(
     current_dir: &Path,
@@ -1220,6 +1249,89 @@ def test_workspace_rust_dependency_is_available() -> None:
         &test_output,
         "rooted workspace selected-member test with an inherited Rust dependency",
     );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn rooted_workspace_missing_root_artifact_is_prepared_once_issue908() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("src"))?;
+    fs::write(
+        root.path().join("incan.toml"),
+        r#"[project]
+name = "root_lib"
+version = "0.1.0"
+
+[project.scripts]
+library = "src/lib.incn"
+"#,
+    )?;
+    fs::write(
+        root.path().join("src/lib.incn"),
+        "pub def answer() -> int:\n  return 42\n",
+    )?;
+
+    let warmup = run_incan(root.path(), &["build", "--lib"])?;
+    assert_success(&warmup, "standalone SDK and library artifact warmup");
+    fs::remove_dir_all(root.path().join("target/lib"))?;
+    fs::remove_file(root.path().join("incan.lock"))?;
+
+    fs::write(
+        root.path().join("incan.toml"),
+        r#"[project]
+name = "root_lib"
+version = "0.1.0"
+
+[project.scripts]
+library = "src/lib.incn"
+
+[workspace]
+members = ["consumer"]
+default-members = ["root_lib", "consumer"]
+
+[workspace.dependencies]
+root_lib = { path = "." }
+"#,
+    )?;
+    let consumer = root.path().join("consumer");
+    fs::create_dir_all(consumer.join("src"))?;
+    fs::write(
+        consumer.join("incan.toml"),
+        r#"[project]
+name = "consumer"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+root_lib = { workspace = true }
+"#,
+    )?;
+    fs::write(
+        consumer.join("src/main.incn"),
+        "from pub::root_lib import answer\n\n\ndef main() -> None:\n  println(answer())\n",
+    )?;
+
+    let (output, timed_out) = run_incan_with_timeout(root.path(), &["lock"], std::time::Duration::from_secs(60))?;
+    assert!(
+        !timed_out,
+        "rooted workspace lock exceeded its bounded artifact-preparation window\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_success(&output, "rooted workspace lock with a missing root artifact");
+    let stderr = String::from_utf8(output.stderr)?;
+    assert_eq!(
+        stderr
+            .matches("Preparing missing pub::root_lib dependency artifact")
+            .count(),
+        1,
+        "root dependency preparation should launch exactly one artifact-only child:\n{stderr}"
+    );
+    assert!(root.path().join("target/lib/root_lib.incnlib").is_file());
+    assert!(root.path().join("incan.lock").is_file());
     Ok(())
 }
 
