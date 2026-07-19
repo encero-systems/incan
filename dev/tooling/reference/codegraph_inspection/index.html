@@ -1430,6 +1430,8 @@
       
         
       
+        
+      
     
     
       
@@ -1851,6 +1853,27 @@
   
   <span class="md-ellipsis">
     Project lifecycle
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/workspaces/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Workspaces
   </span>
   
 
@@ -4363,6 +4386,8 @@
       
         
       
+        
+      
     
     
       
@@ -4532,6 +4557,27 @@
   
   <span class="md-ellipsis">
     Formatting with incan fmt
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/sdk_components_and_package_features/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    SDK components and package features
   </span>
   
 
@@ -4833,6 +4879,21 @@
       JSONL records
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="JSONL records">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#diagnostic-records" class="md-nav__link">
+    <span class="md-ellipsis">
+      Diagnostic records
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -6339,6 +6400,21 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="JSONL records">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#diagnostic-records" class="md-nav__link">
+    <span class="md-ellipsis">
+      Diagnostic records
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -6389,9 +6465,70 @@ incan<span class="w"> </span>run<span class="w"> </span>src/main.incn
 <li><code>reference</code>: source-level name references inside declaration bodies, including identifier, field, <code>self</code>, and surface-path forms. <code>target_id</code> points at an emitted declaration record for compiler-proven source identifiers, including local declarations and supported source imports within the exported graph. Unsupported, ambiguous, degraded, field, <code>self</code>, surface-path, external-package, and syntax-only cases keep <code>target_id: null</code>.</li>
 <li><code>call</code>: source-level call expressions inside declaration bodies, including function, method, constructor, and surface-symbol calls. <code>target_id</code> points at an emitted declaration record for compiler-proven source function and constructor calls, including local declarations, supported source imports, and facade reexports where the original declaration identity is known within the exported graph. Unsupported, ambiguous, degraded, method, surface-symbol, external-package, and syntax-only cases keep <code>target_id: null</code>.</li>
 <li><code>containment</code>: parent-child relationship between file, module, declaration, import, reference, or call records.</li>
-<li><code>diagnostic</code>: stable diagnostic code, phase, message, primary span, notes, hints, and explain command.</li>
+<li><code>diagnostic</code>: stable diagnostic code, severity, phase, compiler origin, message, primary span, notes, hints, optional structured expected/actual values, labelled related spans, and explain command.</li>
 </ul>
 <p>Paths and ids are deterministic for the same compiler version and filesystem layout. The schema does not promise that ids are stable across file moves, symbol renames, or future schema versions; consumers that persist the graph should store the schema version and compiler version with their index.</p>
+<h3 id="diagnostic-records">Diagnostic records<a class="headerlink" href="#diagnostic-records" title="Permanent link">&para;</a></h3>
+<p>Diagnostic records appear in tolerant exports produced with <code>--allow-errors</code>. They project the same compiler-owned diagnostic facts used by <code>incan check --format json</code> and the LSP; consumers should read the structured fields instead of reverse-engineering the human message.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Contract</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>code</code></td>
+<td>Stable public diagnostic identifier used by <code>incan explain</code>.</td>
+</tr>
+<tr>
+<td><code>severity</code></td>
+<td>Diagnostic level such as <code>error</code>, <code>warning</code>, or <code>hint</code>.</td>
+</tr>
+<tr>
+<td><code>phase</code></td>
+<td>Compiler phase that detected the problem, such as parsing or typechecking.</td>
+</tr>
+<tr>
+<td><code>origin</code></td>
+<td>Compiler subsystem that produced the fact. Legacy schema-v1 records without this field deserialize as <code>unknown</code>.</td>
+</tr>
+<tr>
+<td><code>message</code></td>
+<td>Human-readable summary; not a machine-readable replacement for the other fields.</td>
+</tr>
+<tr>
+<td><code>primary_span</code></td>
+<td>Primary source location with inclusive start and exclusive end byte offsets plus 1-based line and column positions.</td>
+</tr>
+<tr>
+<td><code>notes</code> and <code>hints</code></td>
+<td>Additional explanation and suggested remedies.</td>
+</tr>
+<tr>
+<td><code>expected</code> and <code>actual</code></td>
+<td>Optional structured values or types for comparisons known to the compiler. The fields are omitted when unavailable.</td>
+</tr>
+<tr>
+<td><code>related_spans</code></td>
+<td>Zero or more objects containing a secondary <code>span</code> and compiler-owned relationship <code>label</code>. Empty arrays are omitted.</td>
+</tr>
+<tr>
+<td><code>explain</code></td>
+<td>Exact command that opens the diagnostic's longer explanation.</td>
+</tr>
+<tr>
+<td><code>provenance</code></td>
+<td><code>diagnostic</code> for compiler-owned diagnostic records.</td>
+</tr>
+<tr>
+<td><code>degraded</code></td>
+<td>Always <code>true</code>; the export contains facts recovered in the presence of diagnostics.</td>
+</tr>
+</tbody>
+</table>
+<p>Codegraph spans include byte offsets because graph consumers often anchor directly into source buffers. Preserve the accompanying line and column values for display rather than trying to reconstruct them from bytes under an assumed encoding.</p>
 
 
 

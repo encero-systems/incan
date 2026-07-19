@@ -1430,6 +1430,8 @@
       
         
       
+        
+      
     
     
       
@@ -1851,6 +1853,27 @@
   
   <span class="md-ellipsis">
     Project lifecycle
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/workspaces/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Workspaces
   </span>
   
 
@@ -4358,6 +4381,8 @@
       
         
       
+        
+      
     
     
       
@@ -4527,6 +4552,27 @@
   
   <span class="md-ellipsis">
     Formatting with incan fmt
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/how-to/sdk_components_and_package_features/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    SDK components and package features
   </span>
   
 
@@ -6413,12 +6459,14 @@
 <li><strong>Stdlib</strong>: <code>std.checksum</code> adds CRC32 value, digest-byte, and incremental helpers for compatibility and accidental-corruption checks, separate from <code>std.hash</code> security and hashing contracts (#709).</li>
 <li><strong>Stdlib</strong>: <code>std.environ</code> adds redacted, read-only Unicode environment access through required, optional, and defaulted string reads, plus typed reads for primitives, explicit <code>TryFrom[str]</code> adopters, and validated newtypes (RFC 089, #557).</li>
 <li><strong>Stdlib</strong>: <code>std.fs</code> adds same-filesystem atomic publication, explicit directory synchronization, and OS-backed shared/exclusive advisory locks for crash-safe local state (RFC 112, #829).</li>
+<li><strong>Stdlib</strong>: <code>Iterator.sum()</code> is now ordinary source-owned Incan behavior through <code>Sum[int]</code> and <code>Sum[float]</code>, including supported validated numeric newtypes, rather than a Rust-source backend special case (#510).</li>
 <li><strong>Compiled providers, SDK components, and package features</strong>: Checked Incan libraries and official SDK artifacts now enter compilation through one session-owned provider plan. The standard library ships as nine independently addressable components with <code>minimal</code>, <code>default</code>, and <code>full</code> profiles; project manifests can refine the selected profile without changing stable <code>std.*</code> imports. Package-owned features resolve additively across optional Incan dependencies, support compile-time <code>when feature(...)</code> source projection, and remain distinct from private Cargo implementation features. <code>incan inspect providers</code> and <code>incan inspect features</code> explain the resolved graph, while canonical locks record the semantic component, feature, provider, and implementation-facet closure ([RFC 114], #544).</li>
 <li><strong>Compact offline SDK seed</strong>: Toolchain archives carry relocatable, integrity-checked provider payloads and one shared Cargo lock without provider source, mutable build targets, or repeated per-project caches. Installed compilers publish the selected profile into a shared content-addressed store with crash-safe coordination, and generated build and test projects reuse those compiled providers instead of materializing standard-library source (#544).</li>
 </ul>
 <h2 id="tooling">Tooling<a class="headerlink" href="#tooling" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Codegraph</strong>: A runnable Incan-authored external importer example uses <code>std.json.parse_jsonl</code> to validate schema-v1 JSONL exports end to end while keeping compiler-owned facts authoritative and unknown future record kinds opaque (RFC 106, #776).</li>
+<li><strong>Diagnostics and codegraph</strong>: Machine-readable diagnostics now carry compiler origin, structured expected and actual values, and labeled related spans across <code>incan check</code>, LSP, and tolerant codegraph exports (#771).</li>
 <li><strong>Workspaces</strong>: RFC 077 adds explicit rooted and virtual project workspaces with deterministic member selection, explicit shared dependency and environment inheritance, one crash-safe root lock, <code>incan workspace inspect</code>, and member-scoped build/check/test/fmt reports (#405).</li>
 <li><strong>npm package</strong>: Installing the npm toolchain adapter no longer emits the package-manager install-script warning now that the release packaging no longer relies on that hook (#812).</li>
 <li><strong>Release tooling</strong>: Installer and packaging tests use lock-protected, named temporary staging, reclaim abandoned staging from interrupted runs, and surface cleanup failures instead of silently retaining release archives and package-manager fixtures (#864).</li>
@@ -6426,6 +6474,7 @@
 <h2 id="bugfixes">Bugfixes<a class="headerlink" href="#bugfixes" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>SDK providers</strong>: Compiled library artifacts now rebind SDK path dependencies to the active content-addressed provider cache, including copied support crates, so semantically identical components cannot enter one Cargo graph through conflicting cache roots (#911).</li>
+<li><strong>Toolchain</strong>: Prelude parsing, stdlib type metadata, testing markers, and compiled SDK-provider publication now resolve one canonical stdlib source tree. <code>INCAN_STDLIB</code> and <code>INCAN_STDLIB_DIR</code> are true overrides, preventing a compiler in a shared Cargo target from mixing its source checkout with an older executable-adjacent stdlib.</li>
 <li><strong>Workspaces</strong>: Rooted workspace library artifacts now retain the selected project's identity across Cargo package, Cargo library, and <code>.incnlib</code> metadata, while removing self-dependencies even with explicit output overrides so external consumers can compile the published package (#909).</li>
 <li><strong>Workspaces</strong>: Root library dependency preparation now targets exactly that project and leaves canonical lock publication to its parent command, preventing fresh rooted workspaces from recursively spawning <code>incan build --lib</code> until the machine is exhausted (#908).</li>
 <li><strong>Workspaces</strong>: Rooted-workspace entrypoints and tests now resolve through their deepest owning member, so selected member builds retain both direct and inherited Rust dependency versions (#907).</li>
@@ -6442,6 +6491,11 @@
 <li><strong>Compiler</strong>: String literals returned from closures now materialize owned Incan <code>str</code> values, so <code>Result.map_err</code> and other closure consumers generate Rust <code>String</code> values instead of borrowed <code>&amp;str</code> values (#880).</li>
 <li><strong>Compiler</strong>: Imported mutable Rust trait receivers now distinguish owned values from dereferenceable guards, so calls such as <code>Read.by_ref(input)</code> emit a valid direct borrow for <code>Stdin</code> while stdlib <code>RefMut</code> readers retain their required reborrow (#878).</li>
 <li><strong>Compiler</strong>: Rust interop method calls with inferred <code>Into</code>-bound generic parameters now keep string literals in an inferable shape instead of generating ambiguous <code>.into()</code> calls (#804).</li>
+<li><strong>Compiler</strong>: Rust boundary metadata now preserves pointer-sized integer identity, so <code>usize</code> and <code>isize</code> arguments are no longer reported as mismatches against themselves (#803).</li>
+<li><strong>Compiler</strong>: Expression-position vocab declarations now activate their declaration-owned clause keywords, keeping parser routing and downstream syntax ownership aligned (#813).</li>
+<li><strong>Compiler</strong>: Generic <code>Index[K, V]</code> adoptions now retain their key and output substitutions through lowering and generated Rust, including adopters whose trait arguments use <code>Self</code> (#815).</li>
+<li><strong>Compiler</strong>: Trait-typed receivers may call only methods available through the declared trait and its supertraits; methods belonging only to narrower subtraits now receive an Incan diagnostic (#817).</li>
+<li><strong>Compiler</strong>: Rust callback metadata now preserves borrowed slice parameters in <code>FnMut</code> bounds, allowing compatible Incan callbacks to satisfy APIs that pass <code>&amp;[T]</code> values (#835).</li>
 <li><strong>Compiler</strong>: Incomplete explicit generic arguments on inspected Rust methods are rejected during Incan typechecking with the method's required arity, instead of failing later in generated Rust compilation (#834).</li>
 <li><strong>Compiler</strong>: Generic Rust function results can now be inferred from an annotated return or parameter context through <code>Result.unwrap()</code>, including generated package-test builds such as <code>serde_json::from_str</code> (#852).</li>
 <li><strong>Compiler</strong>: Rust interop now preserves callable bounds such as <code>FnMut(&amp;mut T, &amp;U)</code> when checking generic callback parameters, so by-value Incan callbacks are rejected at typecheck instead of reaching Rust codegen with an invalid borrowed callback shape (#805).</li>

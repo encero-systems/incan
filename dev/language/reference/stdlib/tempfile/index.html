@@ -1435,6 +1435,8 @@
       
         
       
+        
+      
     
     
       
@@ -1856,6 +1858,27 @@
   
   <span class="md-ellipsis">
     Project lifecycle
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/workspaces/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Workspaces
   </span>
   
 
@@ -4452,6 +4475,8 @@
       
         
       
+        
+      
     
     
       
@@ -4621,6 +4646,27 @@
   
   <span class="md-ellipsis">
     Formatting with incan fmt
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/how-to/sdk_components_and_package_features/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    SDK components and package features
   </span>
   
 
@@ -6419,7 +6465,7 @@
 <p><code>std.tempfile</code> creates temporary filesystem locations with automatic cleanup. Once a path exists, use <code>std.fs.Path</code> and <code>std.fs.File</code> for ordinary reads, writes, metadata, joins, and explicit cleanup.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.tempfile</span><span class="w"> </span><span class="kn">import</span> <span class="nc">NamedTemporaryFile</span><span class="p">,</span> <span class="nc">SpooledTemporaryFile</span><span class="p">,</span> <span class="nc">TemporaryDirectory</span>
 </code></pre></div>
-<p>Named file and directory creation is fallible because it reserves real host filesystem entries. Use <code>try_new()</code> for default acquisition and <code>try_new_with(prefix, suffix, dir)</code> for configured acquisition. Direct <code>NamedTemporaryFile(...)</code> and <code>TemporaryDirectory(...)</code> construction is ordinary infallible class construction and is not the resource-acquisition API. <code>SpooledTemporaryFile(max_size=...)</code> is infallible because it starts in memory and creates a temporary file only when it rolls over.</p>
+<p>Named file and directory creation is fallible because it reserves real host filesystem entries. Each acquisition chooses an unpredictable name and uses exclusive creation, so an existing entry is never opened as the new temporary resource. Use <code>try_new()</code> for default acquisition and <code>try_new_with(prefix, suffix, dir)</code> for configured acquisition. Direct <code>NamedTemporaryFile(...)</code> and <code>TemporaryDirectory(...)</code> construction is ordinary infallible class construction and is not the resource-acquisition API. <code>SpooledTemporaryFile(max_size=...)</code> is infallible because it starts in memory and creates a temporary file only when it rolls over.</p>
 <h2 id="namedtemporaryfile">NamedTemporaryFile<a class="headerlink" href="#namedtemporaryfile" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

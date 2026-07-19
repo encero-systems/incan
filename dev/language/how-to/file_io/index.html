@@ -1437,6 +1437,8 @@
       
         
       
+        
+      
     
     
       
@@ -1692,6 +1694,15 @@
   <a href="#copy-move-and-clean-up" class="md-nav__link">
     <span class="md-ellipsis">
       Copy, Move, and Clean Up
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#publish-a-file-without-exposing-partial-contents" class="md-nav__link">
+    <span class="md-ellipsis">
+      Publish a File Without Exposing Partial Contents
     </span>
   </a>
   
@@ -1997,6 +2008,27 @@
   
   <span class="md-ellipsis">
     Project lifecycle
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../workspaces/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Workspaces
   </span>
   
 
@@ -4504,6 +4536,8 @@
       
         
       
+        
+      
     
     
       
@@ -4673,6 +4707,27 @@
   
   <span class="md-ellipsis">
     Formatting with incan fmt
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tooling/how-to/sdk_components_and_package_features/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    SDK components and package features
   </span>
   
 
@@ -6477,6 +6532,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#publish-a-file-without-exposing-partial-contents" class="md-nav__link">
+    <span class="md-ellipsis">
+      Publish a File Without Exposing Partial Contents
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#directory-listings" class="md-nav__link">
     <span class="md-ellipsis">
       Directory Listings
@@ -6623,6 +6687,34 @@
     <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="kc">None</span><span class="p">)</span>
 </code></pre></div>
 <p><code>remove_tree()</code> is for directories. Use <code>unlink()</code> for files and symlinks.</p>
+<h2 id="publish-a-file-without-exposing-partial-contents">Publish a File Without Exposing Partial Contents<a class="headerlink" href="#publish-a-file-without-exposing-partial-contents" title="Permanent link">&para;</a></h2>
+<p>Use a sibling temporary file when readers must see either the previous complete value or the next complete value. Creating the temporary file inside <code>target.parent()</code> keeps the final replacement on the same filesystem, while <code>NamedTemporaryFile</code> reserves a unique name exclusively and cleans it up if writing or synchronization fails.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.fs</span><span class="w"> </span><span class="kn">import</span> <span class="nc">IoError</span><span class="p">,</span> <span class="kt">Path</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.tempfile</span><span class="w"> </span><span class="kn">import</span> <span class="nc">NamedTemporaryFile</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">publish_bytes</span><span class="p">(</span><span class="n">target</span><span class="p">:</span> <span class="kt">Path</span><span class="p">,</span> <span class="n">contents</span><span class="p">:</span> <span class="nb">bytes</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="nc">IoError</span><span class="p">]:</span>
+    <span class="n">guard</span> <span class="o">=</span> <span class="n">target</span><span class="o">.</span><span class="n">lock_exclusive</span><span class="p">()</span><span class="o">?</span>
+    <span class="n">staging</span> <span class="o">=</span> <span class="nc">NamedTemporaryFile</span><span class="o">.</span><span class="n">try_new_with</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;.</span><span class="si">{</span><span class="n">target</span><span class="o">.</span><span class="n">name</span><span class="p">()</span><span class="si">}</span><span class="s2">-&quot;</span><span class="p">,</span> <span class="s2">&quot;.tmp&quot;</span><span class="p">,</span> <span class="nb">Some</span><span class="p">(</span><span class="n">target</span><span class="o">.</span><span class="n">parent</span><span class="p">()))</span><span class="o">?</span>
+    <span class="n">staged_path</span> <span class="o">=</span> <span class="n">staging</span><span class="o">.</span><span class="n">path</span><span class="p">()</span>
+
+    <span class="n">staged_path</span><span class="o">.</span><span class="n">write_bytes</span><span class="p">(</span><span class="n">contents</span><span class="p">)</span><span class="o">?</span>
+    <span class="n">staged_file</span> <span class="o">=</span> <span class="n">staged_path</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">&quot;rb&quot;</span><span class="p">)</span><span class="o">?</span>
+    <span class="n">staged_file</span><span class="o">.</span><span class="n">sync</span><span class="p">()</span><span class="o">?</span>
+    <span class="n">staged_path</span><span class="o">.</span><span class="nb">replace</span><span class="p">(</span><span class="n">target</span><span class="p">)</span><span class="o">?</span>
+    <span class="n">target</span><span class="o">.</span><span class="n">parent</span><span class="p">()</span><span class="o">.</span><span class="n">sync_directory</span><span class="p">()</span><span class="o">?</span>
+    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="kc">None</span><span class="p">)</span>
+</code></pre></div>
+<p>Keep the exclusive <code>guard</code> live across reading the previous value, preparing the replacement, replacing it, and synchronizing the directory. Other cooperating writers acquire the same target lock, while readers that need a stable multi-step view use <code>target.lock_shared()</code>.</p>
+<p>Each step provides a different guarantee:</p>
+<ol>
+<li><code>NamedTemporaryFile.try_new_with(...)</code> creates an exclusively reserved, unpredictable sibling path rather than sharing a predictable <code>.next</code> name with another process.</li>
+<li><code>staged_file.sync()</code> asks the host to persist the complete staged contents before publication.</li>
+<li><code>staged_path.replace(target)</code> atomically changes which complete file the target name identifies. It never deletes the old target first and returns <code>IoError(kind="cross_device")</code> rather than falling back to copy-and-delete.</li>
+<li><code>target.parent().sync_directory()</code> asks the host to persist the changed directory entry.</li>
+</ol>
+<p>If writing, file synchronization, or replacement fails, <code>?</code> returns the error, the temporary wrapper cleans up its still-staged path, and <code>replace()</code> preserves the previous target instead of deleting it first. If directory synchronization fails, replacement has already happened: return the error and do not claim crash durability, even though readers may already observe the new complete file.</p>
+<p>Do not put the staging file in the host's default temporary directory: that directory may be on another filesystem, where atomic replacement cannot be guaranteed. Do not use a fixed sibling name in a directory another user or process can write. The lock is advisory, so it coordinates only software that follows the same locking convention; it is not an authorization boundary. The initial durability and locking contract supports Linux and macOS, including macOS applications running on a Unix-like filesystem, and Windows through WSL. Native Windows filesystem semantics are not yet covered.</p>
+<p>If atomic visibility is sufficient but crash durability is not required, the file and directory synchronization requests may be unnecessary for your application. Keep the same unique sibling and <code>replace()</code> pattern: atomic visibility, durability, and writer coordination are independent choices.</p>
 <h2 id="directory-listings">Directory Listings<a class="headerlink" href="#directory-listings" title="Permanent link">&para;</a></h2>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.fs</span><span class="w"> </span><span class="kn">import</span> <span class="nc">IoError</span><span class="p">,</span> <span class="kt">Path</span>
 

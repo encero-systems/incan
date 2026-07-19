@@ -1435,6 +1435,8 @@
       
         
       
+        
+      
     
     
       
@@ -1856,6 +1858,27 @@
   
   <span class="md-ellipsis">
     Project lifecycle
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/workspaces/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Workspaces
   </span>
   
 
@@ -4497,6 +4520,8 @@
       
         
       
+        
+      
     
     
       
@@ -4666,6 +4691,27 @@
   
   <span class="md-ellipsis">
     Formatting with incan fmt
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../tooling/how-to/sdk_components_and_package_features/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    SDK components and package features
   </span>
   
 
@@ -6833,16 +6879,22 @@
 <p>Metadata preservation during copy preserves permissions plus modification and access times where the host platform exposes them. Ownership, ACLs, flags, and extended attributes remain host-sensitive and best-effort.</p>
 <p><code>replace()</code> is a publication operation, not a general move: it never unlinks the destination first and does not use a copy-delete fallback. It returns <code>IoError(kind="cross_device")</code> when the host cannot perform same-filesystem replacement. A successful replace gives atomic reader visibility, but it does not by itself request persistence across power loss.</p>
 <h2 id="crash-safe-publication-and-advisory-locks">Crash-safe publication and advisory locks<a class="headerlink" href="#crash-safe-publication-and-advisory-locks" title="Permanent link">&para;</a></h2>
-<p>Publish an authoritative local file by writing a unique sibling staging file, synchronizing its handle, atomically replacing the target, then synchronizing the target directory:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">target</span> <span class="o">=</span> <span class="kt">Path</span><span class="p">(</span><span class="s2">&quot;incan.lock&quot;</span><span class="p">)</span>
-<span class="n">staged</span> <span class="o">=</span> <span class="kt">Path</span><span class="p">(</span><span class="s2">&quot;.incan.lock.next&quot;</span><span class="p">)</span>
-<span class="n">staged</span><span class="o">.</span><span class="n">write_bytes</span><span class="p">(</span><span class="n">rendered_lockfile</span><span class="p">)</span><span class="o">?</span>
-<span class="n">staged_file</span> <span class="o">=</span> <span class="n">staged</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">&quot;rb&quot;</span><span class="p">)</span><span class="o">?</span>
+<p>Publish an authoritative local file by creating an exclusively reserved temporary file beside the target, synchronizing its handle, atomically replacing the target, then synchronizing the target directory. <code>NamedTemporaryFile.try_new_with(...)</code> supplies the unique sibling name and removes the staged file automatically if a step before replacement fails:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.fs</span><span class="w"> </span><span class="kn">import</span> <span class="kt">Path</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.tempfile</span><span class="w"> </span><span class="kn">import</span> <span class="nc">NamedTemporaryFile</span>
+
+<span class="n">target</span> <span class="o">=</span> <span class="kt">Path</span><span class="p">(</span><span class="s2">&quot;incan.lock&quot;</span><span class="p">)</span>
+<span class="n">guard</span> <span class="o">=</span> <span class="n">target</span><span class="o">.</span><span class="n">lock_exclusive</span><span class="p">()</span><span class="o">?</span>
+<span class="n">staging</span> <span class="o">=</span> <span class="nc">NamedTemporaryFile</span><span class="o">.</span><span class="n">try_new_with</span><span class="p">(</span><span class="s2">&quot;.incan.lock-&quot;</span><span class="p">,</span> <span class="s2">&quot;.tmp&quot;</span><span class="p">,</span> <span class="nb">Some</span><span class="p">(</span><span class="n">target</span><span class="o">.</span><span class="n">parent</span><span class="p">()))</span><span class="o">?</span>
+<span class="n">staged_path</span> <span class="o">=</span> <span class="n">staging</span><span class="o">.</span><span class="n">path</span><span class="p">()</span>
+<span class="n">staged_path</span><span class="o">.</span><span class="n">write_bytes</span><span class="p">(</span><span class="n">rendered_lockfile</span><span class="p">)</span><span class="o">?</span>
+<span class="n">staged_file</span> <span class="o">=</span> <span class="n">staged_path</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">&quot;rb&quot;</span><span class="p">)</span><span class="o">?</span>
 <span class="n">staged_file</span><span class="o">.</span><span class="n">sync</span><span class="p">()</span><span class="o">?</span>
-<span class="n">staged</span><span class="o">.</span><span class="nb">replace</span><span class="p">(</span><span class="n">target</span><span class="p">)</span><span class="o">?</span>
+<span class="n">staged_path</span><span class="o">.</span><span class="nb">replace</span><span class="p">(</span><span class="n">target</span><span class="p">)</span><span class="o">?</span>
 <span class="n">target</span><span class="o">.</span><span class="n">parent</span><span class="p">()</span><span class="o">.</span><span class="n">sync_directory</span><span class="p">()</span><span class="o">?</span>
 </code></pre></div>
 <p>Use <code>path.lock_shared()</code> or <code>path.lock_exclusive()</code> to acquire a blocking advisory <code>FileLock</code>; <code>try_lock_shared()</code> and <code>try_lock_exclusive()</code> return <code>Ok(None)</code> when a conflicting lock is held. Locks apply to a stable sibling lock entry and are released when their guard leaves scope. They coordinate cooperative processes only, so they are not an authorization or mandatory-locking mechanism. Do not hold a blocking file lock across unrelated work or asynchronous suspension.</p>
+<p>See <a href="../../../how-to/file_io/#publish-a-file-without-exposing-partial-contents">Publish a file without exposing partial contents</a> for the complete workflow, failure behavior, and portability limits.</p>
 <h2 id="file">File<a class="headerlink" href="#file" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
