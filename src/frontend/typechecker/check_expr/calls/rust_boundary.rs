@@ -1148,6 +1148,7 @@ mod validate_rust_function_call_tests {
         let argument = Spanned::new(Expr::Ident("header".to_string()), span);
         let args = [CallArg::Positional(argument)];
         let sig = RustFunctionSig {
+            type_params: Vec::new(),
             params: vec![
                 RustParam {
                     name: Some("self".to_string()),
