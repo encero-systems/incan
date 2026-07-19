@@ -51,7 +51,7 @@ use crate::workspace::{ResolvedWorkspaceScope, WorkspaceGraph, WorkspaceMember, 
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use commands::build_report::{BuildReportFormat, BuildReportOptions, RustInspectionFormat};
 use commands::codegraph::CodegraphInspectionFormat;
-use commands::common::{CargoPolicy, CargoPolicyCliFlags};
+use commands::common::{CargoPolicy, CargoPolicyCliFlags, INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV};
 use commands::diagnostics::DiagnosticOutputFormat;
 use commands::lifecycle::{EnvOutputFormat, VersionBumpArg};
 use commands::provider_inspect::ProviderInspectionFormat;
@@ -1256,12 +1256,29 @@ impl BuildCommandRequest {
     }
 }
 
+/// Return whether this build should resolve and fan out an RFC 077 workspace scope.
+///
+/// Compiler-spawned artifact-only library builds target one dependency project even when that project also owns a
+/// workspace. Letting those children rediscover the default member scope can make the root package request its own
+/// still-missing artifact recursively. Ordinary library and executable builds retain workspace selection semantics.
+fn build_uses_workspace_scope(lib_mode: bool, artifact_only: bool) -> bool {
+    !lib_mode || !artifact_only
+}
+
 /// Fan out builds after resolving the exact RFC 077 member set, producing one aggregate report when JSON is requested.
+///
+/// Internal artifact-only library children bypass workspace selection because their current directory is the exact
+/// dependency project selected by the parent compiler process.
 fn execute_build(
     request: BuildCommandRequest,
     select_workspace: bool,
     member_selectors: Vec<String>,
 ) -> CliResult<ExitCode> {
+    let artifact_only = env::var_os(INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV).is_some();
+    if !build_uses_workspace_scope(request.lib_mode, artifact_only) {
+        return request.run_single();
+    }
+
     let Some(scope) = resolve_workspace_command_scope(select_workspace, &member_selectors)? else {
         return request.run_single();
     };
@@ -2016,6 +2033,13 @@ mod tests {
         assert!(file.is_none());
         assert!(lib_mode);
         Ok(())
+    }
+
+    #[test]
+    fn artifact_only_library_build_bypasses_workspace_scope_issue908() {
+        assert!(!build_uses_workspace_scope(true, true));
+        assert!(build_uses_workspace_scope(true, false));
+        assert!(build_uses_workspace_scope(false, true));
     }
 
     #[test]

@@ -23,7 +23,7 @@ resolver = "2"
 ra_ap_proc_macro_api = { path = "crates/third_party/ra_ap_proc_macro_api" }
 
 [workspace.package]
-version = "0.5.0-dev.15"
+version = "0.5.0-dev.16"
 description = "The Incan programming language compiler"
 edition = "2024"
 rust-version = "1.93"
@@ -112,6 +112,8 @@ wasmtime = { version = "45.0.3", default-features = false, features = ["cranelif
 wasmtime-wasi = { version = "45.0.3", default-features = false, features = ["p1"] }
 
 [dev-dependencies]
+# Unix process-group cleanup for bounded subprocess regression tests.
+libc = "0.2"
 # Runtime crate used by std.io generated-project offline smoke tests.
 byteorder = "1"
 # Runtime crate used by std.uuid generated-project offline smoke tests.

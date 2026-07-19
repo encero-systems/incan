@@ -423,6 +423,15 @@ impl WorkspaceGraph {
         self.members.iter().find(|member| member.root == root)
     }
 
+    /// Return the workspace member that owns `path`, preferring the deepest matching member root.
+    ///
+    /// Rooted workspaces can contain a non-root member below the root project. In that topology, both member roots
+    /// are path prefixes, so callers must use the deepest match rather than allowing the root project to claim a
+    /// descendant member's entrypoint or test file.
+    pub(crate) fn member_containing_path(&self, path: &Path) -> Option<&WorkspaceMember> {
+        self.member_containing_index(path).map(|index| &self.members[index])
+    }
+
     /// Return the fully parsed manifest for one validated workspace member.
     pub fn member_manifest(&self, member: &WorkspaceMember) -> Option<&ProjectManifest> {
         self.member_manifests.get(member.root())
@@ -583,7 +592,7 @@ impl WorkspaceGraph {
         if current_dir == self.root {
             return Ok(self.root_scope());
         }
-        if let Some(index) = self.member_containing(&current_dir) {
+        if let Some(index) = self.member_containing_index(&current_dir) {
             return Ok(self.selection(WorkspaceScopeOrigin::CurrentMember, [index]));
         }
 
@@ -634,7 +643,7 @@ impl WorkspaceGraph {
     }
 
     /// Return the member containing a canonical invocation directory, preferring the deepest match defensively.
-    fn member_containing(&self, directory: &Path) -> Option<usize> {
+    fn member_containing_index(&self, directory: &Path) -> Option<usize> {
         self.members
             .iter()
             .enumerate()
@@ -1712,6 +1721,34 @@ default-members = ["zebra", "packages/alpha"]
         ))?;
         assert_eq!(all.origin(), WorkspaceScopeOrigin::Workspace);
         assert_eq!(all.member_names(), ["root", "alpha", "zebra"]);
+        Ok(())
+    }
+
+    #[test]
+    fn member_path_ownership_prefers_the_deepest_rooted_workspace_member() -> TestResult {
+        let root = tempfile::tempdir()?;
+        write_manifest(
+            root.path(),
+            r#"
+[project]
+name = "root"
+
+[workspace]
+members = ["packages/consumer"]
+"#,
+        )?;
+        write_project(root.path().join("packages/consumer"), "consumer")?;
+        let graph = WorkspaceGraph::load_from_root(root.path())?;
+
+        let root_owner = graph
+            .member_containing_path(&graph.root().join("tests/test_root.incn"))
+            .ok_or("root-owned path should resolve to a member")?;
+        let consumer_owner = graph
+            .member_containing_path(&graph.root().join("packages/consumer/tests/test_consumer.incn"))
+            .ok_or("consumer-owned path should resolve to a member")?;
+
+        assert_eq!(root_owner.name(), "root");
+        assert_eq!(consumer_owner.name(), "consumer");
         Ok(())
     }
 
