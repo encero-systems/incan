@@ -6876,6 +6876,7 @@
 <span class="n">requires-incan</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;&gt;=0.2&quot;</span>
 </code></pre></div>
 <p><code>requires-incan</code> is enforced by project-aware execution commands. If the active compiler does not satisfy the requirement, <code>incan run</code> in project mode, <code>incan build</code>, <code>incan test</code>, <code>incan lock</code>, and <code>incan env run</code> fail before compiling, locking, or launching scripts. Single-file or inline commands without a discovered project manifest do not infer a toolchain requirement.</p>
+<p>For <code>incan build</code> and <code>incan build --lib</code>, declared <code>version</code> and <code>license</code> values are preserved in the generated Cargo package. A generated library's Cargo version therefore matches its <code>.incnlib</code> version. The plural Incan <code>license-files</code> field remains source-package metadata and is not translated to Cargo's singular <code>license-file</code> field.</p>
 <h3 id="projectscripts"><code>[project.scripts]</code><a class="headerlink" href="#projectscripts" title="Permanent link">&para;</a></h3>
 <p>Named entry points for CLI commands:</p>
 <div class="language-toml highlight"><pre><span></span><code><span class="k">[project.scripts]</span>

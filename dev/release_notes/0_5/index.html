@@ -6424,6 +6424,7 @@
 </ul>
 <h2 id="bugfixes">Bugfixes<a class="headerlink" href="#bugfixes" title="Permanent link">&para;</a></h2>
 <ul>
+<li><strong>Compiler</strong>: Generated Cargo packages now preserve the authored Incan project version and SPDX license for application and library builds, keeping library <code>Cargo.toml</code> versions aligned with their <code>.incnlib</code> manifests (#889).</li>
 <li><strong>Compiler</strong>: <code>std::io::stdout()</code> now retains its stable <code>Stdout</code> receiver type when sysroot metadata is unavailable, so fallible extension-trait calls such as crossterm's <code>ExecutableCommand.execute(...)</code> expose their native <code>Result</code> and support postfix <code>?</code> (#888).</li>
 <li><strong>Compiler</strong>: Class-field privacy now survives checked metadata and compiled package boundaries. Named construction through a compiled package uses an exact package-owned constructor bridge—including aliases, inherited fields, and provider-owned defaults—while later private member access receives an Incan diagnostic instead of a Rust privacy failure; older manifests without field visibility retain their compatible public behavior (#883).</li>
 <li><strong>Compiler</strong>: Absolute sibling-module imports such as <code>from crate.types import Decision</code> now retain public model fields and enum variants across direct checks, generated builds, library builds, re-exports, and test batches (#882).</li>
