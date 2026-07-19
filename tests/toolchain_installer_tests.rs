@@ -1,4 +1,8 @@
-use std::fs;
+use std::collections::BTreeSet;
+use std::fs::{self, File, OpenOptions, TryLockError};
+use std::io;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
@@ -6,6 +10,134 @@ use std::sync::Mutex;
 use sha2::{Digest, Sha256};
 
 static PREPARE_ASSETS_LOCK: Mutex<()> = Mutex::new(());
+static ACTIVE_TOOLCHAIN_TEST_STAGING: Mutex<BTreeSet<PathBuf>> = Mutex::new(BTreeSet::new());
+static TOOLCHAIN_TEST_STAGING_SWEEP: Mutex<()> = Mutex::new(());
+
+const TOOLCHAIN_TEST_STAGING_ROOT: &str = "incan-toolchain-installer-tests";
+
+/// Test-owned release staging with checked cleanup and abandoned-run recovery.
+///
+/// `tempfile::TempDir` deliberately ignores cleanup failures from `Drop`. That is a poor fit for these tests because
+/// a single staging tree can contain several release archives and package-manager fixtures. Keep every tree below a
+/// recognizable root, protect active trees with an OS-backed file lock, reclaim trees whose owner process exited,
+/// and turn cleanup failures into test failures instead of silently filling temporary storage.
+struct ToolchainTestStaging {
+    path: PathBuf,
+    tempdir: Option<tempfile::TempDir>,
+    owner_lock: Option<File>,
+}
+
+impl ToolchainTestStaging {
+    fn new() -> Result<Self, Box<dyn std::error::Error>> {
+        let root = std::env::temp_dir().join(TOOLCHAIN_TEST_STAGING_ROOT);
+        Self::new_in(&root)
+    }
+
+    fn new_in(root: &Path) -> Result<Self, Box<dyn std::error::Error>> {
+        let _thread_guard = TOOLCHAIN_TEST_STAGING_SWEEP
+            .lock()
+            .map_err(|_| "toolchain test staging sweep lock is poisoned")?;
+        fs::create_dir_all(root)?;
+
+        let sweep_lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(root.join(".sweep.lock"))?;
+        sweep_lock.lock()?;
+        reclaim_abandoned_toolchain_staging(root)?;
+
+        let tempdir = tempfile::Builder::new().prefix("staging-").tempdir_in(root)?;
+        let owner_lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(tempdir.path().join(".owner.lock"))?;
+        owner_lock.lock()?;
+        let path = tempdir.path().to_path_buf();
+        active_toolchain_test_staging()?.insert(path.clone());
+        drop(sweep_lock);
+
+        Ok(Self {
+            path,
+            tempdir: Some(tempdir),
+            owner_lock: Some(owner_lock),
+        })
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+
+    fn cleanup(&mut self) -> io::Result<()> {
+        let mut active = active_toolchain_test_staging()?;
+        let cleanup_result = match self.tempdir.take() {
+            Some(tempdir) => tempdir.close(),
+            None => Ok(()),
+        };
+        drop(self.owner_lock.take());
+        active.remove(&self.path);
+        cleanup_result.map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!(
+                    "failed to remove toolchain test staging {}: {error}",
+                    self.path.display()
+                ),
+            )
+        })
+    }
+}
+
+impl Drop for ToolchainTestStaging {
+    fn drop(&mut self) {
+        if let Err(error) = self.cleanup() {
+            if std::thread::panicking() {
+                eprintln!("toolchain test staging cleanup also failed: {error}");
+            } else {
+                panic!("{error}");
+            }
+        }
+    }
+}
+
+fn reclaim_abandoned_toolchain_staging(root: &Path) -> io::Result<()> {
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() || !entry.file_name().to_string_lossy().starts_with("staging-") {
+            continue;
+        }
+
+        let staging = entry.path();
+        if active_toolchain_test_staging()?.contains(&staging) {
+            continue;
+        }
+        let owner_path = staging.join(".owner.lock");
+        if !owner_path.exists() {
+            fs::remove_dir_all(&staging)?;
+            continue;
+        }
+
+        let owner_lock = OpenOptions::new().read(true).write(true).open(&owner_path)?;
+        match owner_lock.try_lock() {
+            Ok(()) => {
+                drop(owner_lock);
+                fs::remove_dir_all(&staging)?;
+            }
+            Err(TryLockError::WouldBlock) => {}
+            Err(TryLockError::Error(error)) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
+fn active_toolchain_test_staging() -> io::Result<std::sync::MutexGuard<'static, BTreeSet<PathBuf>>> {
+    ACTIVE_TOOLCHAIN_TEST_STAGING
+        .lock()
+        .map_err(|_| io::Error::other("active toolchain test staging registry is poisoned"))
+}
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -442,7 +574,7 @@ fn assert_toolchain_install(incan_home: &Path, bin_dir: &Path) {
 
 #[test]
 fn toolchain_archive_packager_writes_archive_checksum_and_release_metadata() -> Result<(), Box<dyn std::error::Error>> {
-    let tmp = tempfile::tempdir()?;
+    let tmp = ToolchainTestStaging::new()?;
     let out_dir = tmp.path().join("toolchain");
     let (incan, incan_lsp) = write_fixture_toolchain_commands(tmp.path())?;
 
@@ -618,7 +750,7 @@ fn default_sdk_archive_contains_every_default_profile_component() -> Result<(), 
 
 #[test]
 fn toolchain_release_assets_are_prepared_by_central_manifest_script() -> Result<(), Box<dyn std::error::Error>> {
-    let tmp = tempfile::tempdir()?;
+    let tmp = ToolchainTestStaging::new()?;
     let dist = tmp.path().join("toolchain");
     let (incan, incan_lsp) = write_fixture_toolchain_commands(tmp.path())?;
 
@@ -670,7 +802,7 @@ fn toolchain_release_assets_are_prepared_by_central_manifest_script() -> Result<
 #[test]
 fn toolchain_release_assets_can_be_prepared_for_single_host_smoke_without_homebrew()
 -> Result<(), Box<dyn std::error::Error>> {
-    let tmp = tempfile::tempdir()?;
+    let tmp = ToolchainTestStaging::new()?;
     let dist = tmp.path().join("toolchain");
     let (incan, incan_lsp) = write_fixture_toolchain_commands(tmp.path())?;
 
@@ -695,7 +827,7 @@ fn toolchain_release_assets_can_be_prepared_for_single_host_smoke_without_homebr
 
 #[test]
 fn package_prepare_scripts_stage_versions_and_shared_installer() -> Result<(), Box<dyn std::error::Error>> {
-    let tmp = tempfile::tempdir()?;
+    let tmp = ToolchainTestStaging::new()?;
     let dist = tmp.path().join("toolchain");
     fs::create_dir_all(&dist)?;
     let (incan, incan_lsp) = write_fixture_toolchain_commands(tmp.path())?;
@@ -811,7 +943,7 @@ fn package_prepare_scripts_stage_versions_and_shared_installer() -> Result<(), B
 
 #[test]
 fn npm_command_wrappers_run_platform_package_without_installer() -> Result<(), Box<dyn std::error::Error>> {
-    let tmp = tempfile::tempdir()?;
+    let tmp = ToolchainTestStaging::new()?;
     let dist = tmp.path().join("toolchain");
     let (incan, incan_lsp) = write_fixture_toolchain_commands(tmp.path())?;
     package_all_npm_fixture_archives(&dist, &incan, &incan_lsp)?;
@@ -865,7 +997,7 @@ fn npm_command_wrappers_run_platform_package_without_installer() -> Result<(), B
 
 #[test]
 fn npm_command_wrappers_report_unsupported_platforms() -> Result<(), Box<dyn std::error::Error>> {
-    let tmp = tempfile::tempdir()?;
+    let tmp = ToolchainTestStaging::new()?;
     let dist = tmp.path().join("toolchain");
     let (incan, incan_lsp) = write_fixture_toolchain_commands(tmp.path())?;
     package_all_npm_fixture_archives(&dist, &incan, &incan_lsp)?;
@@ -905,7 +1037,7 @@ fn npm_command_wrappers_report_unsupported_platforms() -> Result<(), Box<dyn std
 
 #[test]
 fn toolchain_installer_dry_run_selects_manifest_target_without_writing() -> Result<(), Box<dyn std::error::Error>> {
-    let tmp = tempfile::tempdir()?;
+    let tmp = ToolchainTestStaging::new()?;
     let (archive, checksum) = write_fixture_archive(tmp.path())?;
     let manifest = write_manifest(tmp.path(), &archive, &checksum)?;
     let incan_home = tmp.path().join("home");
@@ -937,7 +1069,7 @@ fn toolchain_installer_dry_run_selects_manifest_target_without_writing() -> Resu
 
 #[test]
 fn toolchain_installer_verifies_checksum_and_links_commands() -> Result<(), Box<dyn std::error::Error>> {
-    let tmp = tempfile::tempdir()?;
+    let tmp = ToolchainTestStaging::new()?;
     let (archive, checksum) = write_fixture_archive(tmp.path())?;
     let manifest = write_manifest(tmp.path(), &archive, &checksum)?;
     let incan_home = tmp.path().join("home");
@@ -965,7 +1097,7 @@ fn toolchain_installer_verifies_checksum_and_links_commands() -> Result<(), Box<
 
 #[test]
 fn toolchain_installer_provisions_rust_backend_targets() -> Result<(), Box<dyn std::error::Error>> {
-    let tmp = tempfile::tempdir()?;
+    let tmp = ToolchainTestStaging::new()?;
     let (archive, checksum) = write_fixture_archive(tmp.path())?;
     let manifest = write_manifest(tmp.path(), &archive, &checksum)?;
     let incan_home = tmp.path().join("home");
@@ -1019,7 +1151,7 @@ fn toolchain_installer_provisions_rust_backend_targets() -> Result<(), Box<dyn s
 
 #[test]
 fn toolchain_installer_bootstraps_rustup_when_missing() -> Result<(), Box<dyn std::error::Error>> {
-    let tmp = tempfile::tempdir()?;
+    let tmp = ToolchainTestStaging::new()?;
     let (archive, checksum) = write_fixture_archive(tmp.path())?;
     let manifest = write_manifest(tmp.path(), &archive, &checksum)?;
     let incan_home = tmp.path().join("home");
@@ -1084,7 +1216,7 @@ chmod +x "$HOME/.cargo/bin/rustup" "$HOME/.cargo/bin/cargo" "$HOME/.cargo/bin/ru
 
 #[test]
 fn homebrew_formula_is_rendered_from_the_toolchain_manifest() -> Result<(), Box<dyn std::error::Error>> {
-    let tmp = tempfile::tempdir()?;
+    let tmp = ToolchainTestStaging::new()?;
     let dist = tmp.path().join("toolchain");
     let (incan, incan_lsp) = write_fixture_toolchain_commands(tmp.path())?;
 
@@ -1143,7 +1275,7 @@ fn homebrew_formula_is_rendered_from_the_toolchain_manifest() -> Result<(), Box<
 #[test]
 fn homebrew_smoke_preserves_existing_platform_archives() -> Result<(), Box<dyn std::error::Error>> {
     let _guard = PREPARE_ASSETS_LOCK.lock().map_err(|_| "prepare assets lock poisoned")?;
-    let tmp = tempfile::tempdir()?;
+    let tmp = ToolchainTestStaging::new()?;
     let dist = tmp.path().join("toolchain");
     let fake_bin = tmp.path().join("fake-bin");
     fs::create_dir_all(&fake_bin)?;
@@ -1217,7 +1349,7 @@ fn npm_smoke_installs_platform_package_without_lifecycle_scripts() -> Result<(),
     let Some(host_target) = current_npm_host_target() else {
         return Ok(());
     };
-    let tmp = tempfile::tempdir()?;
+    let tmp = ToolchainTestStaging::new()?;
     let dist = tmp.path().join("toolchain");
     let (incan, incan_lsp) = write_fixture_toolchain_commands(tmp.path())?;
     package_all_npm_fixture_archives(&dist, &incan, &incan_lsp)?;
@@ -1241,7 +1373,7 @@ fn npm_smoke_installs_platform_package_without_lifecycle_scripts() -> Result<(),
 
 #[test]
 fn npm_installer_wrapper_delegates_to_shared_toolchain_installer() -> Result<(), Box<dyn std::error::Error>> {
-    let tmp = tempfile::tempdir()?;
+    let tmp = ToolchainTestStaging::new()?;
     let (archive, checksum) = write_fixture_archive(tmp.path())?;
     let manifest = write_manifest(tmp.path(), &archive, &checksum)?;
     let incan_home = tmp.path().join("npm-home");
@@ -1269,7 +1401,7 @@ fn npm_installer_wrapper_delegates_to_shared_toolchain_installer() -> Result<(),
 
 #[test]
 fn npm_installer_wrapper_defaults_to_its_own_release_manifest() -> Result<(), Box<dyn std::error::Error>> {
-    let tmp = tempfile::tempdir()?;
+    let tmp = ToolchainTestStaging::new()?;
     let (fake_bin, log) = write_fake_bash_recorder(tmp.path())?;
     let current_path = std::env::var("PATH")?;
     let expected_manifest = "https://github.com/encero-systems/incan/releases/download/v0.4.0/manifest.json";
@@ -1296,7 +1428,7 @@ fn npm_installer_wrapper_defaults_to_its_own_release_manifest() -> Result<(), Bo
 
 #[test]
 fn pip_installer_wrapper_delegates_to_shared_toolchain_installer() -> Result<(), Box<dyn std::error::Error>> {
-    let tmp = tempfile::tempdir()?;
+    let tmp = ToolchainTestStaging::new()?;
     let (archive, checksum) = write_fixture_archive(tmp.path())?;
     let manifest = write_manifest(tmp.path(), &archive, &checksum)?;
     let incan_home = tmp.path().join("pip-home");
@@ -1325,7 +1457,7 @@ fn pip_installer_wrapper_delegates_to_shared_toolchain_installer() -> Result<(),
 
 #[test]
 fn pip_installer_wrapper_defaults_to_its_own_release_manifest() -> Result<(), Box<dyn std::error::Error>> {
-    let tmp = tempfile::tempdir()?;
+    let tmp = ToolchainTestStaging::new()?;
     let (fake_bin, log) = write_fake_bash_recorder(tmp.path())?;
     let current_path = std::env::var("PATH")?;
     let expected_manifest = "https://github.com/encero-systems/incan/releases/download/v0.4.0/manifest.json";
@@ -1346,5 +1478,119 @@ fn pip_installer_wrapper_defaults_to_its_own_release_manifest() -> Result<(), Bo
         String::from_utf8_lossy(&output.stderr)
     );
     assert_recorded_arg_pair(&log, "--manifest", expected_manifest)?;
+    Ok(())
+}
+
+fn return_error_after_creating_toolchain_staging(
+    root: &Path,
+    staging_path: &mut Option<PathBuf>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let staging = ToolchainTestStaging::new_in(root)?;
+    *staging_path = Some(staging.path().to_path_buf());
+    fs::write(staging.path().join("partial-release-asset"), "fixture")?;
+    Err(io::Error::other("fixture subprocess failed").into())
+}
+
+#[test]
+fn toolchain_test_staging_is_removed_after_a_successful_path() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let staging_path = {
+        let staging = ToolchainTestStaging::new_in(root.path())?;
+        let staging_path = staging.path().to_path_buf();
+        fs::write(staging.path().join("release-asset"), "fixture")?;
+        staging_path
+    };
+
+    assert!(
+        !staging_path.exists(),
+        "successful test path retained release staging: {}",
+        staging_path.display()
+    );
+    Ok(())
+}
+
+#[test]
+fn toolchain_test_staging_is_removed_after_a_failing_path() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let mut staging_path = None;
+    let result = return_error_after_creating_toolchain_staging(root.path(), &mut staging_path);
+
+    assert!(result.is_err(), "fixture failure must propagate");
+    let staging_path = staging_path.ok_or("fixture did not report its staging path")?;
+    assert!(
+        !staging_path.exists(),
+        "failed test path retained release staging: {}",
+        staging_path.display()
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn toolchain_test_staging_surfaces_cleanup_failures() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let mut staging = ToolchainTestStaging::new_in(root.path())?;
+    let staging_path = staging.path().to_path_buf();
+    fs::write(staging.path().join("release-asset"), "fixture")?;
+
+    let original_permissions = fs::metadata(&staging_path)?.permissions();
+    let mut blocked_permissions = original_permissions.clone();
+    blocked_permissions.set_mode(0o500);
+    fs::set_permissions(&staging_path, blocked_permissions)?;
+
+    let cleanup_result = staging.cleanup();
+    if staging_path.exists() {
+        fs::set_permissions(&staging_path, original_permissions)?;
+        fs::remove_dir_all(&staging_path)?;
+    }
+
+    let cleanup_error = cleanup_result
+        .err()
+        .ok_or("staging cleanup failure was silently ignored")?;
+    let cleanup_diagnostic = cleanup_error.to_string();
+    assert!(
+        cleanup_diagnostic.contains("failed to remove toolchain test staging"),
+        "cleanup failure was not actionable: {cleanup_diagnostic}"
+    );
+    assert!(
+        cleanup_diagnostic.contains(staging_path.to_string_lossy().as_ref()),
+        "cleanup failure did not include the staging path: {cleanup_diagnostic}"
+    );
+    Ok(())
+}
+
+#[test]
+fn toolchain_test_staging_reclaims_an_abandoned_unlocked_run() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let mut abandoned = ToolchainTestStaging::new_in(root.path())?;
+    let abandoned_path = abandoned.path().to_path_buf();
+    fs::write(abandoned.path().join("partial-release-asset"), "fixture")?;
+
+    let owner_lock = abandoned.owner_lock.take().ok_or("fixture owner lock is unavailable")?;
+    owner_lock.unlock()?;
+    drop(owner_lock);
+    assert!(
+        active_toolchain_test_staging()?.remove(&abandoned_path),
+        "fixture staging was not registered as active"
+    );
+    let kept_path = abandoned
+        .tempdir
+        .take()
+        .ok_or("fixture staging directory is unavailable")?
+        .keep();
+    drop(abandoned);
+    assert_eq!(kept_path, abandoned_path);
+    assert!(abandoned_path.exists(), "fixture must emulate abandoned staging");
+
+    let active = ToolchainTestStaging::new_in(root.path())?;
+    assert!(
+        !abandoned_path.exists(),
+        "a later toolchain test run did not reclaim abandoned staging: {}",
+        abandoned_path.display()
+    );
+    assert!(
+        active.path().exists(),
+        "active staging must remain protected by its owner lock"
+    );
     Ok(())
 }
