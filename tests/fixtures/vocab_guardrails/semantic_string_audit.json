@@ -27,8 +27,8 @@
     {
       "path": "crates/rust_inspect/src/cache_tests.rs",
       "category": "rust-inspect generated metadata regression assertions",
-      "expected_count": 17,
-      "expected_fingerprint": "0xe71187e6045075ce"
+      "expected_count": 18,
+      "expected_fingerprint": "0x9479828cc53614a2"
     },
     {
       "path": "crates/rust_inspect/src/cache_timing.rs",
