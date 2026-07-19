@@ -34,6 +34,9 @@ use crate::frontend::ast::{
 };
 use crate::frontend::diagnostics::{self, StableDiagnostic};
 use crate::frontend::module::canonicalize_source_module_segments;
+use crate::frontend::registry_metadata::{
+    CheckedRegistryMetadataModule, CheckedRegistrySubjectKind, CheckedRegistryValue, collect_checked_registry_metadata,
+};
 use crate::provider::{
     BackendImplementationRequirement, ComponentSelectionReason, FeatureActivationReason, FeatureSelection,
     ProviderParticipation, ProviderPlan, ProviderProvenance,
@@ -41,7 +44,7 @@ use crate::provider::{
 use crate::version::INCAN_VERSION;
 
 use super::common::{
-    CliDiagnosticFailure, CompilationSession, collect_modules_detailed_with_selections,
+    CliDiagnosticFailure, CompilationAnalysis, CompilationSession, collect_modules_detailed_with_selections,
     collect_modules_detailed_with_session, discover_effective_project_manifest, read_source, resolve_project_root,
 };
 
@@ -80,19 +83,21 @@ fn collect_codegraph_records(
     sdk_profile_override: Option<&str>,
 ) -> CliResult<Vec<CodegraphRecord>> {
     let package = package_identity(path)?;
+    let package_name = package.as_ref().and_then(|package| package.name.clone());
     let mut builder = CodegraphBuilder::new(path, package, allow_errors);
     builder.semantic_contexts =
         collect_codegraph_semantic_contexts(path, feature_selection, sdk_profile_override, allow_errors)?;
 
     if path.is_dir() {
         let files = discover_incan_files(path)?;
-        let (modules, diagnostics, semantic_snapshots_by_path) =
+        let (modules, analysis) =
             directory_modules_diagnostics_and_info(&files, feature_selection, sdk_profile_override)?;
-        if !diagnostics.is_empty() && !allow_errors {
-            return Err(CliError::failure(render_diagnostics(&diagnostics)));
+        if !analysis.diagnostics.is_empty() && !allow_errors {
+            return Err(CliError::failure(render_diagnostics(&analysis.diagnostics)));
         }
-        if diagnostics.is_empty() {
-            builder.set_semantic_snapshots(semantic_snapshots_by_path);
+        if analysis.diagnostics.is_empty() {
+            builder.set_semantic_snapshots(analysis.semantic_snapshots_by_path);
+            builder.set_registry_metadata(analysis.registry_metadata_by_path);
             builder.seed_source_target_ids(&modules);
             for module in &modules {
                 builder.collect_parsed_module(module, Vec::new());
@@ -116,7 +121,7 @@ fn collect_codegraph_records(
                 builder.collect_tolerant_file_with_session(file, session)?;
             }
         }
-        builder.collect_diagnostics(diagnostics);
+        builder.collect_diagnostics(analysis.diagnostics);
         if !allow_errors && builder.has_diagnostics() {
             return Err(CliError::failure(render_diagnostics(builder.diagnostics())));
         }
@@ -124,16 +129,18 @@ fn collect_codegraph_records(
         let session = CompilationSession::discover_with_selections(path, feature_selection, sdk_profile_override)?;
         match collect_modules_detailed_with_session(path.to_path_buf(), &session) {
             Ok(modules) => {
-                let (diagnostics, semantic_snapshots_by_path) = typecheck_diagnostics_and_info(&session, &modules)?;
-                if !diagnostics.is_empty() && !allow_errors {
-                    return Err(CliError::failure(render_diagnostics(&diagnostics)));
+                let analysis = typecheck_diagnostics_and_info(&session, &modules, package_name.as_deref())?;
+                if !analysis.diagnostics.is_empty() && !allow_errors {
+                    return Err(CliError::failure(render_diagnostics(&analysis.diagnostics)));
                 }
-                builder.set_semantic_snapshots(semantic_snapshots_by_path);
+                builder.set_semantic_snapshots(analysis.semantic_snapshots_by_path);
+                builder.set_registry_metadata(analysis.registry_metadata_by_path);
                 builder.seed_source_target_ids(&modules);
                 for module in &modules {
-                    builder.collect_parsed_module(module, diagnostics_for_file(&diagnostics, &module.file_path));
+                    builder
+                        .collect_parsed_module(module, diagnostics_for_file(&analysis.diagnostics, &module.file_path));
                 }
-                builder.collect_diagnostics(diagnostics);
+                builder.collect_diagnostics(analysis.diagnostics);
             }
             Err(failure) if allow_errors => {
                 builder.collect_tolerant_failure(path, failure, feature_selection, sdk_profile_override)?;
@@ -145,11 +152,13 @@ fn collect_codegraph_records(
     Ok(builder.finish())
 }
 
-type DirectoryTypecheckArtifacts = (
-    Vec<ParsedModule>,
-    Vec<StableDiagnostic>,
-    BTreeMap<PathBuf, SemanticModuleSnapshot>,
-);
+struct CheckedCodegraphAnalysis {
+    diagnostics: Vec<StableDiagnostic>,
+    semantic_snapshots_by_path: BTreeMap<PathBuf, SemanticModuleSnapshot>,
+    registry_metadata_by_path: BTreeMap<PathBuf, CheckedRegistryMetadataModule>,
+}
+
+type DirectoryTypecheckArtifacts = (Vec<ParsedModule>, CheckedCodegraphAnalysis);
 
 /// Collect and typecheck every discovered directory source root, keeping semantic artifacts only when the whole
 /// directory graph is clean.
@@ -163,6 +172,7 @@ fn directory_modules_diagnostics_and_info(
     let mut diagnostics = Vec::new();
     let mut sessions = BTreeMap::new();
     let mut semantic_snapshots_by_path = BTreeMap::new();
+    let mut registry_metadata_by_path = BTreeMap::new();
 
     for file in files {
         let project_root = resolve_project_root(file);
@@ -198,6 +208,12 @@ fn directory_modules_diagnostics_and_info(
                                 .entry(path.clone())
                                 .or_insert_with(|| snapshot.clone());
                         }
+                        let package_name = package_identity(&project_root)?
+                            .and_then(|package| package.name)
+                            .unwrap_or_else(|| "<unpackaged>".to_string());
+                        for (path, metadata) in checked_registry_metadata_by_path(&analysis, &modules, &package_name) {
+                            registry_metadata_by_path.entry(path).or_insert(metadata);
+                        }
                     }
                     Err(failure) => {
                         dedup_diagnostics(&mut diagnostics, stable_diagnostics(failure));
@@ -213,11 +229,21 @@ fn directory_modules_diagnostics_and_info(
     if diagnostics.is_empty() {
         Ok((
             modules_by_path.into_values().collect(),
-            diagnostics,
-            semantic_snapshots_by_path,
+            CheckedCodegraphAnalysis {
+                diagnostics,
+                semantic_snapshots_by_path,
+                registry_metadata_by_path,
+            },
         ))
     } else {
-        Ok((Vec::new(), diagnostics, BTreeMap::new()))
+        Ok((
+            Vec::new(),
+            CheckedCodegraphAnalysis {
+                diagnostics,
+                semantic_snapshots_by_path: BTreeMap::new(),
+                registry_metadata_by_path: BTreeMap::new(),
+            },
+        ))
     }
 }
 
@@ -225,15 +251,49 @@ fn directory_modules_diagnostics_and_info(
 fn typecheck_diagnostics_and_info(
     session: &CompilationSession,
     modules: &[ParsedModule],
-) -> CliResult<(Vec<StableDiagnostic>, BTreeMap<PathBuf, SemanticModuleSnapshot>)> {
+    package_name: Option<&str>,
+) -> CliResult<CheckedCodegraphAnalysis> {
     match session.analyze_modules(
         modules,
         #[cfg(feature = "rust_inspect")]
         None,
     ) {
-        Ok(analysis) => Ok((Vec::new(), analysis.semantic_snapshots().clone())),
-        Err(failure) => Ok((stable_diagnostics(failure), BTreeMap::new())),
+        Ok(analysis) => Ok(CheckedCodegraphAnalysis {
+            diagnostics: Vec::new(),
+            semantic_snapshots_by_path: analysis.semantic_snapshots().clone(),
+            registry_metadata_by_path: checked_registry_metadata_by_path(
+                &analysis,
+                modules,
+                package_name.unwrap_or("<unpackaged>"),
+            ),
+        }),
+        Err(failure) => Ok(CheckedCodegraphAnalysis {
+            diagnostics: stable_diagnostics(failure),
+            semantic_snapshots_by_path: BTreeMap::new(),
+            registry_metadata_by_path: BTreeMap::new(),
+        }),
     }
+}
+
+/// Build the portable registry projection from the same session analysis used by codegraph body facts.
+fn checked_registry_metadata_by_path(
+    analysis: &CompilationAnalysis,
+    modules: &[ParsedModule],
+    package_name: &str,
+) -> BTreeMap<PathBuf, CheckedRegistryMetadataModule> {
+    modules
+        .iter()
+        .filter_map(|module| {
+            analysis
+                .type_info_for_module_path(&module.path_segments)
+                .map(|type_info| {
+                    (
+                        module.file_path.clone(),
+                        collect_checked_registry_metadata(type_info, module.path_segments.clone(), package_name),
+                    )
+                })
+        })
+        .collect()
 }
 
 /// Convert shared CLI diagnostic failures into the public diagnostic projection used by both `incan check` and
@@ -575,6 +635,7 @@ struct CodegraphBuilder {
     semantic_contexts: Vec<CodegraphSemanticContext>,
     next_body_fact_index: usize,
     semantic_snapshots_by_path: BTreeMap<PathBuf, SemanticModuleSnapshot>,
+    registry_metadata_by_path: BTreeMap<PathBuf, CheckedRegistryMetadataModule>,
     source_target_ids: BTreeMap<(Vec<String>, String, String), String>,
 }
 
@@ -606,6 +667,7 @@ impl CodegraphBuilder {
             semantic_contexts: Vec::new(),
             next_body_fact_index: 0,
             semantic_snapshots_by_path: BTreeMap::new(),
+            registry_metadata_by_path: BTreeMap::new(),
             source_target_ids: BTreeMap::new(),
         }
     }
@@ -613,6 +675,11 @@ impl CodegraphBuilder {
     /// Attach session-owned semantic facts for checked body target population.
     fn set_semantic_snapshots(&mut self, semantic_snapshots_by_path: BTreeMap<PathBuf, SemanticModuleSnapshot>) {
         self.semantic_snapshots_by_path = semantic_snapshots_by_path;
+    }
+
+    /// Attach the checked registry projection produced from the same session-owned typechecking pass.
+    fn set_registry_metadata(&mut self, registry_metadata_by_path: BTreeMap<PathBuf, CheckedRegistryMetadataModule>) {
+        self.registry_metadata_by_path = registry_metadata_by_path;
     }
 
     /// Precompute declaration ids for source targets before body facts are emitted.
@@ -795,84 +862,38 @@ impl CodegraphBuilder {
         }
     }
 
-    /// Project RFC 113 registry facts from the existing typechecker artifact. This shares the compiler-owned
-    /// declaration model with inspection and package metadata rather than inferring registrations from decorators.
+    /// Project RFC 113 registry facts from the session-owned checked metadata artifact.
+    ///
+    /// Inspection, package publication, and codegraph all consume this same portable projection. Codegraph never
+    /// reparses decorators or performs a command-local typecheck to reconstruct registry meaning.
     fn collect_checked_registry_records(&mut self, module: &ParsedModule, module_id: &str) {
-        let Some(type_info) = self.type_info_by_path.get(&module.file_path) else {
+        let Some(metadata) = self.registry_metadata_by_path.get(&module.file_path) else {
             return;
         };
-        let module_identity = module.path_segments.join("::");
-        let package_identity = self
-            .package
-            .as_ref()
-            .and_then(|package| package.name.clone())
-            .unwrap_or_else(|| module_identity.clone());
-
-        for description in &type_info.registry.descriptions {
-            let Some(definition) = type_info.registry.definitions.get(&description.registry_name) else {
-                continue;
-            };
-            let registry_identity = format!("{module_identity}::{}", description.registry_name);
+        for entry in &metadata.entries {
             self.records.push(CodegraphRecord::Registry(CodegraphRegistryRecord {
                 id: registry_record_id(
-                    &registry_identity,
-                    &format!("{module_identity}.{}", description.declaration_name),
-                    description.decorator_span.0,
+                    &entry.registry_identity,
+                    &entry.subject_identity,
+                    entry.registration_anchor.start,
                 ),
                 language: CodegraphLanguage::Incan,
                 module_id: module_id.to_string(),
-                registry_identity,
-                registry_public: definition.is_public,
-                key: semantic_registry_value_json(&description.key),
-                descriptor: semantic_registry_value_json(&description.descriptor),
-                subject_kind: description.subject_kind.to_string(),
-                subject_identity: format!("{module_identity}.{}", description.declaration_name),
+                registry_identity: entry.registry_identity.clone(),
+                registry_public: entry.registry_public,
+                key: checked_registry_value_json(&entry.key),
+                descriptor: checked_registry_value_json(&entry.descriptor),
+                subject_kind: checked_registry_subject_kind(entry.subject_kind).to_string(),
+                subject_identity: entry.subject_identity.clone(),
                 registration_span: source_span(
                     &module.file_path,
                     &module.source,
-                    Span::new(description.decorator_span.0, description.decorator_span.1),
+                    Span::new(entry.registration_anchor.start, entry.registration_anchor.end),
                 ),
                 subject_span: source_span(
                     &module.file_path,
                     &module.source,
-                    Span::new(description.declaration_span.0, description.declaration_span.1),
-                ),
-                provenance: CodegraphProvenance::Checked,
-                reexport_paths: Vec::new(),
-                degraded: false,
-            }));
-        }
-
-        for entry in &type_info.registry.explicit_entries {
-            let Some(definition) = type_info.registry.definitions.get(&entry.registry_name) else {
-                continue;
-            };
-            let registry_identity = format!("{module_identity}::{}", entry.registry_name);
-            let subject_identity = match entry.subject_kind {
-                incan_semantics_core::SemanticRegistrySubjectKind::CompilationUnit => module_identity.clone(),
-                incan_semantics_core::SemanticRegistrySubjectKind::Package => package_identity.clone(),
-                incan_semantics_core::SemanticRegistrySubjectKind::Function
-                | incan_semantics_core::SemanticRegistrySubjectKind::Method => continue,
-            };
-            self.records.push(CodegraphRecord::Registry(CodegraphRegistryRecord {
-                id: registry_record_id(&registry_identity, &subject_identity, entry.declaration_span.0),
-                language: CodegraphLanguage::Incan,
-                module_id: module_id.to_string(),
-                registry_identity,
-                registry_public: definition.is_public,
-                key: semantic_registry_value_json(&entry.key),
-                descriptor: semantic_registry_value_json(&entry.descriptor),
-                subject_kind: entry.subject_kind.to_string(),
-                subject_identity,
-                registration_span: source_span(
-                    &module.file_path,
-                    &module.source,
-                    Span::new(entry.declaration_span.0, entry.declaration_span.1),
-                ),
-                subject_span: source_span(
-                    &module.file_path,
-                    &module.source,
-                    Span::new(entry.subject_span.0, entry.subject_span.1),
+                    Span::new(entry.subject_anchor.start, entry.subject_anchor.end),
                 ),
                 provenance: CodegraphProvenance::Checked,
                 reexport_paths: Vec::new(),
@@ -1813,49 +1834,56 @@ fn registry_record_id(registry_identity: &str, subject_identity: &str, anchor_st
     )
 }
 
-/// Convert one compiler structural registry value into a schema-stable JSON value without requiring the codegraph
-/// crate to depend on frontend semantic types.
-fn semantic_registry_value_json(value: &incan_semantics_core::SemanticRegistryValue) -> Value {
-    use incan_semantics_core::SemanticRegistryValue;
-
+/// Convert one checked registry value into the codegraph's schema-stable JSON representation.
+fn checked_registry_value_json(value: &CheckedRegistryValue) -> Value {
     match value {
-        SemanticRegistryValue::Int(value) => json!({ "kind": "int", "value": value }),
-        SemanticRegistryValue::Float(value) => json!({ "kind": "float", "value": value }),
-        SemanticRegistryValue::Bool(value) => json!({ "kind": "bool", "value": value }),
-        SemanticRegistryValue::String(value) => json!({ "kind": "string", "value": value }),
-        SemanticRegistryValue::Bytes(value) => json!({ "kind": "bytes", "value": value }),
-        SemanticRegistryValue::None => json!({ "kind": "none", "value": null }),
-        SemanticRegistryValue::Type(value) => json!({ "kind": "type", "value": value }),
-        SemanticRegistryValue::Option(value) => json!({
+        CheckedRegistryValue::Int(value) => json!({ "kind": "int", "value": value }),
+        CheckedRegistryValue::Float(value) => json!({ "kind": "float", "value": value }),
+        CheckedRegistryValue::Bool(value) => json!({ "kind": "bool", "value": value }),
+        CheckedRegistryValue::String(value) => json!({ "kind": "string", "value": value }),
+        CheckedRegistryValue::Bytes(value) => json!({ "kind": "bytes", "value": value }),
+        CheckedRegistryValue::None => json!({ "kind": "none", "value": null }),
+        CheckedRegistryValue::Type(value) => json!({ "kind": "type", "value": value }),
+        CheckedRegistryValue::Option(value) => json!({
             "kind": "option",
-            "value": semantic_registry_value_json(value),
+            "value": checked_registry_value_json(value),
         }),
-        SemanticRegistryValue::List(values) => json!({
+        CheckedRegistryValue::List(values) => json!({
             "kind": "list",
-            "value": values.iter().map(semantic_registry_value_json).collect::<Vec<_>>(),
+            "value": values.iter().map(checked_registry_value_json).collect::<Vec<_>>(),
         }),
-        SemanticRegistryValue::Dict(entries) => json!({
+        CheckedRegistryValue::Dict(entries) => json!({
             "kind": "dict",
-            "value": entries.iter().map(|(key, value)| json!({
-                "key": semantic_registry_value_json(key),
-                "value": semantic_registry_value_json(value),
+            "value": entries.iter().map(|entry| json!({
+                "key": checked_registry_value_json(&entry.key),
+                "value": checked_registry_value_json(&entry.value),
             })).collect::<Vec<_>>(),
         }),
-        SemanticRegistryValue::ConstRef(path) => json!({ "kind": "const_ref", "value": path }),
-        SemanticRegistryValue::Newtype { name, value } => json!({
+        CheckedRegistryValue::ConstRef(path) => json!({ "kind": "const_ref", "value": path }),
+        CheckedRegistryValue::Newtype { name, value } => json!({
             "kind": "newtype",
-            "value": { "name": name, "value": semantic_registry_value_json(value) },
+            "value": { "name": name, "value": checked_registry_value_json(value) },
         }),
-        SemanticRegistryValue::Model { name, fields } => json!({
+        CheckedRegistryValue::Model { name, fields } => json!({
             "kind": "model",
             "value": {
                 "name": name,
-                "fields": fields.iter().map(|(name, value)| json!({
-                    "name": name,
-                    "value": semantic_registry_value_json(value),
+                "fields": fields.iter().map(|field| json!({
+                    "name": field.name,
+                    "value": checked_registry_value_json(&field.value),
                 })).collect::<Vec<_>>(),
             },
         }),
+    }
+}
+
+/// Return the codegraph spelling for one checked registry subject kind.
+const fn checked_registry_subject_kind(kind: CheckedRegistrySubjectKind) -> &'static str {
+    match kind {
+        CheckedRegistrySubjectKind::Function => "function",
+        CheckedRegistrySubjectKind::Method => "method",
+        CheckedRegistrySubjectKind::CompilationUnit => "compilation_unit",
+        CheckedRegistrySubjectKind::Package => "package",
     }
 }
 

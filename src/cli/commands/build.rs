@@ -17,7 +17,8 @@ use crate::compiled_sdk::CompiledSdkModules;
 use crate::dependency_resolver::{ResolvedDependencies, resolve_dependencies, resolve_reachable_dependencies};
 use crate::frontend::api_metadata::{
     CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, CheckedApiPackageIdentity,
-    collect_checked_api_metadata, materialize_api_alias_projections, validate_checked_api_docstrings,
+    collect_checked_api_alias_metadata, collect_checked_api_metadata, materialize_api_alias_projections,
+    validate_checked_api_docstrings,
 };
 use crate::frontend::ast::{Declaration, Decorator, Expr, ImportKind, Literal, Span, Spanned, Statement, Visibility};
 use crate::frontend::contract_metadata::{ContractMetadataPackage, read_project_model_bundles};
@@ -26,6 +27,10 @@ use crate::frontend::library_manifest_index::{LibraryArtifactKind, LibraryManife
 use crate::frontend::module::{
     SourceModuleImportResolution, canonicalize_source_module_segments, resolve_program_source_imports,
     resolve_source_module_import,
+};
+use crate::frontend::registry_metadata::{
+    CHECKED_REGISTRY_METADATA_SCHEMA_VERSION, CheckedRegistryMetadataPackage, CheckedRegistryPackageIdentity,
+    collect_checked_registry_metadata, materialize_registry_reexport_projections,
 };
 use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
 use crate::frontend::{diagnostics, typechecker};
@@ -62,7 +67,6 @@ use super::lock::{
 };
 #[cfg(feature = "rust_inspect")]
 use super::lock::{RustInspectWorkspaceRequest, prepare_rust_inspect_workspace};
-use super::tools::collect_registry_metadata_package;
 use super::vocab_extraction::{PendingDesugarerArtifact, collect_library_vocab_metadata};
 use crate::cli::prelude::ParsedModule;
 #[cfg(feature = "rust_inspect")]
@@ -1473,6 +1477,26 @@ fn prepare_library_project(
 
     let api_validation_start = Instant::now();
     materialize_api_alias_projections(&mut api_metadata_modules);
+    let registry_module_path = |module: &ParsedModule| {
+        if module.file_path == lib_entry {
+            vec!["lib".to_string()]
+        } else {
+            module.path_segments.clone()
+        }
+    };
+    let mut registry_metadata_modules = modules
+        .iter()
+        .filter_map(|module| {
+            checked_type_info_by_path.get(&module.file_path).map(|type_info| {
+                collect_checked_registry_metadata(type_info, registry_module_path(module), project_name.as_str())
+            })
+        })
+        .collect::<Vec<_>>();
+    let registry_alias_modules = modules
+        .iter()
+        .map(|module| collect_checked_api_alias_metadata(&module.ast, registry_module_path(module)))
+        .collect::<Vec<_>>();
+    materialize_registry_reexport_projections(&mut registry_metadata_modules, &registry_alias_modules);
 
     for diagnostic in validate_checked_api_docstrings(&api_metadata_modules) {
         if let Some(module) = modules
@@ -1559,7 +1583,14 @@ fn prepare_library_project(
         &provider_metadata_modules,
         lib_module,
     )?;
-    let mut registry_metadata = collect_registry_metadata_package(&project_root)?;
+    let mut registry_metadata = CheckedRegistryMetadataPackage {
+        schema_version: CHECKED_REGISTRY_METADATA_SCHEMA_VERSION,
+        package: Some(CheckedRegistryPackageIdentity {
+            name: project_name.clone(),
+            version: Some(project_version.clone()),
+        }),
+        modules: registry_metadata_modules,
+    };
     for module in &mut registry_metadata.modules {
         module.registries.retain(|registry| registry.public);
         module.entries.retain(|entry| entry.registry_public);

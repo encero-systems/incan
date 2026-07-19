@@ -15,8 +15,8 @@ use crate::cli::prelude::ParsedModule;
 use crate::cli::{CliError, CliResult, ExitCode};
 use crate::frontend::api_metadata::{
     ApiDeclaration, ApiFunction, ApiPartial, CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage,
-    CheckedApiPackageIdentity, collect_checked_api_metadata, materialize_api_alias_projections,
-    validate_checked_api_docstrings,
+    CheckedApiPackageIdentity, collect_checked_api_alias_metadata, collect_checked_api_metadata,
+    materialize_api_alias_projections, validate_checked_api_docstrings,
 };
 use crate::frontend::contract_metadata::{
     CanonicalModelBundle, read_model_bundles_from_json, read_project_model_bundles,
@@ -33,8 +33,8 @@ use crate::library_manifest::{LibraryManifest, ParamExport, ParamKindExport, Typ
 use crate::manifest::ProjectManifest;
 
 use super::common::{
-    collect_modules, discover_effective_project_manifest, imported_module_deps_for_with_index, module_key_index,
-    resolve_project_root,
+    CompilationSession, collect_modules, collect_modules_detailed_with_session, discover_effective_project_manifest,
+    imported_module_deps_for_with_index, module_key_index, resolve_project_root,
 };
 
 /// Output format for `incan tools doctor`.
@@ -175,7 +175,7 @@ pub fn inspect_registry(
     });
     let candidates = all_candidates
         .iter()
-        .filter(|candidate| registry_identity_matches(&candidate.registry.identity, identity))
+        .filter(|candidate| registry_identity_matches(candidate, identity))
         .cloned()
         .collect::<Vec<_>>();
     let candidate = match candidates.as_slice() {
@@ -183,7 +183,7 @@ pub fn inspect_registry(
         [] => {
             let mut available = all_candidates
                 .iter()
-                .map(|candidate| candidate.registry.identity.clone())
+                .map(registry_candidate_selector)
                 .collect::<Vec<_>>();
             available.sort();
             available.dedup();
@@ -206,14 +206,7 @@ pub fn inspect_registry(
                 "registry identity `{identity}` is ambiguous; use one of: {}",
                 candidates
                     .iter()
-                    .map(|candidate| {
-                        let package = candidate
-                            .package
-                            .as_ref()
-                            .map(|package| package.name.as_str())
-                            .unwrap_or("local source");
-                        format!("{} from {package}", candidate.registry.identity)
-                    })
+                    .map(|candidate| { registry_candidate_selector(candidate) })
                     .collect::<Vec<_>>()
                     .join(", ")
             )));
@@ -537,9 +530,22 @@ fn registry_candidates_from_package(
     candidates
 }
 
-/// Match either the canonical double-colon identity or the accepted dotted CLI spelling.
-fn registry_identity_matches(canonical: &str, requested: &str) -> bool {
-    canonical == requested || canonical.replace("::", ".") == requested
+/// Return the unambiguous package-qualified selector for one registry candidate when package identity is available.
+fn registry_candidate_selector(candidate: &RegistryInspectionCandidate) -> String {
+    candidate
+        .package
+        .as_ref()
+        .map(|package| format!("{}::{}", package.name, candidate.registry.identity))
+        .unwrap_or_else(|| candidate.registry.identity.clone())
+}
+
+/// Match a module-local identity or an unambiguous package-qualified selector, accepting dotted CLI spellings.
+fn registry_identity_matches(candidate: &RegistryInspectionCandidate, requested: &str) -> bool {
+    let canonical = &candidate.registry.identity;
+    canonical == requested
+        || canonical.replace("::", ".") == requested
+        || registry_candidate_selector(candidate) == requested
+        || registry_candidate_selector(candidate).replace("::", ".") == requested
 }
 
 /// Render a compact Markdown API reference from checked API metadata.
@@ -909,17 +915,25 @@ fn collect_api_metadata_package(path: &Path) -> CliResult<CheckedApiMetadataPack
     })
 }
 
-/// Type-check a registry inspection entry path and collect compiler-owned metadata for all local modules.
+/// Analyze a registry inspection entry path once and collect compiler-owned metadata for all local modules.
 pub(crate) fn collect_registry_metadata_package(path: &Path) -> CliResult<CheckedRegistryMetadataPackage> {
     let entry_path = resolve_metadata_entry_path(path)?;
-    let entry_path_string = entry_path.to_string_lossy();
-    let modules = collect_modules(&entry_path_string)?;
+    let session = CompilationSession::discover_for_collection(&entry_path)?;
+    let modules = collect_modules_detailed_with_session(entry_path.clone(), &session)
+        .map_err(|failure| CliError::failure(failure.render_human()))?;
+    let analysis = session
+        .analyze_modules(
+            &modules,
+            #[cfg(feature = "rust_inspect")]
+            None,
+        )
+        .map_err(|failure| CliError::failure(failure.render_human()))?;
     let project_root = resolve_project_root(&entry_path);
     // Imported source modules are canonicalized by module resolution. Keep the producer-boundary comparison in the
     // same path space so macOS's `/var` -> `/private/var` alias cannot silently drop a local module from checked
     // registry inspection or the artifact it publishes.
     let canonical_project_root = project_root.canonicalize().unwrap_or_else(|_| project_root.clone());
-    let manifest = ProjectManifest::discover(&project_root).map_err(|error| CliError::failure(error.to_string()))?;
+    let manifest = session.manifest.clone();
     let runtime_package_identity = manifest
         .as_ref()
         .and_then(|manifest| manifest.project.as_ref())
@@ -934,17 +948,10 @@ pub(crate) fn collect_registry_metadata_package(path: &Path) -> CliResult<Checke
                 .map(str::to_string)
         })
         .unwrap_or_else(|| "<unpackaged>".to_string());
-    let declared = manifest.as_ref().map(ProjectManifest::declared_rust_crate_names);
-    let library_manifest_index = manifest
-        .as_ref()
-        .map(LibraryManifestIndex::from_project_manifest)
-        .unwrap_or_default();
-    let module_idx_by_key = module_key_index(&modules);
-    let mut all_errors = String::new();
     let mut metadata_modules = Vec::new();
     let mut api_metadata_modules = Vec::new();
 
-    for (idx, module) in modules.iter().enumerate() {
+    for module in &modules {
         // `collect_modules` includes compiler-provided modules needed to type-check the entry module. They are not
         // producer source and must never be republished as this package's registry metadata, except when the caller
         // intentionally selected that stdlib source entry (the capability-inventory generator does exactly that).
@@ -955,35 +962,16 @@ pub(crate) fn collect_registry_metadata_package(path: &Path) -> CliResult<Checke
         {
             continue;
         }
-        let deps_for_module = imported_module_deps_for_with_index(&modules, idx, &module_idx_by_key);
-        let mut checker = typechecker::TypeChecker::new();
-        if let Some(names) = declared.clone() {
-            checker.set_declared_crate_names(names);
-        }
-        checker.set_library_manifest_index(library_manifest_index.clone());
-        match checker.check_with_imports(&module.ast, &deps_for_module) {
-            Ok(()) => {
-                let module_path = metadata_module_path(module, &entry_path);
-                metadata_modules.push(collect_checked_registry_metadata(
-                    checker.type_info(),
-                    module_path.clone(),
-                    &runtime_package_identity,
-                ));
-                api_metadata_modules.push(collect_checked_api_metadata(&module.ast, &checker, module_path));
-            }
-            Err(errs) => {
-                for err in &errs {
-                    all_errors.push_str(&diagnostics::format_error(
-                        module.file_path.to_string_lossy().as_ref(),
-                        &module.source,
-                        err,
-                    ));
-                }
-            }
-        }
-    }
-    if !all_errors.is_empty() {
-        return Err(CliError::failure(all_errors.trim_end()));
+        let type_info = analysis
+            .type_info_for_module_path(&module.path_segments)
+            .ok_or_else(|| CliError::failure(format!("missing session analysis for {}", module.file_path.display())))?;
+        let module_path = metadata_module_path(module, &entry_path);
+        metadata_modules.push(collect_checked_registry_metadata(
+            type_info,
+            module_path.clone(),
+            &runtime_package_identity,
+        ));
+        api_metadata_modules.push(collect_checked_api_alias_metadata(&module.ast, module_path));
     }
     materialize_api_alias_projections(&mut api_metadata_modules);
     materialize_registry_reexport_projections(&mut metadata_modules, &api_metadata_modules);
@@ -1813,6 +1801,33 @@ mod tests {
     use crate::cli::commands::build_report::BuildReportOptions;
     use crate::frontend::api_metadata::ApiDeclaration;
     use crate::lockfile::{CargoFeatureSelection, IncanLock, compute_deps_fingerprint};
+
+    #[test]
+    fn registry_selector_accepts_package_qualified_and_module_local_identities() {
+        let candidate = RegistryInspectionCandidate {
+            package: Some(CheckedRegistryPackageIdentity {
+                name: "catalogue".to_string(),
+                version: Some("1.0.0".to_string()),
+            }),
+            registry: CheckedRegistryDefinition {
+                identity: "feature::functions".to_string(),
+                binding: "functions".to_string(),
+                public: true,
+                key_type: "FunctionId".to_string(),
+                descriptor_type: "FunctionSpec".to_string(),
+                subjects: vec![crate::frontend::registry_metadata::CheckedRegistrySubjectKind::Function],
+                reexport_paths: Vec::new(),
+            },
+            entries: Vec::new(),
+        };
+
+        assert!(registry_identity_matches(&candidate, "feature::functions"));
+        assert!(registry_identity_matches(&candidate, "feature.functions"));
+        assert!(registry_identity_matches(&candidate, "catalogue::feature::functions"));
+        assert!(registry_identity_matches(&candidate, "catalogue.feature.functions"));
+        assert!(!registry_identity_matches(&candidate, "other::feature::functions"));
+        assert_eq!(registry_candidate_selector(&candidate), "catalogue::feature::functions");
+    }
 
     #[test]
     fn std_capability_inventory_is_checked_and_generates_reference() -> Result<(), Box<dyn std::error::Error>> {

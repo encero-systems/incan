@@ -697,7 +697,7 @@ pub enum InspectCommand {
     },
     /// Inspect one complete compiler-checked typed registry without executing user modules
     Registry {
-        /// Canonical registry identity, such as `package::module::functions`
+        /// Registry identity, such as `feature::functions` or the unambiguous `package::feature::functions`
         #[arg(value_name = "CANONICAL_IDENTITY")]
         identity: String,
         /// Source project root; defaults to the current directory
