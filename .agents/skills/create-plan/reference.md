@@ -40,8 +40,8 @@ Replace bracketed sections. Remove sections that do not apply. Point **Gate** at
 
 | Step | Command |
 |------|---------|
-| Format | `make fmt` (Incan) / `make fmt-check` (InQL) / … |
-| Full gate | `make pre-commit` (Incan) / `make ci` (InQL) / … |
+| Format | `make fmt` (Incan) / `make fmt-check` (IncQL) / … |
+| Full gate | `make pre-commit` (Incan) / `make ci` (IncQL) / … |
 | Smoke | `make smoke-test` (Incan) / … |
 
 ## Success criteria

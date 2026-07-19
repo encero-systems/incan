@@ -767,7 +767,7 @@ impl TypeChecker {
     /// Type-check a Rust type-shaped constructor when metadata is unavailable but source names every field.
     ///
     /// Metadata is still required for positional construction because field order must come from Rust. Named source
-    /// arguments already carry the field names lowering needs, so this path can preserve InQL/Substrait-style protobuf
+    /// arguments already carry the field names lowering needs, so this path can preserve IncQL/Substrait-style protobuf
     /// constructors without emitting invalid tuple calls.
     fn check_metadata_free_rust_named_field_constructor_call(
         &mut self,

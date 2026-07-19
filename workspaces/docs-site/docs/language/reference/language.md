@@ -320,7 +320,7 @@ Decorator factories can be generic over the decorated function type. This is the
 def registered[F](function_ref: str) -> ((F) -> F):
     return (func) => func
 
-@registered("inql.functions.col")
+@registered("incql.functions.col")
 pub def col(name: str) -> ColumnExpr:
     return ColumnExpr(name=name)
 ```
@@ -328,7 +328,7 @@ pub def col(name: str) -> ColumnExpr:
 The compiler infers `F` from the decorated function when the factory result is applied. If inference needs help, pass the decorated function type explicitly on the decorator factory call:
 
 ```incan
-@registered[(str) -> ColumnExpr]("inql.functions.col")
+@registered[(str) -> ColumnExpr]("incql.functions.col")
 pub def col(name: str) -> ColumnExpr:
     return ColumnExpr(name=name)
 ```

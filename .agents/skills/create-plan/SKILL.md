@@ -1,6 +1,6 @@
 ---
 name: create-plan
-description: Drafts implementation plans with TDD, documentation updates, and repository verification commands before coding. Use when the user asks for an implementation plan, /create-plan, or structured pre-implementation design for work in encero workspaces (e.g. Incan, InQL).
+description: Drafts implementation plans with TDD, documentation updates, and repository verification commands before coding. Use when the user asks for an implementation plan, /create-plan, or structured pre-implementation design for work in encero workspaces (e.g. Incan, IncQL).
 ---
 
 # Create implementation plan
@@ -9,7 +9,7 @@ description: Drafts implementation plans with TDD, documentation updates, and re
 
 Apply when scoping **implementation** (not RFC-only drafting): bugs, features, compiler/library behavior, tests, or user-facing docs tied to that work.
 
-**Identify the repository root** from the user’s path or context (`incan/`, `InQL/`, etc.). If unclear, ask. Follow that repo’s **`AGENTS.md`** and **`CONTRIBUTING.md`** (repository root) for authoritative commands and boundaries.
+**Identify the repository root** from the user’s path or context (`incan/`, `IncQL/`, etc.). If unclear, ask. Follow that repo’s **`AGENTS.md`** and **`CONTRIBUTING.md`** (repository root) for authoritative commands and boundaries.
 
 ## Plan output shape
 
@@ -51,7 +51,7 @@ Include:
 
 - the direct/local behavior under test;
 - each boundary that can observe the same behavior: import, reexport/facade, package consumer, dependency-owned type, test batch, vocab/desugarer, formatter, generated Rust, or Rust metadata;
-- downstream acceptance lanes such as InQL when the changed surface is exercised there;
+- downstream acceptance lanes such as IncQL when the changed surface is exercised there;
 - performance/progress expectations when touching prewarm, metadata, test runner, CI, or cache behavior;
 - docs, rustdocs, generated references, release notes, and RFC lifecycle work;
 - boundaries explicitly not applicable, with the reason.
@@ -124,15 +124,15 @@ Optional: `make smoke-test` when you explicitly want the full smoke suite after 
 
 **Project rules:** no `.unwrap()` / `.expect()` in Incan (see `AGENTS.md`).
 
-### InQL (`InQL/`)
+### IncQL (`IncQL/`)
 
-From the InQL package root:
+From the IncQL package root:
 
 | Step | Command |
 |------|---------|
 | CI-equivalent gate | `make ci` (or `make fmt-check`, `make build`, `make test` as listed in `AGENTS.md`) |
 
-Release notes and RFC alignment follow `InQL/AGENTS.md` and `CONTRIBUTING.md`.
+Release notes and RFC alignment follow `IncQL/AGENTS.md` and `CONTRIBUTING.md`.
 
 ### Other repos
 

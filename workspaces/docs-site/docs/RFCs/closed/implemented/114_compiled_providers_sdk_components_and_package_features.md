@@ -563,7 +563,7 @@ Provider construction may use one staging workspace, but the published artifacts
 
 - Add direct-import, facade/reexport, package-consumer, library, test-batch, generated-Rust, rust-metadata, LSP, diagnostics, codegraph, formatter, documentation, and inspection coverage across component and feature states.
 - Verify unknown, disabled, unavailable, corrupt, incompatible, conflicting, feature-gated, locked, offline, relocated, and concurrent-publication behavior on macOS and Linux.
-- Update feature inventory, CLI and manifest references, RFC links, rustdocs, v0.5 release notes, development version, installed-SDK smoke coverage, artifact-size evidence, and an InQL consumer lane before the RFC becomes Implemented.
+- Update feature inventory, CLI and manifest references, RFC links, rustdocs, v0.5 release notes, development version, installed-SDK smoke coverage, artifact-size evidence, and an IncQL consumer lane before the RFC becomes Implemented.
 
 ## Implementation log
 
@@ -585,7 +585,7 @@ Provider construction may use one staging workspace, but the published artifacts
 - [x] Direct import, facade/reexport, package consumer, generated Rust, rust-metadata, locked, offline, and installed-SDK regressions pass.
 - [x] Minimal, default, and full profile packaging proves excluded payload and dependency behavior with measured size evidence.
 - [x] CLI, manifest, artifact, feature, component, generated-reference, rustdoc, and v0.5 release documentation are complete.
-- [x] InQL consumer verification, macOS and Linux release lanes, development-version bump, and full repository gates pass.
+- [x] IncQL consumer verification, macOS and Linux release lanes, development-version bump, and full repository gates pass.
 
 ## Inspectability and tooling surface
 

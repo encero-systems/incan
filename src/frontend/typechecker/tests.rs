@@ -6670,7 +6670,7 @@ model ColumnExpr:
 def registered[F](name: str) -> ((F) -> F):
   return (func) => func
 
-@registered[(str) -> ColumnExpr]("inql.functions.col")
+@registered[(str) -> ColumnExpr]("incql.functions.col")
 def col(name: str) -> ColumnExpr:
   return ColumnExpr(name=name)
 
@@ -6689,7 +6689,7 @@ model ColumnExpr:
 def registered[F](name: str) -> ((F) -> F):
   return (func) => func
 
-@registered("inql.functions.col")
+@registered("incql.functions.col")
 def col(name: str) -> ColumnExpr:
   return ColumnExpr(name=name)
 

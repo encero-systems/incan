@@ -2567,7 +2567,7 @@ model ColumnExpr:
 def registered[F](name: str) -> ((F) -> F):
     return (func) => func
 
-@registered("inql.functions.col")
+@registered("incql.functions.col")
 pub def col(name: str) -> ColumnExpr:
     """Build a column expression.
 
