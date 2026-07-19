@@ -22,6 +22,7 @@ use incan_codegraph::{
     CodegraphRecord, CodegraphReferenceRecord, CodegraphSdkComponentProjection, CodegraphSdkProjection,
     CodegraphSemanticContext, CodegraphSourceSpan, to_jsonl,
 };
+use incan_semantics_core::{CompilerNodeId, SemanticModuleSnapshot, SemanticSourceTarget};
 
 use crate::cli::prelude::ParsedModule;
 use crate::cli::{CliError, CliResult, ExitCode};
@@ -32,8 +33,6 @@ use crate::frontend::ast::{
 };
 use crate::frontend::diagnostics::{self, StableDiagnostic};
 use crate::frontend::module::canonicalize_source_module_segments;
-use crate::frontend::typechecker::{SourceTargetInfo, TypeCheckInfo};
-use crate::manifest::ProjectManifest;
 use crate::provider::{
     BackendImplementationRequirement, ComponentSelectionReason, FeatureActivationReason, FeatureSelection,
     ProviderParticipation, ProviderPlan, ProviderProvenance,
@@ -42,7 +41,7 @@ use crate::version::INCAN_VERSION;
 
 use super::common::{
     CliDiagnosticFailure, CompilationSession, collect_modules_detailed_with_selections,
-    discover_effective_project_manifest, read_source, resolve_project_root, typecheck_modules_with_import_graph_info,
+    collect_modules_detailed_with_session, discover_effective_project_manifest, read_source, resolve_project_root,
 };
 
 /// Output format for `incan inspect codegraph`.
@@ -86,13 +85,13 @@ fn collect_codegraph_records(
 
     if path.is_dir() {
         let files = discover_incan_files(path)?;
-        let (modules, diagnostics, type_info_by_path) =
+        let (modules, diagnostics, semantic_snapshots_by_path) =
             directory_modules_diagnostics_and_info(&files, feature_selection, sdk_profile_override)?;
         if !diagnostics.is_empty() && !allow_errors {
             return Err(CliError::failure(render_diagnostics(&diagnostics)));
         }
         if diagnostics.is_empty() {
-            builder.set_type_info(type_info_by_path);
+            builder.set_semantic_snapshots(semantic_snapshots_by_path);
             builder.seed_source_target_ids(&modules);
             for module in &modules {
                 builder.collect_parsed_module(module, Vec::new());
@@ -121,15 +120,14 @@ fn collect_codegraph_records(
             return Err(CliError::failure(render_diagnostics(builder.diagnostics())));
         }
     } else {
-        match collect_modules_detailed_with_selections(&path.to_string_lossy(), feature_selection, sdk_profile_override)
-        {
+        let session = CompilationSession::discover_with_selections(path, feature_selection, sdk_profile_override)?;
+        match collect_modules_detailed_with_session(path.to_path_buf(), &session) {
             Ok(modules) => {
-                let (diagnostics, type_info_by_path) =
-                    typecheck_diagnostics_and_info(path, &modules, feature_selection, sdk_profile_override)?;
+                let (diagnostics, semantic_snapshots_by_path) = typecheck_diagnostics_and_info(&session, &modules)?;
                 if !diagnostics.is_empty() && !allow_errors {
                     return Err(CliError::failure(render_diagnostics(&diagnostics)));
                 }
-                builder.set_type_info(type_info_by_path);
+                builder.set_semantic_snapshots(semantic_snapshots_by_path);
                 builder.seed_source_target_ids(&modules);
                 for module in &modules {
                     builder.collect_parsed_module(module, diagnostics_for_file(&diagnostics, &module.file_path));
@@ -149,7 +147,7 @@ fn collect_codegraph_records(
 type DirectoryTypecheckArtifacts = (
     Vec<ParsedModule>,
     Vec<StableDiagnostic>,
-    BTreeMap<PathBuf, TypeCheckInfo>,
+    BTreeMap<PathBuf, SemanticModuleSnapshot>,
 );
 
 /// Collect and typecheck every discovered directory source root, keeping semantic artifacts only when the whole
@@ -162,12 +160,24 @@ fn directory_modules_diagnostics_and_info(
     let file_set = files.iter().cloned().collect::<BTreeSet<_>>();
     let mut modules_by_path = BTreeMap::new();
     let mut diagnostics = Vec::new();
-    let mut contexts = BTreeMap::new();
-    let mut type_info_by_path = BTreeMap::new();
+    let mut sessions = BTreeMap::new();
+    let mut semantic_snapshots_by_path = BTreeMap::new();
 
     for file in files {
-        match collect_modules_detailed_with_selections(&file.to_string_lossy(), feature_selection, sdk_profile_override)
-        {
+        let project_root = resolve_project_root(file);
+        if !sessions.contains_key(&project_root) {
+            sessions.insert(
+                project_root.clone(),
+                CompilationSession::discover_with_selections(file, feature_selection, sdk_profile_override)?,
+            );
+        }
+        let Some(session) = sessions.get(&project_root) else {
+            return Err(CliError::failure(format!(
+                "failed to prepare codegraph compilation session for {}",
+                project_root.display()
+            )));
+        };
+        match collect_modules_detailed_with_session(file.clone(), session) {
             Ok(modules) => {
                 for module in &modules {
                     if file_set.contains(&module.file_path) {
@@ -176,30 +186,16 @@ fn directory_modules_diagnostics_and_info(
                             .or_insert_with(|| module.clone());
                     }
                 }
-                let project_root = resolve_project_root(file);
-                if !contexts.contains_key(&project_root) {
-                    contexts.insert(
-                        project_root.clone(),
-                        TypecheckContext::discover(file, feature_selection, sdk_profile_override)?,
-                    );
-                }
-                let Some(context) = contexts.get(&project_root) else {
-                    return Err(CliError::failure(format!(
-                        "failed to prepare codegraph typecheck context for {}",
-                        project_root.display()
-                    )));
-                };
-                let provider_plan = context.provider_plan_for_modules(&modules)?;
-                match typecheck_modules_with_import_graph_info(
+                match session.analyze_modules(
                     &modules,
-                    context.manifest.as_ref(),
-                    &provider_plan,
                     #[cfg(feature = "rust_inspect")]
                     None,
                 ) {
-                    Ok(module_type_info) => {
-                        for (path, type_info) in module_type_info {
-                            type_info_by_path.entry(path).or_insert(type_info);
+                    Ok(analysis) => {
+                        for (path, snapshot) in analysis.semantic_snapshots() {
+                            semantic_snapshots_by_path
+                                .entry(path.clone())
+                                .or_insert_with(|| snapshot.clone());
                         }
                     }
                     Err(failure) => {
@@ -214,52 +210,27 @@ fn directory_modules_diagnostics_and_info(
     }
 
     if diagnostics.is_empty() {
-        Ok((modules_by_path.into_values().collect(), diagnostics, type_info_by_path))
+        Ok((
+            modules_by_path.into_values().collect(),
+            diagnostics,
+            semantic_snapshots_by_path,
+        ))
     } else {
         Ok((Vec::new(), diagnostics, BTreeMap::new()))
     }
 }
 
-struct TypecheckContext {
-    manifest: Option<ProjectManifest>,
-    session: CompilationSession,
-}
-
-impl TypecheckContext {
-    /// Discover manifest and library metadata needed to typecheck codegraph entrypoint collections.
-    fn discover(
-        path: &Path,
-        feature_selection: &FeatureSelection,
-        sdk_profile_override: Option<&str>,
-    ) -> CliResult<Self> {
-        let session = CompilationSession::discover_with_selections(path, feature_selection, sdk_profile_override)?;
-        let manifest = session.manifest.clone();
-        Ok(Self { manifest, session })
-    }
-
-    /// Resolve the shared provider projection for one collected codegraph compilation.
-    fn provider_plan_for_modules(&self, modules: &[ParsedModule]) -> CliResult<Arc<ProviderPlan>> {
-        self.session.provider_plan_for_modules(modules)
-    }
-}
-
 /// Run typechecking and keep reusable semantic artifacts when the checked graph succeeds.
 fn typecheck_diagnostics_and_info(
-    path: &Path,
+    session: &CompilationSession,
     modules: &[ParsedModule],
-    feature_selection: &FeatureSelection,
-    sdk_profile_override: Option<&str>,
-) -> CliResult<(Vec<StableDiagnostic>, BTreeMap<PathBuf, TypeCheckInfo>)> {
-    let context = TypecheckContext::discover(path, feature_selection, sdk_profile_override)?;
-    let provider_plan = context.provider_plan_for_modules(modules)?;
-    match typecheck_modules_with_import_graph_info(
+) -> CliResult<(Vec<StableDiagnostic>, BTreeMap<PathBuf, SemanticModuleSnapshot>)> {
+    match session.analyze_modules(
         modules,
-        context.manifest.as_ref(),
-        &provider_plan,
         #[cfg(feature = "rust_inspect")]
         None,
     ) {
-        Ok(type_info_by_path) => Ok((Vec::new(), type_info_by_path)),
+        Ok(analysis) => Ok((Vec::new(), analysis.semantic_snapshots().clone())),
         Err(failure) => Ok((stable_diagnostics(failure), BTreeMap::new())),
     }
 }
@@ -602,7 +573,7 @@ struct CodegraphBuilder {
     package: Option<CodegraphPackage>,
     semantic_contexts: Vec<CodegraphSemanticContext>,
     next_body_fact_index: usize,
-    type_info_by_path: BTreeMap<PathBuf, TypeCheckInfo>,
+    semantic_snapshots_by_path: BTreeMap<PathBuf, SemanticModuleSnapshot>,
     source_target_ids: BTreeMap<(Vec<String>, String, String), String>,
 }
 
@@ -633,14 +604,14 @@ impl CodegraphBuilder {
             package,
             semantic_contexts: Vec::new(),
             next_body_fact_index: 0,
-            type_info_by_path: BTreeMap::new(),
+            semantic_snapshots_by_path: BTreeMap::new(),
             source_target_ids: BTreeMap::new(),
         }
     }
 
-    /// Attach successful typechecker artifacts for later body fact target population.
-    fn set_type_info(&mut self, type_info_by_path: BTreeMap<PathBuf, TypeCheckInfo>) {
-        self.type_info_by_path = type_info_by_path;
+    /// Attach session-owned semantic facts for checked body target population.
+    fn set_semantic_snapshots(&mut self, semantic_snapshots_by_path: BTreeMap<PathBuf, SemanticModuleSnapshot>) {
+        self.semantic_snapshots_by_path = semantic_snapshots_by_path;
     }
 
     /// Precompute declaration ids for source targets before body facts are emitted.
@@ -1610,14 +1581,29 @@ impl CodegraphBuilder {
 
     /// Return a declaration record id for a compiler-proven source target at `span`.
     fn source_target_id(&self, module: &ParsedModule, span: Span) -> Option<String> {
-        let target = self.type_info_by_path.get(&module.file_path)?.source_target(span)?;
+        let module_identity = if module.path_segments.is_empty() {
+            "<module>".to_string()
+        } else {
+            module.path_segments.join("::")
+        };
+        let subject = CompilerNodeId::expression_span(&module_identity, span.start, span.end);
+        let target = self
+            .semantic_snapshots_by_path
+            .get(&module.file_path)?
+            .facts
+            .source_targets_for(&subject)
+            .next()?;
         self.declaration_id_for_source_target(target)
     }
 
     /// Resolve one source target artifact to an emitted declaration id.
-    fn declaration_id_for_source_target(&self, target: &SourceTargetInfo) -> Option<String> {
+    fn declaration_id_for_source_target(&self, target: &SemanticSourceTarget) -> Option<String> {
         self.source_target_ids
-            .get(&(target.module_path.clone(), target.name.clone(), target.kind.clone()))
+            .get(&(
+                target.module_path.clone(),
+                target.name.clone(),
+                target.kind.as_str().to_string(),
+            ))
             .cloned()
     }
 }

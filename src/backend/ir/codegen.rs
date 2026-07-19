@@ -37,6 +37,7 @@ use crate::frontend::ast::{Declaration, ImportKind, Program};
 use crate::frontend::diagnostics::CompileError;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::canonicalize_source_module_segments;
+use crate::frontend::typechecker::TypeCheckInfo;
 use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
 use crate::library_manifest::LibraryManifest;
 use crate::provider::ProviderPlan;
@@ -224,6 +225,13 @@ pub struct IrCodegen<'a> {
     /// Shared stdlib source metadata cache reused across the repeated internal typecheck/lowering passes that codegen
     /// performs for multi-module builds.
     stdlib_cache: StdlibAstCache,
+    /// Main-module facts supplied by the owning compilation session.
+    ///
+    /// Direct backend API callers may omit this temporarily; that fallback is removed when every caller constructs its
+    /// lowering request from a compilation-session analysis (#225).
+    prechecked_main_type_info: Option<TypeCheckInfo>,
+    /// Dependency facts from the same session analysis, keyed by module identity.
+    prechecked_dependency_type_info: HashMap<Vec<String>, TypeCheckInfo>,
     /// Manifest/workspace root for rust-inspect-backed typechecking during IR generation.
     #[cfg(feature = "rust_inspect")]
     rust_inspect_manifest_dir: Option<PathBuf>,
@@ -250,6 +258,8 @@ impl<'a> IrCodegen<'a> {
             preserve_dependency_public_items: true,
             public_typecheck_module_paths: HashSet::new(),
             stdlib_cache: StdlibAstCache::new(),
+            prechecked_main_type_info: None,
+            prechecked_dependency_type_info: HashMap::new(),
             #[cfg(feature = "rust_inspect")]
             rust_inspect_manifest_dir: None,
         }
@@ -536,6 +546,24 @@ impl<'a> IrCodegen<'a> {
     /// Seed codegen with stdlib metadata already collected by an earlier typecheck phase.
     pub(crate) fn set_stdlib_cache(&mut self, cache: StdlibAstCache) {
         self.stdlib_cache = cache;
+    }
+
+    /// Supply the checked lowering inputs owned by one compilation session.
+    ///
+    /// Production command paths use this to prevent lowering from rechecking source after diagnostics and semantic
+    /// facts have already been produced.
+    pub(crate) fn set_prechecked_type_info(
+        &mut self,
+        main: TypeCheckInfo,
+        dependencies: HashMap<Vec<String>, TypeCheckInfo>,
+    ) {
+        self.prechecked_main_type_info = Some(main);
+        self.prechecked_dependency_type_info = dependencies;
+    }
+
+    /// Return session-owned facts for one dependency module when supplied.
+    fn prechecked_dependency_type_info(&self, path: &[String]) -> Option<TypeCheckInfo> {
+        self.prechecked_dependency_type_info.get(path).cloned()
     }
 
     /// Set declared Rust crate names from `incan.toml [rust-dependencies]`. (RFC 031)
@@ -931,7 +959,9 @@ impl<'a> IrCodegen<'a> {
         // Typecheck to obtain reusable type information for lowering.
         //
         // Strict policy: if typechecking fails, do NOT proceed to lowering/codegen.
-        let type_info_opt = {
+        let type_info_opt = if let Some(type_info) = self.prechecked_main_type_info.clone() {
+            type_info
+        } else {
             use crate::frontend::typechecker::TypeChecker;
             let mut tc = TypeChecker::new();
             self.configure_typechecker(&mut tc);
@@ -992,7 +1022,10 @@ impl<'a> IrCodegen<'a> {
 
         let mut dependency_ir_programs = Vec::new();
         for (dep_name, dep_ast, dep_path_segments) in dependency_modules.clone() {
-            let dep_type_info = {
+            let dep_path = dep_path_segments.clone().unwrap_or_else(|| vec![dep_name.to_string()]);
+            let dep_type_info = if let Some(type_info) = self.prechecked_dependency_type_info(&dep_path) {
+                type_info
+            } else {
                 use crate::frontend::typechecker::TypeChecker;
                 let mut tc = TypeChecker::new();
                 self.configure_typechecker(&mut tc);
@@ -1570,7 +1603,9 @@ impl<'a> IrCodegen<'a> {
                 module_paths.iter().find(|path| path.join("_") == *name)
             };
             if let Some(path) = matching_path {
-                let module_type_info = {
+                let module_type_info = if let Some(type_info) = self.prechecked_dependency_type_info(path) {
+                    type_info
+                } else {
                     use crate::frontend::typechecker::TypeChecker;
                     let mut tc = TypeChecker::new();
                     self.configure_typechecker(&mut tc);

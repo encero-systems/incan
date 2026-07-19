@@ -27,6 +27,8 @@ use crate::frontend::decorator_resolution;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::logical_module_segments_from_file;
 use crate::frontend::testing_markers::{TestingMarkerKind, TestingMarkerSemantics, resolve_testing_marker_kind};
+use crate::frontend::typechecker::TypeCheckInfo;
+use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
 use crate::frontend::vocab_desugar_pass;
 use crate::frontend::{lexer, parser};
 use crate::lockfile::{CargoFeatureSelection, semantic_lock_state};
@@ -934,6 +936,8 @@ pub(super) struct PreparedTestFile {
     pub project_requirements: ProjectRequirements,
     pub cargo_package_name: String,
     pub lock_payload: Option<String>,
+    /// Checked lowering inputs supplied by the same session analysis as test diagnostics and semantic facts.
+    pub prechecked_type_info: (TypeCheckInfo, HashMap<Vec<String>, TypeCheckInfo>, StdlibAstCache),
     #[cfg(feature = "rust_inspect")]
     pub rust_inspect_manifest_dir: PathBuf,
 }
@@ -3126,8 +3130,8 @@ pub(super) fn run_file_tests_batch(
         let inline_imports = collect_test_dependency_inline_imports(&module_for_imports, &source_dependency_modules);
 
         let mut dependency_modules: Vec<ParsedModule> = Vec::with_capacity(1 + source_modules.len());
-        dependency_modules.push(module_for_imports);
-        dependency_modules.extend(source_dependency_modules);
+        dependency_modules.push(module_for_imports.clone());
+        dependency_modules.extend(source_dependency_modules.clone());
 
         let mut project_requirements =
             match common::collect_project_requirements(&dependency_modules, &library_manifest_index) {
@@ -3353,6 +3357,61 @@ pub(super) fn run_file_tests_batch(
             rust_inspect_manifest_dir
         };
 
+        let prechecked_type_info = {
+            let mut analysis_modules = source_dependency_modules.clone();
+            analysis_modules.push(module_for_imports.clone());
+            let analysis = match compilation_session.analyze_modules(
+                &analysis_modules,
+                #[cfg(feature = "rust_inspect")]
+                Some(&rust_inspect_manifest_dir),
+            ) {
+                Ok(analysis) => analysis,
+                Err(failure) => {
+                    let message = failure.render_human();
+                    return tests
+                        .iter()
+                        .map(|test| (test.clone(), TestResult::Failed(start.elapsed(), message.clone())))
+                        .collect();
+                }
+            };
+            let Some(main) = analysis
+                .type_info_for_module_path(&module_for_imports.path_segments)
+                .cloned()
+            else {
+                return tests
+                    .iter()
+                    .map(|test| {
+                        (
+                            test.clone(),
+                            TestResult::Failed(
+                                start.elapsed(),
+                                format!("missing session analysis for {}", first.file_path.display()),
+                            ),
+                        )
+                    })
+                    .collect();
+            };
+            let mut dependencies = HashMap::with_capacity(source_modules.len());
+            for module in &source_modules {
+                let Some(type_info) = analysis.type_info_for_module_path(&module.path_segments).cloned() else {
+                    return tests
+                        .iter()
+                        .map(|test| {
+                            (
+                                test.clone(),
+                                TestResult::Failed(
+                                    start.elapsed(),
+                                    format!("missing session analysis for {}", module.file_path.display()),
+                                ),
+                            )
+                        })
+                        .collect();
+                };
+                dependencies.insert(module.path_segments.clone(), type_info);
+            }
+            (main, dependencies, analysis.stdlib_cache().clone())
+        };
+
         let prepared = PreparedTestFile {
             provider_plan,
             ast: runner_ast,
@@ -3364,6 +3423,7 @@ pub(super) fn run_file_tests_batch(
             project_requirements: lock_resolution.project_requirements,
             cargo_package_name: lock_resolution.cargo_package_name,
             lock_payload,
+            prechecked_type_info,
             #[cfg(feature = "rust_inspect")]
             rust_inspect_manifest_dir,
         };
@@ -3383,6 +3443,9 @@ pub(super) fn run_file_tests_batch(
     let mut codegen = IrCodegen::new();
     codegen.set_preserve_dependency_public_items(false);
     codegen.set_provider_plan(Arc::clone(&prepared.provider_plan));
+    let (main_type_info, dependency_type_info, stdlib_cache) = &prepared.prechecked_type_info;
+    codegen.set_stdlib_cache(stdlib_cache.clone());
+    codegen.set_prechecked_type_info(main_type_info.clone(), dependency_type_info.clone());
     let compiled_sdk_modules = CompiledSdkModules::from_provider_plan(&prepared.provider_plan);
     #[cfg(feature = "rust_inspect")]
     {

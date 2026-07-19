@@ -54,7 +54,7 @@ use super::common::{
     collect_project_requirements, collect_rust_dependency_uses, discover_effective_project_manifest,
     enforce_project_toolchain_constraint, extend_requirements_with_provider_plan, format_dependency_error,
     imported_module_deps_for_with_index, merge_project_requirement_dependencies, module_key_index,
-    resolve_project_root, resolve_source_root, typecheck_modules_with_import_graph, validate_output_dir,
+    resolve_project_root, resolve_source_root, validate_output_dir,
 };
 use super::lock::{
     GeneratedLibraryDependencyPreheatRequest, LockResolutionRequest, resolve_lock_context,
@@ -965,13 +965,32 @@ fn prepare_project_with_options(
     // This must run after rust-inspect preparation. Direct Rust calls expose their callable signatures through the
     // prepared metadata workspace; checking before that step degrades those calls to `Unknown` and breaks source-level
     // constructs such as `?` on Rust `Result<T, E>` returns.
-    typecheck_modules_with_import_graph(
-        &modules,
-        manifest.as_ref(),
-        &provider_plan,
-        #[cfg(feature = "rust_inspect")]
-        rust_inspect_manifest_dir.as_deref(),
-    )?;
+    let compilation_analysis = compilation_session
+        .analyze_modules(
+            &modules,
+            #[cfg(feature = "rust_inspect")]
+            rust_inspect_manifest_dir.as_deref(),
+        )
+        .map_err(|failure| CliError::failure(failure.render_human()))?;
+    let main_type_info = compilation_analysis
+        .type_info_for_path(&main_module.file_path)
+        .cloned()
+        .ok_or_else(|| {
+            CliError::failure(format!(
+                "missing session analysis for {}",
+                main_module.file_path.display()
+            ))
+        })?;
+    let mut dependency_type_info = HashMap::with_capacity(dep_modules.len());
+    for module in dep_modules {
+        let type_info = compilation_analysis
+            .type_info_for_path(&module.file_path)
+            .cloned()
+            .ok_or_else(|| CliError::failure(format!("missing session analysis for {}", module.file_path.display())))?;
+        dependency_type_info.insert(module.path_segments.clone(), type_info);
+    }
+    codegen.set_stdlib_cache(compilation_analysis.stdlib_cache().clone());
+    codegen.set_prechecked_type_info(main_type_info, dependency_type_info);
     generator.set_cargo_lock_payload(lock_payload);
 
     let cargo_flags = cargo_command_flags(cargo_policy, &cargo_features);
@@ -1310,6 +1329,7 @@ fn prepare_library_project(
     let mut api_metadata_modules = Vec::new();
     let module_idx_by_key = module_key_index(&modules);
     let mut stdlib_cache = StdlibAstCache::new();
+    let mut checked_type_info_by_path = BTreeMap::new();
 
     for (idx, module) in modules.iter().enumerate() {
         let deps_for_module = imported_module_deps_for_with_index(&modules, idx, &module_idx_by_key);
@@ -1345,6 +1365,7 @@ fn prepare_library_project(
                     module_key(&module.path_segments),
                     checked_exports_by_name(module_exports),
                 );
+                checked_type_info_by_path.insert(module.file_path.clone(), checker.type_info().clone());
                 stdlib_cache = checker.stdlib_cache.clone();
             }
             Err(errs) => {
@@ -1478,6 +1499,29 @@ fn prepare_library_project(
     codegen.set_stdlib_cache(stdlib_cache);
     codegen.set_declared_crate_names(declared);
     codegen.set_provider_plan(Arc::clone(&provider_plan));
+    let main_type_info = checked_type_info_by_path
+        .get(&lib_module.file_path)
+        .cloned()
+        .ok_or_else(|| {
+            CliError::failure(format!(
+                "missing checked library analysis for {}",
+                lib_module.file_path.display()
+            ))
+        })?;
+    let mut dependency_type_info = HashMap::with_capacity(dep_modules.len());
+    for module in dep_modules {
+        let type_info = checked_type_info_by_path
+            .get(&module.file_path)
+            .cloned()
+            .ok_or_else(|| {
+                CliError::failure(format!(
+                    "missing checked library analysis for {}",
+                    module.file_path.display()
+                ))
+            })?;
+        dependency_type_info.insert(module.path_segments.clone(), type_info);
+    }
+    codegen.set_prechecked_type_info(main_type_info, dependency_type_info);
     codegen.set_public_ordinal_type_identities(public_ordinal_type_identities(
         lib_module,
         project_name.as_str(),

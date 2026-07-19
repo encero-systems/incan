@@ -55,7 +55,7 @@ The first backend-foundation artifacts are compiler-facing. They make current fr
 | `IncanType`              | Backend-neutral type vocabulary independent of Rust spelling.                                         | Used for semantic type facts and ABI v0 hooks; it is compiler-facing and not a stable public ABI.                                           |
 | ABI v0 type facts        | Conservative ownership, representation, and reserved runtime/target slots for semantic types.         | Records unknowns explicitly; it does not promise layout or target compatibility yet.                                                        |
 | `HirModule`              | Declaration-level HIR v0 with source spans and optional type-fact subjects.                           | Body, statement, expression, and ownership HIR are later slices.                                                                            |
-| `SemanticModuleSnapshot` | Bundled HIR plus semantic facts for one module.                                                       | Intended for inspection and future middle-end handoff fixtures before backend cutover.                                                      |
+| `SemanticModuleSnapshot` | Bundled HIR plus semantic facts for one module.                                                       | Produced by `CompilationSession`; codegraph reads checked source-target facts from it, while legacy lowering inputs remain until Body IR owns every lowering query. |
 
 ## Seed behavior matrix
 

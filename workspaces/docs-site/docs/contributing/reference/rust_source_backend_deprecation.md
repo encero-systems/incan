@@ -35,6 +35,12 @@ Use this template in the code comment, test name, issue note, or PR text:
 
 Do not use the template as bureaucracy. Use it to prevent backend-only fixes from becoming hidden architecture.
 
+## Current v0.5 adoption
+
+`CompilationSession` now owns one checked analysis result for executable builds, generated-Rust inspection, and codegraph inspection. That result bundles the lowering inputs and source-backed stdlib metadata still required by the current backend with a `SemanticModuleSnapshot` per module. The build paths pass that analysis into `IrCodegen` rather than asking codegen to typecheck the same source again, and codegraph resolves checked call/reference targets from semantic facts rather than `TypeCheckInfo` directly.
+
+The remaining internal `IrCodegen` typecheck fallback is deliberate and narrow: it serves direct backend API callers that do not yet supply a session analysis. Its owner is [#225](https://github.com/encero-systems/incan/issues/225); remove it when those callers supply session analysis and Body IR owns the lowering-specific queries that facts do not yet model. It must not receive new semantic decisions.
+
 ## Not allowed without explicit maintainer approval
 
 - Adding new source semantics only in an emitter branch.
