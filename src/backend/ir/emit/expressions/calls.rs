@@ -751,9 +751,9 @@ impl<'a> IrEmitter<'a> {
                 .iter()
                 .filter_map(|arg| arg.name.as_ref().map(|name| (name.clone(), arg.expr.clone())))
                 .collect::<Vec<_>>();
-            if let Some(metadata) = self
-                .struct_constructor_metadata_for_fields(target_name, &fields)
-                .or_else(|| self.unique_struct_constructor_metadata_for_fields(&fields))
+            if let Some(metadata) = canonical_path
+                .and_then(|path| self.public_dependency_constructor_metadata_for_path(path, &fields))
+                .or_else(|| self.struct_constructor_metadata_for_fields(target_name, &fields))
             {
                 let mut provided: std::collections::HashMap<&str, &TypedExpr> = std::collections::HashMap::new();
                 for (name, expr) in &fields {
@@ -768,10 +768,26 @@ impl<'a> IrEmitter<'a> {
                     let target_ty = metadata.field_types.get(field_name);
                     if let Some(value) = provided.get(field_name.as_str()) {
                         let value = self.emit_expr_for_use(value, ValueUseSite::StructField { target_ty })?;
-                        out_fields.push(quote! { #field_ident: #value });
-                    } else if let Some(default_expr) = metadata.field_defaults.get(field_name) {
-                        let value = self.emit_expr_for_use(default_expr, ValueUseSite::StructField { target_ty })?;
-                        out_fields.push(quote! { #field_ident: #value });
+                        let value =
+                            if metadata.requires_constructor_function && metadata.default_fields.contains(field_name) {
+                                quote! { Some(#value) }
+                            } else {
+                                value
+                            };
+                        out_fields.push((quote! { #field_ident }, value));
+                    } else if metadata.default_fields.contains(field_name) {
+                        let value = if metadata.requires_constructor_function {
+                            quote! { None }
+                        } else {
+                            let default_expr = metadata.field_defaults.get(field_name).ok_or_else(|| {
+                                EmitError::Unsupported(format!(
+                                    "default for field '{}' on '{}' cannot be materialized",
+                                    field_name, target_name
+                                ))
+                            })?;
+                            self.emit_expr_for_use(default_expr, ValueUseSite::StructField { target_ty })?
+                        };
+                        out_fields.push((quote! { #field_ident }, value));
                     } else {
                         return Err(EmitError::Unsupported(format!(
                             "missing required field '{}' when constructing '{}'",
@@ -780,7 +796,12 @@ impl<'a> IrEmitter<'a> {
                     }
                 }
 
-                return Ok(quote! { #f { #(#out_fields),* } });
+                if metadata.requires_constructor_function {
+                    let values = out_fields.iter().map(|(_, value)| value);
+                    return Ok(quote! { #f(#(#values),*) });
+                }
+                let fields = out_fields.iter().map(|(field, value)| quote! { #field: #value });
+                return Ok(quote! { #f { #(#fields),* } });
             }
         }
 
@@ -1466,6 +1487,86 @@ mod tests {
             kind: IrCallArgKind::Positional,
             expr,
         }
+    }
+
+    #[test]
+    fn alternate_type_name_call_uses_exact_private_library_constructor_bridge_issue883()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::backend::ir::emit::StructConstructorMetadata;
+        use crate::library_manifest::{FieldExport, FieldVisibilityExport, ParamDefaultExport, TypeRef};
+
+        let sealed_fields = vec![
+            FieldExport {
+                name: "secret".to_string(),
+                ty: TypeRef::Named {
+                    name: "int".to_string(),
+                },
+                visibility: FieldVisibilityExport::Private,
+                has_default: false,
+                default: None,
+                alias: None,
+                description: None,
+            },
+            FieldExport {
+                name: "label".to_string(),
+                ty: TypeRef::Named {
+                    name: "str".to_string(),
+                },
+                visibility: FieldVisibilityExport::Public,
+                has_default: true,
+                default: Some(ParamDefaultExport::String("sealed".to_string())),
+                alias: None,
+                description: None,
+            },
+        ];
+        let decoy_fields = vec![FieldExport {
+            name: "unrelated".to_string(),
+            ty: TypeRef::Named {
+                name: "bool".to_string(),
+            },
+            visibility: FieldVisibilityExport::Public,
+            has_default: false,
+            default: None,
+            alias: None,
+            description: None,
+        }];
+        let registry = FunctionRegistry::new();
+        let mut emitter = IrEmitter::new(&registry);
+        emitter.pub_dependency_constructor_metadata.insert(
+            ("sealed".to_string(), "Vault".to_string()),
+            StructConstructorMetadata::from_manifest_fields("sealed", &sealed_fields),
+        );
+        emitter.pub_dependency_constructor_metadata.insert(
+            ("decoy".to_string(), "Vault".to_string()),
+            StructConstructorMetadata::from_manifest_fields("decoy", &decoy_fields),
+        );
+        let func = TypedExpr::new(
+            IrExprKind::Var {
+                name: "PublicVault".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::TypeName,
+            },
+            IrType::Unknown,
+        );
+        let args = vec![IrCallArg {
+            name: Some("secret".to_string()),
+            kind: IrCallArgKind::Named,
+            expr: TypedExpr::new(IrExprKind::Int(42), IrType::Int),
+        }];
+        let target = IrType::Struct("PublicVault".to_string());
+        let path = vec!["pub".to_string(), "sealed".to_string(), "Vault".to_string()];
+        let tokens = emitter.emit_call_expr_for_use(
+            &func,
+            &[],
+            &args,
+            None,
+            Some(&path),
+            ValueUseSite::Assignment {
+                target_ty: Some(&target),
+            },
+        )?;
+        assert_eq!(render(tokens), "sealed::Vault(42,None)");
+        Ok(())
     }
 
     fn typed_rust_call_target(name: &str, params: Vec<IrType>) -> TypedExpr {

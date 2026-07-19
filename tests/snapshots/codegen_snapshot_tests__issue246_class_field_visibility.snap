@@ -12,6 +12,10 @@ pub struct LazyFrame {
     _cursor: i64,
     pub schema: String,
 }
+#[allow(non_snake_case, clippy::too_many_arguments)]
+pub fn LazyFrame(_cursor: i64, schema: String) -> LazyFrame {
+    LazyFrame { _cursor, schema }
+}
 impl incan_stdlib::reflection::HasClassName for LazyFrame {
     fn __class_name__(&self) -> &'static str {
         <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()

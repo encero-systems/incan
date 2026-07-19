@@ -696,6 +696,12 @@ pub enum TypeRef {
 pub struct FieldExport {
     pub name: String,
     pub ty: TypeRef,
+    /// Source-level field visibility enforced for compiled-library consumers.
+    ///
+    /// Older manifests omitted this field and exposed every recorded field to consumers, so absence remains public for
+    /// backward compatibility. New manifests only need to serialize the private case.
+    #[serde(default, skip_serializing_if = "FieldVisibilityExport::is_public")]
+    pub visibility: FieldVisibilityExport,
     /// Whether the field has a declared default value.
     pub has_default: bool,
     /// Materializable source default used when a consumer constructs this type through the artifact boundary.
@@ -705,6 +711,27 @@ pub struct FieldExport {
     pub alias: Option<String>,
     /// Optional human-readable field description.
     pub description: Option<String>,
+}
+
+/// Source-level visibility of a model or class field published through a library manifest.
+///
+/// Public models currently emit public fields only. Private visibility is valid for class fields; manifest validation
+/// rejects private model fields until the language defines that source state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FieldVisibilityExport {
+    /// Access is limited to the declaring class's own methods.
+    Private,
+    /// Access is available to source and compiled-library consumers.
+    #[default]
+    Public,
+}
+
+impl FieldVisibilityExport {
+    /// Return whether this field retains the legacy public consumer behavior.
+    fn is_public(&self) -> bool {
+        matches!(self, Self::Public)
+    }
 }
 
 /// Receiver mutability for an exported method.
@@ -1573,11 +1600,16 @@ fn method_from_checked(method: &crate::frontend::library_exports::CheckedMethod)
 
 /// Convert checked field metadata into artifact metadata, including a materializable default when available.
 fn field_from_checked(field: &crate::frontend::library_exports::CheckedField) -> FieldExport {
+    let default = field.default.as_ref().and_then(param_default_from_checked);
     FieldExport {
         name: field.name.clone(),
         ty: type_ref_from_resolved(&field.ty),
+        visibility: match field.visibility {
+            crate::frontend::ast::Visibility::Private => FieldVisibilityExport::Private,
+            crate::frontend::ast::Visibility::Public => FieldVisibilityExport::Public,
+        },
         has_default: field.has_default,
-        default: field.default.as_ref().and_then(param_default_from_checked),
+        default,
         alias: field.alias.clone(),
         description: field.description.clone(),
     }

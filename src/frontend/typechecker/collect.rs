@@ -25,6 +25,9 @@ use self::decl_helpers::{
 
 type InheritedMembers = (
     HashMap<String, FieldInfo>,
+    HashMap<String, Spanned<Expr>>,
+    HashMap<String, crate::frontend::library_exports::CheckedParamDefault>,
+    Vec<String>,
     HashMap<String, PropertyInfo>,
     HashMap<String, MethodInfo>,
     HashMap<String, Vec<MethodInfo>>,
@@ -576,15 +579,30 @@ impl TypeChecker {
 
     /// Register a class declaration, inheriting from parent if present.
     fn collect_class(&mut self, class: &ClassDecl, span: Span) {
-        let (mut fields, mut properties, mut methods, mut method_overloads) = self.inherit_from_parent(&class.extends);
+        let (
+            mut fields,
+            mut field_defaults,
+            mut field_default_metadata,
+            mut field_order,
+            mut properties,
+            mut methods,
+            mut method_overloads,
+        ) = self.inherit_from_parent(&class.extends);
 
         // Add own fields (can override inherited ones)
         fields.extend(collect_fields(&class.fields, self, &class.name, &class.type_params));
-        let field_order = class
-            .fields
-            .iter()
-            .map(|field| field.node.name.clone())
-            .collect::<Vec<_>>();
+        for field in &class.fields {
+            if !field_order.iter().any(|name| name == &field.node.name) {
+                field_order.push(field.node.name.clone());
+            }
+            if let Some(default) = &field.node.default {
+                field_defaults.insert(field.node.name.clone(), default.clone());
+                field_default_metadata.remove(&field.node.name);
+            } else {
+                field_defaults.remove(&field.node.name);
+                field_default_metadata.remove(&field.node.name);
+            }
+        }
         properties.extend(collect_properties(
             &class.properties,
             self,
@@ -614,6 +632,8 @@ impl TypeChecker {
                 trait_adoptions,
                 derives,
                 fields,
+                field_defaults: Box::new(field_defaults),
+                field_default_metadata,
                 field_order,
                 properties,
                 methods,
@@ -628,13 +648,32 @@ impl TypeChecker {
     /// Inherit fields and methods from a parent class if present.
     fn inherit_from_parent(&self, extends: &Option<String>) -> InheritedMembers {
         let Some(parent_name) = extends else {
-            return (HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new());
+            return (
+                HashMap::new(),
+                HashMap::new(),
+                HashMap::new(),
+                Vec::new(),
+                HashMap::new(),
+                HashMap::new(),
+                HashMap::new(),
+            );
         };
         let Some(TypeInfo::Class(parent_info)) = self.lookup_type_info(parent_name) else {
-            return (HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new());
+            return (
+                HashMap::new(),
+                HashMap::new(),
+                HashMap::new(),
+                Vec::new(),
+                HashMap::new(),
+                HashMap::new(),
+                HashMap::new(),
+            );
         };
         (
             parent_info.fields.clone(),
+            parent_info.field_defaults.as_ref().clone(),
+            parent_info.field_default_metadata.clone(),
+            parent_info.field_order.clone(),
             parent_info.properties.clone(),
             parent_info.methods.clone(),
             parent_info.method_overloads.clone(),

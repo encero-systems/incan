@@ -1007,7 +1007,10 @@ fn api_class(
         traits: export.traits.clone(),
         trait_adoptions: export.trait_adoptions.iter().map(type_bound).collect(),
         derives: export.derives.clone(),
-        fields: fields_in_source_order(&class.fields, &export.fields),
+        // Class export order is the provider's constructor ABI: inherited fields first, then the class's own fields.
+        // Reordering the checked sequence to the child's AST declaration order would make manifest-backed consumers
+        // pass positional bridge arguments in a different order than the generated Rust constructor.
+        fields: export.fields.iter().map(field).collect(),
         methods: methods(
             &class.methods,
             &class.method_aliases,
@@ -1042,6 +1045,7 @@ fn api_trait(
             .map(|(name, ty)| FieldExport {
                 name: name.clone(),
                 ty: type_ref_from_resolved(ty),
+                visibility: crate::library_manifest::FieldVisibilityExport::Public,
                 has_default: false,
                 default: None,
                 alias: None,
@@ -1407,11 +1411,16 @@ fn type_bound(bound: &CheckedTypeBound) -> TypeBoundExport {
 
 /// Convert a checked field into API metadata.
 fn field(field: &crate::frontend::library_exports::CheckedField) -> FieldExport {
+    let default = field.default.as_ref().and_then(param_default_from_checked);
     FieldExport {
         name: field.name.clone(),
         ty: type_ref_from_resolved(&field.ty),
+        visibility: match field.visibility {
+            Visibility::Private => crate::library_manifest::FieldVisibilityExport::Private,
+            Visibility::Public => crate::library_manifest::FieldVisibilityExport::Public,
+        },
         has_default: field.has_default,
-        default: field.default.as_ref().and_then(param_default_from_checked),
+        default,
         alias: field.alias.clone(),
         description: field.description.clone(),
     }

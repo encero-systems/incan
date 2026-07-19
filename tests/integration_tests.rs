@@ -10946,7 +10946,9 @@ def database() -> Database:
 
 mod rfc031_pub_import_integration_tests {
     use super::*;
-    use incan::library_manifest::{FunctionExport, LibraryManifest, ModelExport, ParamExport, TypeRef};
+    use incan::library_manifest::{
+        FieldVisibilityExport, FunctionExport, LibraryManifest, ModelExport, ParamExport, TypeRef,
+    };
     use incan::manifest::{INTERNAL_MANIFEST_OVERRIDE_ENV, INTERNAL_PROJECT_ROOT_OVERRIDE_ENV};
     use sha2::{Digest, Sha256};
     use std::collections::BTreeSet;
@@ -13331,6 +13333,208 @@ pub def aggregate_default(expr: ColumnExpr, output_name: str = DEFAULT_LABEL) ->
             "expected consumer check to accept pub:: alias and generic carrier imports.\nstdout:\n{}\nstderr:\n{}",
             String::from_utf8_lossy(&consumer_check.stdout),
             String::from_utf8_lossy(&consumer_check.stderr)
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn build_lib_consumer_preserves_private_class_field_visibility_issue883() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let tmp = tempfile::tempdir()?;
+        let producer_root = tmp.path().join("sealed_class_lib");
+        std::fs::create_dir_all(producer_root.join("src"))?;
+        std::fs::write(
+            producer_root.join("incan.toml"),
+            "[project]\nname = \"sealed_class_lib\"\nversion = \"0.1.0\"\n",
+        )?;
+        std::fs::write(
+            producer_root.join("src/vaults.incn"),
+            r#"const DEFAULT_PRIVATE_TEXT: str = "authority"
+
+def default_label() -> str:
+  return "sealed"
+
+pub class VaultBase:
+  private_text: str = DEFAULT_PRIVATE_TEXT
+  computed_secret: int = 1 + 2
+  pub base_count: int
+
+pub class Vault extends VaultBase:
+  secret: str
+  pub label: str = default_label()
+
+  def reveal(self) -> str:
+    return self.secret
+
+pub def make_vault(secret: str) -> Vault:
+  return Vault(base_count=7, secret=secret)
+"#,
+        )?;
+        std::fs::write(
+            producer_root.join("src/lib.incn"),
+            "pub from crate.vaults import Vault as PublicVault, VaultBase, make_vault\n",
+        )?;
+
+        let producer_build = run_build_lib(&producer_root)?;
+        assert!(
+            producer_build.status.success(),
+            "expected private-field provider library build to succeed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&producer_build.stdout),
+            String::from_utf8_lossy(&producer_build.stderr)
+        );
+        let provider_manifest =
+            LibraryManifest::read_from_path(&producer_root.join("target/lib/sealed_class_lib.incnlib"))?;
+        let vault = provider_manifest
+            .contract_metadata
+            .api
+            .as_ref()
+            .and_then(|api| api.modules.iter().find(|module| module.module_path == ["vaults"]))
+            .and_then(|module| {
+                module.declarations.iter().find_map(|declaration| match declaration {
+                    incan::frontend::api_metadata::ApiDeclaration::Class(class) if class.name == "Vault" => Some(class),
+                    _ => None,
+                })
+            })
+            .ok_or("expected facade-backed Vault in checked API metadata")?;
+        assert_eq!(
+            vault.fields.iter().map(|field| field.name.as_str()).collect::<Vec<_>>(),
+            vec!["private_text", "computed_secret", "base_count", "secret", "label"],
+            "manifest constructor fields must retain the provider's parent-first ABI order"
+        );
+        let private_text = vault
+            .fields
+            .iter()
+            .find(|field| field.name == "private_text")
+            .ok_or("expected inherited private_text field in provider manifest")?;
+        let secret = vault
+            .fields
+            .iter()
+            .find(|field| field.name == "secret")
+            .ok_or("expected secret field in provider manifest")?;
+        let computed_secret = vault
+            .fields
+            .iter()
+            .find(|field| field.name == "computed_secret")
+            .ok_or("expected computed_secret field in provider manifest")?;
+        let label = vault
+            .fields
+            .iter()
+            .find(|field| field.name == "label")
+            .ok_or("expected label field in provider manifest")?;
+        assert_eq!(secret.visibility, FieldVisibilityExport::Private);
+        assert_eq!(label.visibility, FieldVisibilityExport::Public);
+        assert_eq!(private_text.visibility, FieldVisibilityExport::Private);
+        assert_eq!(computed_secret.visibility, FieldVisibilityExport::Private);
+        assert!(computed_secret.has_default);
+        assert_eq!(computed_secret.default, None);
+        assert!(private_text.has_default);
+        assert_eq!(
+            private_text.default,
+            Some(incan::library_manifest::ParamDefaultExport::ConstRef(vec![
+                "vaults".to_string(),
+                "DEFAULT_PRIVATE_TEXT".to_string(),
+            ]))
+        );
+        assert!(label.has_default);
+        assert!(matches!(
+            label.default,
+            Some(incan::library_manifest::ParamDefaultExport::Call {
+                ref path,
+                ref signature,
+                ..
+            }) if path == &["vaults".to_string(), "default_label".to_string()] && signature.is_some()
+        ));
+
+        let decoy_root = tmp.path().join("decoy_class_lib");
+        std::fs::create_dir_all(decoy_root.join("src"))?;
+        std::fs::write(
+            decoy_root.join("incan.toml"),
+            "[project]\nname = \"decoy_class_lib\"\nversion = \"0.1.0\"\n",
+        )?;
+        std::fs::write(
+            decoy_root.join("src/lib.incn"),
+            r#"pub class PublicVault:
+  private_text: int = 11
+  computed_secret: str = "wrong" + "provider"
+  pub base_count: str
+  secret: int
+  pub label: int = 99
+"#,
+        )?;
+        let decoy_build = run_build_lib(&decoy_root)?;
+        assert!(
+            decoy_build.status.success(),
+            "expected duplicate-short-name decoy library build to succeed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&decoy_build.stdout),
+            String::from_utf8_lossy(&decoy_build.stderr)
+        );
+
+        let consumer_root = tmp.path().join("consumer");
+        let consumer_main = write_project_files(
+            &consumer_root,
+            "[project]\nname = \"sealed_class_consumer\"\n\n[dependencies]\nsealed_class_lib = { path = \"../sealed_class_lib\" }\ndecoy_class_lib = { path = \"../decoy_class_lib\" }\n",
+            r#"from pub::sealed_class_lib import PublicVault
+
+def main() -> None:
+  value: PublicVault = PublicVault(base_count=9, secret="authority")
+  overridden: PublicVault = PublicVault(computed_secret=4, base_count=10, secret="override")
+  println(value.label)
+  println(value.base_count)
+  println(overridden.base_count)
+"#,
+        )?;
+
+        let public_check = run_check(&consumer_main)?;
+        assert!(
+            public_check.status.success(),
+            "expected public field access and existing named class construction to remain valid.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&public_check.stdout),
+            String::from_utf8_lossy(&public_check.stderr)
+        );
+        let public_build = run_build(&consumer_main, &consumer_root.join("out"))?;
+        assert!(
+            public_build.status.success(),
+            "expected public access and named construction to generate valid Rust.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&public_build.stdout),
+            String::from_utf8_lossy(&public_build.stderr)
+        );
+
+        std::fs::write(
+            &consumer_main,
+            r#"from pub::sealed_class_lib import PublicVault as ConsumerVault
+
+def main() -> None:
+  value: ConsumerVault = ConsumerVault(base_count=9, secret="authority")
+  println(value.label)
+"#,
+        )?;
+        let alias_build = run_build(&consumer_main, &consumer_root.join("out"))?;
+        assert!(
+            alias_build.status.success(),
+            "expected a consumer alias of a facade-renamed class to retain the exact provider bridge.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&alias_build.stdout),
+            String::from_utf8_lossy(&alias_build.stderr)
+        );
+
+        std::fs::write(
+            &consumer_main,
+            r#"from pub::sealed_class_lib import PublicVault as ConsumerVault
+
+def main() -> None:
+  value: ConsumerVault = ConsumerVault(base_count=7, secret="authority")
+  println(value.secret)
+"#,
+        )?;
+        let private_check = run_check(&consumer_main)?;
+        assert!(
+            !private_check.status.success(),
+            "expected compiled-library private field access to fail Incan typechecking"
+        );
+        let stderr = strip_ansi_escapes(&String::from_utf8_lossy(&private_check.stderr));
+        assert!(
+            stderr.contains("Field 'secret' on 'ConsumerVault' is private"),
+            "expected source-level private field diagnostic, got:\n{stderr}"
         );
 
         Ok(())

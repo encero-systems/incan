@@ -4311,6 +4311,8 @@ impl TypeChecker {
                         trait_adoptions: Vec::new(),
                         derives: Vec::new(),
                         fields: HashMap::new(),
+                        field_defaults: Box::new(HashMap::new()),
+                        field_default_metadata: HashMap::new(),
                         field_order: Vec::new(),
                         properties: HashMap::new(),
                         methods: HashMap::new(),

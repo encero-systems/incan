@@ -92,6 +92,7 @@ pub struct CheckedTypeBound {
 pub struct CheckedField {
     pub name: String,
     pub ty: ResolvedType,
+    pub visibility: Visibility,
     pub has_default: bool,
     pub default: Option<CheckedParamDefault>,
     pub alias: Option<String>,
@@ -1099,13 +1100,24 @@ fn checked_model_export(model: &ModelDecl, checker: &TypeChecker) -> Option<Chec
         return None;
     };
 
+    let defaults = model
+        .fields
+        .iter()
+        .filter_map(|field| {
+            field
+                .node
+                .default
+                .as_ref()
+                .map(|default| (field.node.name.clone(), default.clone()))
+        })
+        .collect();
     Some(CheckedModelExport {
         name: model.name.clone(),
         type_params: checked_type_params(&model.type_params, checker),
         traits: sorted_vec(traits.to_vec()),
         trait_adoptions: sorted_type_bounds(map_type_bound_infos(trait_adoptions)),
         derives: sorted_vec(derives.to_vec()),
-        fields: map_fields(fields, field_order, &model.fields, checker),
+        fields: map_fields(fields, field_order, &defaults, None, checker),
         methods: map_method_overloads_with_defaults(method_overloads, &model.methods, checker),
     })
 }
@@ -1119,6 +1131,8 @@ fn checked_class_export(class: &ClassDecl, checker: &TypeChecker) -> Option<Chec
         trait_adoptions,
         derives,
         fields,
+        field_defaults,
+        field_default_metadata,
         field_order,
         method_overloads,
         ..
@@ -1134,7 +1148,13 @@ fn checked_class_export(class: &ClassDecl, checker: &TypeChecker) -> Option<Chec
         traits: sorted_vec(traits.to_vec()),
         trait_adoptions: sorted_type_bounds(map_type_bound_infos(trait_adoptions)),
         derives: sorted_vec(derives.to_vec()),
-        fields: map_fields(fields, field_order, &class.fields, checker),
+        fields: map_fields(
+            fields,
+            field_order,
+            field_defaults,
+            Some(field_default_metadata),
+            checker,
+        ),
         methods: map_method_overloads_with_defaults(method_overloads, &class.methods, checker),
     })
 }
@@ -1338,22 +1358,24 @@ fn type_args_sort_key(args: &[ResolvedType]) -> String {
 fn map_fields(
     fields: &HashMap<String, FieldInfo>,
     field_order: &[String],
-    source_fields: &[Spanned<crate::frontend::ast::FieldDecl>],
+    default_exprs: &HashMap<String, Spanned<Expr>>,
+    preserved_defaults: Option<&HashMap<String, CheckedParamDefault>>,
     checker: &TypeChecker,
 ) -> Vec<CheckedField> {
-    let defaults = source_fields
+    let mut defaults = default_exprs
         .iter()
-        .map(|field| {
+        .map(|(name, default)| {
             (
-                field.node.name.as_str(),
-                field
-                    .node
-                    .default
-                    .as_ref()
-                    .map(|default| checked_param_default(default, DefaultPathContext::for_checker(checker))),
+                name.as_str(),
+                checked_param_default(default, DefaultPathContext::for_checker(checker)),
             )
         })
         .collect::<HashMap<_, _>>();
+    if let Some(preserved_defaults) = preserved_defaults {
+        for (name, default) in preserved_defaults {
+            defaults.insert(name.as_str(), default.clone());
+        }
+    }
     let mut used = std::collections::HashSet::new();
     let mut entries = Vec::with_capacity(fields.len());
     for name in field_order {
@@ -1362,8 +1384,9 @@ fn map_fields(
             entries.push(CheckedField {
                 name: name.clone(),
                 ty: info.ty.clone(),
-                has_default: info.has_default,
-                default: defaults.get(name.as_str()).cloned().flatten(),
+                visibility: info.visibility,
+                has_default: defaults.contains_key(name.as_str()),
+                default: defaults.get(name.as_str()).cloned(),
                 alias: info.alias.clone(),
                 description: info.description.clone(),
             });
@@ -1377,8 +1400,9 @@ fn map_fields(
     entries.extend(remaining.into_iter().map(|(name, info)| CheckedField {
         name: name.clone(),
         ty: info.ty.clone(),
-        has_default: info.has_default,
-        default: defaults.get(name.as_str()).cloned().flatten(),
+        visibility: info.visibility,
+        has_default: defaults.contains_key(name.as_str()),
+        default: defaults.get(name.as_str()).cloned(),
         alias: info.alias.clone(),
         description: info.description.clone(),
     }));

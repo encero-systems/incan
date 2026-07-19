@@ -100,17 +100,31 @@ impl<'a> IrEmitter<'a> {
                 return Ok(quote! { #n {} });
             }
 
-            let mut out_fields: Vec<TokenStream> = Vec::new();
+            let mut out_fields: Vec<(TokenStream, TokenStream)> = Vec::new();
             for fname in field_names {
                 let fn_ident = Self::rust_ident(fname);
                 let target_type = metadata.field_types.get(fname);
                 if let Some(fval) = provided.get(fname.as_str()) {
                     let fv = self.emit_expr_for_use(fval, ValueUseSite::StructField { target_ty: target_type })?;
-                    out_fields.push(quote! { #fn_ident: #fv });
-                } else if let Some(default_expr) = metadata.field_defaults.get(fname) {
-                    let fv =
-                        self.emit_expr_for_use(default_expr, ValueUseSite::StructField { target_ty: target_type })?;
-                    out_fields.push(quote! { #fn_ident: #fv });
+                    let fv = if metadata.requires_constructor_function && metadata.default_fields.contains(fname) {
+                        quote! { Some(#fv) }
+                    } else {
+                        fv
+                    };
+                    out_fields.push((quote! { #fn_ident }, fv));
+                } else if metadata.default_fields.contains(fname) {
+                    let fv = if metadata.requires_constructor_function {
+                        quote! { None }
+                    } else {
+                        let default_expr = metadata.field_defaults.get(fname).ok_or_else(|| {
+                            EmitError::Unsupported(format!(
+                                "default for field '{}' on '{}' cannot be materialized",
+                                fname, name
+                            ))
+                        })?;
+                        self.emit_expr_for_use(default_expr, ValueUseSite::StructField { target_ty: target_type })?
+                    };
+                    out_fields.push((quote! { #fn_ident }, fv));
                 } else {
                     return Err(EmitError::Unsupported(format!(
                         "missing required field '{}' when constructing '{}'",
@@ -119,7 +133,13 @@ impl<'a> IrEmitter<'a> {
                 }
             }
 
-            Ok(quote! { #n { #(#out_fields),* } })
+            if metadata.requires_constructor_function {
+                let values = out_fields.iter().map(|(_, value)| value);
+                Ok(quote! { #n(#(#values),*) })
+            } else {
+                let fields = out_fields.iter().map(|(field, value)| quote! { #field: #value });
+                Ok(quote! { #n { #(#fields),* } })
+            }
         }
     }
 }

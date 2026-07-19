@@ -17,7 +17,7 @@ use crate::frontend::testing_markers::TestingFixtureScope;
 use crate::frontend::{lexer, parser};
 use crate::library_manifest::{
     AliasExport, ClassExport, ConstExport, EnumExport, EnumValueExport, EnumValueTypeExport, EnumVariantExport,
-    ExportIdentity, ExportIdentityKind, ExportIdentityProjection, FunctionExport,
+    ExportIdentity, ExportIdentityKind, ExportIdentityProjection, FieldExport, FieldVisibilityExport, FunctionExport,
     LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION, LibraryContractMetadata, LibraryExports, LibraryIdentityGraph,
     LibraryManifest, LibraryRustAbi, MethodExport, ModelExport, ParamDefaultCallArgExport,
     ParamDefaultCallSignatureExport, ParamDefaultExport, ParamExport, ParamKindExport, PartialExport,
@@ -101,6 +101,17 @@ fn check_str_err(source: &str, context: &str) -> Vec<CompileError> {
     match check_str(source) {
         Err(errs) => errs,
         Ok(()) => panic!("{context}"),
+    }
+}
+
+fn check_str_with_library_index_err(
+    source: &str,
+    library_index: LibraryManifestIndex,
+    context: &str,
+) -> Result<Vec<CompileError>, String> {
+    match check_str_with_library_index(source, library_index) {
+        Err(errs) => Ok(errs),
+        Ok(()) => Err(context.to_string()),
     }
 }
 
@@ -1923,6 +1934,85 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
         LibraryManifestIndexEntry::Loaded {
             manifest: Box::new(manifest),
             metadata: LibraryArtifactMetadata::from_crate_root("mylib", "mylib", synthetic_artifact_root("mylib")),
+        },
+    )]))
+}
+
+fn library_index_with_private_class_field_issue883() -> LibraryManifestIndex {
+    let mut manifest = LibraryManifest::new("sealed_class_lib", "0.1.0");
+    manifest.exports.classes.push(ClassExport {
+        name: "Vault".to_string(),
+        type_params: Vec::new(),
+        extends: None,
+        traits: Vec::new(),
+        trait_adoptions: Vec::new(),
+        derives: Vec::new(),
+        fields: vec![
+            FieldExport {
+                name: "secret".to_string(),
+                ty: TypeRef::Named {
+                    name: "str".to_string(),
+                },
+                visibility: FieldVisibilityExport::Private,
+                has_default: false,
+                default: None,
+                alias: None,
+                description: None,
+            },
+            FieldExport {
+                name: "label".to_string(),
+                ty: TypeRef::Named {
+                    name: "str".to_string(),
+                },
+                visibility: FieldVisibilityExport::Public,
+                has_default: true,
+                default: Some(ParamDefaultExport::Call {
+                    path: vec!["defaults".to_string(), "make_label".to_string()],
+                    args: vec![ParamDefaultCallArgExport {
+                        name: None,
+                        value: ParamDefaultExport::ConstRef(vec!["defaults".to_string(), "FALLBACK".to_string()]),
+                    }],
+                    signature: Some(ParamDefaultCallSignatureExport {
+                        params: vec![ParamExport {
+                            name: "value".to_string(),
+                            ty: TypeRef::Named {
+                                name: "str".to_string(),
+                            },
+                            kind: ParamKindExport::Normal,
+                            has_default: false,
+                            default: None,
+                        }],
+                        return_type: TypeRef::Named {
+                            name: "str".to_string(),
+                        },
+                    }),
+                }),
+                alias: None,
+                description: None,
+            },
+            FieldExport {
+                name: "computed_secret".to_string(),
+                ty: TypeRef::Named {
+                    name: "int".to_string(),
+                },
+                visibility: FieldVisibilityExport::Private,
+                has_default: true,
+                default: None,
+                alias: None,
+                description: None,
+            },
+        ],
+        methods: Vec::new(),
+    });
+    LibraryManifestIndex::from_entries(HashMap::from([(
+        "sealed_class_lib".to_string(),
+        LibraryManifestIndexEntry::Loaded {
+            manifest: Box::new(manifest),
+            metadata: LibraryArtifactMetadata::from_crate_root(
+                "sealed_class_lib",
+                "sealed_class_lib",
+                synthetic_artifact_root("private_class_field_issue883"),
+            ),
         },
     )]))
 }
@@ -13062,6 +13152,137 @@ def build() -> Widget:
 "#;
     let result = check_str_with_library_index(source, library_index_with_mylib_exports());
     assert!(result.is_ok(), "expected pub import to typecheck, got: {result:?}");
+}
+
+#[test]
+fn test_pub_imported_private_class_field_access_is_rejected_issue883() -> Result<(), String> {
+    let source = r#"
+from pub::sealed_class_lib import Vault
+
+def leak(value: Vault) -> str:
+  return value.secret
+"#;
+    let errors = check_str_with_library_index_err(
+        source,
+        library_index_with_private_class_field_issue883(),
+        "compiled-library private class field access should fail typechecking",
+    )?;
+    assert!(
+        has_private_field_error(&errors, "Vault", "secret"),
+        "expected private field error, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+    Ok(())
+}
+
+#[test]
+fn test_pub_imported_private_parent_field_access_is_rejected_in_child_issue883() -> Result<(), String> {
+    let source = r#"
+from pub::sealed_class_lib import Vault
+
+class Child extends Vault:
+  def leak(self) -> str:
+    return self.secret
+"#;
+    let errors = check_str_with_library_index_err(
+        source,
+        library_index_with_private_class_field_issue883(),
+        "compiled-library private parent field access should fail in a child method",
+    )?;
+    assert!(
+        has_private_field_error(&errors, "Child", "secret"),
+        "expected imported parent private field error, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+    Ok(())
+}
+
+#[test]
+fn test_pub_imported_class_preserves_public_access_and_named_construction_issue883() {
+    let source = r#"
+from pub::sealed_class_lib import Vault
+
+def build() -> Vault:
+  return Vault(secret="authority", label="sealed")
+
+def label(value: Vault) -> str:
+  return value.label
+"#;
+    let result = check_str_with_library_index(source, library_index_with_private_class_field_issue883());
+    assert!(
+        result.is_ok(),
+        "expected public access and existing named construction to typecheck, got: {result:?}"
+    );
+}
+
+#[test]
+fn test_imported_parent_field_default_keeps_provider_path_and_signature_issue883()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+from pub::sealed_class_lib import Vault
+
+pub class Child extends Vault:
+  pub marker: int = 1
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("{errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("{errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(vec!["child".to_string()]));
+    checker.set_library_manifest_index(library_index_with_private_class_field_issue883());
+    checker
+        .check_program(&ast)
+        .map_err(|errs| std::io::Error::other(format!("{errs:?}")))?;
+
+    let exports = collect_checked_public_exports(&ast, &checker);
+    let manifest = LibraryManifest::from_checked_exports("child_lib".to_string(), "0.1.0".to_string(), &exports);
+    let child = manifest
+        .exports
+        .classes
+        .iter()
+        .find(|class| class.name == "Child")
+        .ok_or("missing Child export")?;
+    let label = child
+        .fields
+        .iter()
+        .find(|field| field.name == "label")
+        .ok_or("missing inherited label field")?;
+
+    assert_eq!(
+        label.default,
+        Some(ParamDefaultExport::Call {
+            path: vec!["defaults".to_string(), "make_label".to_string()],
+            args: vec![ParamDefaultCallArgExport {
+                name: None,
+                value: ParamDefaultExport::ConstRef(vec!["defaults".to_string(), "FALLBACK".to_string()]),
+            }],
+            signature: Some(ParamDefaultCallSignatureExport {
+                params: vec![ParamExport {
+                    name: "value".to_string(),
+                    ty: TypeRef::Named {
+                        name: "str".to_string(),
+                    },
+                    kind: ParamKindExport::Normal,
+                    has_default: false,
+                    default: None,
+                }],
+                return_type: TypeRef::Named {
+                    name: "str".to_string(),
+                },
+            }),
+        }),
+        "compiled parent defaults must retain their original provider path and checked call signature"
+    );
+    let computed_secret = child
+        .fields
+        .iter()
+        .find(|field| field.name == "computed_secret")
+        .ok_or("missing inherited computed_secret field")?;
+    assert!(
+        computed_secret.has_default,
+        "compiled parent defaults that are provider-owned but not consumer-materializable must retain bridge optionality"
+    );
+    assert_eq!(computed_secret.default, None);
+    Ok(())
 }
 
 #[test]
