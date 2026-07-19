@@ -57,7 +57,7 @@ use super::common::{
     resolve_project_root, resolve_source_root, typecheck_modules_with_import_graph, validate_output_dir,
 };
 use super::lock::{
-    GeneratedLibraryDependencyPreheatRequest, LockResolutionRequest, resolve_lock_context,
+    GeneratedLibraryDependencyPreheatRequest, LockResolution, LockResolutionRequest, resolve_lock_context,
     run_generated_library_dependency_preheat,
 };
 #[cfg(feature = "rust_inspect")]
@@ -1141,6 +1141,15 @@ pub(crate) fn build_file_report(
     }
 }
 
+/// Return whether an internal library artifact build must avoid canonical workspace lock resolution.
+///
+/// Ordinary dependency artifacts are prepared before their parent can finish the canonical workspace lock, so they
+/// must retain producer-local resolution. SDK artifacts are different: their publisher supplies an exact lock
+/// override that remains part of preparation.
+fn dependency_artifact_skips_canonical_lock(artifact_only: bool, sdk_provider_build: bool) -> bool {
+    artifact_only && !sdk_provider_build
+}
+
 /// Validate a library project and generate its Rust project without running Cargo.
 #[allow(clippy::too_many_arguments)] // Library preparation receives the same independent CLI selection axes.
 fn prepare_library_project(
@@ -1262,21 +1271,39 @@ fn prepare_library_project(
     let metadata_query_paths: Vec<String> = Vec::new();
 
     let lock_start = Instant::now();
-    let lock_resolution = resolve_lock_context(LockResolutionRequest {
-        project_root: &project_root,
-        project_name: project_name.as_str(),
-        entry_file: Some(&lib_entry),
-        manifest: Some(&manifest),
-        resolved: &resolved,
-        project_requirements: &project_requirements,
-        cargo_features: &cargo_features,
-        cargo_policy: &cargo_policy,
-        semantic: Some(&semantic),
-        package_features: Some(package_features),
-        sdk_profile_override,
-        #[cfg(feature = "rust_inspect")]
-        rust_inspect_query_paths: &metadata_query_paths,
-    })?;
+    let dependency_artifact_only = dependency_artifact_skips_canonical_lock(
+        env::var_os(INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV).is_some(),
+        env::var_os(SDK_PROVIDER_BUILD_ENV).is_some(),
+    );
+    let lock_resolution = if dependency_artifact_only {
+        // Dependency artifact preparation has no Cargo build to constrain with a lock payload. Resolving the
+        // canonical workspace lock here would traverse the consumer that requested this still-missing root artifact
+        // and recursively launch the same artifact-only child. Keep the already-resolved producer context intact;
+        // the parent command remains the sole owner of canonical lock generation and publication. SDK provider
+        // artifact builds are excluded because their parent supplies an exact Cargo.lock payload override.
+        LockResolution {
+            cargo_lock_payload: None,
+            cargo_package_name: project_name.clone(),
+            resolved,
+            project_requirements,
+        }
+    } else {
+        resolve_lock_context(LockResolutionRequest {
+            project_root: &project_root,
+            project_name: project_name.as_str(),
+            entry_file: Some(&lib_entry),
+            manifest: Some(&manifest),
+            resolved: &resolved,
+            project_requirements: &project_requirements,
+            cargo_features: &cargo_features,
+            cargo_policy: &cargo_policy,
+            semantic: Some(&semantic),
+            package_features: Some(package_features),
+            sdk_profile_override,
+            #[cfg(feature = "rust_inspect")]
+            rust_inspect_query_paths: &metadata_query_paths,
+        })?
+    };
     resolved = lock_resolution.resolved;
     project_requirements = lock_resolution.project_requirements;
     let lock_payload_for_typecheck = lock_resolution.cargo_lock_payload;
@@ -2573,6 +2600,13 @@ mod tests {
     use crate::lockfile::{IncanLock, compute_deps_fingerprint};
     use crate::manifest::ProjectManifest;
     use std::fs;
+
+    #[test]
+    fn dependency_artifact_only_build_skips_canonical_lock_issue908() {
+        assert!(dependency_artifact_skips_canonical_lock(true, false));
+        assert!(!dependency_artifact_skips_canonical_lock(true, true));
+        assert!(!dependency_artifact_skips_canonical_lock(false, false));
+    }
 
     #[test]
     fn classify_signature_mismatch_for_rust_extern_context() {
