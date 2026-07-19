@@ -208,6 +208,8 @@ pub struct ProjectGenerator {
     pub(super) compiled_provider_modules: BTreeMap<String, BTreeSet<String>>,
     /// Equivalent active SDK paths used to project immutable compiled-library Cargo artifacts into this build.
     pub(super) sdk_dependency_rebindings: Vec<SdkDependencyRebinding>,
+    /// Path-backed dependencies proven to come from the active SDK/toolchain rather than an ordinary project source.
+    pub(super) sdk_path_dependencies: Vec<DependencySpec>,
     /// Complete compiled-artifact closure that must be copied so projected child paths propagate to every ancestor.
     pub(super) sdk_artifact_projections: Vec<SdkArtifactProjection>,
 }
@@ -243,6 +245,7 @@ impl ProjectGenerator {
             compiled_sdk_modules: CompiledSdkModules::default(),
             compiled_provider_modules: BTreeMap::new(),
             sdk_dependency_rebindings: Vec::new(),
+            sdk_path_dependencies: Vec::new(),
             sdk_artifact_projections: Vec::new(),
         }
     }
@@ -342,6 +345,16 @@ impl ProjectGenerator {
         self.compiled_sdk_modules = CompiledSdkModules::from_provider_plan(plan);
         self.sdk_dependency_rebindings = plan.sdk_dependency_rebindings().to_vec();
         self.sdk_artifact_projections = plan.sdk_artifact_projections().to_vec();
+        self.set_sdk_path_dependencies(
+            plan.active_sdk_records()
+                .filter_map(|provider| {
+                    provider
+                        .artifact
+                        .as_ref()
+                        .map(LibraryArtifactMetadata::to_dependency_spec)
+                })
+                .collect(),
+        );
         for provider in plan.sdk_link_roots() {
             let Some(artifact) = provider.artifact.as_ref() else {
                 continue;
@@ -363,6 +376,35 @@ impl ProjectGenerator {
     /// Configure immutable compiled-library SDK projections for helper Cargo workspaces that do not retain a plan.
     pub(crate) fn set_sdk_dependency_rebindings(&mut self, rebindings: Vec<SdkDependencyRebinding>) {
         self.sdk_dependency_rebindings = rebindings;
+    }
+
+    /// Configure active path-backed SDK/toolchain dependencies for helper workspaces that do not retain a plan.
+    pub(crate) fn set_sdk_path_dependencies(&mut self, dependencies: Vec<DependencySpec>) {
+        self.sdk_path_dependencies.extend(
+            dependencies
+                .into_iter()
+                .filter(|dependency| matches!(dependency.source, DependencySource::Path { .. }))
+                .map(DependencySpec::normalized),
+        );
+        self.sdk_path_dependencies.sort_by(|left, right| {
+            (
+                &left.crate_name,
+                left.package.as_deref(),
+                match &left.source {
+                    DependencySource::Path { path } => Some(path),
+                    DependencySource::Registry | DependencySource::Git { .. } => None,
+                },
+            )
+                .cmp(&(
+                    &right.crate_name,
+                    right.package.as_deref(),
+                    match &right.source {
+                        DependencySource::Path { path } => Some(path),
+                        DependencySource::Registry | DependencySource::Git { .. } => None,
+                    },
+                ))
+        });
+        self.sdk_path_dependencies.dedup();
     }
 
     /// Configure the complete compiled-artifact closure for helper workspaces that do not retain a provider plan.
@@ -416,7 +458,7 @@ impl ProjectGenerator {
             .unwrap_or(self.output_dir.as_path())
             .join(".incan-sdk-rebound");
         let mut projection_identity = Sha256::new();
-        projection_identity.update(b"incan-sdk-artifact-projection/v2\0");
+        projection_identity.update(b"incan-sdk-artifact-projection/v4\0");
         let mut rebindings = self.sdk_dependency_rebindings.iter().collect::<Vec<_>>();
         rebindings.sort_by(|left, right| {
             (
@@ -441,13 +483,37 @@ impl ProjectGenerator {
             projection_identity.update(active_digest.as_bytes());
             projection_identity.update(b"\0");
         }
+        let mut sdk_path_dependencies = self.sdk_path_dependencies.iter().collect::<Vec<_>>();
+        sdk_path_dependencies.sort_by(|left, right| {
+            (&left.crate_name, left.package.as_deref()).cmp(&(&right.crate_name, right.package.as_deref()))
+        });
+        for dependency in sdk_path_dependencies {
+            let DependencySource::Path { path } = &dependency.source else {
+                continue;
+            };
+            projection_identity.update(dependency.crate_name.as_bytes());
+            projection_identity.update(b"\0");
+            projection_identity.update(
+                dependency
+                    .package
+                    .as_deref()
+                    .unwrap_or(&dependency.crate_name)
+                    .as_bytes(),
+            );
+            projection_identity.update(b"\0");
+            projection_identity.update(path.as_os_str().as_encoded_bytes());
+            projection_identity.update(b"\0");
+            let active_digest = digest_provider_artifact(path).map_err(io::Error::other)?;
+            projection_identity.update(active_digest.as_bytes());
+            projection_identity.update(b"\0");
+        }
         let projection_identity = projection_identity.finalize();
         let mut projected = BTreeMap::new();
         for projection in &self.sdk_artifact_projections {
             let artifact_root = normalize_artifact_path(&projection.artifact.crate_root);
             let artifact_digest = digest_provider_artifact(&artifact_root).map_err(io::Error::other)?;
             let mut hasher = Sha256::new();
-            hasher.update(b"incan-sdk-artifact-shadow/v2\0");
+            hasher.update(b"incan-sdk-artifact-shadow/v4\0");
             hasher.update(artifact_digest.as_bytes());
             hasher.update(b"\0");
             hasher.update(projection_identity.as_slice());
@@ -511,7 +577,9 @@ impl ProjectGenerator {
         lock.lock()?;
         let ready_marker = shadow_root.join(".incan-sdk-rebound-ready");
         let integrity_marker = shadow_parent.join(format!(".{shadow_name}.integrity"));
-        let shadow_is_valid = ready_marker.is_file()
+        let shadow_is_valid = fs::read_to_string(&ready_marker)
+            .ok()
+            .is_some_and(|marker| marker.trim() == "v4")
             && fs::read_to_string(&integrity_marker)
                 .ok()
                 .zip(digest_provider_artifact(shadow_root).ok())
@@ -550,97 +618,172 @@ impl ProjectGenerator {
                                 && rebinding.provider_name == descriptor.provider_name
                         })
                         .map(|rebinding| rebinding.active_crate_root.clone())
+                        .unwrap_or_else(|| source_root.clone())
                 } else {
-                    projected.get(&source_root).map(|(_, shadow)| shadow.clone())
+                    projected
+                        .get(&source_root)
+                        .map(|(_, shadow)| shadow.clone())
+                        .unwrap_or_else(|| source_root.clone())
                 };
-                if let Some(target_root) = target_root {
-                    edges.push(ProjectedArtifactEdge {
-                        dependency_key: descriptor.dependency_key.clone(),
-                        provider_name: descriptor.provider_name.clone(),
-                        source_root,
-                        target_root,
-                        kind: descriptor.kind,
-                        default_features: descriptor.default_features,
-                        optional: descriptor.optional,
-                    });
-                }
+                edges.push(ProjectedArtifactEdge {
+                    dependency_key: descriptor.dependency_key.clone(),
+                    provider_name: descriptor.provider_name.clone(),
+                    source_root,
+                    target_root,
+                    kind: descriptor.kind,
+                    default_features: descriptor.default_features,
+                    optional: descriptor.optional,
+                });
             }
 
-            let cargo_manifest_path = staging_root.join("Cargo.toml");
+            let cargo_relative = artifact
+                .cargo_toml_path
+                .strip_prefix(&artifact.crate_root)
+                .map_err(|_| io::Error::other("compiled Cargo manifest is outside its artifact root"))?;
+            let cargo_manifest_path = staging_root.join(cargo_relative);
             let cargo_source = fs::read_to_string(&cargo_manifest_path)?;
             let mut cargo_document = cargo_source
                 .parse::<DocumentMut>()
                 .map_err(|error| io::Error::other(format!("failed to parse rebound Cargo manifest: {error}")))?;
-            let dependencies = cargo_document
-                .get_mut("dependencies")
-                .and_then(Item::as_table_like_mut)
-                .ok_or_else(|| io::Error::other("compiled library Cargo manifest has no dependencies table"))?;
-            for edge in &edges {
-                let dependency = dependencies
-                    .get_mut(&edge.dependency_key)
-                    .and_then(Item::as_table_like_mut)
-                    .ok_or_else(|| {
-                        io::Error::other(format!(
-                            "compiled library Cargo manifest has no path dependency `{}` for private SDK provider `{}`",
-                            edge.dependency_key, edge.provider_name
-                        ))
-                    })?;
-                if ["git", "registry", "branch", "tag", "rev"]
-                    .iter()
-                    .any(|key| dependency.contains_key(key))
-                {
-                    return Err(io::Error::other(format!(
-                        "compiled library Cargo dependency `{}` for private SDK provider `{}` is not an exclusive path dependency",
-                        edge.dependency_key, edge.provider_name
-                    )));
-                }
-                let authored_path = dependency.get("path").and_then(Item::as_str).ok_or_else(|| {
-                    io::Error::other(format!(
-                        "compiled library Cargo dependency `{}` for private SDK provider `{}` has no path source",
-                        edge.dependency_key, edge.provider_name
-                    ))
-                })?;
-                let frozen_path = if Path::new(authored_path).is_absolute() {
-                    PathBuf::from(authored_path)
-                } else {
-                    artifact_root.join(authored_path)
+            let original_cargo_dir = artifact
+                .cargo_toml_path
+                .parent()
+                .ok_or_else(|| io::Error::other("compiled library Cargo manifest has no parent directory"))?;
+            let projected_cargo_manifest = shadow_root.join(cargo_relative);
+            let projected_cargo_dir = projected_cargo_manifest
+                .parent()
+                .ok_or_else(|| io::Error::other("projected Cargo manifest has no parent directory"))?;
+            let mut matched_edges = BTreeSet::new();
+            for table_name in ["dependencies", "dev-dependencies"] {
+                let Some(dependencies) = cargo_document.get_mut(table_name).and_then(Item::as_table_like_mut) else {
+                    continue;
                 };
-                if normalize_artifact_path(&frozen_path) != edge.source_root {
-                    return Err(io::Error::other(format!(
-                        "compiled library Cargo dependency `{}` points to `{}`, but its checked .incnlib descriptor freezes `{}`",
-                        edge.dependency_key,
-                        frozen_path.display(),
-                        edge.source_root.display()
-                    )));
+                for (dependency_key, dependency_item) in dependencies.iter_mut() {
+                    let dependency_key = dependency_key.get();
+                    let Some(dependency) = dependency_item.as_table_like_mut() else {
+                        continue;
+                    };
+                    let Some(authored_path) = dependency.get("path").and_then(Item::as_str) else {
+                        continue;
+                    };
+                    if ["git", "registry", "branch", "tag", "rev"]
+                        .iter()
+                        .any(|key| dependency.contains_key(key))
+                    {
+                        return Err(io::Error::other(format!(
+                            "compiled library Cargo dependency `{dependency_key}` is not an exclusive path dependency"
+                        )));
+                    }
+                    let frozen_path = if Path::new(authored_path).is_absolute() {
+                        PathBuf::from(authored_path)
+                    } else {
+                        original_cargo_dir.join(authored_path)
+                    };
+                    let frozen_path = normalize_artifact_path(&frozen_path);
+                    let cargo_package = dependency
+                        .get("package")
+                        .and_then(Item::as_str)
+                        .unwrap_or(dependency_key)
+                        .to_string();
+                    let edge = (table_name == "dependencies")
+                        .then(|| {
+                            edges
+                                .iter()
+                                .enumerate()
+                                .find(|(_, edge)| edge.dependency_key == dependency_key)
+                        })
+                        .flatten();
+                    if let Some((edge_index, edge)) = edge {
+                        matched_edges.insert(edge_index);
+                        if frozen_path != edge.source_root {
+                            return Err(io::Error::other(format!(
+                                "compiled library Cargo dependency `{}` points to `{}`, but its checked .incnlib descriptor freezes `{}`",
+                                dependency_key,
+                                frozen_path.display(),
+                                edge.source_root.display()
+                            )));
+                        }
+                        if cargo_package != edge.provider_name {
+                            return Err(io::Error::other(format!(
+                                "compiled library Cargo dependency `{}` names package `{cargo_package}`, but its checked .incnlib descriptor names `{}`",
+                                dependency_key, edge.provider_name
+                            )));
+                        }
+                        let cargo_optional = dependency.get("optional").and_then(Item::as_bool).unwrap_or(false);
+                        let cargo_default_features = dependency
+                            .get("default-features")
+                            .and_then(Item::as_bool)
+                            .unwrap_or(true);
+                        let flags_match = if edge.kind == ProviderDependencyKind::PublicPackage {
+                            cargo_optional == edge.optional && cargo_default_features == edge.default_features
+                        } else {
+                            !cargo_optional
+                                && match dependency.get("default-features") {
+                                    None => true,
+                                    Some(authored) => authored.as_bool() == Some(edge.default_features),
+                                }
+                        };
+                        if !flags_match {
+                            return Err(io::Error::other(format!(
+                                "compiled library Cargo dependency `{}` optional/default feature flags disagree with its checked .incnlib descriptor",
+                                dependency_key,
+                            )));
+                        }
+                        if edge.kind == ProviderDependencyKind::PrivateImplementation
+                            && dependency.get("default-features").is_none()
+                        {
+                            // v0.5 development artifacts recorded the checked private value in `.incnlib` but
+                            // omitted it from Cargo.toml. The checked descriptor is authoritative; normalize the
+                            // copied shadow while new producers emit the key explicitly.
+                            dependency.insert("default-features", value(edge.default_features));
+                        }
+                    }
+                    let trusted_sdk_targets = self
+                        .sdk_path_dependencies
+                        .iter()
+                        .filter(|resolved| {
+                            resolved.crate_name == dependency_key
+                                && resolved.package.as_deref().unwrap_or(resolved.crate_name.as_str())
+                                    == cargo_package.as_str()
+                        })
+                        .filter_map(|resolved| match &resolved.source {
+                            DependencySource::Path { path } => Some(normalize_artifact_path(path)),
+                            DependencySource::Registry | DependencySource::Git { .. } => None,
+                        })
+                        .collect::<BTreeSet<_>>();
+                    if trusted_sdk_targets.len() > 1 {
+                        return Err(io::Error::other(format!(
+                            "compiled library Cargo dependency `{dependency_key}` has multiple active SDK path targets"
+                        )));
+                    }
+                    let trusted_sdk_target = trusted_sdk_targets.into_iter().next().filter(|target| {
+                        self.sdk_dependency_rebindings.iter().any(|rebinding| {
+                            relative_artifact_path(&rebinding.source_crate_root, &frozen_path)
+                                == relative_artifact_path(&rebinding.active_crate_root, target)
+                        })
+                    });
+                    let target_root = if let Some((_, edge)) = edge {
+                        edge.target_root.clone()
+                    } else if let Some(target) = trusted_sdk_target {
+                        target
+                    } else if let Ok(relative) = frozen_path.strip_prefix(&artifact_root) {
+                        shadow_root.join(relative)
+                    } else {
+                        frozen_path
+                    };
+                    let relative = relative_artifact_path(projected_cargo_dir, &target_root);
+                    dependency.insert("path", value(relative));
                 }
-                let cargo_package = dependency
-                    .get("package")
-                    .and_then(Item::as_str)
-                    .unwrap_or(edge.dependency_key.as_str());
-                if cargo_package != edge.provider_name {
-                    return Err(io::Error::other(format!(
-                        "compiled library Cargo dependency `{}` names package `{cargo_package}`, but its checked .incnlib descriptor names `{}`",
-                        edge.dependency_key, edge.provider_name
-                    )));
-                }
-                let cargo_optional = dependency.get("optional").and_then(Item::as_bool).unwrap_or(false);
-                let cargo_default_features = dependency
-                    .get("default-features")
-                    .and_then(Item::as_bool)
-                    .unwrap_or(true);
-                let flags_match = if edge.kind == ProviderDependencyKind::PublicPackage {
-                    cargo_optional == edge.optional && cargo_default_features == edge.default_features
-                } else {
-                    !cargo_optional && dependency.get("default-features").and_then(Item::as_bool) != Some(true)
-                };
-                if !flags_match {
-                    return Err(io::Error::other(format!(
-                        "compiled library Cargo dependency `{}` optional/default feature flags disagree with its checked .incnlib descriptor",
-                        edge.dependency_key,
-                    )));
-                }
-                let relative = relative_artifact_path(&staging_root, &edge.target_root);
-                dependency.insert("path", value(relative));
+            }
+            if let Some(edge) = edges
+                .iter()
+                .enumerate()
+                .find_map(|(index, edge)| (!matched_edges.contains(&index)).then_some(edge))
+            {
+                return Err(io::Error::other(format!(
+                    "compiled library Cargo manifest has no path dependency `{}` for checked provider `{}`",
+                    edge.dependency_key, edge.provider_name
+                )));
             }
             fs::write(&cargo_manifest_path, cargo_document.to_string())?;
 
@@ -676,13 +819,13 @@ impl ProjectGenerator {
                         edge.provider_name, descriptor.artifact_digest
                     )));
                 }
-                descriptor.relative_artifact_path = relative_artifact_path(&staging_root, &edge.target_root);
+                descriptor.relative_artifact_path = relative_artifact_path(shadow_root, &edge.target_root);
                 descriptor.artifact_digest = digest;
             }
             library_manifest
                 .write_to_path(&rebound_manifest_path)
                 .map_err(io::Error::other)?;
-            fs::write(staging_root.join(".incan-sdk-rebound-ready"), "v2\n")?;
+            fs::write(staging_root.join(".incan-sdk-rebound-ready"), "v4\n")?;
             Ok(())
         })();
         if let Err(error) = projection {
@@ -1330,26 +1473,74 @@ mod tests {
         let workspace = tempfile::tempdir()?;
         let library_artifact = workspace.path().join("root-lib");
         let absent_sdk_artifact = workspace.path().join("sdk-cache-a/stdlib-codecs");
+        let absent_sdk_core = workspace.path().join("sdk-cache-a/stdlib-core");
+        let absent_sdk_testing = workspace.path().join("sdk-cache-a/stdlib-testing");
         let active_sdk_artifact = workspace.path().join("sdk-cache-b/stdlib-codecs");
-        let generated = workspace.path().join("generated/consumer");
+        let active_sdk_core = workspace.path().join("sdk-cache-b/stdlib-core");
+        let active_sdk_testing = workspace.path().join("sdk-cache-b/stdlib-testing");
+        let active_sdk_external_decoy = workspace.path().join("sdk-cache-b/stdlib-external");
+        let frozen_external = workspace.path().join("ordinary-external");
+        let internal_support = library_artifact.join("support");
+        let internal_dev_support = library_artifact.join("dev-support");
+        let generated = workspace
+            .path()
+            .join("Users/danny/Development/encero/tmp/hees/target/incan_lock");
         fs::create_dir_all(library_artifact.join("src"))?;
-        fs::create_dir_all(active_sdk_artifact.join("src"))?;
+        for active in [
+            &active_sdk_artifact,
+            &active_sdk_core,
+            &active_sdk_testing,
+            &active_sdk_external_decoy,
+            &frozen_external,
+            &internal_support,
+            &internal_dev_support,
+        ] {
+            fs::create_dir_all(active.join("src"))?;
+        }
         fs::write(
             library_artifact.join("Cargo.toml"),
             format!(
-                "[package]\nname = \"root_lib\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[workspace]\n\n[dependencies.incan_issue911_codecs]\npath = {:?}\ndefault-features = false\n",
-                absent_sdk_artifact.to_string_lossy()
+                "[package]\nname = \"root_lib\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[workspace]\n\n[dependencies.incan_issue911_codecs]\npath = {:?}\ndefault-features = false\n\n[dependencies.incan_issue911_core]\npath = {:?}\n\n[dependencies.incan_issue911_testing]\npath = {:?}\n\n[dependencies.incan_issue911_external]\npath = {:?}\n\n[dependencies.incan_issue911_support]\npath = \"support\"\n\n[dev-dependencies.incan_issue911_dev_support]\npath = \"dev-support\"\n",
+                relative_artifact_path(&library_artifact, &absent_sdk_artifact),
+                relative_artifact_path(&library_artifact, &absent_sdk_core),
+                relative_artifact_path(&library_artifact, &absent_sdk_testing),
+                relative_artifact_path(&library_artifact, &frozen_external)
             ),
         )?;
         fs::write(
             library_artifact.join("src/lib.rs"),
-            "pub fn root_value() -> u8 { incan_issue911_codecs::value() }\n",
+            "pub fn root_value() -> u8 { incan_issue911_codecs::value() + incan_issue911_core::value() + incan_issue911_testing::value() + incan_issue911_external::value() + incan_issue911_support::value() }\n",
         )?;
         fs::write(
             active_sdk_artifact.join("Cargo.toml"),
             "[package]\nname = \"incan_issue911_codecs\"\nversion = \"0.5.0\"\nedition = \"2024\"\n\n[workspace]\n",
         )?;
         fs::write(active_sdk_artifact.join("src/lib.rs"), "pub fn value() -> u8 { 7 }\n")?;
+        fs::write(
+            active_sdk_core.join("Cargo.toml"),
+            "[package]\nname = \"incan_issue911_core\"\nversion = \"0.5.0\"\nedition = \"2024\"\n\n[workspace]\n",
+        )?;
+        fs::write(active_sdk_core.join("src/lib.rs"), "pub fn value() -> u8 { 8 }\n")?;
+        fs::write(
+            active_sdk_testing.join("Cargo.toml"),
+            "[package]\nname = \"incan_issue911_testing\"\nversion = \"0.5.0\"\nedition = \"2024\"\n\n[workspace]\n",
+        )?;
+        fs::write(active_sdk_testing.join("src/lib.rs"), "pub fn value() -> u8 { 9 }\n")?;
+        for (artifact, package, value) in [
+            (&active_sdk_external_decoy, "incan_issue911_external", 99),
+            (&frozen_external, "incan_issue911_external", 10),
+            (&internal_support, "incan_issue911_support", 5),
+            (&internal_dev_support, "incan_issue911_dev_support", 6),
+        ] {
+            fs::write(
+                artifact.join("Cargo.toml"),
+                format!("[package]\nname = \"{package}\"\nversion = \"0.5.0\"\nedition = \"2024\"\n\n[workspace]\n"),
+            )?;
+            fs::write(
+                artifact.join("src/lib.rs"),
+                format!("pub fn value() -> u8 {{ {value} }}\n"),
+            )?;
+        }
         let digest = digest_provider_artifact(&active_sdk_artifact)?;
         let mut manifest = LibraryManifest::new("root_lib", "0.1.0");
         manifest.contract_metadata.provider.namespace_claims = vec![ProviderModuleClaim {
@@ -1403,17 +1594,127 @@ mod tests {
                 optional: false,
                 package: None,
             },
+            DependencySpec {
+                crate_name: "incan_issue911_core".to_string(),
+                version: None,
+                features: Vec::new(),
+                default_features: true,
+                source: DependencySource::Path {
+                    path: active_sdk_core.clone(),
+                },
+                optional: false,
+                package: None,
+            },
+            DependencySpec {
+                crate_name: "incan_issue911_testing".to_string(),
+                version: None,
+                features: Vec::new(),
+                default_features: true,
+                source: DependencySource::Path {
+                    path: active_sdk_testing.clone(),
+                },
+                optional: false,
+                package: None,
+            },
         ]);
         generator.sdk_dependency_rebindings = vec![SdkDependencyRebinding {
             containing_artifact: containing_artifact.clone(),
             source_crate_root: absent_sdk_artifact.clone(),
             provider_name: "incan_issue911_codecs".to_string(),
             dependency_key: "incan_issue911_codecs".to_string(),
-            active_crate_root: active_sdk_artifact,
+            active_crate_root: active_sdk_artifact.clone(),
         }];
+        generator.set_sdk_path_dependencies(vec![
+            DependencySpec {
+                crate_name: "incan_issue911_core".to_string(),
+                version: None,
+                features: Vec::new(),
+                default_features: true,
+                source: DependencySource::Path {
+                    path: active_sdk_core.clone(),
+                },
+                optional: false,
+                package: None,
+            },
+            DependencySpec {
+                crate_name: "incan_issue911_testing".to_string(),
+                version: None,
+                features: Vec::new(),
+                default_features: true,
+                source: DependencySource::Path {
+                    path: active_sdk_testing.clone(),
+                },
+                optional: false,
+                package: None,
+            },
+            DependencySpec {
+                crate_name: "incan_issue911_external".to_string(),
+                version: None,
+                features: Vec::new(),
+                default_features: true,
+                source: DependencySource::Path {
+                    path: active_sdk_external_decoy.clone(),
+                },
+                optional: false,
+                package: None,
+            },
+        ]);
         generator.sdk_artifact_projections = vec![SdkArtifactProjection {
             artifact: containing_artifact,
         }];
+
+        let original_sdk_paths = generator.sdk_path_dependencies.clone();
+        let original_shadow = generator
+            .sdk_projection_shadow_roots()?
+            .into_values()
+            .next()
+            .ok_or("missing original SDK shadow")?
+            .1;
+        let alternate_core = workspace.path().join("sdk-cache-c/stdlib-core");
+        fs::create_dir_all(alternate_core.join("src"))?;
+        fs::write(
+            alternate_core.join("Cargo.toml"),
+            "[package]\nname = \"incan_issue911_core\"\nversion = \"0.5.0\"\nedition = \"2024\"\n\n[workspace]\n",
+        )?;
+        fs::write(alternate_core.join("src/lib.rs"), "pub fn value() -> u8 { 8 }\n")?;
+        generator
+            .sdk_path_dependencies
+            .retain(|dependency| dependency.crate_name != "incan_issue911_core");
+        generator.set_sdk_path_dependencies(vec![DependencySpec {
+            crate_name: "incan_issue911_core".to_string(),
+            version: None,
+            features: Vec::new(),
+            default_features: true,
+            source: DependencySource::Path { path: alternate_core },
+            optional: false,
+            package: None,
+        }]);
+        let changed_shadow = generator
+            .sdk_projection_shadow_roots()?
+            .into_values()
+            .next()
+            .ok_or("missing changed SDK shadow")?
+            .1;
+        assert_ne!(
+            original_shadow, changed_shadow,
+            "active SDK path targets must participate in shadow identity"
+        );
+        generator.sdk_path_dependencies = original_sdk_paths;
+
+        copy_compiled_artifact_tree(&library_artifact, &original_shadow)?;
+        fs::write(original_shadow.join(".incan-sdk-rebound-ready"), "v3\n")?;
+        let stale_digest = digest_provider_artifact(&original_shadow)?;
+        let shadow_name = original_shadow
+            .file_name()
+            .ok_or("missing SDK shadow name")?
+            .to_string_lossy();
+        fs::write(
+            original_shadow
+                .parent()
+                .ok_or("missing SDK shadow parent")?
+                .join(format!(".{shadow_name}.integrity")),
+            format!("{stale_digest}\n"),
+        )?;
         let (left_projection, right_projection) = std::thread::scope(|scope| {
             let left = scope.spawn(|| generator.effective_dependencies());
             let right = scope.spawn(|| generator.effective_dependencies());
@@ -1430,16 +1731,76 @@ mod tests {
                 return Err("projected root dependency is not path-backed".into());
             }
         };
+        assert_eq!(
+            fs::read_to_string(projected_root.join(".incan-sdk-rebound-ready"))?,
+            "v4\n"
+        );
         fs::write(projected_root.join("src/lib.rs"), "pub fn corrupt() {}\n")?;
         let repaired_projection = generator.effective_dependencies()?;
         assert_eq!(repaired_projection, left_projection);
         assert!(fs::read_to_string(projected_root.join("src/lib.rs"))?.contains("root_value"));
-        generator.generate("fn main() { assert_eq!(root_lib::root_value(), incan_issue911_codecs::value()); }")?;
+        generator.generate("fn main() { assert_eq!(root_lib::root_value(), 39); }")?;
+
+        let rebound_cargo = fs::read_to_string(projected_root.join("Cargo.toml"))?.parse::<DocumentMut>()?;
+        let rebound_dependencies = rebound_cargo
+            .get("dependencies")
+            .and_then(Item::as_table_like)
+            .ok_or("projected Cargo manifest has no dependencies")?;
+        for (dependency_key, expected_root) in [
+            ("incan_issue911_codecs", &active_sdk_artifact),
+            ("incan_issue911_core", &active_sdk_core),
+            ("incan_issue911_testing", &active_sdk_testing),
+        ] {
+            let relative = rebound_dependencies
+                .get(dependency_key)
+                .and_then(Item::as_table_like)
+                .and_then(|dependency| dependency.get("path"))
+                .and_then(Item::as_str)
+                .ok_or("projected Cargo dependency has no path")?;
+            assert_eq!(
+                fs::canonicalize(projected_root.join(relative))?,
+                fs::canonicalize(expected_root)?,
+                "projected Cargo dependency `{dependency_key}` must resolve from the shadow manifest directory"
+            );
+        }
+        for (dependency_key, expected_root) in [
+            ("incan_issue911_external", frozen_external.as_path()),
+            ("incan_issue911_support", projected_root.join("support").as_path()),
+        ] {
+            let relative = rebound_dependencies
+                .get(dependency_key)
+                .and_then(Item::as_table_like)
+                .and_then(|dependency| dependency.get("path"))
+                .and_then(Item::as_str)
+                .ok_or("projected Cargo dependency has no path")?;
+            assert_eq!(
+                fs::canonicalize(projected_root.join(relative))?,
+                fs::canonicalize(expected_root)?,
+                "projected Cargo dependency `{dependency_key}` must preserve its intended source"
+            );
+        }
+        let rebound_dev_dependencies = rebound_cargo
+            .get("dev-dependencies")
+            .and_then(Item::as_table_like)
+            .ok_or("projected Cargo manifest has no dev dependencies")?;
+        let relative = rebound_dev_dependencies
+            .get("incan_issue911_dev_support")
+            .and_then(Item::as_table_like)
+            .and_then(|dependency| dependency.get("path"))
+            .and_then(Item::as_str)
+            .ok_or("projected dev Cargo dependency has no path")?;
+        assert_eq!(
+            fs::canonicalize(projected_root.join(relative))?,
+            fs::canonicalize(projected_root.join("dev-support"))?,
+            "projected dev Cargo dependency must remain inside the copied shadow"
+        );
 
         assert!(
             !absent_sdk_artifact.exists(),
             "logical rebinding must not recreate the historical SDK cache root"
         );
+        assert!(!absent_sdk_core.exists());
+        assert!(!absent_sdk_testing.exists());
         let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
         let output = Command::new(cargo)
             .arg("check")
@@ -1665,13 +2026,13 @@ mod tests {
             version: None,
             features: Vec::new(),
             default_features: true,
-            source: DependencySource::Path { path: artifact },
+            source: DependencySource::Path { path: artifact.clone() },
             optional: false,
             package: None,
         }]);
         generator.sdk_dependency_rebindings = vec![SdkDependencyRebinding {
             containing_artifact: metadata.clone(),
-            source_crate_root: descriptor_source,
+            source_crate_root: descriptor_source.clone(),
             provider_name: "incan_issue911_runtime".to_string(),
             dependency_key: "incan_issue911_runtime".to_string(),
             active_crate_root: active,
@@ -1685,6 +2046,47 @@ mod tests {
 
         assert!(error.to_string().contains("checked .incnlib descriptor freezes"));
         assert!(!cargo_source.exists());
+
+        fs::write(
+            artifact.join("Cargo.toml"),
+            format!(
+                "[package]\nname = \"issue911_source_mismatch\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies.incan_issue911_runtime]\npath = {:?}\n",
+                descriptor_source.to_string_lossy()
+            ),
+        )?;
+        generator.generate("fn main() {}")?;
+        let projected = generator.effective_dependencies()?;
+        let projected_root = match &projected[0].source {
+            DependencySource::Path { path } => path,
+            DependencySource::Registry | DependencySource::Git { .. } => {
+                return Err("projected dependency is not path-backed".into());
+            }
+        };
+        let cargo = fs::read_to_string(projected_root.join("Cargo.toml"))?.parse::<DocumentMut>()?;
+        assert_eq!(
+            cargo
+                .get("dependencies")
+                .and_then(Item::as_table_like)
+                .and_then(|dependencies| dependencies.get("incan_issue911_runtime"))
+                .and_then(Item::as_table_like)
+                .and_then(|dependency| dependency.get("default-features"))
+                .and_then(Item::as_bool),
+            Some(false),
+            "legacy private SDK edges must be normalized to their checked feature contract"
+        );
+
+        fs::write(
+            artifact.join("Cargo.toml"),
+            format!(
+                "[package]\nname = \"issue911_source_mismatch\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies.incan_issue911_runtime]\npath = {:?}\ndefault-features = \"false\"\n",
+                descriptor_source.to_string_lossy()
+            ),
+        )?;
+        let error = generator
+            .generate("fn main() {}")
+            .err()
+            .ok_or("expected malformed Cargo/default-feature descriptor mismatch")?;
+        assert!(error.to_string().contains("optional/default feature flags disagree"));
         Ok(())
     }
 

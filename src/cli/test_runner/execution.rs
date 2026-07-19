@@ -3517,6 +3517,7 @@ pub(super) fn run_file_tests_batch(
 
     let mut generator = ProjectGenerator::new(&temp_dir, &runner_crate_name, false);
     generator.set_provider_plan(&prepared.provider_plan);
+    generator.set_sdk_path_dependencies(prepared.project_requirements.sdk_path_dependencies.clone());
     generator.set_package_name(Some(prepared.cargo_package_name.clone()));
     generator.set_stdlib_features(test_runner_stdlib_features_for_batch(
         &prepared.project_requirements.stdlib_features,
@@ -4209,6 +4210,7 @@ mod tests {
             stdlib_features: vec!["json".to_string()],
             dependencies: vec![test_requirement_dependency("serde", &["derive"])],
             sdk_dependency_rebindings: Vec::new(),
+            sdk_path_dependencies: Vec::new(),
             sdk_artifact_projections: Vec::new(),
         };
         let lock_entry = ProjectRequirements {
@@ -4218,6 +4220,7 @@ mod tests {
                 test_requirement_dependency("tokio", &["macros"]),
             ],
             sdk_dependency_rebindings: Vec::new(),
+            sdk_path_dependencies: Vec::new(),
             sdk_artifact_projections: Vec::new(),
         };
 
@@ -4243,12 +4246,14 @@ mod tests {
             stdlib_features: Vec::new(),
             dependencies: vec![test_requirement_dependency("tokio", &["time"])],
             sdk_dependency_rebindings: Vec::new(),
+            sdk_path_dependencies: Vec::new(),
             sdk_artifact_projections: Vec::new(),
         };
         let lock_entry = ProjectRequirements {
             stdlib_features: Vec::new(),
             dependencies: vec![test_requirement_dependency("tokio", &["macros"])],
             sdk_dependency_rebindings: Vec::new(),
+            sdk_path_dependencies: Vec::new(),
             sdk_artifact_projections: Vec::new(),
         };
 

@@ -877,6 +877,7 @@ fn prepare_project_with_options(
         generator.set_package_metadata(project.version.clone(), project.license.clone());
     }
     generator.set_provider_plan(&provider_plan);
+    generator.set_sdk_path_dependencies(project_requirements.sdk_path_dependencies.clone());
     generator.set_cargo_target_dir_override(options.generated_cargo_target_dir.map(Path::to_path_buf));
     generator.set_stdlib_features(project_requirements.stdlib_features.clone());
     generator.set_include_dev_dependencies(false);
@@ -1595,6 +1596,7 @@ fn prepare_library_project(
     generator.set_package_name(Some(project_name.clone()));
     generator.set_package_metadata(Some(project_version.clone()), project_license);
     generator.set_provider_plan(&provider_plan);
+    generator.set_sdk_path_dependencies(project_requirements.sdk_path_dependencies.clone());
     generator.set_cargo_target_dir_override(generated_cargo_target_dir.map(Path::to_path_buf));
     generator.set_stdlib_features(project_requirements.stdlib_features.clone());
     generator.set_include_dev_dependencies(lock_payload_for_typecheck.is_some());

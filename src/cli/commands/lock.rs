@@ -889,6 +889,23 @@ fn merge_workspace_project_requirements(
             ))
     });
     sdk_dependency_rebindings.dedup();
+    let mut sdk_path_dependencies = current.sdk_path_dependencies.clone();
+    for candidate in &extra.sdk_path_dependencies {
+        if let Some(existing) = sdk_path_dependencies
+            .iter()
+            .find(|dependency| dependency.crate_name == candidate.crate_name)
+        {
+            if existing != candidate {
+                return Err(CliError::failure(format!(
+                    "SDK/toolchain path dependency `{}` conflicts between workspace requirement contexts",
+                    candidate.crate_name
+                )));
+            }
+        } else {
+            sdk_path_dependencies.push(candidate.clone());
+        }
+    }
+    sdk_path_dependencies.sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
     let mut sdk_artifact_projections = current.sdk_artifact_projections.clone();
     sdk_artifact_projections.extend(extra.sdk_artifact_projections.iter().cloned());
     sdk_artifact_projections.sort_by(|left, right| left.artifact.crate_root.cmp(&right.artifact.crate_root));
@@ -897,6 +914,7 @@ fn merge_workspace_project_requirements(
         stdlib_features,
         dependencies,
         sdk_dependency_rebindings,
+        sdk_path_dependencies,
         sdk_artifact_projections,
     })
 }
@@ -1534,6 +1552,7 @@ fn materialize_dependency_preheat_workspace(
     generator.set_rust_edition(rust_edition);
     generator.set_stdlib_features(project_requirements.stdlib_features.clone());
     generator.set_sdk_dependency_rebindings(project_requirements.sdk_dependency_rebindings.clone());
+    generator.set_sdk_path_dependencies(project_requirements.sdk_path_dependencies.clone());
     generator.set_sdk_artifact_projections(project_requirements.sdk_artifact_projections.clone());
     generator.set_cargo_lock_payload(Some(cargo_lock_payload.to_string()));
     generator
@@ -1602,6 +1621,7 @@ pub(crate) fn generate_lockfile(
     generator.set_rust_edition(rust_edition);
     generator.set_stdlib_features(project_requirements.stdlib_features.clone());
     generator.set_sdk_dependency_rebindings(project_requirements.sdk_dependency_rebindings.clone());
+    generator.set_sdk_path_dependencies(project_requirements.sdk_path_dependencies.clone());
     generator.set_sdk_artifact_projections(project_requirements.sdk_artifact_projections.clone());
 
     let rust_code = "fn main() {}";
@@ -1786,6 +1806,7 @@ mod tests {
             stdlib_features: Vec::new(),
             dependencies: Vec::new(),
             sdk_dependency_rebindings: Vec::new(),
+            sdk_path_dependencies: Vec::new(),
             sdk_artifact_projections: Vec::new(),
         }
     }

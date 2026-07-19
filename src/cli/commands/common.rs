@@ -179,6 +179,8 @@ pub(crate) struct ProjectRequirements {
     pub dependencies: Vec<DependencySpec>,
     /// Immutable compiled-library projections that replace obsolete physical SDK cache coordinates.
     pub sdk_dependency_rebindings: Vec<SdkDependencyRebinding>,
+    /// Path dependencies proven to be owned by the active SDK/toolchain rather than an ordinary project source.
+    pub sdk_path_dependencies: Vec<DependencySpec>,
     /// Complete compiled-artifact closure whose transitive coordinates must be projected together.
     pub sdk_artifact_projections: Vec<SdkArtifactProjection>,
 }
@@ -1157,6 +1159,30 @@ fn extend_requirements_with_selected_sdk_providers(
     provider_plan: &ProviderPlan,
     sdk_providers: &BTreeSet<String>,
 ) -> CliResult<()> {
+    // Projection helpers do not retain the ProviderPlan. Preserve the complete active SDK path catalog separately
+    // from the minimal set of providers linked directly into this generated crate: a copied compiled artifact can
+    // still carry a non-descriptor Cargo edge to an active provider supplied transitively or unused by this consumer.
+    for provider in provider_plan.active_sdk_records() {
+        if let Some(artifact) = provider.artifact.as_ref() {
+            merge_requirement_dependency(
+                &mut requirements.sdk_path_dependencies,
+                artifact.to_dependency_spec(),
+                format!("active SDK provider `{}`", provider.identity.name),
+            )?;
+        }
+        for requirement in provider_plan.selected_backend_requirements(provider) {
+            let BackendImplementationRequirement::CargoDependency { dependency } = requirement else {
+                continue;
+            };
+            if matches!(dependency.source, ProviderCargoDependencySource::Toolchain { .. }) {
+                merge_requirement_dependency(
+                    &mut requirements.sdk_path_dependencies,
+                    provider_cargo_dependency_spec(&dependency),
+                    format!("active SDK provider `{}` toolchain dependency", provider.identity.name),
+                )?;
+            }
+        }
+    }
     for provider in provider_plan.active_records() {
         if matches!(provider.authority, crate::provider::NamespaceAuthority::SdkReserved)
             && !sdk_providers.contains(&provider.identity.stable_key())
@@ -1166,16 +1192,30 @@ fn extend_requirements_with_selected_sdk_providers(
         let Some(artifact) = provider.artifact.as_ref() else {
             continue;
         };
+        let mut provider_dependency = artifact.to_dependency_spec();
+        if matches!(provider.authority, crate::provider::NamespaceAuthority::SdkReserved) {
+            // Checked private SDK edges freeze an exact feature projection and never inherit the provider crate's
+            // conventional Cargo defaults. Emit that contract explicitly so future artifacts need no legacy repair.
+            provider_dependency.default_features = false;
+        }
         merge_requirement_dependency(
             &mut requirements.dependencies,
-            artifact.to_dependency_spec(),
+            provider_dependency,
             format!("compiled provider `{}`", provider.identity.name),
         )?;
         for requirement in provider_plan.selected_backend_requirements(provider) {
             if let BackendImplementationRequirement::CargoDependency { dependency } = requirement {
+                let dependency_spec = provider_cargo_dependency_spec(&dependency);
+                if matches!(dependency.source, ProviderCargoDependencySource::Toolchain { .. }) {
+                    merge_requirement_dependency(
+                        &mut requirements.sdk_path_dependencies,
+                        dependency_spec.clone(),
+                        format!("compiled provider `{}` toolchain dependency", provider.identity.name),
+                    )?;
+                }
                 merge_requirement_dependency(
                     &mut requirements.dependencies,
-                    provider_cargo_dependency_spec(&dependency),
+                    dependency_spec,
                     format!("compiled provider `{}` implementation facet", provider.identity.name),
                 )?;
             }
@@ -2082,6 +2122,7 @@ pub(crate) fn collect_project_requirements(
         stdlib_features: stdlib_features.into_iter().collect(),
         dependencies: Vec::new(),
         sdk_dependency_rebindings: Vec::new(),
+        sdk_path_dependencies: Vec::new(),
         sdk_artifact_projections: Vec::new(),
     };
     let workspace_root = stdlib_extra_crate_workspace_root();
@@ -2091,6 +2132,13 @@ pub(crate) fn collect_project_requirements(
         };
         for dep in namespace.extra_crate_deps {
             let spec = dependency_spec_from_stdlib_dep(dep, &workspace_root);
+            if matches!(spec.source, DependencySource::Path { .. }) {
+                merge_requirement_dependency(
+                    &mut requirements.sdk_path_dependencies,
+                    spec.clone(),
+                    format!("stdlib namespace `std.{namespace_name}` toolchain path"),
+                )?;
+            }
             merge_requirement_dependency(
                 &mut requirements.dependencies,
                 spec,
@@ -2102,6 +2150,13 @@ pub(crate) fn collect_project_requirements(
     let needs_serde_runtime = needs_legacy_serde_runtime || stdlib_namespaces.contains("serde");
     if needs_serde_runtime {
         let serde = dependency_spec_from_stdlib_extra_crate("serde")?;
+        if matches!(serde.source, DependencySource::Path { .. }) {
+            merge_requirement_dependency(
+                &mut requirements.sdk_path_dependencies,
+                serde.clone(),
+                "std.serde toolchain path".to_string(),
+            )?;
+        }
         merge_requirement_dependency(
             &mut requirements.dependencies,
             serde,
@@ -2298,6 +2353,14 @@ pub(crate) fn merge_project_requirements(
     let mut sdk_dependency_rebindings = current.sdk_dependency_rebindings.clone();
     sdk_dependency_rebindings.extend(extra.sdk_dependency_rebindings.iter().cloned());
     normalize_sdk_dependency_rebindings(&mut sdk_dependency_rebindings);
+    let mut sdk_path_dependencies = current.sdk_path_dependencies.clone();
+    for candidate in &extra.sdk_path_dependencies {
+        merge_requirement_dependency(
+            &mut sdk_path_dependencies,
+            candidate.clone(),
+            "merged SDK/toolchain path context".to_string(),
+        )?;
+    }
     let mut sdk_artifact_projections = current.sdk_artifact_projections.clone();
     sdk_artifact_projections.extend(extra.sdk_artifact_projections.iter().cloned());
     normalize_sdk_artifact_projections(&mut sdk_artifact_projections);
@@ -2306,6 +2369,7 @@ pub(crate) fn merge_project_requirements(
         stdlib_features,
         dependencies,
         sdk_dependency_rebindings,
+        sdk_path_dependencies,
         sdk_artifact_projections,
     })
 }
@@ -2431,11 +2495,12 @@ fn rust_inspect_workspace_fingerprint(
     resolved: &ResolvedDependencies,
     stdlib_features: &[String],
     sdk_dependency_rebindings: &[SdkDependencyRebinding],
+    sdk_path_dependencies: &[DependencySpec],
     sdk_artifact_projections: &[SdkArtifactProjection],
     cargo_lock_payload: Option<&str>,
 ) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(b"incan_rust_inspect_workspace/1\0");
+    hasher.update(b"incan_rust_inspect_workspace/2\0");
     hasher.update(project_name.as_bytes());
     hasher.update(b"\0");
     hasher.update(cargo_package_name.as_bytes());
@@ -2491,6 +2556,23 @@ fn rust_inspect_workspace_fingerprint(
             Err(error) => hasher.update(error.to_string().as_bytes()),
         }
         hasher.update(b"\0");
+    }
+    hasher.update(b"|\0");
+
+    let mut sdk_paths = sdk_path_dependencies.to_vec();
+    sdk_paths.sort_by(|left, right| {
+        (&left.crate_name, left.package.as_deref()).cmp(&(&right.crate_name, right.package.as_deref()))
+    });
+    hasher.update(b"sdk_path_dependencies\0");
+    for dependency in &sdk_paths {
+        hash_dependency_spec_for_rust_inspect(&mut hasher, dependency);
+        if let DependencySource::Path { path } = &dependency.source {
+            match digest_provider_artifact(path) {
+                Ok(digest) => hasher.update(digest.as_bytes()),
+                Err(error) => hasher.update(error.to_string().as_bytes()),
+            }
+            hasher.update(b"\0");
+        }
     }
     hasher.update(b"|\0");
 
@@ -2786,6 +2868,7 @@ pub(crate) fn ensure_rust_inspect_workspace_with_cargo_package_name(
         resolved,
         &project_requirements.stdlib_features,
         &project_requirements.sdk_dependency_rebindings,
+        &project_requirements.sdk_path_dependencies,
         &project_requirements.sdk_artifact_projections,
         cargo_lock_payload.as_deref(),
     );
@@ -2814,6 +2897,7 @@ pub(crate) fn ensure_rust_inspect_workspace_with_cargo_package_name(
     generator.set_include_dev_dependencies(true);
     generator.set_stdlib_features(project_requirements.stdlib_features.clone());
     generator.set_sdk_dependency_rebindings(project_requirements.sdk_dependency_rebindings.clone());
+    generator.set_sdk_path_dependencies(project_requirements.sdk_path_dependencies.clone());
     generator.set_sdk_artifact_projections(project_requirements.sdk_artifact_projections.clone());
     generator.set_rust_edition(rust_edition);
     generator.set_cargo_lock_payload(cargo_lock_payload);
@@ -5478,6 +5562,7 @@ pub def main() -> int:
             &resolved,
             &requirements.stdlib_features,
             &requirements.sdk_dependency_rebindings,
+            &requirements.sdk_path_dependencies,
             &requirements.sdk_artifact_projections,
             Some("lock-bytes"),
         );
@@ -5488,6 +5573,7 @@ pub def main() -> int:
             &resolved,
             &requirements.stdlib_features,
             &requirements.sdk_dependency_rebindings,
+            &requirements.sdk_path_dependencies,
             &requirements.sdk_artifact_projections,
             Some("lock-bytes"),
         );
@@ -5498,6 +5584,7 @@ pub def main() -> int:
             &resolved,
             &requirements.stdlib_features,
             &requirements.sdk_dependency_rebindings,
+            &requirements.sdk_path_dependencies,
             &requirements.sdk_artifact_projections,
             Some("lock-bytes"),
         );
@@ -5521,6 +5608,7 @@ pub def main() -> int:
             &resolved,
             &requirements.stdlib_features,
             &requirements.sdk_dependency_rebindings,
+            &requirements.sdk_path_dependencies,
             &requirements.sdk_artifact_projections,
             Some("lock-a"),
         );
@@ -5531,6 +5619,7 @@ pub def main() -> int:
             &resolved,
             &requirements.stdlib_features,
             &requirements.sdk_dependency_rebindings,
+            &requirements.sdk_path_dependencies,
             &requirements.sdk_artifact_projections,
             Some("lock-b"),
         );
@@ -5566,6 +5655,7 @@ pub def main() -> int:
             &resolved,
             &requirements.stdlib_features,
             &requirements.sdk_dependency_rebindings,
+            &requirements.sdk_path_dependencies,
             &requirements.sdk_artifact_projections,
             None,
         );
@@ -5577,11 +5667,78 @@ pub def main() -> int:
             &resolved,
             &requirements.stdlib_features,
             &requirements.sdk_dependency_rebindings,
+            &requirements.sdk_path_dependencies,
             &requirements.sdk_artifact_projections,
             None,
         );
 
         assert_ne!(before, after);
+        Ok(())
+    }
+
+    #[test]
+    fn helper_requirements_keep_unused_active_sdk_path_targets_issue911() -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = tempfile::tempdir()?;
+        let artifact = workspace.path().join("unused-sdk-provider");
+        let record = crate::provider::ProviderRecord {
+            identity: crate::provider::ProviderIdentity {
+                name: "incan_issue911_unused_sdk".to_string(),
+                version: "0.5.0".to_string(),
+                digest: "sha256:issue911-unused".to_string(),
+                feature_projection: BTreeSet::new(),
+            },
+            provenance: crate::provider::ProviderProvenance::Sdk {
+                sdk_identity: "incan@0.5.0".to_string(),
+                component_id: "issue911-unused".to_string(),
+                inventory_path: None,
+            },
+            authority: crate::provider::NamespaceAuthority::SdkReserved,
+            namespace_claims: BTreeSet::from([vec!["std".to_string(), "issue911_unused".to_string()]]),
+            available: true,
+            enabled: true,
+            manifest: Some(Arc::new(LibraryManifest::new("incan_issue911_unused_sdk", "0.5.0"))),
+            artifact: Some(LibraryArtifactMetadata::from_crate_root(
+                "incan_issue911_unused_sdk",
+                "incan_issue911_unused_sdk",
+                &artifact,
+            )),
+            implementation_facets: Vec::new(),
+        };
+        let plan = ProviderPlan::new(
+            crate::frontend::library_manifest_index::LibraryManifestIndex::default(),
+            vec![record.clone()],
+            std::iter::empty(),
+        )?;
+        assert!(
+            plan.sdk_link_roots().is_empty(),
+            "unused SDK provider must not become a direct link root"
+        );
+
+        let mut requirements = ProjectRequirements::default();
+        extend_requirements_with_provider_plan(&mut requirements, &plan)?;
+
+        assert!(
+            requirements.dependencies.is_empty(),
+            "unused provider must not be linked directly"
+        );
+        assert_eq!(requirements.sdk_path_dependencies.len(), 1);
+        assert!(matches!(
+            &requirements.sdk_path_dependencies[0].source,
+            DependencySource::Path { path } if path == &artifact
+        ));
+
+        let used_plan = ProviderPlan::new(
+            crate::frontend::library_manifest_index::LibraryManifestIndex::default(),
+            vec![record],
+            [vec!["std".to_string(), "issue911_unused".to_string()]],
+        )?;
+        let mut used_requirements = ProjectRequirements::default();
+        extend_requirements_with_provider_plan(&mut used_requirements, &used_plan)?;
+        assert_eq!(used_requirements.dependencies.len(), 1);
+        assert!(
+            !used_requirements.dependencies[0].default_features,
+            "new direct SDK edges must render explicit default-features = false"
+        );
         Ok(())
     }
 
