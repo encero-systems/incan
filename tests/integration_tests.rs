@@ -597,6 +597,115 @@ def main() -> None:
 }
 
 #[test]
+fn validated_newtype_json_deserialization_runtime() -> Result<(), Box<dyn std::error::Error>> {
+    let output = incan_command()
+        .args([
+            "run",
+            "-c",
+            r#"
+from std.serde import json
+from std.serde.json import Deserialize
+
+@derive(Clone, json)
+type ShortId = newtype str:
+  def from_underlying(value: str) -> Result[Self, ValidationError]:
+    if len(value) > 8:
+      return Err(ValidationError("identifier too long"))
+    return Ok(ShortId(value))
+
+type PositiveInt = newtype int[gt=0]
+
+@derive(Clone, Deserialize)
+type CheckedBox[D] = newtype D:
+  def from_underlying(value: D) -> Result[Self, ValidationError]:
+    return Ok(CheckedBox[D](value))
+
+@derive(json)
+model Envelope:
+  id: ShortId
+
+@derive(Deserialize)
+model IdList:
+  ids: list[ShortId]
+
+@derive(Deserialize)
+model OptionalId:
+  id: Option[ShortId]
+
+@derive(Deserialize)
+model PositiveEnvelope:
+  value: PositiveInt
+
+@derive(Deserialize)
+model GenericEnvelope:
+  value: CheckedBox[str]
+
+def main() -> None:
+  match Envelope.from_json('{"id":"short"}'):
+    case Ok(value):
+      println(f"model_roundtrip:{value.to_json()}")
+    case Err(_):
+      println("model_valid_rejected")
+  match Envelope.from_json('{"id":"identifier_too_long"}'):
+    case Ok(_):
+      println("model_invalid_accepted")
+    case Err(_):
+      println("model_invalid_rejected")
+  match IdList.from_json('{"ids":["short","identifier_too_long"]}'):
+    case Ok(_):
+      println("list_invalid_accepted")
+    case Err(_):
+      println("list_invalid_rejected")
+  match OptionalId.from_json('{"id":"identifier_too_long"}'):
+    case Ok(_):
+      println("optional_invalid_accepted")
+    case Err(_):
+      println("optional_invalid_rejected")
+  match PositiveEnvelope.from_json('{"value":1}'):
+    case Ok(value):
+      println(f"constraint_valid:{value.value.0}")
+    case Err(_):
+      println("constraint_valid_rejected")
+  match PositiveEnvelope.from_json('{"value":0}'):
+    case Ok(_):
+      println("constraint_invalid_accepted")
+    case Err(_):
+      println("constraint_invalid_rejected")
+  match GenericEnvelope.from_json('{"value":"generic"}'):
+    case Ok(value):
+      println(f"generic_valid:{value.value.0}")
+    case Err(_):
+      println("generic_valid_rejected")
+"#,
+        ])
+        .env("CARGO_NET_OFFLINE", "true")
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "validated-newtype JSON program failed.\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        stdout.lines().collect::<Vec<_>>(),
+        vec![
+            "model_roundtrip:{\"id\":\"short\"}",
+            "model_invalid_rejected",
+            "list_invalid_rejected",
+            "optional_invalid_rejected",
+            "constraint_valid:1",
+            "constraint_invalid_rejected",
+            "generic_valid:generic",
+        ],
+        "expected every JSON ingress to preserve newtype validation, got:\n{stdout}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn rfc028_user_defined_operators_run_end_to_end() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let src_dir = tmp.path().join("src");
