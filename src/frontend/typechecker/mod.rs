@@ -582,16 +582,16 @@ impl TypeChecker {
     }
 
     #[cfg(feature = "rust_inspect")]
-    /// Return complete Rust type metadata for a compiler path that needs methods or proven trait implementations.
+    /// Return complete Rust type metadata for a compiler path that needs proven trait implementations.
     ///
-    /// Fast source metadata does not guarantee either surface. Escalate only when a consumer explicitly needs a full
-    /// type record so field and variant compatibility checks retain their cache-only behavior.
+    /// Fast source metadata can prove public inherent methods but not trait implementations. Escalate only when a
+    /// consumer explicitly needs a full type record so ordinary method calls retain their source-only fast path.
     pub(crate) fn rust_item_metadata_for_complete_type(&self, canonical_path: &str) -> Option<RustItemMetadata> {
         let metadata = self.rust_item_metadata_for_path(canonical_path)?;
         let RustItemKind::Type(type_info) = &metadata.kind else {
             return Some(metadata);
         };
-        if type_info.metadata_completeness.has_methods() {
+        if type_info.metadata_completeness.has_trait_impls() {
             return Some(metadata);
         }
 
@@ -618,9 +618,42 @@ impl TypeChecker {
     }
 
     #[cfg(feature = "rust_inspect")]
-    /// Return Rust type metadata suitable for resolving an inherent method call.
-    pub(crate) fn rust_item_metadata_for_method_call(&self, canonical_path: &str) -> Option<RustItemMetadata> {
-        self.rust_item_metadata_for_complete_type(canonical_path)
+    /// Return Rust type metadata suitable for resolving one inherent method call.
+    pub(crate) fn rust_item_metadata_for_method_call(
+        &self,
+        canonical_path: &str,
+        method: &str,
+    ) -> Option<RustItemMetadata> {
+        let metadata = self.rust_item_metadata_for_path(canonical_path)?;
+        let RustItemKind::Type(type_info) = &metadata.kind else {
+            return Some(metadata);
+        };
+        if type_info.methods.iter().any(|candidate| candidate.name == method)
+            || type_info.metadata_completeness.has_methods()
+        {
+            return Some(metadata);
+        }
+
+        let canonical_path = Self::normalize_rust_namespace_path(canonical_path);
+        let lookup_path = Self::rust_metadata_lookup_path(canonical_path)?;
+        if lookup_path.starts_with("incan_stdlib::") {
+            return Some(metadata);
+        }
+        let dir = self.rust_inspect_manifest_dir.as_ref()?;
+        match self
+            .rust_inspect_cache
+            .get_or_extract_complete(dir, lookup_path, &|_| ())
+        {
+            Ok(metadata) => Some((*metadata).clone()),
+            Err(err) => {
+                tracing::debug!(
+                    "rust-inspect complete method metadata lookup failed for `{}` (query `{}`): {err}",
+                    canonical_path,
+                    lookup_path
+                );
+                Some(metadata)
+            }
+        }
     }
 
     #[cfg(not(feature = "rust_inspect"))]
@@ -633,7 +666,11 @@ impl TypeChecker {
 
     #[cfg(not(feature = "rust_inspect"))]
     /// Return Rust item metadata from shipped dependency ABI when rust-inspect support is not compiled in.
-    pub(crate) fn rust_item_metadata_for_method_call(&self, canonical_path: &str) -> Option<RustItemMetadata> {
+    pub(crate) fn rust_item_metadata_for_method_call(
+        &self,
+        canonical_path: &str,
+        _method: &str,
+    ) -> Option<RustItemMetadata> {
         self.rust_item_metadata_for_path(canonical_path)
     }
 

@@ -2177,6 +2177,95 @@ fn collect_source_public_reexport_paths(
     public_reexports
 }
 
+/// Collect public inherent methods recursively from one source item list without loading rust-analyzer.
+#[allow(clippy::too_many_arguments)]
+fn collect_source_inherent_methods_in_items<'a>(
+    items: impl Iterator<Item = ast::Item> + Clone + 'a,
+    module_path: &[String],
+    parent_aliases: &HashMap<String, String>,
+    crate_name: &str,
+    external_crates: &HashSet<String>,
+    preferred_external_paths: &HashMap<String, String>,
+    public_reexports: &HashMap<String, String>,
+    methods_by_type: &mut HashMap<String, Vec<RustMethodSig>>,
+    seen: &mut HashSet<(String, String)>,
+) {
+    let items = items.collect::<Vec<_>>();
+    let aliases = source_items_import_aliases(
+        items.iter().cloned(),
+        crate_name,
+        module_path,
+        external_crates,
+        preferred_external_paths,
+        parent_aliases,
+    );
+    let ctx = SourceMetadataContext {
+        crate_name,
+        module_path,
+        external_crates,
+        aliases: &aliases,
+        preferred_external_paths,
+        source_public_reexports: public_reexports,
+    };
+    for item in items {
+        match item {
+            ast::Item::Impl(impl_item) if impl_item.trait_().is_none() => {
+                let Some(self_ty) = impl_item.self_ty() else {
+                    continue;
+                };
+                let receiver_type = ctx.type_display(self_ty.syntax().text().to_string().as_str());
+                let Some(assoc_items) = impl_item.assoc_item_list() else {
+                    continue;
+                };
+                for assoc in assoc_items.assoc_items() {
+                    let ast::AssocItem::Fn(function) = assoc else {
+                        continue;
+                    };
+                    if !ast_visibility_is_public(function.visibility()) {
+                        continue;
+                    }
+                    let Some(name) = function.name() else {
+                        continue;
+                    };
+                    let name = generated_source_name(name.to_string().as_str());
+                    if !seen.insert((receiver_type.clone(), name.clone())) {
+                        continue;
+                    }
+                    methods_by_type
+                        .entry(receiver_type.clone())
+                        .or_default()
+                        .push(RustMethodSig {
+                            name,
+                            signature: source_function_signature(&function, &ctx, Some(receiver_type.as_str())),
+                        });
+                }
+            }
+            ast::Item::Module(module) => {
+                let Some(item_list) = module.item_list() else {
+                    continue;
+                };
+                let Some(name) = module.name() else {
+                    continue;
+                };
+                let mut nested_module_path = module_path.to_vec();
+                nested_module_path.push(generated_source_name(name.to_string().as_str()));
+                collect_source_inherent_methods_in_items(
+                    item_list.items(),
+                    &nested_module_path,
+                    &aliases,
+                    crate_name,
+                    external_crates,
+                    preferred_external_paths,
+                    public_reexports,
+                    methods_by_type,
+                    seen,
+                );
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Build dependency-source metadata indexes without loading rust-analyzer.
 fn build_source_metadata_indexes(
     source_root: &Path,
@@ -2209,48 +2298,17 @@ fn build_source_metadata_indexes(
     let mut methods_by_type: HashMap<String, Vec<RustMethodSig>> = HashMap::new();
     let mut seen = HashSet::new();
     for file in &files {
-        let ctx = SourceMetadataContext {
+        collect_source_inherent_methods_in_items(
+            file.parsed.items(),
+            &file.module_path,
+            &file.aliases,
             crate_name,
-            module_path: &file.module_path,
             external_crates,
-            aliases: &file.aliases,
             preferred_external_paths,
-            source_public_reexports: &public_reexports,
-        };
-        for item in file.parsed.items() {
-            let ast::Item::Impl(impl_item) = item else {
-                continue;
-            };
-            let Some(self_ty) = impl_item.self_ty() else {
-                continue;
-            };
-            let receiver_type = ctx.type_display(self_ty.syntax().text().to_string().as_str());
-            let Some(assoc_items) = impl_item.assoc_item_list() else {
-                continue;
-            };
-            for assoc in assoc_items.assoc_items() {
-                let ast::AssocItem::Fn(function) = assoc else {
-                    continue;
-                };
-                if !ast_visibility_is_public(function.visibility()) {
-                    continue;
-                }
-                let Some(name) = function.name() else {
-                    continue;
-                };
-                let name = generated_source_name(name.to_string().as_str());
-                if !seen.insert((receiver_type.clone(), name.clone())) {
-                    continue;
-                }
-                methods_by_type
-                    .entry(receiver_type.clone())
-                    .or_default()
-                    .push(RustMethodSig {
-                        name,
-                        signature: source_function_signature(&function, &ctx, Some(receiver_type.as_str())),
-                    });
-            }
-        }
+            &public_reexports,
+            &mut methods_by_type,
+            &mut seen,
+        );
     }
     for methods in methods_by_type.values_mut() {
         methods.sort_by(|left, right| left.name.cmp(&right.name));
