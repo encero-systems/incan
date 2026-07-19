@@ -6424,6 +6424,7 @@
 </ul>
 <h2 id="bugfixes">Bugfixes<a class="headerlink" href="#bugfixes" title="Permanent link">&para;</a></h2>
 <ul>
+<li><strong>Compiler</strong>: <code>std::io::stdout()</code> now retains its stable <code>Stdout</code> receiver type when sysroot metadata is unavailable, so fallible extension-trait calls such as crossterm's <code>ExecutableCommand.execute(...)</code> expose their native <code>Result</code> and support postfix <code>?</code> (#888).</li>
 <li><strong>Compiler</strong>: Class-field privacy now survives checked metadata and compiled package boundaries. Named construction through a compiled package uses an exact package-owned constructor bridge—including aliases, inherited fields, and provider-owned defaults—while later private member access receives an Incan diagnostic instead of a Rust privacy failure; older manifests without field visibility retain their compatible public behavior (#883).</li>
 <li><strong>Stdlib</strong>: <code>std.regex</code> replacement and split operations now reconstruct strings with the regex engine's UTF-8 byte spans, preserving characters adjacent to non-ASCII matches while keeping public match offsets byte-based (#893).</li>
 <li><strong>Compiler</strong>: String literals returned from closures now materialize owned Incan <code>str</code> values, so <code>Result.map_err</code> and other closure consumers generate Rust <code>String</code> values instead of borrowed <code>&amp;str</code> values (#880).</li>
