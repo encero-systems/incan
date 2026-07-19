@@ -6425,6 +6425,9 @@
 </ul>
 <h2 id="bugfixes">Bugfixes<a class="headerlink" href="#bugfixes" title="Permanent link">&para;</a></h2>
 <ul>
+<li><strong>Workspaces</strong>: Root library dependency preparation now targets exactly that project and leaves canonical lock publication to its parent command, preventing fresh rooted workspaces from recursively spawning <code>incan build --lib</code> until the machine is exhausted (#908).</li>
+<li><strong>Workspaces</strong>: Rooted-workspace entrypoints and tests now resolve through their deepest owning member, so selected member builds retain both direct and inherited Rust dependency versions (#907).</li>
+<li><strong>Workspaces</strong>: Canonical workspace locks now rebase nested package roots and feature edges into workspace-relative coordinates, keeping cross-member semantic state and fingerprints portable across checkout locations (#906).</li>
 <li><strong>Compiler</strong>: Batched test modules now keep transitive dependency imports out of each other's local scopes, so separate test files can legitimately import the same public package symbols while true duplicate bindings inside one module remain rejected (#898).</li>
 <li><strong>Compiler</strong>: Public types imported from compiled libraries now retain provider-qualified nominal identity across split imports, multiple local aliases, qualified module calls, nested generics, and generated test batches, without unifying same-named types from separate dependencies (#892).</li>
 <li><strong>Compiler</strong>: Generated Cargo packages now preserve the authored Incan project version and SPDX license for application and library builds, keeping library <code>Cargo.toml</code> versions aligned with their <code>.incnlib</code> manifests (#889).</li>
