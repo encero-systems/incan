@@ -729,9 +729,9 @@ Canonical forms:
 - **Stability:** `Stable`
 - **Activation:** Import from `std.fs` or submodules such as `std.fs.path`.
 - **Use instead of:** One-off Rust filesystem wrappers for ordinary path and file work.
-- **References:** [std.fs](stdlib/fs.md), [File IO](../how-to/file_io.md), [Release 0.3](../../release_notes/0_3.md)
+- **References:** [std.fs](stdlib/fs.md), [File IO](../how-to/file_io.md), [RFC 055](../../RFCs/closed/implemented/055_std_fs.md), [RFC 112](../../RFCs/closed/implemented/112_crash_safe_publication_and_file_coordination.md), [Release 0.5](../../release_notes/0_5.md)
 
-Path-centric filesystem APIs cover paths, files, metadata, traversal, globbing, copy/move/delete, and durability syncs.
+Path-centric filesystem APIs cover paths, files, metadata, traversal, globbing, copy/move/delete, durability syncs, and crash-safe publication through same-filesystem replacement, directory synchronization, and advisory locks.
 
 Canonical forms:
 
@@ -1080,6 +1080,25 @@ Canonical forms:
 - `incan version patch`
 - `incan env run dev test`
 
+### Workspace and multi-package projects
+
+- **Id:** `WorkspaceMultiPackageProjects`
+- **Category:** `Tooling`
+- **Since:** `0.5`
+- **RFC:** `RFC 077`
+- **Stability:** `Stable`
+- **Activation:** Declare `[workspace]` in the repository root and inspect or select members through the CLI.
+- **Use instead of:** Ad hoc directory conventions, member-local locks, or implicit cross-project dependency activation.
+- **References:** [Project lifecycle](project_lifecycle.md), [CLI reference](../../tooling/reference/cli_reference.md), [Release 0.5](../../release_notes/0_5.md)
+
+Workspaces supply explicit rooted/virtual member topology, deterministic scope selection, explicit shared dependency and environment inheritance, one durable root lock, and member-scoped command reports.
+
+Canonical forms:
+
+- `incan workspace inspect --format json`
+- `incan test --workspace`
+- `incan build --member packages/api --report json`
+
 ### Toolchain installer and release manifest
 
 - **Id:** `ToolchainInstallerManifest`
@@ -1228,20 +1247,12 @@ Checked libraries and official SDK components resolve through one provider plan,
 
 Canonical forms:
 
-
-```text
-[sdk]
+- `[sdk]
 profile = "minimal"
-components = ["stdlib-data"]
-```
-
+components = ["stdlib-data"]`
 - `incan build --features json --sdk-profile minimal`
-
-```text
-when feature("json"):
-    pub from json_support import JsonReport
-```
-
+- `when feature("json"):
+    pub from json_support import JsonReport`
 - `incan inspect providers --format json`
 
 ### Formatter spacing and wrapping contract

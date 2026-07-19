@@ -22,6 +22,7 @@ pub enum GraphRecordKind(str):
     Call = "call"
     Containment = "containment"
     Diagnostic = "diagnostic"
+    Registry = "registry"
 
 
 @derive(Serialize)
@@ -42,6 +43,7 @@ pub model GraphSummary:
     pub call_count: int
     pub containment_count: int
     pub diagnostic_count: int
+    pub registry_count: int
     pub degraded_fact_count: int
     pub unknown_record_count: int
 
@@ -63,6 +65,7 @@ pub model GraphSummary:
             call_count=0,
             containment_count=0,
             diagnostic_count=0,
+            registry_count=0,
             degraded_fact_count=0,
             unknown_record_count=0,
         )
@@ -92,6 +95,8 @@ pub model GraphSummary:
                 self.containment_count += 1
             Some(GraphRecordKind.Diagnostic) =>
                 self.diagnostic_count += 1
+            Some(GraphRecordKind.Registry) =>
+                self.registry_count += 1
             None =>
                 self.unknown_record_count += 1
 
@@ -109,7 +114,7 @@ pub def import_jsonl(source: str) -> Result[GraphSummary, JsonError]:
     if record_kind != "header":
         return Err(_invalid_snapshot("first codegraph record must be snapshot metadata (`record` = `header`)"))
     summary.schema_version = metadata.require("schema_version")?.expect_int()?
-    if summary.schema_version != 1:
+    if summary.schema_version != 1 and summary.schema_version != 2:
         return Err(_invalid_snapshot("unsupported codegraph schema version"))
     summary.mode = metadata.require("mode")?.expect_str()?
     summary.degraded = metadata.require("degraded")?.expect_bool()?

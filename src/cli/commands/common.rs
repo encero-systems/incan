@@ -187,22 +187,35 @@ pub(crate) struct ProjectRequirements {
 
 /// Select the Incan CLI executable that prepares SDK provider artifacts.
 ///
-/// Cargo integration tests run inside a test executable, so `current_exe()` is not the `incan` CLI there. Cargo exposes
-/// the actual binary through `CARGO_BIN_EXE_incan`; installed SDKs do not set that variable and correctly fall back to
-/// their current CLI executable.
-fn sdk_provider_builder_executable(cargo_test_binary: Option<PathBuf>, current_executable: PathBuf) -> PathBuf {
-    cargo_test_binary.filter(|path| path.is_file()).unwrap_or_else(|| {
-        let cargo_test_binary = current_executable
-            .parent()
-            .filter(|parent| parent.file_name().is_some_and(|name| name == "deps"))
-            .and_then(|deps| deps.parent())
-            .map(|target_dir| {
-                let mut cli = target_dir.join("incan");
-                cli.set_extension(std::env::consts::EXE_EXTENSION);
-                cli
-            });
-        cargo_test_binary.unwrap_or(current_executable)
-    })
+/// Cargo integration tests and development utilities do not run inside the `incan` CLI. Tests receive the real binary
+/// through `CARGO_BIN_EXE_incan`; utility binaries use the sibling CLI built in the same target directory. Returning an
+/// error is important: executing a generator with CLI arguments can exit successfully without publishing an artifact.
+fn sdk_provider_builder_executable(
+    cargo_test_binary: Option<PathBuf>,
+    current_executable: PathBuf,
+) -> CliResult<PathBuf> {
+    if let Some(executable) = cargo_test_binary.filter(|path| path.is_file()) {
+        return Ok(executable);
+    }
+
+    let binary_dir = current_executable.parent().unwrap_or_else(|| Path::new("."));
+    let mut sibling = binary_dir.join("incan");
+    sibling.set_extension(std::env::consts::EXE_EXTENSION);
+    if sibling.is_file() {
+        return Ok(sibling);
+    }
+
+    let mut parent_sibling = binary_dir.parent().unwrap_or_else(|| Path::new(".")).join("incan");
+    parent_sibling.set_extension(std::env::consts::EXE_EXTENSION);
+    if parent_sibling.is_file() {
+        return Ok(parent_sibling);
+    }
+
+    Err(CliError::failure(format!(
+        "SDK provider publication requires the incan CLI executable at {} or {}; build that binary before running compiler-backed utilities",
+        sibling.display(),
+        parent_sibling.display()
+    )))
 }
 
 /// Find the verified workspace Cargo.lock available to a development SDK provider build.
@@ -513,7 +526,7 @@ fn prepare_sdk_provider_inventory() -> CliResult<Arc<SdkInventory>> {
     let cargo_test_binary = env::var_os("CARGO_BIN_EXE_incan")
         .filter(|path| !path.is_empty())
         .map(PathBuf::from);
-    let executable = sdk_provider_builder_executable(cargo_test_binary, current_exe);
+    let executable = sdk_provider_builder_executable(cargo_test_binary, current_exe)?;
     let workspace_lock = sdk_provider_workspace_lock(&stdlib_root);
     let distribution_profile = env::var(INTERNAL_SDK_DISTRIBUTION_PROFILE_ENV)
         .ok()
@@ -4073,30 +4086,52 @@ mod tests {
     }
 
     #[test]
-    fn sdk_provider_builder_uses_current_cargo_cli_binary_in_integration_tests()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn sdk_provider_builder_selects_the_real_cli_for_tests_and_utilities() -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = tempfile::tempdir()?;
         let cargo_cli = temp_dir.path().join("incan-cli");
         fs::write(&cargo_cli, "test binary")?;
         assert_eq!(
-            sdk_provider_builder_executable(Some(cargo_cli.clone()), PathBuf::from("/tmp/integration-test"),),
+            sdk_provider_builder_executable(Some(cargo_cli.clone()), PathBuf::from("/tmp/integration-test"),)?,
             cargo_cli
         );
+
+        let target_dir = temp_dir.path().join("target/debug");
+        fs::create_dir_all(&target_dir)?;
+        let mut sibling_cli = target_dir.join("incan");
+        sibling_cli.set_extension(std::env::consts::EXE_EXTENSION);
+        fs::write(&sibling_cli, "cli binary")?;
         assert_eq!(
-            sdk_provider_builder_executable(
-                Some(PathBuf::from("/tmp/stale-incan-cli")),
-                PathBuf::from("/tmp/integration-test"),
-            ),
-            PathBuf::from("/tmp/integration-test")
+            sdk_provider_builder_executable(None, target_dir.join("generate_feature_inventory"))?,
+            sibling_cli
         );
+
+        let direct_cli = temp_dir.path().join("incan");
+        fs::write(&direct_cli, "installed cli")?;
         assert_eq!(
-            sdk_provider_builder_executable(None, PathBuf::from("/usr/local/bin/incan")),
-            PathBuf::from("/usr/local/bin/incan")
+            sdk_provider_builder_executable(Some(PathBuf::from("/tmp/stale-incan-cli")), direct_cli.clone(),)?,
+            direct_cli
         );
+
+        let deps_dir = target_dir.join("deps");
+        fs::create_dir_all(&deps_dir)?;
         assert_eq!(
-            sdk_provider_builder_executable(None, PathBuf::from("/tmp/target/debug/deps/incan-abc123"),),
-            PathBuf::from("/tmp/target/debug/incan")
+            sdk_provider_builder_executable(None, deps_dir.join("incan-abc123"))?,
+            sibling_cli
         );
+        Ok(())
+    }
+
+    #[test]
+    fn sdk_provider_builder_rejects_a_utility_without_a_sibling_cli() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = tempfile::tempdir()?;
+        let utility = temp_dir.path().join("generate_feature_inventory");
+        fs::write(&utility, "utility binary")?;
+
+        let error = match sdk_provider_builder_executable(None, utility) {
+            Err(error) => error,
+            Ok(path) => return Err(format!("missing sibling CLI unexpectedly resolved to {}", path.display()).into()),
+        };
+        assert!(error.message.contains("requires the incan CLI executable"));
         Ok(())
     }
 

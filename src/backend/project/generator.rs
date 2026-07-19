@@ -1061,6 +1061,24 @@ impl ProjectGenerator {
         facade
     }
 
+    /// Keep Rust implementation lints from leaking through compiled Incan provider crates.
+    ///
+    /// Incan owns declaration reachability and identifier style for provider source. Private metadata declarations and
+    /// snake-case constants are valid Incan even though the corresponding generated Rust triggers `dead_code` and
+    /// `non_upper_case_globals`. Suppress only those representation-level lints, and only at the provider crate root.
+    fn add_sdk_provider_crate_lints(&self, crate_root: &mut String, sdk_provider_build: bool) {
+        if self.is_binary || !sdk_provider_build {
+            return;
+        }
+
+        const PROVIDER_LINTS: &str = "#![allow(dead_code, non_upper_case_globals)]\n";
+        if crate_root.contains(PROVIDER_LINTS) {
+            return;
+        }
+        let insertion = crate_root.find(MOD_INSERT_MARKER).unwrap_or(0);
+        crate_root.insert_str(insertion, PROVIDER_LINTS);
+    }
+
     /// Return whether this generated project links at least one compiled SDK provider.
     ///
     /// The artifact preserves a narrow `__incan_std` facade for compiler-generated compatibility paths. Consumers
@@ -1084,6 +1102,7 @@ impl ProjectGenerator {
         // bridges still use `crate::__incan_std` while they are migrated to canonical artifact paths; re-exporting
         // the artifact's facade keeps those bridges out of a regenerated source stdlib tree.
         let mut full_main = rust_code.to_string();
+        self.add_sdk_provider_crate_lints(&mut full_main, is_sdk_provider_build());
         if self.links_compiled_sdk_provider() && !is_sdk_provider_build() && !full_main.contains("mod __incan_std") {
             let facade = self.compiled_provider_facade(&[]);
             if let Some(marker_pos) = full_main.find(MOD_INSERT_MARKER) {
@@ -1146,6 +1165,7 @@ impl ProjectGenerator {
         // so we insert module declarations at the backend marker after any crate attributes.
         let mut full_main = String::new();
         full_main.push_str(main_code);
+        self.add_sdk_provider_crate_lints(&mut full_main, is_sdk_provider_build());
 
         if !modules.is_empty() {
             // Add mod declarations for each module (sorted for deterministic output)
@@ -1376,6 +1396,7 @@ impl ProjectGenerator {
         // declarations at the backend marker after any crate attributes.
         let mut full_main = String::new();
         full_main.push_str(main_code);
+        self.add_sdk_provider_crate_lints(&mut full_main, is_sdk_provider_build());
 
         let mut sorted_top: Vec<_> = top_level_modules.into_iter().collect();
         sorted_top.sort();
@@ -2146,6 +2167,26 @@ mod tests {
             facade,
             "pub mod __incan_std {\n    pub use crate::r#async;\n    pub use crate::fs;\n    pub use crate::traits;\n}\n"
         );
+    }
+
+    #[test]
+    fn sdk_provider_crate_lints_suppress_only_generated_representation_warnings() {
+        let library = ProjectGenerator::new("target/test-provider-lints", "provider", false);
+        let mut provider_root = format!("// Generated\n\n{MOD_INSERT_MARKER}\n");
+        library.add_sdk_provider_crate_lints(&mut provider_root, true);
+        assert_eq!(
+            provider_root,
+            format!("// Generated\n\n#![allow(dead_code, non_upper_case_globals)]\n{MOD_INSERT_MARKER}\n")
+        );
+
+        let mut ordinary_library_root = MOD_INSERT_MARKER.to_string();
+        library.add_sdk_provider_crate_lints(&mut ordinary_library_root, false);
+        assert_eq!(ordinary_library_root, MOD_INSERT_MARKER);
+
+        let binary = ProjectGenerator::new("target/test-provider-lints", "provider", true);
+        let mut binary_root = MOD_INSERT_MARKER.to_string();
+        binary.add_sdk_provider_crate_lints(&mut binary_root, true);
+        assert_eq!(binary_root, MOD_INSERT_MARKER);
     }
 
     #[test]

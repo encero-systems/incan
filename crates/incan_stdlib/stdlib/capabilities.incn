@@ -1345,6 +1345,31 @@ static project_lifecycle: RegistryEntry[CapabilityId, CapabilityDescriptor] = ca
         references=project_lifecycle_references,
     ),
 )
+const workspace_multi_package_projects_forms: FrozenList[str] = ["incan workspace inspect --format json", "incan test --workspace", "incan build --member packages/api --report json"]
+const workspace_multi_package_projects_references: FrozenList[CapabilityReference] = [CapabilityReference(
+    label="Project lifecycle",
+    path="project_lifecycle.md",
+), CapabilityReference(label="CLI reference", path="../../tooling/reference/cli_reference.md"), CapabilityReference(
+    label="Release 0.5",
+    path="../../release_notes/0_5.md",
+)]
+static workspace_multi_package_projects: RegistryEntry[CapabilityId, CapabilityDescriptor] = capabilities.entry(
+    key=CapabilityId("WorkspaceMultiPackageProjects"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=CapabilityDescriptor(
+        id=CapabilityId("WorkspaceMultiPackageProjects"),
+        name="Workspace and multi-package projects",
+        category=CapabilityCategory.Tooling,
+        since="0.5",
+        rfc="RFC 077",
+        stability=CapabilityStability.Stable,
+        activation="Declare `[workspace]` in the repository root and inspect or select members through the CLI.",
+        summary="Workspaces supply explicit rooted/virtual member topology, deterministic scope selection, explicit shared dependency and environment inheritance, one durable root lock, and member-scoped command reports.",
+        canonical_forms=workspace_multi_package_projects_forms,
+        prefer_over="Ad hoc directory conventions, member-local locks, or implicit cross-project dependency activation.",
+        references=workspace_multi_package_projects_references,
+    ),
+)
 const toolchain_installer_manifest_forms: FrozenList[str] = ["curl -fsSL https://github.com/encero-systems/incan/releases/latest/download/install.sh | bash", "brew tap encero-systems/tap && brew install incan", "npm install -g @incan/toolchain", "pipx install incan"]
 const toolchain_installer_manifest_references: FrozenList[CapabilityReference] = [CapabilityReference(
     label="Install and run",
@@ -1503,6 +1528,31 @@ static checked_api_metadata: RegistryEntry[CapabilityId, CapabilityDescriptor] =
         canonical_forms=checked_api_metadata_forms,
         prefer_over="Scraping source text or generated Rust when tooling needs API contracts.",
         references=checked_api_metadata_references,
+    ),
+)
+const compiled_providers_sdk_components_package_features_forms: FrozenList[str] = ["[sdk]\nprofile = \"minimal\"\ncomponents = [\"stdlib-data\"]", "incan build --features json --sdk-profile minimal", "when feature(\"json\"):\n    pub from json_support import JsonReport", "incan inspect providers --format json"]
+const compiled_providers_sdk_components_package_features_references: FrozenList[CapabilityReference] = [CapabilityReference(
+    label="SDK components and package features",
+    path="../../tooling/reference/sdk_components_and_package_features.md",
+), CapabilityReference(label="Conditional compilation", path="conditional_compilation.md"), CapabilityReference(
+    label="Project configuration",
+    path="../../tooling/reference/project_configuration.md",
+), CapabilityReference(label="Release 0.5", path="../../release_notes/0_5.md")]
+static compiled_providers_sdk_components_package_features: RegistryEntry[CapabilityId, CapabilityDescriptor] = capabilities.entry(
+    key=CapabilityId("CompiledProvidersSdkComponentsPackageFeatures"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=CapabilityDescriptor(
+        id=CapabilityId("CompiledProvidersSdkComponentsPackageFeatures"),
+        name="Compiled providers, SDK components, and package features",
+        category=CapabilityCategory.Libraries,
+        since="0.5",
+        rfc="RFC 114",
+        stability=CapabilityStability.Stable,
+        activation="Select SDK components in `[sdk]`; select additive package features in manifests or with Incan feature flags.",
+        summary="Checked libraries and official SDK components resolve through one provider plan, while package-owned features project additive source and dependency facts without exposing Cargo features as Incan API.",
+        canonical_forms=compiled_providers_sdk_components_package_features_forms,
+        prefer_over="Hardcoded stdlib inventories, copied provider source, or Cargo feature names used as public package semantics.",
+        references=compiled_providers_sdk_components_package_features_references,
     ),
 )
 const formatter_contract_forms: FrozenList[str] = ["incan fmt src/main.incn", "incan fmt --check"]

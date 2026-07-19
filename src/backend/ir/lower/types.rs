@@ -1131,7 +1131,7 @@ impl AstLowering {
 
 #[cfg(test)]
 mod tests {
-    use super::AstLowering;
+    use super::{AstLowering, CollectionTypeId, collections};
     use crate::backend::ir::types::IrType;
     use crate::frontend::symbols::ResolvedType;
     use crate::frontend::typechecker::canonical_public_library_type_name;
@@ -1224,10 +1224,13 @@ mod tests {
         assert_eq!(
             lowered,
             IrType::NamedGeneric(
-                "FrozenDict".to_string(),
+                collections::as_str(CollectionTypeId::FrozenDict).to_string(),
                 vec![
                     IrType::StaticStr,
-                    IrType::NamedGeneric("FrozenList".to_string(), vec![IrType::StaticBytes])
+                    IrType::NamedGeneric(
+                        collections::as_str(CollectionTypeId::FrozenList).to_string(),
+                        vec![IrType::StaticBytes]
+                    )
                 ]
             )
         );

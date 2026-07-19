@@ -4209,7 +4209,21 @@ version = "0.1.0"
     let source_main = source_dir.join("main.incn");
     fs::write(
         &source_main,
-        r#"pub def greet(name: str) -> str:
+        r#"from std.registry import Registry, SubjectKind, describe
+
+@derive(Clone, Eq)
+type FunctionId = newtype str
+
+@derive(Descriptor)
+model FunctionSpec:
+    summary: str
+
+pub static functions: Registry[FunctionId, FunctionSpec] = Registry.define(
+    subjects=[SubjectKind.Function],
+)
+
+@describe(functions, FunctionId("greet"), FunctionSpec(summary="Greet a named user"))
+pub def greet(name: str) -> str:
     return f"hello {name}"
 
 def main() -> None:
@@ -4255,7 +4269,7 @@ def main() -> None:
     assert_eq!(first.stdout, second.stdout, "importer summary must be deterministic");
 
     let summary = parse_json_stdout(&first)?;
-    assert_eq!(summary["schema_version"], serde_json::json!(1));
+    assert_eq!(summary["schema_version"], serde_json::json!(2));
     assert_eq!(summary["mode"], serde_json::json!("strict"));
     assert_eq!(summary["metadata_record_count"], serde_json::json!(1));
     assert!(
@@ -4266,6 +4280,25 @@ def main() -> None:
         summary["declaration_count"].as_i64().is_some_and(|count| count > 0),
         "importer must preserve declaration records without parsing source itself: {summary}"
     );
+    assert!(
+        summary["registry_count"].as_i64().is_some_and(|count| count > 0),
+        "importer must preserve compiler-checked typed registry facts: {summary}"
+    );
+
+    fs::write(
+        importer_dir.join("codegraph.jsonl"),
+        concat!(
+            r#"{"record":"header","schema_version":1,"mode":"strict","degraded":false}"#,
+            "\n",
+            r#"{"record":"file","degraded":false}"#,
+            "\n",
+        ),
+    )?;
+    let legacy = run_incan(&importer_dir, &["run", "src/main.incn"])?;
+    assert_success(&legacy, "schema-v1 codegraph importer compatibility");
+    let legacy_summary = parse_json_stdout(&legacy)?;
+    assert_eq!(legacy_summary["schema_version"], serde_json::json!(1));
+    assert_eq!(legacy_summary["file_count"], serde_json::json!(1));
 
     Ok(())
 }

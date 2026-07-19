@@ -1825,12 +1825,24 @@ mod tests {
                 && entry.name == "`std.registry` typed declaration catalogues"
                 && entry.references.iter().any(|(label, _)| label == "RFC 113")
         }));
+        assert!(entries.iter().any(|entry| {
+            entry.id == "WorkspaceMultiPackageProjects"
+                && entry.name == "Workspace and multi-package projects"
+                && entry.references.iter().any(|(label, _)| label == "Release 0.5")
+        }));
+        assert!(entries.iter().any(|entry| {
+            entry.id == "CompiledProvidersSdkComponentsPackageFeatures"
+                && entry.name == "Compiled providers, SDK components, and package features"
+                && entry.rfc == "RFC 114"
+        }));
 
         let output_dir = tempfile::tempdir()?;
         let output = output_dir.path().join("feature_inventory.md");
         write_feature_inventory_reference(&output)?;
         let rendered = fs::read_to_string(output)?;
         assert!(rendered.contains("`std.registry` typed declaration catalogues"));
+        assert!(rendered.contains("Workspace and multi-package projects"));
+        assert!(rendered.contains("Compiled providers, SDK components, and package features"));
         assert!(rendered.contains("crates/incan_stdlib/stdlib/capabilities.incn"));
         Ok(())
     }
