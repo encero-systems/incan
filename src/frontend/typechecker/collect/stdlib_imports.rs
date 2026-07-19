@@ -3,7 +3,7 @@
 //! This keeps stdlib import enforcement (RFC 022) separate from general declaration collection while preserving the
 //! existing behavior.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::frontend::api_metadata::{
     ApiDeclaration, class_export_from_api, enum_export_from_api, function_export_from_api,
@@ -22,7 +22,8 @@ use crate::frontend::testing_markers::{
 };
 use crate::frontend::typechecker::type_info::RustTraitImportInfo;
 use crate::frontend::typechecker::{
-    PartialProjectionInfo, PartialProjectionPreset, PartialProjectionTargetKind, TypeChecker,
+    PartialProjectionInfo, PartialProjectionPreset, PartialProjectionTargetKind, PublicLibraryTypeIdentity,
+    TypeChecker, canonical_public_library_type_name,
 };
 use crate::library_manifest::{
     AliasExport, ClassExport, ConstExport, EnumExport, EnumValueExport, EnumValueTypeExport, FieldExport,
@@ -1040,15 +1041,7 @@ impl TypeChecker {
         self.cache_transitive_pub_export_semantics(library, &manifest);
 
         let available_exports = Self::manifest_export_names(&manifest);
-        let mut imported_type_aliases: HashMap<String, String> = HashMap::new();
-        for item in items {
-            let local_name = item.alias.clone().unwrap_or_else(|| item.name.clone());
-            if let Some(export) = Self::find_manifest_export(&manifest, &item.name)
-                && Self::manifest_export_is_type(&export)
-            {
-                imported_type_aliases.insert(item.name.clone(), local_name);
-            }
-        }
+        let imported_type_aliases = self.public_library_type_import_remapping(library, &manifest);
 
         for item in items {
             let local_name = item.alias.clone().unwrap_or_else(|| item.name.clone());
@@ -1109,6 +1102,135 @@ impl TypeChecker {
         }
     }
 
+    /// Build the provider-aware type remapping shared by every import statement for one compiled library.
+    ///
+    /// The whole program's import table is available before declaration collection starts, so a callable imported in a
+    /// later statement can use a type alias declared in an earlier statement. Provider-owned signature types without a
+    /// local import receive an internal qualified spelling so identical short names from separate dependencies remain
+    /// distinct.
+    fn public_library_type_import_remapping(
+        &mut self,
+        library: &str,
+        manifest: &LibraryManifest,
+    ) -> HashMap<String, String> {
+        let mut local_names_by_public_export: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for (local_name, path) in &self.import_aliases {
+            let [root, dependency_key, public_name] = path.as_slice() else {
+                continue;
+            };
+            if root != "pub" || dependency_key != library || !self.manifest_public_name_is_type(manifest, public_name) {
+                continue;
+            }
+            local_names_by_public_export
+                .entry(public_name.clone())
+                .or_default()
+                .push(local_name.clone());
+        }
+        for local_names in local_names_by_public_export.values_mut() {
+            local_names.sort();
+            local_names.dedup();
+        }
+
+        let mut remapping = self.public_library_canonical_type_remapping(library, manifest);
+        for (public_name, local_names) in local_names_by_public_export {
+            if let Some(identity) = self.public_library_nominal_type_identity(library, manifest, &public_name) {
+                for local_name in &local_names {
+                    self.public_library_type_identities
+                        .insert(local_name.clone(), identity.clone());
+                }
+            }
+            if let Some(local_name) = local_names.into_iter().next() {
+                remapping.insert(public_name, local_name);
+            }
+        }
+        remapping
+    }
+
+    /// Build an import-scope-independent provider-qualified remapping for one compiled library.
+    ///
+    /// Qualified module access has no local `from` import whose alias can carry identity, so every nominal manifest
+    /// spelling is mapped to its checker-owned canonical key before the member's signature enters expression checking.
+    fn public_library_canonical_type_remapping(
+        &mut self,
+        library: &str,
+        manifest: &LibraryManifest,
+    ) -> HashMap<String, String> {
+        let mut remapping = HashMap::new();
+        let public_names = manifest
+            .contract_metadata
+            .identity_graph
+            .exports
+            .iter()
+            .map(|entry| entry.public_name.clone())
+            .collect::<Vec<_>>();
+        for public_name in public_names {
+            let Some(identity) = self.public_library_nominal_type_identity(library, manifest, &public_name) else {
+                continue;
+            };
+            let canonical_name = canonical_public_library_type_name(library, &public_name);
+            self.public_library_type_identities
+                .insert(canonical_name.clone(), identity);
+            remapping.insert(public_name, canonical_name);
+        }
+        remapping
+    }
+
+    /// Return whether one public manifest spelling resolves to a type-like import binding.
+    fn manifest_public_name_is_type(&self, manifest: &LibraryManifest, public_name: &str) -> bool {
+        let Some(export) = Self::find_manifest_export(manifest, public_name) else {
+            return false;
+        };
+        match export {
+            ManifestExportRef::Alias(alias) => self
+                .symbol_kind_from_manifest_alias(manifest, alias, &mut HashSet::new())
+                .is_some_and(|kind| matches!(kind, SymbolKind::Type(_) | SymbolKind::Trait(_))),
+            other => Self::manifest_export_is_type(&other),
+        }
+    }
+
+    /// Resolve one public spelling to nominal model/class/enum/newtype metadata.
+    fn manifest_nominal_type_info(&self, manifest: &LibraryManifest, public_name: &str) -> Option<TypeInfo> {
+        let export = Self::find_manifest_export(manifest, public_name)?;
+        let kind = match export {
+            ManifestExportRef::Alias(alias) => {
+                self.symbol_kind_from_manifest_alias(manifest, alias, &mut HashSet::new())?
+            }
+            ManifestExportRef::Model(export) => {
+                SymbolKind::Type(TypeInfo::Model(self.model_info_from_manifest(export)))
+            }
+            ManifestExportRef::Class(export) => {
+                SymbolKind::Type(TypeInfo::Class(self.class_info_from_manifest(export)))
+            }
+            ManifestExportRef::Enum(export) => SymbolKind::Type(TypeInfo::Enum(self.enum_info_from_manifest(export))),
+            ManifestExportRef::Newtype(export) => {
+                SymbolKind::Type(TypeInfo::Newtype(self.newtype_info_from_manifest(export)))
+            }
+            _ => return None,
+        };
+        match kind {
+            SymbolKind::Type(
+                info @ (TypeInfo::Model(_) | TypeInfo::Class(_) | TypeInfo::Enum(_) | TypeInfo::Newtype(_)),
+            ) => Some(info),
+            _ => None,
+        }
+    }
+
+    /// Resolve one public nominal type spelling to its dependency-qualified provider source identity.
+    fn public_library_nominal_type_identity(
+        &self,
+        library: &str,
+        manifest: &LibraryManifest,
+        public_name: &str,
+    ) -> Option<PublicLibraryTypeIdentity> {
+        self.manifest_nominal_type_info(manifest, public_name)?;
+        let entry = manifest
+            .contract_metadata
+            .identity_graph
+            .entry_for_public_name(public_name)?;
+        let source_path = entry.target_path().unwrap_or(entry.source_path.as_slice());
+        Some(PublicLibraryTypeIdentity::new(library, source_path))
+    }
+
     /// Return the missing public features for one known provider export that is inactive in this artifact projection.
     fn inactive_pub_export_features(manifest: &LibraryManifest, symbol: &str) -> Option<Vec<Vec<String>>> {
         let active = &manifest.contract_metadata.provider.active_features;
@@ -1164,29 +1286,19 @@ impl TypeChecker {
 
     /// Resolve one exported const/static value type from a loaded `pub::` library manifest.
     pub(in crate::frontend::typechecker) fn lookup_pub_library_constant_member(
-        &self,
+        &mut self,
         library: &str,
         member: &str,
     ) -> Option<VariableInfo> {
-        let entry = self.provider_plan.library_manifest_index().get(library)?;
-        let LibraryManifestIndexEntry::Loaded { manifest, .. } = entry else {
-            return None;
-        };
-        if let Some(export) = manifest.exports.consts.iter().find(|item| item.name == member) {
-            return Some(VariableInfo {
-                ty: resolved_type_from_manifest_type_ref(&export.ty),
-                is_mutable: false,
-                is_used: false,
-            });
-        }
-        if let Some(export) = manifest.exports.statics.iter().find(|item| item.name == member) {
-            return Some(VariableInfo {
-                ty: resolved_type_from_manifest_type_ref(&export.ty),
+        match self.lookup_pub_library_symbol_member(library, member)? {
+            SymbolKind::Variable(info) => Some(info),
+            SymbolKind::Static(info) => Some(VariableInfo {
+                ty: info.ty,
                 is_mutable: true,
-                is_used: false,
-            });
+                is_used: info.is_used,
+            }),
+            _ => None,
         }
-        None
     }
 
     /// Resolve one exported member from an imported `pub::` library as a symbol kind.
@@ -1195,52 +1307,59 @@ impl TypeChecker {
     /// a direct `from pub::lib import member` symbol. Alias exports are followed to their manifest target before the
     /// projected kind is returned.
     pub(in crate::frontend::typechecker) fn lookup_pub_library_symbol_member(
-        &self,
+        &mut self,
         library: &str,
         member: &str,
     ) -> Option<SymbolKind> {
-        let entry = self.provider_plan.library_manifest_index().get(library)?;
+        let entry = self.provider_plan.library_manifest_index().get(library)?.clone();
         let LibraryManifestIndexEntry::Loaded { manifest, .. } = entry else {
             return None;
         };
-        if let Some(kind) = self.pub_library_function_symbol(manifest, member) {
-            return Some(kind);
-        }
-        let export = Self::find_manifest_export(manifest, member)?;
-        Some(match export {
-            ManifestExportRef::Model(export) => {
-                SymbolKind::Type(TypeInfo::Model(self.model_info_from_manifest(export)))
+        self.cache_transitive_pub_export_semantics(library, &manifest);
+        let remapping = self.public_library_canonical_type_remapping(library, &manifest);
+        let mut kind = if let Some(kind) = self.pub_library_function_symbol(&manifest, member) {
+            kind
+        } else {
+            let export = Self::find_manifest_export(&manifest, member)?;
+            match export {
+                ManifestExportRef::Model(export) => {
+                    SymbolKind::Type(TypeInfo::Model(self.model_info_from_manifest(export)))
+                }
+                ManifestExportRef::Class(export) => {
+                    SymbolKind::Type(TypeInfo::Class(self.class_info_from_manifest(export)))
+                }
+                ManifestExportRef::Function(export) => SymbolKind::Function(self.function_info_from_manifest(export)),
+                ManifestExportRef::Partial(export) => SymbolKind::Function(self.partial_info_from_manifest(export)),
+                ManifestExportRef::Trait(export) => SymbolKind::Trait(self.trait_info_from_manifest(export)),
+                ManifestExportRef::Enum(export) => {
+                    SymbolKind::Type(TypeInfo::Enum(self.enum_info_from_manifest(export)))
+                }
+                ManifestExportRef::TypeAlias(_) => SymbolKind::Type(TypeInfo::TypeAlias),
+                ManifestExportRef::Newtype(export) => {
+                    SymbolKind::Type(TypeInfo::Newtype(self.newtype_info_from_manifest(export)))
+                }
+                ManifestExportRef::Const(export) => SymbolKind::Variable(VariableInfo {
+                    ty: resolved_type_from_manifest_type_ref(&export.ty),
+                    is_mutable: false,
+                    is_used: false,
+                }),
+                ManifestExportRef::Static(export) => SymbolKind::Static(StaticInfo {
+                    ty: resolved_type_from_manifest_type_ref(&export.ty),
+                    is_public: true,
+                    is_imported: true,
+                    is_used: false,
+                }),
+                ManifestExportRef::EnumVariant { enum_name, fields } => SymbolKind::Variant(VariantInfo {
+                    enum_name: enum_name.to_string(),
+                    fields: fields.iter().map(resolved_type_from_manifest_type_ref).collect(),
+                }),
+                ManifestExportRef::Alias(export) => {
+                    self.symbol_kind_from_manifest_alias(&manifest, export, &mut HashSet::new())?
+                }
             }
-            ManifestExportRef::Class(export) => {
-                SymbolKind::Type(TypeInfo::Class(self.class_info_from_manifest(export)))
-            }
-            ManifestExportRef::Function(export) => SymbolKind::Function(self.function_info_from_manifest(export)),
-            ManifestExportRef::Partial(export) => SymbolKind::Function(self.partial_info_from_manifest(export)),
-            ManifestExportRef::Trait(export) => SymbolKind::Trait(self.trait_info_from_manifest(export)),
-            ManifestExportRef::Enum(export) => SymbolKind::Type(TypeInfo::Enum(self.enum_info_from_manifest(export))),
-            ManifestExportRef::TypeAlias(_) => SymbolKind::Type(TypeInfo::TypeAlias),
-            ManifestExportRef::Newtype(export) => {
-                SymbolKind::Type(TypeInfo::Newtype(self.newtype_info_from_manifest(export)))
-            }
-            ManifestExportRef::Const(export) => SymbolKind::Variable(VariableInfo {
-                ty: resolved_type_from_manifest_type_ref(&export.ty),
-                is_mutable: false,
-                is_used: false,
-            }),
-            ManifestExportRef::Static(export) => SymbolKind::Static(StaticInfo {
-                ty: resolved_type_from_manifest_type_ref(&export.ty),
-                is_public: true,
-                is_imported: true,
-                is_used: false,
-            }),
-            ManifestExportRef::EnumVariant { enum_name, fields } => SymbolKind::Variant(VariantInfo {
-                enum_name: enum_name.to_string(),
-                fields: fields.iter().map(resolved_type_from_manifest_type_ref).collect(),
-            }),
-            ManifestExportRef::Alias(export) => {
-                return self.symbol_kind_from_manifest_alias(manifest, export, &mut HashSet::new());
-            }
-        })
+        };
+        self.remap_symbol_kind_with_import_aliases(&mut kind, &remapping);
+        Some(kind)
     }
 
     /// Seed internal semantic caches for one `pub::` library's exported types and traits.
@@ -1252,6 +1371,7 @@ impl TypeChecker {
         if !self.cached_pub_libraries.insert(library.to_string()) {
             return;
         }
+        let canonical_remapping = self.public_library_canonical_type_remapping(library, manifest);
 
         for model in &manifest.exports.models {
             let model_info = self.model_info_from_manifest(model);
@@ -1287,6 +1407,24 @@ impl TypeChecker {
                 .entry(trait_export.name.clone())
                 .or_default()
                 .push(trait_info);
+        }
+
+        let canonical_types = manifest
+            .contract_metadata
+            .identity_graph
+            .exports
+            .iter()
+            .filter_map(|identity| {
+                let info = self.manifest_nominal_type_info(manifest, &identity.public_name)?;
+                Some((canonical_public_library_type_name(library, &identity.public_name), info))
+            })
+            .collect::<Vec<_>>();
+        for (canonical_name, info) in canonical_types {
+            let mut kind = SymbolKind::Type(info);
+            self.remap_symbol_kind_with_import_aliases(&mut kind, &canonical_remapping);
+            if let SymbolKind::Type(info) = kind {
+                self.transitive_pub_types.entry(canonical_name).or_default().push(info);
+            }
         }
     }
 
@@ -1785,20 +1923,11 @@ impl TypeChecker {
                 Self::remap_resolved_type_with_import_aliases(&mut info.ty, imported_type_aliases);
             }
             SymbolKind::Function(info) => {
-                for param in &mut info.params {
-                    Self::remap_resolved_type_with_import_aliases(&mut param.ty, imported_type_aliases);
-                }
-                Self::remap_resolved_type_with_import_aliases(&mut info.return_type, imported_type_aliases);
+                Self::remap_function_info_with_import_aliases(info, imported_type_aliases);
             }
             SymbolKind::FunctionOverloads(overloads) => {
                 for overload in overloads {
-                    for param in &mut overload.info.params {
-                        Self::remap_resolved_type_with_import_aliases(&mut param.ty, imported_type_aliases);
-                    }
-                    Self::remap_resolved_type_with_import_aliases(
-                        &mut overload.info.return_type,
-                        imported_type_aliases,
-                    );
+                    Self::remap_function_info_with_import_aliases(&mut overload.info, imported_type_aliases);
                 }
             }
             SymbolKind::Type(ty_info) => match ty_info {
@@ -1808,6 +1937,7 @@ impl TypeChecker {
                     {
                         *extends = alias.clone();
                     }
+                    Self::remap_type_bounds_with_import_aliases(&mut info.trait_adoptions, imported_type_aliases);
                     for field in info.fields.values_mut() {
                         Self::remap_resolved_type_with_import_aliases(&mut field.ty, imported_type_aliases);
                     }
@@ -1815,13 +1945,16 @@ impl TypeChecker {
                         Self::remap_resolved_type_with_import_aliases(&mut property.return_type, imported_type_aliases);
                     }
                     for method in info.methods.values_mut() {
-                        for param in &mut method.params {
-                            Self::remap_resolved_type_with_import_aliases(&mut param.ty, imported_type_aliases);
+                        Self::remap_method_info_with_import_aliases(method, imported_type_aliases);
+                    }
+                    for overloads in info.method_overloads.values_mut() {
+                        for method in overloads {
+                            Self::remap_method_info_with_import_aliases(method, imported_type_aliases);
                         }
-                        Self::remap_resolved_type_with_import_aliases(&mut method.return_type, imported_type_aliases);
                     }
                 }
                 TypeInfo::Model(info) => {
+                    Self::remap_type_bounds_with_import_aliases(&mut info.trait_adoptions, imported_type_aliases);
                     for field in info.fields.values_mut() {
                         Self::remap_resolved_type_with_import_aliases(&mut field.ty, imported_type_aliases);
                     }
@@ -1829,29 +1962,52 @@ impl TypeChecker {
                         Self::remap_resolved_type_with_import_aliases(&mut property.return_type, imported_type_aliases);
                     }
                     for method in info.methods.values_mut() {
-                        for param in &mut method.params {
-                            Self::remap_resolved_type_with_import_aliases(&mut param.ty, imported_type_aliases);
+                        Self::remap_method_info_with_import_aliases(method, imported_type_aliases);
+                    }
+                    for overloads in info.method_overloads.values_mut() {
+                        for method in overloads {
+                            Self::remap_method_info_with_import_aliases(method, imported_type_aliases);
                         }
-                        Self::remap_resolved_type_with_import_aliases(&mut method.return_type, imported_type_aliases);
                     }
                 }
                 TypeInfo::Newtype(info) => {
                     Self::remap_resolved_type_with_import_aliases(&mut info.underlying, imported_type_aliases);
+                    Self::remap_type_bounds_with_import_aliases(&mut info.trait_adoptions, imported_type_aliases);
                     for method in info.methods.values_mut() {
-                        for param in &mut method.params {
-                            Self::remap_resolved_type_with_import_aliases(&mut param.ty, imported_type_aliases);
+                        Self::remap_method_info_with_import_aliases(method, imported_type_aliases);
+                    }
+                    for overloads in info.method_overloads.values_mut() {
+                        for method in overloads {
+                            Self::remap_method_info_with_import_aliases(method, imported_type_aliases);
                         }
-                        Self::remap_resolved_type_with_import_aliases(&mut method.return_type, imported_type_aliases);
                     }
                 }
-                TypeInfo::Enum(_) | TypeInfo::TypeAlias | TypeInfo::Builtin => {}
+                TypeInfo::Enum(info) => {
+                    Self::remap_type_bounds_with_import_aliases(&mut info.trait_adoptions, imported_type_aliases);
+                    for fields in info.variant_fields.values_mut() {
+                        for field in fields {
+                            Self::remap_resolved_type_with_import_aliases(field, imported_type_aliases);
+                        }
+                    }
+                    for method in info.methods.values_mut() {
+                        Self::remap_method_info_with_import_aliases(method, imported_type_aliases);
+                    }
+                    for overloads in info.method_overloads.values_mut() {
+                        for method in overloads {
+                            Self::remap_method_info_with_import_aliases(method, imported_type_aliases);
+                        }
+                    }
+                }
+                TypeInfo::TypeAlias | TypeInfo::Builtin => {}
             },
             SymbolKind::Trait(info) => {
-                for method in info.methods.values_mut() {
-                    for param in &mut method.params {
-                        Self::remap_resolved_type_with_import_aliases(&mut param.ty, imported_type_aliases);
+                for (_, type_args) in &mut info.supertraits {
+                    for type_arg in type_args {
+                        Self::remap_resolved_type_with_import_aliases(type_arg, imported_type_aliases);
                     }
-                    Self::remap_resolved_type_with_import_aliases(&mut method.return_type, imported_type_aliases);
+                }
+                for method in info.methods.values_mut() {
+                    Self::remap_method_info_with_import_aliases(method, imported_type_aliases);
                 }
                 for (_, ty) in &mut info.requires {
                     Self::remap_resolved_type_with_import_aliases(ty, imported_type_aliases);
@@ -1860,11 +2016,69 @@ impl TypeChecker {
                     Self::remap_resolved_type_with_import_aliases(&mut property.return_type, imported_type_aliases);
                 }
             }
-            SymbolKind::Module(_)
-            | SymbolKind::Variant(_)
-            | SymbolKind::Field(_)
-            | SymbolKind::Property(_)
-            | SymbolKind::RustItem(_) => {}
+            SymbolKind::Variant(info) => {
+                if let Some(alias) = imported_type_aliases.get(&info.enum_name) {
+                    info.enum_name = alias.clone();
+                }
+                for field in &mut info.fields {
+                    Self::remap_resolved_type_with_import_aliases(field, imported_type_aliases);
+                }
+            }
+            SymbolKind::Field(info) => {
+                Self::remap_resolved_type_with_import_aliases(&mut info.ty, imported_type_aliases);
+            }
+            SymbolKind::Property(info) => {
+                Self::remap_resolved_type_with_import_aliases(&mut info.return_type, imported_type_aliases);
+            }
+            SymbolKind::Module(_) | SymbolKind::RustItem(_) => {}
+        }
+    }
+
+    /// Rewrite all resolved carrier types in one imported function signature and its generic bounds.
+    fn remap_function_info_with_import_aliases(
+        info: &mut FunctionInfo,
+        imported_type_aliases: &HashMap<String, String>,
+    ) {
+        for param in &mut info.params {
+            Self::remap_resolved_type_with_import_aliases(&mut param.ty, imported_type_aliases);
+        }
+        Self::remap_resolved_type_with_import_aliases(&mut info.return_type, imported_type_aliases);
+        for bounds in info.type_param_bound_details.values_mut() {
+            Self::remap_type_bounds_with_import_aliases(bounds, imported_type_aliases);
+        }
+    }
+
+    /// Rewrite all resolved carrier types in one imported method signature and its generic or trait-target bounds.
+    fn remap_method_info_with_import_aliases(info: &mut MethodInfo, imported_type_aliases: &HashMap<String, String>) {
+        for param in &mut info.params {
+            Self::remap_resolved_type_with_import_aliases(&mut param.ty, imported_type_aliases);
+        }
+        Self::remap_resolved_type_with_import_aliases(&mut info.return_type, imported_type_aliases);
+        for bounds in info.type_param_bound_details.values_mut() {
+            Self::remap_type_bounds_with_import_aliases(bounds, imported_type_aliases);
+        }
+        if let Some(target) = info.trait_target.as_mut() {
+            Self::remap_type_bound_with_import_aliases(target, imported_type_aliases);
+        }
+    }
+
+    /// Rewrite resolved generic arguments carried by imported trait-bound metadata.
+    fn remap_type_bounds_with_import_aliases(
+        bounds: &mut [TypeBoundInfo],
+        imported_type_aliases: &HashMap<String, String>,
+    ) {
+        for bound in bounds {
+            Self::remap_type_bound_with_import_aliases(bound, imported_type_aliases);
+        }
+    }
+
+    /// Rewrite resolved generic arguments carried by one imported trait-bound entry.
+    fn remap_type_bound_with_import_aliases(
+        bound: &mut TypeBoundInfo,
+        imported_type_aliases: &HashMap<String, String>,
+    ) {
+        for type_arg in &mut bound.type_args {
+            Self::remap_resolved_type_with_import_aliases(type_arg, imported_type_aliases);
         }
     }
 

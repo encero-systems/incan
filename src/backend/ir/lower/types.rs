@@ -17,6 +17,7 @@ use crate::frontend::ast;
 use crate::frontend::library_manifest_index::LibraryManifestIndexEntry;
 use crate::frontend::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::frontend::symbols::ResolvedType;
+use crate::frontend::typechecker::split_canonical_public_library_type_name;
 use crate::library_manifest::{TypeAliasExport, resolved_type_from_manifest_type_ref};
 use crate::numeric_adapters::{ir_type_to_numeric_ty, numeric_op_from_ast};
 use incan_core::lang::conventions;
@@ -120,6 +121,7 @@ impl AstLowering {
         if matches!(ty, IrType::ExternalUnion { .. }) {
             return ty;
         }
+        let ty = ty.provider_localized(library);
         if ty.union_type_name().is_some() {
             return IrType::ExternalUnion {
                 library: library.to_string(),
@@ -668,6 +670,19 @@ impl AstLowering {
     /// This is used when lowering is driven by the typechecker output rather than AST heuristics.
     #[allow(clippy::only_used_in_recursion)]
     pub(super) fn lower_resolved_type(&self, ty: &ResolvedType) -> IrType {
+        if let ResolvedType::Named(name) = ty
+            && let Some((library, public_name)) = split_canonical_public_library_type_name(name)
+        {
+            return IrType::Struct(format!("{library}::{public_name}"));
+        }
+        if let ResolvedType::Generic(name, args) = ty
+            && let Some((library, public_name)) = split_canonical_public_library_type_name(name)
+        {
+            return IrType::NamedGeneric(
+                format!("{library}::{public_name}"),
+                args.iter().map(|arg| self.lower_resolved_type(arg)).collect(),
+            );
+        }
         match ty {
             // Rust `!` is carried only for typechecking diverging interop calls; the call expression itself keeps its
             // concrete Rust spelling through lowering.
@@ -1084,6 +1099,68 @@ mod tests {
     use super::AstLowering;
     use crate::backend::ir::types::IrType;
     use crate::frontend::symbols::ResolvedType;
+    use crate::frontend::typechecker::canonical_public_library_type_name;
+
+    /// Regression for #892: checker-owned public-library keys lower to provider-qualified Rust nominal paths.
+    #[test]
+    fn lower_resolved_type_qualifies_canonical_public_library_identity_issue892() {
+        let lowering = AstLowering::new();
+        let lowered = lowering.lower_resolved_type(&ResolvedType::Named(canonical_public_library_type_name(
+            "widgets", "Widget",
+        )));
+
+        assert_eq!(lowered, IrType::Struct("widgets::Widget".to_string()));
+    }
+
+    /// Regression for #892: provider qualification survives generic nominal lowering and nested carrier arguments.
+    #[test]
+    fn lower_resolved_type_qualifies_generic_public_library_identity_issue892() {
+        let lowering = AstLowering::new();
+        let lowered = lowering.lower_resolved_type(&ResolvedType::Generic(
+            canonical_public_library_type_name("widgets", "Envelope"),
+            vec![ResolvedType::Named(canonical_public_library_type_name(
+                "widgets", "Widget",
+            ))],
+        ));
+
+        assert_eq!(
+            lowered,
+            IrType::NamedGeneric(
+                "widgets::Envelope".to_string(),
+                vec![IrType::Struct("widgets::Widget".to_string())]
+            )
+        );
+    }
+
+    /// Regression for #755/#892: provider-owned union members use provider-local names before wrapper identity hashing.
+    #[test]
+    fn pub_external_type_normalizes_canonical_union_members_issue892() {
+        let lowering = AstLowering::new();
+        let lowered = lowering.pub_external_type(
+            "widgets",
+            IrType::NamedGeneric(
+                crate::backend::ir::types::IR_UNION_TYPE_NAME.to_string(),
+                vec![
+                    IrType::Struct("widgets::Widget".to_string()),
+                    IrType::Struct("widgets::Fallback".to_string()),
+                ],
+            ),
+        );
+
+        assert_eq!(
+            lowered,
+            IrType::ExternalUnion {
+                library: "widgets".to_string(),
+                union: Box::new(IrType::NamedGeneric(
+                    crate::backend::ir::types::IR_UNION_TYPE_NAME.to_string(),
+                    vec![
+                        IrType::Struct("Widget".to_string()),
+                        IrType::Struct("Fallback".to_string())
+                    ]
+                ))
+            }
+        );
+    }
 
     #[test]
     fn lower_resolved_type_preserves_named_generic_args_for_nominal_types() {

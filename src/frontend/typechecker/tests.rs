@@ -1785,7 +1785,7 @@ class Child extends Parent:
 }
 
 fn library_index_with_mylib_exports() -> LibraryManifestIndex {
-    let manifest = LibraryManifest {
+    let mut manifest = LibraryManifest {
         name: "mylib".to_string(),
         version: "0.1.0".to_string(),
         incan_version: crate::version::INCAN_VERSION.to_string(),
@@ -1828,24 +1828,39 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
                 methods: Vec::new(),
             }],
             classes: Vec::new(),
-            functions: vec![FunctionExport {
-                name: "make_widget".to_string(),
-                emitted_name: None,
-                type_params: Vec::new(),
-                params: vec![ParamExport {
-                    name: "name".to_string(),
-                    ty: TypeRef::Named {
-                        name: "str".to_string(),
+            functions: vec![
+                FunctionExport {
+                    name: "make_widget".to_string(),
+                    emitted_name: None,
+                    type_params: Vec::new(),
+                    params: vec![ParamExport {
+                        name: "name".to_string(),
+                        ty: TypeRef::Named {
+                            name: "str".to_string(),
+                        },
+                        kind: ParamKindExport::Normal,
+                        has_default: false,
+                        default: None,
+                    }],
+                    return_type: TypeRef::Named {
+                        name: "Widget".to_string(),
                     },
-                    kind: ParamKindExport::Normal,
-                    has_default: false,
-                    default: None,
-                }],
-                return_type: TypeRef::Named {
-                    name: "Widget".to_string(),
+                    is_async: false,
                 },
-                is_async: false,
-            }],
+                FunctionExport {
+                    name: "collect_widgets".to_string(),
+                    emitted_name: None,
+                    type_params: Vec::new(),
+                    params: Vec::new(),
+                    return_type: TypeRef::Applied {
+                        name: "list".to_string(),
+                        args: vec![TypeRef::Named {
+                            name: "Widget".to_string(),
+                        }],
+                    },
+                    is_async: false,
+                },
+            ],
             traits: vec![TraitExport {
                 name: "Labelled".to_string(),
                 source_name: None,
@@ -1928,6 +1943,16 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
         contract_metadata: LibraryContractMetadata::default(),
         rust_abi: None,
     };
+    manifest.contract_metadata.identity_graph = LibraryIdentityGraph {
+        schema_version: LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION,
+        exports: vec![ExportIdentity {
+            public_name: "Widget".to_string(),
+            public_path: vec!["mylib".to_string(), "Widget".to_string()],
+            source_path: vec!["widgets".to_string(), "Widget".to_string()],
+            kind: ExportIdentityKind::Model,
+            projection: ExportIdentityProjection::Direct,
+        }],
+    };
 
     LibraryManifestIndex::from_entries(HashMap::from([(
         "mylib".to_string(),
@@ -1936,6 +1961,131 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
             metadata: LibraryArtifactMetadata::from_crate_root("mylib", "mylib", synthetic_artifact_root("mylib")),
         },
     )]))
+}
+
+/// Build two compiled-provider manifests that export distinct models and constructors under the same short names.
+fn library_index_with_colliding_pub_type_identities() -> LibraryManifestIndex {
+    let provider_manifest = |library: &str| {
+        let mut manifest = LibraryManifest::new(library, "0.1.0");
+        manifest.exports.models.push(ModelExport {
+            name: "Widget".to_string(),
+            type_params: Vec::new(),
+            traits: Vec::new(),
+            trait_adoptions: Vec::new(),
+            derives: Vec::new(),
+            fields: Vec::new(),
+            methods: Vec::new(),
+        });
+        manifest.exports.models.push(ModelExport {
+            name: "Factory".to_string(),
+            type_params: Vec::new(),
+            traits: Vec::new(),
+            trait_adoptions: Vec::new(),
+            derives: Vec::new(),
+            fields: vec![FieldExport {
+                name: "widget".to_string(),
+                ty: TypeRef::Named {
+                    name: "Widget".to_string(),
+                },
+                visibility: FieldVisibilityExport::Public,
+                has_default: false,
+                default: None,
+                alias: None,
+                description: None,
+            }],
+            methods: Vec::new(),
+        });
+        manifest.exports.functions.push(FunctionExport {
+            name: "make_widget".to_string(),
+            emitted_name: None,
+            type_params: Vec::new(),
+            params: Vec::new(),
+            return_type: TypeRef::Named {
+                name: "Widget".to_string(),
+            },
+            is_async: false,
+        });
+        manifest.exports.functions.push(FunctionExport {
+            name: "make_factory".to_string(),
+            emitted_name: None,
+            type_params: Vec::new(),
+            params: Vec::new(),
+            return_type: TypeRef::Named {
+                name: "Factory".to_string(),
+            },
+            is_async: false,
+        });
+        manifest.exports.enums.push(EnumExport {
+            name: "Envelope".to_string(),
+            type_params: Vec::new(),
+            traits: Vec::new(),
+            trait_adoptions: Vec::new(),
+            value_type: None,
+            ordinal_type_identity: None,
+            variants: vec![EnumVariantExport {
+                name: "WithWidget".to_string(),
+                fields: vec![TypeRef::Named {
+                    name: "Widget".to_string(),
+                }],
+                value: None,
+            }],
+            variant_aliases: Vec::new(),
+            methods: Vec::new(),
+            derives: Vec::new(),
+        });
+        manifest.contract_metadata.identity_graph = LibraryIdentityGraph {
+            schema_version: LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION,
+            exports: vec![
+                ExportIdentity {
+                    public_name: "Widget".to_string(),
+                    public_path: vec![library.to_string(), "Widget".to_string()],
+                    source_path: vec!["widgets".to_string(), "Widget".to_string()],
+                    kind: ExportIdentityKind::Model,
+                    projection: ExportIdentityProjection::Direct,
+                },
+                ExportIdentity {
+                    public_name: "Envelope".to_string(),
+                    public_path: vec![library.to_string(), "Envelope".to_string()],
+                    source_path: vec!["widgets".to_string(), "Envelope".to_string()],
+                    kind: ExportIdentityKind::Enum,
+                    projection: ExportIdentityProjection::Direct,
+                },
+                ExportIdentity {
+                    public_name: "Factory".to_string(),
+                    public_path: vec![library.to_string(), "Factory".to_string()],
+                    source_path: vec!["widgets".to_string(), "Factory".to_string()],
+                    kind: ExportIdentityKind::Model,
+                    projection: ExportIdentityProjection::Direct,
+                },
+            ],
+        };
+        manifest
+    };
+
+    LibraryManifestIndex::from_entries(HashMap::from([
+        (
+            "alpha".to_string(),
+            LibraryManifestIndexEntry::Loaded {
+                manifest: Box::new(provider_manifest("alpha")),
+                metadata: LibraryArtifactMetadata::from_crate_root(
+                    "alpha",
+                    "alpha",
+                    synthetic_artifact_root("pub_identity_alpha"),
+                ),
+            },
+        ),
+        (
+            "beta".to_string(),
+            LibraryManifestIndexEntry::Loaded {
+                manifest: Box::new(provider_manifest("beta")),
+                metadata: LibraryArtifactMetadata::from_crate_root(
+                    "beta",
+                    "beta",
+                    synthetic_artifact_root("pub_identity_beta"),
+                ),
+            },
+        ),
+    ]))
 }
 
 fn library_index_with_private_class_field_issue883() -> LibraryManifestIndex {
@@ -15076,6 +15226,228 @@ def build() -> LibWidget:
 "#;
     let result = check_str_with_library_index(source, library_index_with_mylib_exports());
     assert!(result.is_ok(), "expected alias recovery to typecheck, got: {result:?}");
+}
+
+/// Regression for #892: callable signatures retain provider identity across separate import statements.
+#[test]
+fn test_pub_from_split_import_alias_preserves_provider_identity_issue892() {
+    let source = r#"
+from pub::mylib import Widget as LibWidget
+from pub::mylib import make_widget
+
+def build() -> LibWidget:
+  return make_widget("ok")
+"#;
+    let result = check_str_with_library_index(source, library_index_with_mylib_exports());
+    assert!(
+        result.is_ok(),
+        "expected split pub import alias to preserve identity, got: {result:?}"
+    );
+}
+
+/// Regression for #892: whole-program identity collection is independent of split-import declaration order.
+#[test]
+fn test_pub_from_reversed_split_import_alias_preserves_provider_identity_issue892() {
+    let source = r#"
+from pub::mylib import make_widget
+from pub::mylib import Widget as LibWidget
+
+def build() -> LibWidget:
+  return make_widget("ok")
+"#;
+    let result = check_str_with_library_index(source, library_index_with_mylib_exports());
+    assert!(
+        result.is_ok(),
+        "expected reversed split pub import alias to preserve identity, got: {result:?}"
+    );
+}
+
+/// Regression for #892: every local alias of one provider-owned type compares as the same nominal declaration.
+#[test]
+fn test_pub_from_multiple_aliases_share_provider_identity_issue892() {
+    let source = r#"
+from pub::mylib import Widget as FirstWidget
+from pub::mylib import Widget as SecondWidget
+from pub::mylib import make_widget
+
+def make_first() -> FirstWidget:
+  return make_widget("ok")
+
+def keep_identity(value: SecondWidget) -> FirstWidget:
+  return value
+"#;
+    let result = check_str_with_library_index(source, library_index_with_mylib_exports());
+    assert!(
+        result.is_ok(),
+        "expected aliases of one provider type to share identity, got: {result:?}"
+    );
+}
+
+/// Regression for #892: provider identity is compared recursively through generic type arguments.
+#[test]
+fn test_pub_from_split_alias_preserves_nested_generic_identity_issue892() {
+    let source = r#"
+from pub::mylib import Widget as LibWidget
+from pub::mylib import collect_widgets
+
+def collect() -> list[LibWidget]:
+  return collect_widgets()
+"#;
+    let result = check_str_with_library_index(source, library_index_with_mylib_exports());
+    assert!(
+        result.is_ok(),
+        "expected nested pub type identity to survive split imports, got: {result:?}"
+    );
+}
+
+/// Regression for #892: matching short names from separate dependencies remain nominally distinct.
+#[test]
+fn test_pub_from_same_short_name_different_providers_stay_distinct_issue892() -> Result<(), String> {
+    let source = r#"
+from pub::alpha import Widget as AlphaWidget, make_widget as make_alpha_widget
+from pub::beta import Widget as BetaWidget, make_widget as make_beta_widget
+
+def wrong_provider() -> BetaWidget:
+  return make_alpha_widget()
+"#;
+    let errors = check_str_with_library_index_err(
+        source,
+        library_index_with_colliding_pub_type_identities(),
+        "different provider identities must not unify",
+    )?;
+    if !errors.iter().any(|error| {
+        error
+            .message
+            .contains("Return type mismatch: expected 'BetaWidget', found 'AlphaWidget'")
+    }) {
+        return Err(format!("expected provider-qualified nominal mismatch, got: {errors:?}"));
+    }
+    Ok(())
+}
+
+/// Regression for #892: callable-only provider signatures remain qualified against an unaliased colliding type.
+#[test]
+fn test_pub_callable_only_same_short_name_different_providers_stays_distinct_issue892() -> Result<(), String> {
+    let source = r#"
+from pub::alpha import make_widget as make_alpha_widget
+from pub::beta import Widget
+
+def wrong_provider() -> Widget:
+  return make_alpha_widget()
+"#;
+    let errors = check_str_with_library_index_err(
+        source,
+        library_index_with_colliding_pub_type_identities(),
+        "callable-only provider identity must not unify with another provider's same-named type",
+    )?;
+    if !errors.iter().any(|error| {
+        error
+            .message
+            .starts_with("Return type mismatch: expected 'Widget', found '")
+    }) {
+        return Err(format!(
+            "expected callable-only provider-qualified mismatch, got: {errors:?}"
+        ));
+    }
+    Ok(())
+}
+
+/// Regression for #892: qualified module calls preserve provider identity instead of reverting to a short name.
+#[test]
+fn test_pub_qualified_callable_same_short_name_different_providers_stays_distinct_issue892() -> Result<(), String> {
+    let source = r#"
+import pub::alpha as alpha
+from pub::beta import Widget
+
+def wrong_provider() -> Widget:
+  return alpha.make_widget()
+"#;
+    let errors = check_str_with_library_index_err(
+        source,
+        library_index_with_colliding_pub_type_identities(),
+        "qualified provider callable identity must not unify with another provider's same-named type",
+    )?;
+    if !errors.iter().any(|error| {
+        error
+            .message
+            .starts_with("Return type mismatch: expected 'Widget', found '")
+    }) {
+        return Err(format!("expected qualified-call provider mismatch, got: {errors:?}"));
+    }
+    Ok(())
+}
+
+/// Regression for #892: enum variant payload metadata retains the provider identity of its manifest carrier types.
+#[test]
+fn test_pub_enum_variant_payload_same_short_name_different_providers_stays_distinct_issue892() -> Result<(), String> {
+    let source = r#"
+from pub::alpha import WithWidget
+from pub::beta import Widget
+"#;
+    let tokens = lexer::lex(source).map_err(|errors| format!("enum payload repro lex failed: {errors:?}"))?;
+    let ast = parser::parse(&tokens).map_err(|errors| format!("enum payload repro parse failed: {errors:?}"))?;
+    let mut checker = TypeChecker::new();
+    checker.set_library_manifest_index(library_index_with_colliding_pub_type_identities());
+    checker
+        .check_program(&ast)
+        .map_err(|errors| format!("enum payload imports should typecheck: {errors:?}"))?;
+    let payload_ty = match checker.lookup_symbol("WithWidget").map(|symbol| &symbol.kind) {
+        Some(SymbolKind::Variant(info)) => info
+            .fields
+            .first()
+            .cloned()
+            .ok_or("expected WithWidget payload metadata")?,
+        other => return Err(format!("expected imported WithWidget variant metadata, got: {other:?}")),
+    };
+    if checker.types_compatible(&payload_ty, &ResolvedType::Named("Widget".to_string())) {
+        return Err(format!(
+            "alpha variant payload must stay distinct from beta Widget, got payload {payload_ty}"
+        ));
+    }
+    Ok(())
+}
+
+/// Regression for #892: split enum aliases and variant imports retain one provider-owned enum identity.
+#[test]
+fn test_pub_split_enum_alias_and_variant_share_provider_identity_issue892() {
+    let source = r#"
+from pub::alpha import Envelope as ProviderEnvelope
+from pub::alpha import WithWidget
+from pub::alpha import make_widget
+
+def make_envelope() -> ProviderEnvelope:
+  return WithWidget(make_widget())
+"#;
+    let result = check_str_with_library_index(source, library_index_with_colliding_pub_type_identities());
+    assert!(
+        result.is_ok(),
+        "expected split enum alias and variant imports to share provider identity, got: {result:?}"
+    );
+}
+
+/// Regression for #892: transitive fields reached through qualified callables retain their provider identity.
+#[test]
+fn test_pub_transitive_field_same_short_name_different_providers_stays_distinct_issue892() -> Result<(), String> {
+    let source = r#"
+import pub::alpha as alpha
+from pub::beta import Widget
+
+def wrong_provider() -> Widget:
+  return alpha.make_factory().widget
+"#;
+    let errors = check_str_with_library_index_err(
+        source,
+        library_index_with_colliding_pub_type_identities(),
+        "transitive provider field identity must not unify with another provider's same-named type",
+    )?;
+    if !errors.iter().any(|error| {
+        error
+            .message
+            .starts_with("Return type mismatch: expected 'Widget', found '")
+    }) {
+        return Err(format!("expected transitive provider field mismatch, got: {errors:?}"));
+    }
+    Ok(())
 }
 
 #[test]

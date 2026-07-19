@@ -132,6 +132,44 @@ pub(crate) struct TypeAliasTarget {
     pub target: ResolvedType,
 }
 
+/// Canonical nominal identity for one type exported through a compiled public-library dependency.
+///
+/// Local aliases and provider-qualified internal signature spellings map to this value. The dependency key prevents
+/// same-named declarations from separate providers from unifying, while the provider-local source path lets multiple
+/// public spellings of one declaration compare as the same type.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct PublicLibraryTypeIdentity {
+    dependency_key: String,
+    source_path: Vec<String>,
+}
+
+impl PublicLibraryTypeIdentity {
+    /// Build one provider-qualified identity from the active dependency key and manifest source path.
+    pub(crate) fn new(dependency_key: &str, source_path: &[String]) -> Self {
+        Self {
+            dependency_key: dependency_key.to_string(),
+            source_path: source_path.to_vec(),
+        }
+    }
+}
+
+const PUBLIC_LIBRARY_TYPE_PREFIX: &str = "pub::";
+
+/// Encode one provider-owned public type as an internal `ResolvedType` spelling without adding a new enum variant.
+///
+/// The encoded spelling remains source-unspellable because `pub::` is import syntax, but it preserves enough context
+/// for type compatibility and can be lowered to the provider-qualified Rust nominal path.
+pub(crate) fn canonical_public_library_type_name(dependency_key: &str, public_name: &str) -> String {
+    format!("{PUBLIC_LIBRARY_TYPE_PREFIX}{dependency_key}::{public_name}")
+}
+
+/// Decode an internal provider-qualified public type spelling into its dependency key and public export name.
+pub(crate) fn split_canonical_public_library_type_name(name: &str) -> Option<(&str, &str)> {
+    let remainder = name.strip_prefix(PUBLIC_LIBRARY_TYPE_PREFIX)?;
+    let (dependency_key, public_name) = remainder.split_once("::")?;
+    (!dependency_key.is_empty() && !public_name.is_empty()).then_some((dependency_key, public_name))
+}
+
 /// Declaration context that determines how `yield` expressions are interpreted.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum YieldContext {
@@ -251,6 +289,11 @@ pub struct TypeChecker {
     /// functions/methods can still participate in method lookup and trait compatibility even when the consumer did not
     /// explicitly import every referenced carrier type.
     pub(crate) transitive_pub_types: HashMap<String, Vec<TypeInfo>>,
+    /// Canonical nominal identities for local aliases and provider-qualified signature spellings from `pub::` imports.
+    ///
+    /// Identity is deliberately separate from [`ResolvedType`]: source diagnostics retain local spellings while
+    /// compatibility can still distinguish identical short names owned by separate dependencies.
+    pub(crate) public_library_type_identities: HashMap<String, PublicLibraryTypeIdentity>,
     /// Internal semantic trait cache for `pub::` exports referenced transitively by imported signatures.
     ///
     /// This keeps trait/supertrait compatibility available for imported function signatures without making those trait
@@ -383,6 +426,7 @@ impl TypeChecker {
             dependency_trait_rust_derive_paths: HashMap::new(),
             provider_plan: Arc::new(ProviderPlan::default()),
             transitive_pub_types: HashMap::new(),
+            public_library_type_identities: HashMap::new(),
             transitive_pub_traits: HashMap::new(),
             transitive_stdlib_stub_types: HashMap::new(),
             transitive_stdlib_stub_traits: HashMap::new(),
@@ -929,6 +973,47 @@ impl TypeChecker {
             .collect::<Vec<_>>()
             .join(", ");
         Some(format!("{base}<{rendered_args}>"))
+    }
+
+    /// Return the canonical public-library identity and generic arguments carried by one named type spelling.
+    fn public_library_type_identity_for_type<'a>(
+        &'a self,
+        ty: &'a ResolvedType,
+    ) -> Option<(&'a PublicLibraryTypeIdentity, &'a [ResolvedType])> {
+        match ty {
+            ResolvedType::Named(name) => self
+                .public_library_type_identities
+                .get(name)
+                .map(|identity| (identity, &[][..])),
+            ResolvedType::Generic(name, args) => self
+                .public_library_type_identities
+                .get(name)
+                .map(|identity| (identity, args.as_slice())),
+            _ => None,
+        }
+    }
+
+    /// Compare provider-qualified public-library identities before ordinary nominal spelling equality.
+    ///
+    /// Returning `None` leaves non-provider types on the ordinary compatibility path. When both sides carry compiled
+    /// provider identity, the dependency and source declaration must match and generic arguments are compared
+    /// recursively through the same compatibility rules.
+    fn public_library_type_identities_compatible(
+        &self,
+        actual: &ResolvedType,
+        expected: &ResolvedType,
+    ) -> Option<bool> {
+        let (actual_identity, actual_args) = self.public_library_type_identity_for_type(actual)?;
+        let (expected_identity, expected_args) = self.public_library_type_identity_for_type(expected)?;
+        if actual_identity != expected_identity || actual_args.len() != expected_args.len() {
+            return Some(false);
+        }
+        Some(
+            actual_args
+                .iter()
+                .zip(expected_args)
+                .all(|(actual_arg, expected_arg)| self.types_compatible(actual_arg, expected_arg)),
+        )
     }
 
     /// Return whether two Rust type identities describe the same boundary type.
@@ -3987,6 +4072,7 @@ impl TypeChecker {
         self.import_aliases = self.surface_context.import_aliases().clone();
         self.supertrait_closure.clear();
         self.transitive_pub_types.clear();
+        self.public_library_type_identities.clear();
         self.transitive_pub_traits.clear();
         self.cached_pub_libraries.clear();
         self.validate_alias_declarations(program);
@@ -4786,6 +4872,10 @@ impl TypeChecker {
         let expanded_expected = self.expand_type_aliases(expected.clone());
         if &expanded_actual != actual || &expanded_expected != expected {
             return self.types_compatible(&expanded_actual, &expanded_expected);
+        }
+
+        if let Some(matches) = self.public_library_type_identities_compatible(actual, expected) {
+            return matches;
         }
 
         if actual == expected {

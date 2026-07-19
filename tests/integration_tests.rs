@@ -13479,6 +13479,129 @@ pub def aggregate_default(expr: ColumnExpr, output_name: str = DEFAULT_LABEL) ->
         Ok(())
     }
 
+    /// Regression for #892: split aliases keep their provider identity in real library consumers and test batches.
+    #[test]
+    fn build_lib_consumer_preserves_split_pub_import_alias_identity_issue892() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let tmp = tempfile::tempdir()?;
+        let provider_root = tmp.path().join("proposal_provider");
+        std::fs::create_dir_all(provider_root.join("src"))?;
+        std::fs::write(
+            provider_root.join("incan.toml"),
+            "[project]\nname = \"proposal_provider\"\nversion = \"0.1.0\"\n",
+        )?;
+        std::fs::write(
+            provider_root.join("src/proposals.incn"),
+            r#"pub model ConsoleProposal:
+  pub title: str
+
+pub def make_console_proposal(title: str) -> ConsoleProposal:
+  return ConsoleProposal(title=title)
+"#,
+        )?;
+        std::fs::write(
+            provider_root.join("src/lib.incn"),
+            "pub from proposals import ConsoleProposal, make_console_proposal\n",
+        )?;
+
+        let provider_build = run_build_lib(&provider_root)?;
+        assert!(
+            provider_build.status.success(),
+            "expected #892 provider library build to succeed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&provider_build.stdout),
+            String::from_utf8_lossy(&provider_build.stderr)
+        );
+        assert!(
+            provider_root.join("target/lib/proposal_provider.incnlib").is_file(),
+            "expected the provider's compiled .incnlib manifest"
+        );
+
+        let consumer_root = tmp.path().join("consumer");
+        std::fs::create_dir_all(consumer_root.join("src"))?;
+        std::fs::create_dir_all(consumer_root.join("tests"))?;
+        std::fs::write(
+            consumer_root.join("incan.toml"),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nproposals = { path = \"../proposal_provider\" }\n",
+        )?;
+        let main_path = consumer_root.join("src/main.incn");
+        std::fs::write(
+            &main_path,
+            r#"from pub::proposals import ConsoleProposal as ProviderConsoleProposal
+from pub::proposals import make_console_proposal
+
+def proposal() -> ProviderConsoleProposal:
+  return make_console_proposal("ready")
+
+def main() -> None:
+  println(proposal().title)
+"#,
+        )?;
+
+        let check_output = run_check(&main_path)?;
+        assert!(
+            check_output.status.success(),
+            "expected split pub import aliases to typecheck against the compiled library.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&check_output.stdout),
+            String::from_utf8_lossy(&check_output.stderr)
+        );
+
+        let out_dir = consumer_root.join("out");
+        let build_output = run_build(&main_path, &out_dir)?;
+        assert!(
+            build_output.status.success(),
+            "expected generated Rust for split pub import aliases to compile.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&build_output.stdout),
+            String::from_utf8_lossy(&build_output.stderr)
+        );
+        let generated_main = std::fs::read_to_string(out_dir.join("src/main.rs"))?;
+        assert!(
+            generated_main.contains("proposals::ConsoleProposal"),
+            "expected generated Rust to retain the provider-qualified model path.\ngenerated main.rs:\n{generated_main}"
+        );
+
+        std::fs::write(
+            consumer_root.join("tests/test_split_alias.incn"),
+            r#"from pub::proposals import ConsoleProposal as SplitConsoleProposal
+from pub::proposals import make_console_proposal
+
+def make_split() -> SplitConsoleProposal:
+  return make_console_proposal("split")
+
+def test_split_pub_import_alias() -> None:
+  proposal: SplitConsoleProposal = make_split()
+  assert proposal.title == "split"
+"#,
+        )?;
+        std::fs::write(
+            consumer_root.join("tests/test_same_statement_alias.incn"),
+            r#"from pub::proposals import ConsoleProposal as SameStatementConsoleProposal, make_console_proposal
+
+def make_same_statement() -> SameStatementConsoleProposal:
+  return make_console_proposal("same")
+
+def test_same_statement_pub_import_alias() -> None:
+  proposal: SameStatementConsoleProposal = make_same_statement()
+  assert proposal.title == "same"
+"#,
+        )?;
+
+        let test_output = run_test(&consumer_root.join("tests"))?;
+        assert!(
+            test_output.status.success(),
+            "expected split and same-statement aliases to coexist in one compiled test batch.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&test_output.stdout),
+            String::from_utf8_lossy(&test_output.stderr)
+        );
+        let test_stdout = String::from_utf8_lossy(&test_output.stdout);
+        assert!(
+            test_stdout.contains("test_split_alias.incn::test_split_pub_import_alias")
+                && test_stdout.contains("test_same_statement_alias.incn::test_same_statement_pub_import_alias"),
+            "expected both #892 regression tests in the batch output.\nstdout:\n{test_stdout}"
+        );
+
+        Ok(())
+    }
+
     #[test]
     fn build_lib_consumer_preserves_private_class_field_visibility_issue883() -> Result<(), Box<dyn std::error::Error>>
     {
