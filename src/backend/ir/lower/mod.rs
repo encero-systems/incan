@@ -557,7 +557,7 @@ impl AstLowering {
             }
             ResolvedType::SelfType => ast::Type::SelfType,
             ResolvedType::RustPath(path) => ast::Type::Simple(path.clone()),
-            ResolvedType::CallSiteInfer | ResolvedType::Unknown => ast::Type::Infer,
+            ResolvedType::Never | ResolvedType::CallSiteInfer | ResolvedType::Unknown => ast::Type::Infer,
         };
         ast::Spanned::new(node, span)
     }

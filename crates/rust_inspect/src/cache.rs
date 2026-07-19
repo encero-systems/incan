@@ -14,10 +14,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use incan_core::interop::{
-    RustFieldInfo, RustFunctionSig, RustItemKind, RustItemMetadata, RustMethodSig, RustParam, RustTraitAssoc,
-    RustTraitInfo, RustTypeInfo, RustTypeMetadataCompleteness, RustTypeShape, RustTypeShapePathFallback,
-    RustVariantInfo, RustVisibility, parse_rust_type_shape_text, rust_source_borrowed_type_param_bound_display,
-    rust_source_callable_bound_for_type_param, rust_source_type_param_has_as_fd_bound, split_top_level_rust_args,
+    RUST_NEVER_TYPE_DISPLAY, RustFieldInfo, RustFunctionSig, RustItemKind, RustItemMetadata, RustMethodSig, RustParam,
+    RustTraitAssoc, RustTraitInfo, RustTypeInfo, RustTypeMetadataCompleteness, RustTypeShape,
+    RustTypeShapePathFallback, RustVariantInfo, RustVisibility, parse_rust_type_shape_text,
+    rust_source_borrowed_type_param_bound_display, rust_source_callable_bound_for_type_param,
+    rust_source_type_param_has_as_fd_bound, split_top_level_rust_args,
 };
 use incan_core::lang::types::collections::{self, CollectionTypeId};
 use ra_ap_syntax::{
@@ -162,7 +163,7 @@ struct DiskCacheEnvelope {
 }
 
 // Bump when extracted metadata semantics change in a way that makes previously persisted items unsafe to reuse.
-const DISK_CACHE_FORMAT: u32 = 16;
+const DISK_CACHE_FORMAT: u32 = 17;
 const DISK_CACHE_FILE: &str = ".incan_rust_inspect_cache.json";
 // Backward-compatibility read path for caches written before the crate/module rename.
 const LEGACY_DISK_CACHE_FILE: &str = ".incan_rust_metadata_cache.json";
@@ -1190,6 +1191,9 @@ fn generated_type_path_display(
     if let Some(base) = generated_known_collection_base(compact.as_str()) {
         return base.to_string();
     }
+    if compact == RUST_NEVER_TYPE_DISPLAY {
+        return compact;
+    }
     match compact.as_str() {
         "bool" | "f32" | "f64" | "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64"
         | "u128" | "usize" | "str" | "String" | "()" | "[u8]" => return compact,
@@ -1476,6 +1480,9 @@ fn source_type_path_display(
     }
     if let Some(base) = generated_known_collection_base(compact.as_str()) {
         return base.to_string();
+    }
+    if compact == RUST_NEVER_TYPE_DISPLAY {
+        return compact;
     }
     match compact.as_str() {
         "Self" => return "Self".to_string(),

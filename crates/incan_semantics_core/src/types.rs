@@ -8,6 +8,8 @@ use std::fmt;
 /// Backend-neutral Incan type universe used by v0.5 middle-end facts.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum IncanType {
+    /// Compiler-internal bottom type used for diverging interop expressions.
+    Never,
     Primitive(IncanPrimitiveType),
     Named(String),
     Generic {
@@ -53,7 +55,7 @@ impl IncanType {
             | Self::Primitive(IncanPrimitiveType::Bool | IncanPrimitiveType::Unit) => AbiV0Ownership::CopyOrTrivial,
             Self::Ref(_) => AbiV0Ownership::Borrowed,
             Self::RefMut(_) => AbiV0Ownership::MutBorrowed,
-            Self::TypeVar(_) | Self::SelfType | Self::Infer | Self::Unknown => AbiV0Ownership::Unknown,
+            Self::Never | Self::TypeVar(_) | Self::SelfType | Self::Infer | Self::Unknown => AbiV0Ownership::Unknown,
             _ => AbiV0Ownership::Owned,
         }
     }
@@ -71,7 +73,7 @@ impl IncanType {
             Self::SelfType => AbiV0Representation::SelfType,
             Self::Ref(_) | Self::RefMut(_) => AbiV0Representation::Borrow,
             Self::RustInteropPath(_) => AbiV0Representation::RustInterop,
-            Self::Infer | Self::Unknown => AbiV0Representation::Unknown,
+            Self::Never | Self::Infer | Self::Unknown => AbiV0Representation::Unknown,
         }
     }
 }
@@ -79,6 +81,7 @@ impl IncanType {
 impl fmt::Display for IncanType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Never => write!(f, "!"),
             Self::Primitive(primitive) => write!(f, "{primitive}"),
             Self::Named(name) | Self::TypeVar(name) => write!(f, "{name}"),
             Self::Generic { base, args } => write_joined_type_args(f, base, args),
@@ -277,6 +280,15 @@ mod tests {
         };
 
         assert_eq!(ty.to_string(), "(List[int], *str) -> (bool, rust::std::path::PathBuf)");
+    }
+
+    #[test]
+    fn semantic_never_type_is_internal_and_representation_free() {
+        let facts = IncanType::Never.abi_v0_facts();
+
+        assert_eq!(facts.identity.canonical, "!");
+        assert_eq!(facts.ownership, AbiV0Ownership::Unknown);
+        assert_eq!(facts.representation, AbiV0Representation::Unknown);
     }
 
     #[test]

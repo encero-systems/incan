@@ -1965,7 +1965,8 @@ impl TypeChecker {
     pub(in crate::frontend::typechecker) fn is_copy_type(&self, ty: &ResolvedType) -> bool {
         matches!(
             ty,
-            ResolvedType::Int
+            ResolvedType::Never
+                | ResolvedType::Int
                 | ResolvedType::Float
                 | ResolvedType::Numeric(_)
                 | ResolvedType::Bool
@@ -1978,7 +1979,8 @@ impl TypeChecker {
     /// Check if a type is cloneable.
     pub(in crate::frontend::typechecker) fn is_clone_type(&self, ty: &ResolvedType) -> bool {
         match ty {
-            ResolvedType::Int
+            ResolvedType::Never
+            | ResolvedType::Int
             | ResolvedType::Float
             | ResolvedType::Numeric(_)
             | ResolvedType::Bool

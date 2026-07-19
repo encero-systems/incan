@@ -36,6 +36,37 @@ fn dummy_reexported_type_metadata(path: &str, definition_path: &str) -> RustItem
     }
 }
 
+/// Dependency-source and generated-source fallbacks must not reinterpret Rust's never type as an owner-relative path.
+#[test]
+fn source_and_generated_type_displays_preserve_never_type() {
+    let external_crates = HashSet::new();
+    let aliases = HashMap::new();
+    let preferred_external_paths = HashMap::new();
+    let source_public_reexports = HashMap::new();
+
+    assert_eq!(
+        generated_type_display(
+            RUST_NEVER_TYPE_DISPLAY,
+            "demo",
+            &["errors".to_string()],
+            &external_crates,
+        ),
+        RUST_NEVER_TYPE_DISPLAY,
+    );
+    assert_eq!(
+        source_type_display(
+            RUST_NEVER_TYPE_DISPLAY,
+            "demo",
+            &["errors".to_string()],
+            &external_crates,
+            &aliases,
+            &preferred_external_paths,
+            &source_public_reexports,
+        ),
+        RUST_NEVER_TYPE_DISPLAY,
+    );
+}
+
 #[test]
 fn lockfile_registry_fallback_resolves_hyphenated_package_for_underscored_crate_name()
 -> Result<(), Box<dyn std::error::Error>> {

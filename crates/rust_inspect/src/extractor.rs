@@ -297,7 +297,11 @@ fn normalize_variant_payload_shape(shape: RustTypeShape) -> RustTypeShape {
     }
 }
 
+/// Classify a rust-analyzer HIR type into the shared structural shape consumed by interop metadata.
 fn rust_type_shape(ty: &Type<'_>, db: &RootDatabase, dt: DisplayTarget) -> RustTypeShape {
+    if ty.is_never() {
+        return RustTypeShape::Never;
+    }
     if ty.is_bool() {
         return RustTypeShape::Bool;
     }
@@ -561,6 +565,7 @@ fn canonicalize_imported_single_segment_type_display(text: &str, f: Function, db
     imported_type_path_in_function_scope(f, normalized.as_str(), db)
 }
 
+/// Return whether any part of a structured Rust type still lacks reliable metadata.
 fn type_shape_contains_unknown(shape: &RustTypeShape) -> bool {
     match shape {
         RustTypeShape::Option(inner) | RustTypeShape::Ref(inner) => type_shape_contains_unknown(inner),
@@ -568,7 +573,8 @@ fn type_shape_contains_unknown(shape: &RustTypeShape) -> bool {
         RustTypeShape::Tuple(items) => items.iter().any(type_shape_contains_unknown),
         RustTypeShape::RustPath { args, .. } => args.iter().any(type_shape_contains_unknown),
         RustTypeShape::Unknown => true,
-        RustTypeShape::Bool
+        RustTypeShape::Never
+        | RustTypeShape::Bool
         | RustTypeShape::Float
         | RustTypeShape::Int
         | RustTypeShape::Str

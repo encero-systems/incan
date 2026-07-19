@@ -1587,6 +1587,7 @@ impl<'a> IrEmitter<'a> {
     /// Convert resolved frontend metadata into IR type metadata without requiring an AST lowering context.
     fn resolved_type_to_ir_type(ty: &ResolvedType) -> IrType {
         match ty {
+            ResolvedType::Never => IrType::Unknown,
             ResolvedType::Int => IrType::Int,
             ResolvedType::Float => IrType::Float,
             ResolvedType::Numeric(id) => IrType::Numeric(*id),
