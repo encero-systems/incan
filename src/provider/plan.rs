@@ -11,8 +11,8 @@ use crate::frontend::library_manifest_index::{
     load_provider_dependency_artifact,
 };
 use crate::library_manifest::{
-    LibraryManifest, LibraryManifestError, ProviderCargoDependency, ProviderImplementationFacet,
-    digest_provider_artifact,
+    LibraryManifest, LibraryManifestError, ProviderCargoDependency, ProviderDependencyKind, ProviderDependencyMetadata,
+    ProviderImplementationFacet, digest_provider_artifact,
 };
 
 use super::features::feature_value_location;
@@ -236,6 +236,37 @@ pub enum ProviderPlanError {
         /// SDK component that must be selected explicitly.
         component: String,
     },
+    /// A compiled library freezes a private SDK implementation that is not equivalent to the active SDK artifact.
+    #[error(
+        "compiled library `{library}` at {manifest_path} has incompatible private SDK provider `{provider}`: frozen identity `{frozen_identity}`, active SDK identity `{active_identity}`; rebuild the compiled library with the active Incan SDK"
+    )]
+    IncompatibleCompiledSdkDependency {
+        /// Compiled library that froze the private implementation edge.
+        library: String,
+        /// Checked library manifest carrying the stale edge.
+        manifest_path: PathBuf,
+        /// SDK provider package name.
+        provider: String,
+        /// Stable name, version, digest, and feature projection frozen by the library.
+        frozen_identity: String,
+        /// Matching provider identities advertised by the active SDK, or an explicit absence marker.
+        active_identity: String,
+    },
+}
+
+/// One compiled-library dependency that must be projected through the active equivalent SDK artifact.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SdkDependencyRebinding {
+    /// Compiled library crate whose Cargo manifest freezes the old SDK path.
+    pub containing_artifact: LibraryArtifactMetadata,
+    /// Historical provider crate root recorded relative to the containing artifact; it may no longer exist.
+    pub source_crate_root: PathBuf,
+    /// Logical Cargo provider package name.
+    pub provider_name: String,
+    /// Cargo dependency key frozen in the containing generated manifest.
+    pub dependency_key: String,
+    /// Active inventory-owned provider crate root with equivalent semantic identity.
+    pub active_crate_root: PathBuf,
 }
 
 /// Immutable provider catalog and active module projection shared by every compiler stage.
@@ -245,6 +276,7 @@ pub struct ProviderPlan {
     records: BTreeMap<String, ProviderRecord>,
     module_catalog: BTreeMap<Vec<String>, String>,
     used_module_paths: BTreeSet<Vec<String>>,
+    sdk_dependency_rebindings: Vec<SdkDependencyRebinding>,
     /// Reserved namespace roots owned by the one SDK component currently being compiled from source.
     ///
     /// This bootstrap-only grant disappears once the checked provider manifest is published and must never be
@@ -291,12 +323,14 @@ impl ProviderPlan {
             }
             indexed_records.insert(key, record);
         }
+        let sdk_dependency_rebindings = resolve_sdk_dependency_rebindings(&indexed_records)?;
 
         Ok(Self {
             library_manifest_index,
             records: indexed_records,
             module_catalog,
             used_module_paths: used_module_paths.into_iter().collect(),
+            sdk_dependency_rebindings,
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
         })
     }
@@ -304,6 +338,11 @@ impl ProviderPlan {
     /// Return the consumer-side dependency manifest index normalized into this plan.
     pub fn library_manifest_index(&self) -> &LibraryManifestIndex {
         &self.library_manifest_index
+    }
+
+    /// Return artifact projections needed to replace stale physical SDK cache paths without mutating either artifact.
+    pub(crate) fn sdk_dependency_rebindings(&self) -> &[SdkDependencyRebinding] {
+        &self.sdk_dependency_rebindings
     }
 
     /// Build one provider plan from ordinary dependency artifacts and the active SDK catalog.
@@ -358,6 +397,7 @@ impl ProviderPlan {
             records: BTreeMap::from([(key, record)]),
             module_catalog,
             used_module_paths: BTreeSet::new(),
+            sdk_dependency_rebindings: Vec::new(),
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
         }
     }
@@ -422,6 +462,7 @@ impl ProviderPlan {
             records: BTreeMap::from([(key.clone(), record)]),
             module_catalog: namespace_claims.into_iter().map(|claim| (claim, key.clone())).collect(),
             used_module_paths: BTreeSet::new(),
+            sdk_dependency_rebindings: Vec::new(),
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
         }
     }
@@ -629,6 +670,156 @@ impl ProviderPlan {
         }
         Ok(())
     }
+}
+
+/// Resolve historical private SDK edges in ordinary compiled libraries against the active inventory by logical
+/// identity.
+///
+/// The checked `.incnlib` descriptor is authoritative for the frozen name, version, digest, and feature projection;
+/// the old physical cache root is deliberately not read because content-addressed provider generations may already
+/// have been collected. Only an enabled, available active SDK record with the exact identity can replace that path.
+fn resolve_sdk_dependency_rebindings(
+    records: &BTreeMap<String, ProviderRecord>,
+) -> Result<Vec<SdkDependencyRebinding>, ProviderPlanError> {
+    let sdk_records = records
+        .values()
+        .filter(|record| matches!(record.authority, NamespaceAuthority::SdkReserved))
+        .collect::<Vec<_>>();
+    if sdk_records.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut rebindings = Vec::new();
+    for library in records
+        .values()
+        .filter(|record| matches!(record.authority, NamespaceAuthority::ProjectDependency { .. }))
+    {
+        let (Some(manifest), Some(containing_artifact)) = (library.manifest.as_deref(), library.artifact.as_ref())
+        else {
+            continue;
+        };
+        for dependency in manifest
+            .contract_metadata
+            .provider
+            .provider_dependencies
+            .iter()
+            .filter(|dependency| dependency.kind == ProviderDependencyKind::PrivateImplementation)
+        {
+            let candidates = sdk_records
+                .iter()
+                .copied()
+                .filter(|record| record.identity.name == dependency.provider_name)
+                .collect::<Vec<_>>();
+            let exact = candidates.iter().copied().find(|record| {
+                record.identity.version == dependency.provider_version
+                    && record.identity.digest == dependency.artifact_digest
+                    && record.identity.feature_projection == dependency.requested_features
+                    && record.enabled
+                    && record.available
+                    && record.artifact.is_some()
+            });
+            let Some(active) = exact else {
+                return Err(incompatible_compiled_sdk_dependency(
+                    library,
+                    containing_artifact,
+                    dependency,
+                    &candidates,
+                ));
+            };
+            let Some(active_artifact) = active.artifact.as_ref() else {
+                return Err(incompatible_compiled_sdk_dependency(
+                    library,
+                    containing_artifact,
+                    dependency,
+                    &candidates,
+                ));
+            };
+            let source_crate_root =
+                normalize_artifact_root(&containing_artifact.crate_root.join(&dependency.relative_artifact_path));
+            let active_crate_root = normalize_artifact_root(&active_artifact.crate_root);
+            if source_crate_root == active_crate_root {
+                continue;
+            }
+            rebindings.push(SdkDependencyRebinding {
+                containing_artifact: containing_artifact.clone(),
+                source_crate_root,
+                provider_name: dependency.provider_name.clone(),
+                dependency_key: dependency.dependency_key.clone(),
+                active_crate_root,
+            });
+        }
+    }
+    rebindings.sort_by(|left, right| {
+        (
+            &left.containing_artifact.crate_root,
+            &left.provider_name,
+            &left.dependency_key,
+            &left.source_crate_root,
+            &left.active_crate_root,
+        )
+            .cmp(&(
+                &right.containing_artifact.crate_root,
+                &right.provider_name,
+                &right.dependency_key,
+                &right.source_crate_root,
+                &right.active_crate_root,
+            ))
+    });
+    rebindings.dedup();
+    Ok(rebindings)
+}
+
+/// Preserve a targeted pre-Cargo diagnostic when an active SDK cannot satisfy one frozen private implementation edge.
+fn incompatible_compiled_sdk_dependency(
+    library: &ProviderRecord,
+    artifact: &LibraryArtifactMetadata,
+    dependency: &ProviderDependencyMetadata,
+    candidates: &[&ProviderRecord],
+) -> ProviderPlanError {
+    let active_identity = if candidates.is_empty() {
+        "<missing from active SDK inventory>".to_string()
+    } else {
+        candidates
+            .iter()
+            .map(|candidate| {
+                let availability = if !candidate.enabled {
+                    "disabled"
+                } else if !candidate.available || candidate.artifact.is_none() {
+                    "unavailable"
+                } else {
+                    "available"
+                };
+                format!("{} ({availability})", candidate.identity.stable_key())
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    ProviderPlanError::IncompatibleCompiledSdkDependency {
+        library: library.identity.name.clone(),
+        manifest_path: artifact.manifest_path.clone(),
+        provider: dependency.provider_name.clone(),
+        frozen_identity: provider_dependency_stable_identity(dependency),
+        active_identity,
+    }
+}
+
+/// Render the same stable identity dimensions used by active SDK provider records.
+fn provider_dependency_stable_identity(dependency: &ProviderDependencyMetadata) -> String {
+    let features = dependency
+        .requested_features
+        .iter()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "{}@{}#{}[{}]",
+        dependency.provider_name, dependency.provider_version, dependency.artifact_digest, features
+    )
+}
+
+/// Canonicalize an artifact root when it exists while retaining an absent historical cache coordinate verbatim.
+fn normalize_artifact_root(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 /// Render one concise provider provenance chain for human diagnostics.
@@ -1356,6 +1547,139 @@ mod tests {
         );
         assert!(matches!(result, Err(ProviderPlanError::InventoryMismatch { .. })));
         Ok(())
+    }
+
+    #[test]
+    fn equivalent_private_sdk_dependency_rebinds_to_active_inventory_root_issue911() -> TestResult {
+        let workspace = tempfile::tempdir()?;
+        let library_artifact = workspace.path().join("library/target/lib");
+        let frozen_sdk_artifact = library_artifact.join("private/stdlib-codecs");
+        let active_sdk_artifact = workspace.path().join("active-sdk/stdlib-codecs");
+        std::fs::create_dir_all(&active_sdk_artifact)?;
+        let digest = format!("sha256:{}", "a".repeat(64));
+        let features = BTreeSet::from(["json".to_string()]);
+        let records = vec![
+            compiled_library_record(&library_artifact, &digest, features.clone()),
+            active_sdk_record(&active_sdk_artifact, &digest, features),
+        ];
+
+        let plan = ProviderPlan::new(LibraryManifestIndex::default(), records, [])?;
+        let rebindings = plan.sdk_dependency_rebindings();
+
+        assert_eq!(rebindings.len(), 1);
+        assert_eq!(rebindings[0].source_crate_root, frozen_sdk_artifact);
+        assert!(
+            !rebindings[0].source_crate_root.exists(),
+            "the historical cache root must not be required for logical rebinding"
+        );
+        assert_eq!(
+            rebindings[0].active_crate_root,
+            std::fs::canonicalize(active_sdk_artifact)?
+        );
+        assert_eq!(rebindings[0].provider_name, "incan_stdlib_codecs");
+        Ok(())
+    }
+
+    #[test]
+    fn incompatible_private_sdk_dependency_fails_before_cargo_issue911() -> TestResult {
+        let workspace = tempfile::tempdir()?;
+        let library_artifact = workspace.path().join("library/target/lib");
+        let frozen_sdk_artifact = library_artifact.join("private/stdlib-codecs");
+        let active_sdk_artifact = workspace.path().join("active-sdk/stdlib-codecs");
+        std::fs::create_dir_all(&frozen_sdk_artifact)?;
+        std::fs::create_dir_all(&active_sdk_artifact)?;
+        let frozen_digest = format!("sha256:{}", "a".repeat(64));
+        let active_digest = format!("sha256:{}", "b".repeat(64));
+        let features = BTreeSet::from(["json".to_string()]);
+        let records = vec![
+            compiled_library_record(&library_artifact, &frozen_digest, features.clone()),
+            active_sdk_record(&active_sdk_artifact, &active_digest, features),
+        ];
+
+        let error = ProviderPlan::new(LibraryManifestIndex::default(), records, [])
+            .err()
+            .ok_or("expected incompatible compiled SDK dependency")?;
+
+        assert!(matches!(
+            error,
+            ProviderPlanError::IncompatibleCompiledSdkDependency { .. }
+        ));
+        assert!(error.to_string().contains("incan_stdlib_codecs"));
+        assert!(error.to_string().contains("rebuild the compiled library"));
+        Ok(())
+    }
+
+    fn compiled_library_record(
+        artifact_root: &Path,
+        sdk_digest: &str,
+        sdk_features: BTreeSet<String>,
+    ) -> ProviderRecord {
+        let mut manifest = LibraryManifest::new("root_lib", "0.1.0");
+        manifest.contract_metadata.provider.provider_dependencies.push(
+            crate::library_manifest::ProviderDependencyMetadata {
+                kind: crate::library_manifest::ProviderDependencyKind::PrivateImplementation,
+                dependency_key: "incan_stdlib_codecs".to_string(),
+                provider_name: "incan_stdlib_codecs".to_string(),
+                provider_version: "0.5.0".to_string(),
+                artifact_digest: sdk_digest.to_string(),
+                relative_artifact_path: "private/stdlib-codecs".to_string(),
+                requested_features: sdk_features,
+                default_features: false,
+                optional: false,
+            },
+        );
+        ProviderRecord {
+            identity: ProviderIdentity {
+                name: "root_lib".to_string(),
+                version: "0.1.0".to_string(),
+                digest: format!("sha256:{}", "c".repeat(64)),
+                feature_projection: BTreeSet::new(),
+            },
+            provenance: ProviderProvenance::ProjectDependency {
+                dependency_key: "root_lib".to_string(),
+                manifest_path: artifact_root.join("root_lib.incnlib"),
+            },
+            authority: NamespaceAuthority::ProjectDependency {
+                dependency_key: "root_lib".to_string(),
+            },
+            namespace_claims: BTreeSet::new(),
+            available: true,
+            enabled: true,
+            manifest: Some(Arc::new(manifest)),
+            artifact: Some(LibraryArtifactMetadata::from_crate_root(
+                "root_lib",
+                "root_lib",
+                artifact_root,
+            )),
+            implementation_facets: Vec::new(),
+        }
+    }
+
+    fn active_sdk_record(artifact_root: &Path, digest: &str, feature_projection: BTreeSet<String>) -> ProviderRecord {
+        ProviderRecord {
+            identity: ProviderIdentity {
+                name: "incan_stdlib_codecs".to_string(),
+                version: "0.5.0".to_string(),
+                digest: digest.to_string(),
+                feature_projection,
+            },
+            provenance: ProviderProvenance::Sdk {
+                sdk_identity: "incan@0.5.0".to_string(),
+                component_id: "stdlib-codecs".to_string(),
+                inventory_path: None,
+            },
+            authority: NamespaceAuthority::SdkReserved,
+            namespace_claims: BTreeSet::new(),
+            available: true,
+            enabled: true,
+            manifest: Some(Arc::new(LibraryManifest::new("incan_stdlib_codecs", "0.5.0"))),
+            artifact: Some(LibraryArtifactMetadata::from_crate_root(
+                "incan_stdlib_codecs",
+                "incan_stdlib_codecs",
+                artifact_root,
+            )),
+            implementation_facets: Vec::new(),
+        }
     }
 
     fn record(
