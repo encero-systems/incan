@@ -123,8 +123,14 @@ fn generated_application_artifact_matches_baseline() -> Result<(), Box<dyn std::
     fs::create_dir_all(&src_dir)?;
     fs::write(
         project_root.join("incan.toml"),
-        "[project]\nname = \"artifact_app_baseline\"\nversion = \"0.1.0\"\n",
+        r#"[project]
+name = "artifact_app_baseline"
+version = "2.3.4"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+"#,
     )?;
+    fs::write(project_root.join("LICENSE"), "Apache License 2.0\n")?;
     write_fixture(&src_dir.join("main.incn"), "app_main.incn")?;
 
     let out_dir = project_root.join("out");
@@ -146,7 +152,13 @@ fn generated_application_artifact_matches_baseline() -> Result<(), Box<dyn std::
     let cargo_toml = read_cargo_toml(&out_dir.join("Cargo.toml"))?;
     let package = toml_table_at(&cargo_toml, "package")?;
     assert_eq!(toml_string_at(package, "name")?, "artifact_app_baseline");
+    assert_eq!(toml_string_at(package, "version")?, "2.3.4");
     assert_eq!(toml_string_at(package, "edition")?, "2021");
+    assert_eq!(toml_string_at(package, "license")?, "Apache-2.0");
+    assert!(
+        package.get("license-file").is_none(),
+        "Incan's plural license-files metadata must not become Cargo's singular license-file field"
+    );
     let dependencies = toml_table_at(&cargo_toml, "dependencies")?;
     assert!(
         toml_at(dependencies, "incan_stdlib").is_ok(),
@@ -161,6 +173,39 @@ fn generated_application_artifact_matches_baseline() -> Result<(), Box<dyn std::
 }
 
 #[test]
+fn generated_application_without_package_metadata_uses_compiler_defaults() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let project_root = tmp.path().join("artifact_default_metadata_project");
+    let src_dir = project_root.join("src");
+    fs::create_dir_all(&src_dir)?;
+    fs::write(
+        project_root.join("incan.toml"),
+        "[project]\nname = \"artifact_default_metadata\"\n",
+    )?;
+    write_fixture(&src_dir.join("main.incn"), "app_main.incn")?;
+
+    let out_dir = project_root.join("out");
+    let main_arg = src_dir
+        .join("main.incn")
+        .to_str()
+        .ok_or("application source path was not valid UTF-8")?
+        .to_string();
+    let out_arg = out_dir
+        .to_str()
+        .ok_or("application output path was not valid UTF-8")?
+        .to_string();
+    let output = run_incan(&project_root, &["build", &main_arg, &out_arg])?;
+    assert_success(&output, "incan build application artifact with default metadata");
+
+    let cargo_toml = read_cargo_toml(&out_dir.join("Cargo.toml"))?;
+    let package = toml_table_at(&cargo_toml, "package")?;
+    assert_eq!(toml_string_at(package, "version")?, env!("CARGO_PKG_VERSION"));
+    assert!(package.get("license").is_none());
+
+    Ok(())
+}
+
+#[test]
 fn generated_library_and_pub_dependency_consumer_artifacts_match_baseline() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let project_root = tmp.path().join("artifact_widgets_project");
@@ -168,8 +213,15 @@ fn generated_library_and_pub_dependency_consumer_artifacts_match_baseline() -> R
     fs::create_dir_all(&src_dir)?;
     fs::write(
         project_root.join("incan.toml"),
-        "[project]\nname = \"artifact_widgets_core\"\nversion = \"0.1.0\"\n",
+        r#"[project]
+name = "artifact_widgets_core"
+version = "4.5.6"
+license = "MIT OR Apache-2.0"
+license-files = ["LICENSE-MIT", "LICENSE-APACHE"]
+"#,
     )?;
+    fs::write(project_root.join("LICENSE-MIT"), "MIT License\n")?;
+    fs::write(project_root.join("LICENSE-APACHE"), "Apache License 2.0\n")?;
     write_fixture(&src_dir.join("widgets.incn"), "library_widgets.incn")?;
     write_fixture(&src_dir.join("lib.incn"), "library_lib.incn")?;
 
@@ -186,7 +238,7 @@ fn generated_library_and_pub_dependency_consumer_artifacts_match_baseline() -> R
 
     let manifest = LibraryManifest::read_from_path(&artifact_root.join("artifact_widgets_core.incnlib"))?;
     assert_eq!(manifest.name, "artifact_widgets_core");
-    assert_eq!(manifest.version, "0.1.0");
+    assert_eq!(manifest.version, "4.5.6");
     assert!(
         manifest.exports.models.iter().any(|model| model.name == "Widget"),
         "generated .incnlib should export Widget, got {:#?}",
@@ -203,9 +255,13 @@ fn generated_library_and_pub_dependency_consumer_artifacts_match_baseline() -> R
     );
 
     let cargo_toml = read_cargo_toml(&artifact_root.join("Cargo.toml"))?;
-    assert_eq!(
-        toml_string_at(toml_table_at(&cargo_toml, "package")?, "name")?,
-        "artifact_widgets_core"
+    let package = toml_table_at(&cargo_toml, "package")?;
+    assert_eq!(toml_string_at(package, "name")?, "artifact_widgets_core");
+    assert_eq!(toml_string_at(package, "version")?, manifest.version);
+    assert_eq!(toml_string_at(package, "license")?, "MIT OR Apache-2.0");
+    assert!(
+        package.get("license-file").is_none(),
+        "Incan's plural license-files metadata must not become Cargo's singular license-file field"
     );
     assert_eq!(
         toml_string_at(toml_table_at(&cargo_toml, "lib")?, "path")?,

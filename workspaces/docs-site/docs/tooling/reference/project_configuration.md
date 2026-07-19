@@ -35,6 +35,8 @@ requires-incan = ">=0.2"
 
 `requires-incan` is enforced by project-aware execution commands. If the active compiler does not satisfy the requirement, `incan run` in project mode, `incan build`, `incan test`, `incan lock`, and `incan env run` fail before compiling, locking, or launching scripts. Single-file or inline commands without a discovered project manifest do not infer a toolchain requirement.
 
+For `incan build` and `incan build --lib`, declared `version` and `license` values are preserved in the generated Cargo package. A generated library's Cargo version therefore matches its `.incnlib` version. The plural Incan `license-files` field remains source-package metadata and is not translated to Cargo's singular `license-file` field.
+
 ### `[project.scripts]`
 
 Named entry points for CLI commands:

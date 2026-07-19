@@ -894,13 +894,13 @@ members = ["packages/*"]
 itoa = "1"
 "#,
     )?;
-    for name in ["alpha", "zebra"] {
+    for (name, version) in [("alpha", "1.2.3"), ("zebra", "4.5.6")] {
         let member_root = root.path().join("packages").join(name);
         fs::create_dir_all(member_root.join("src"))?;
         fs::write(
             member_root.join("incan.toml"),
             format!(
-                "[project]\nname = \"{name}\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n\n[project.features]\ndefault = [\"{name}\"]\n{name} = []\n{}",
+                "[project]\nname = \"{name}\"\nversion = \"{version}\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n\n[project.features]\ndefault = [\"{name}\"]\n{name} = []\n{}",
                 if name == "alpha" {
                     "\n[rust-dependencies]\nitoa = { workspace = true }\n"
                 } else {
@@ -971,11 +971,23 @@ itoa = "1"
             && !root.path().join("packages/zebra/incan.lock").exists(),
         "workspace members must not receive authoritative lockfiles"
     );
-    for name in ["alpha", "zebra"] {
+    for (name, version) in [("alpha", "1.2.3"), ("zebra", "4.5.6")] {
         let build_output = run_incan(&root.path().join("packages").join(name), &["build", "--locked"])?;
         assert_success(
             &build_output,
             &format!("incan build --locked from workspace member {name}"),
+        );
+        let generated_manifest = fs::read_to_string(
+            root.path()
+                .join("packages")
+                .join(name)
+                .join("target/incan")
+                .join(name)
+                .join("Cargo.toml"),
+        )?;
+        assert!(
+            generated_manifest.contains(&format!("version = \"{version}\"")),
+            "workspace member {name} did not preserve its authored package version:\n{generated_manifest}"
         );
     }
     Ok(())

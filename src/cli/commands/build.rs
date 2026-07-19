@@ -873,6 +873,9 @@ fn prepare_project_with_options(
     }
     // ---- Setup project generator ----
     let mut generator = ProjectGenerator::new(&out_dir, project_name.as_str(), true);
+    if let Some(project) = manifest.as_ref().and_then(|manifest| manifest.project.as_ref()) {
+        generator.set_package_metadata(project.version.clone(), project.license.clone());
+    }
     generator.set_provider_plan(&provider_plan);
     generator.set_cargo_target_dir_override(options.generated_cargo_target_dir.map(Path::to_path_buf));
     generator.set_stdlib_features(project_requirements.stdlib_features.clone());
@@ -1423,6 +1426,7 @@ fn prepare_library_project(
         .as_ref()
         .and_then(|project| project.version.clone())
         .unwrap_or_else(|| "0.1.0".to_string());
+    let project_license = manifest.project.as_ref().and_then(|project| project.license.clone());
 
     let mut library_manifest =
         LibraryManifest::from_checked_exports(project_name.clone(), project_version.clone(), &selected_exports);
@@ -1494,6 +1498,7 @@ fn prepare_library_project(
     }
     let mut generator = ProjectGenerator::new(&out_dir, project_name.as_str(), false);
     generator.set_package_name(Some(cargo_package_name.clone()));
+    generator.set_package_metadata(Some(project_version.clone()), project_license);
     generator.set_provider_plan(&provider_plan);
     generator.set_cargo_target_dir_override(generated_cargo_target_dir.map(Path::to_path_buf));
     generator.set_stdlib_features(project_requirements.stdlib_features.clone());
