@@ -2610,6 +2610,32 @@ fn test_newtype_implicit_coercion_codegen() {
 }
 
 #[test]
+fn test_validated_newtype_json_deserialization_uses_canonical_hook() {
+    let source = load_test_file("newtype_json_validation");
+    let rust_code = generate_rust(&source);
+    assert!(
+        !rust_code.contains("serde::Deserialize)]\nstruct ShortId"),
+        "validated newtypes must not derive unchecked deserialization:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("#[derive(Debug, Clone, serde::Serialize)]\nstruct ShortId"),
+        "checked deserialization must preserve newtype serialization:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("impl<'de> serde::Deserialize<'de> for ShortId"),
+        "validated newtypes should emit checked deserialization:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("ShortId::from_underlying") || rust_code.contains("Self::from_underlying"),
+        "checked deserialization should call the canonical validation hook:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("impl<'de, D> serde::Deserialize<'de> for CheckedBox<D>"),
+        "checked deserialization should preserve generic newtype parameters:\n{rust_code}"
+    );
+}
+
+#[test]
 fn test_constrained_newtype_generated_validation_codegen() {
     let source = r#"
 type PositiveInt = newtype int[gt=0]

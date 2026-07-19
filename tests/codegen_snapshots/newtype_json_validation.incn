@@ -1,0 +1,31 @@
+from std.serde import json
+from std.serde.json import Deserialize
+
+
+@derive(Clone, json)
+type ShortId = newtype str:
+    def from_underlying(value: str) -> Result[Self, ValidationError]:
+        if len(value) > 8:
+            return Err(ValidationError("identifier too long"))
+        return Ok(ShortId(value))
+
+
+@derive(json)
+model Envelope:
+    id: ShortId
+
+
+@derive(Clone, Deserialize)
+type CheckedBox[D] = newtype D:
+    def from_underlying(value: D) -> Result[Self, ValidationError]:
+        return Ok(CheckedBox[D](value))
+
+
+@derive(Deserialize)
+model GenericEnvelope:
+    value: CheckedBox[str]
+
+
+def main() -> None:
+    _first = Envelope.from_json("{\"id\":\"valid\"}")
+    _second = GenericEnvelope.from_json("{\"value\":\"valid\"}")
