@@ -83,6 +83,7 @@ pub fn tuple_generic_ty(elems: Vec<ResolvedType>) -> ResolvedType {
 /// Render a resolved generic argument using Rust type syntax for canonical Rust paths.
 pub fn render_resolved_type_as_rust_arg(ty: &ResolvedType) -> String {
     match ty {
+        ResolvedType::Never => "!".to_string(),
         ResolvedType::Int => "i64".to_string(),
         ResolvedType::Float => "f64".to_string(),
         ResolvedType::Numeric(id) => numerics::rust_name(*id).to_string(),

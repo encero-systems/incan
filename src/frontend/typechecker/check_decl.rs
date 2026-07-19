@@ -2553,7 +2553,8 @@ impl TypeChecker {
             | ResolvedType::FrozenDict(_, _)
             | ResolvedType::FrozenSet(_)
             | ResolvedType::Function(_, _) => false,
-            ResolvedType::Int
+            ResolvedType::Never
+            | ResolvedType::Int
             | ResolvedType::Float
             | ResolvedType::Numeric(_)
             | ResolvedType::Bool

@@ -16,7 +16,7 @@ use ra_ap_hir::{
 use ra_ap_ide_db::RootDatabase;
 use ra_ap_syntax::{
     AstNode,
-    ast::{self, HasModuleItem, HasName},
+    ast::{self, HasGenericParams, HasModuleItem, HasName},
 };
 
 use super::error::RustMetadataError;
@@ -297,7 +297,11 @@ fn normalize_variant_payload_shape(shape: RustTypeShape) -> RustTypeShape {
     }
 }
 
+/// Classify a rust-analyzer HIR type into the shared structural shape consumed by interop metadata.
 fn rust_type_shape(ty: &Type<'_>, db: &RootDatabase, dt: DisplayTarget) -> RustTypeShape {
+    if ty.is_never() {
+        return RustTypeShape::Never;
+    }
     if ty.is_bool() {
         return RustTypeShape::Bool;
     }
@@ -561,6 +565,7 @@ fn canonicalize_imported_single_segment_type_display(text: &str, f: Function, db
     imported_type_path_in_function_scope(f, normalized.as_str(), db)
 }
 
+/// Return whether any part of a structured Rust type still lacks reliable metadata.
 fn type_shape_contains_unknown(shape: &RustTypeShape) -> bool {
     match shape {
         RustTypeShape::Option(inner) | RustTypeShape::Ref(inner) => type_shape_contains_unknown(inner),
@@ -568,7 +573,8 @@ fn type_shape_contains_unknown(shape: &RustTypeShape) -> bool {
         RustTypeShape::Tuple(items) => items.iter().any(type_shape_contains_unknown),
         RustTypeShape::RustPath { args, .. } => args.iter().any(type_shape_contains_unknown),
         RustTypeShape::Unknown => true,
-        RustTypeShape::Bool
+        RustTypeShape::Never
+        | RustTypeShape::Bool
         | RustTypeShape::Float
         | RustTypeShape::Int
         | RustTypeShape::Str
@@ -629,6 +635,19 @@ fn source_function_param_type_display(f: Function, param: &ra_ap_hir::Param<'_>,
     source_function_type_display(f, text.as_str(), db)
 }
 
+/// Return source-declared type parameters in their Rust turbofish order.
+fn source_function_type_params(f: Function, db: &RootDatabase) -> Vec<String> {
+    f.source(db)
+        .into_iter()
+        .flat_map(|source| source.value.generic_param_list())
+        .flat_map(|params| params.generic_params())
+        .filter_map(|param| match param {
+            ast::GenericParam::TypeParam(param) => param.name().map(|name| name.text().to_string()),
+            ast::GenericParam::ConstParam(_) | ast::GenericParam::LifetimeParam(_) => None,
+        })
+        .collect()
+}
+
 /// Extract a Rust function signature from inspection metadata.
 fn extract_function_sig(f: Function, db: &RootDatabase, dt: DisplayTarget) -> RustFunctionSig {
     let params = f
@@ -670,6 +689,7 @@ fn extract_function_sig(f: Function, db: &RootDatabase, dt: DisplayTarget) -> Ru
         return_type = source_return_type;
     }
     RustFunctionSig {
+        type_params: source_function_type_params(f, db),
         params,
         return_type,
         is_async: f.is_async(db),
@@ -1250,6 +1270,7 @@ pub fn run_inline<D: FnMut(&mut Data, &OutputCallbackInfo) + Send + 'static>(cal
         let RustItemKind::Function(sig) = metadata.kind else {
             return Err(std::io::Error::other("expected function metadata").into());
         };
+        assert_eq!(sig.type_params, ["D"]);
         assert_eq!(
             sig.params[0].type_display,
             "impl FnMut(&mut demo_callback_probe::Data, &demo_callback_probe::OutputCallbackInfo)"

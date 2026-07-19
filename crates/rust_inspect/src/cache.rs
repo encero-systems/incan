@@ -14,15 +14,16 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use incan_core::interop::{
-    RustFieldInfo, RustFunctionSig, RustItemKind, RustItemMetadata, RustMethodSig, RustParam, RustTraitAssoc,
-    RustTraitInfo, RustTypeInfo, RustTypeMetadataCompleteness, RustTypeShape, RustTypeShapePathFallback,
-    RustVariantInfo, RustVisibility, parse_rust_type_shape_text, rust_source_borrowed_type_param_bound_display,
-    rust_source_callable_bound_for_type_param, rust_source_type_param_has_as_fd_bound, split_top_level_rust_args,
+    RUST_NEVER_TYPE_DISPLAY, RustFieldInfo, RustFunctionSig, RustItemKind, RustItemMetadata, RustMethodSig, RustParam,
+    RustTraitAssoc, RustTraitInfo, RustTypeInfo, RustTypeMetadataCompleteness, RustTypeShape,
+    RustTypeShapePathFallback, RustVariantInfo, RustVisibility, parse_rust_type_shape_text,
+    rust_source_borrowed_type_param_bound_display, rust_source_callable_bound_for_type_param,
+    rust_source_type_param_has_as_fd_bound, split_top_level_rust_args,
 };
 use incan_core::lang::types::collections::{self, CollectionTypeId};
 use ra_ap_syntax::{
     AstNode, Edition, SourceFile,
-    ast::{self, HasModuleItem, HasName, HasVisibility},
+    ast::{self, HasGenericParams, HasModuleItem, HasName, HasVisibility},
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -1190,6 +1191,9 @@ fn generated_type_path_display(
     if let Some(base) = generated_known_collection_base(compact.as_str()) {
         return base.to_string();
     }
+    if compact == RUST_NEVER_TYPE_DISPLAY {
+        return compact;
+    }
     match compact.as_str() {
         "bool" | "f32" | "f64" | "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64"
         | "u128" | "usize" | "str" | "String" | "()" | "[u8]" => return compact,
@@ -1476,6 +1480,9 @@ fn source_type_path_display(
     }
     if let Some(base) = generated_known_collection_base(compact.as_str()) {
         return base.to_string();
+    }
+    if compact == RUST_NEVER_TYPE_DISPLAY {
+        return compact;
     }
     match compact.as_str() {
         "Self" => return "Self".to_string(),
@@ -1896,6 +1903,7 @@ fn source_function_metadata(
         definition_path: Some(definition),
         visibility: RustVisibility::Public,
         kind: RustItemKind::Function(RustFunctionSig {
+            type_params: source_function_type_params(&function),
             params,
             return_type,
             is_async: function.async_token().is_some(),
@@ -1951,11 +1959,25 @@ fn source_function_signature(
         .map(|ty| ctx.type_display(ty.syntax().text().to_string().as_str()))
         .unwrap_or_else(|| "()".to_string());
     RustFunctionSig {
+        type_params: source_function_type_params(function),
         params,
         return_type,
         is_async: function.async_token().is_some(),
         is_unsafe: function.unsafe_token().is_some(),
     }
+}
+
+/// Return source-declared type parameters in Rust turbofish order.
+fn source_function_type_params(function: &ast::Fn) -> Vec<String> {
+    function
+        .generic_param_list()
+        .into_iter()
+        .flat_map(|params| params.generic_params())
+        .filter_map(|param| match param {
+            ast::GenericParam::TypeParam(param) => param.name().map(|name| name.text().to_string()),
+            ast::GenericParam::ConstParam(_) | ast::GenericParam::LifetimeParam(_) => None,
+        })
+        .collect()
 }
 
 /// Return the metadata display type for a Rust source `self` parameter.
@@ -2720,6 +2742,7 @@ fn source_macro_function_metadata(
         definition_path: Some(definition.join("::")),
         visibility: RustVisibility::Public,
         kind: RustItemKind::Function(RustFunctionSig {
+            type_params: Vec::new(),
             params,
             return_type: expr_display,
             is_async: false,

@@ -14,6 +14,8 @@ use crate::frontend::symbols::{CallableParam, ResolvedType};
 /// the export originated.
 pub(crate) fn type_ref_from_resolved(ty: &ResolvedType) -> TypeRef {
     match ty {
+        // Rust's never type is compiler-internal until Incan exposes a source-level bottom type.
+        ResolvedType::Never => TypeRef::Unknown,
         ResolvedType::Int => named_type_ref("int"),
         ResolvedType::Float => named_type_ref("float"),
         ResolvedType::Numeric(id) => named_type_ref(numerics::as_str(*id)),

@@ -33,8 +33,13 @@ use std::collections::{HashMap, HashSet};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
-use super::decl::{FunctionParam, IrDeclKind, IrEnumValue, IrEnumValueType, IrStruct, VariantFields, Visibility};
-use super::expr::{IrDictEntry, IrExprKind, IrListEntry, Literal as IrLiteral, TypedExpr};
+use super::decl::{
+    FunctionParam, IrDeclKind, IrEnumValue, IrEnumValueType, IrImportOrigin, IrStruct, VariantFields, Visibility,
+};
+use super::expr::{
+    IrCallArg, IrCallArgKind, IrDictEntry, IrExprKind, IrListEntry, Literal as IrLiteral, TypedExpr, VarAccess,
+    VarRefKind,
+};
 use super::types::{IR_UNION_TYPE_NAME, IrType, Mutability};
 use super::{FunctionRegistry, FunctionSignature, IrProgram};
 use crate::frontend::api_metadata::{
@@ -44,8 +49,8 @@ use crate::frontend::api_metadata::{
 use crate::frontend::library_manifest_index::{LibraryManifestIndex, LibraryManifestIndexEntry};
 use crate::frontend::symbols::ResolvedType;
 use crate::library_manifest::{
-    FieldExport, LibraryManifest, MethodExport, NewtypeExport, ParamDefaultExport, ParamKindExport, TypeRef,
-    resolved_type_from_manifest_type_ref,
+    FieldExport, FieldVisibilityExport, LibraryManifest, MethodExport, NewtypeExport, ParamDefaultCallSignatureExport,
+    ParamDefaultExport, ParamExport, ParamKindExport, TypeRef, resolved_type_from_manifest_type_ref,
 };
 use incan_core::lang::types::collections::{self, CollectionTypeId};
 use incan_core::lang::{rust_keywords, stdlib};
@@ -170,16 +175,20 @@ impl GeneratedUseAnalysis {
 
 #[derive(Clone)]
 pub(super) struct StructConstructorMetadata {
+    dependency: Option<String>,
     fields: Vec<String>,
     field_types: HashMap<String, IrType>,
     field_defaults: HashMap<String, super::IrExpr>,
+    default_fields: HashSet<String>,
     field_aliases: HashMap<String, String>,
+    requires_constructor_function: bool,
 }
 
 impl StructConstructorMetadata {
     /// Build constructor-emission metadata from one lowered source-defined struct.
     fn from_struct(s: &IrStruct) -> Self {
         Self {
+            dependency: None,
             fields: s.fields.iter().map(|field| field.name.clone()).collect(),
             field_types: s
                 .fields
@@ -196,6 +205,12 @@ impl StructConstructorMetadata {
                         .map(|default| (field.name.clone(), default.clone()))
                 })
                 .collect(),
+            default_fields: s
+                .fields
+                .iter()
+                .filter(|field| field.default.is_some())
+                .map(|field| field.name.clone())
+                .collect(),
             field_aliases: s
                 .fields
                 .iter()
@@ -207,6 +222,55 @@ impl StructConstructorMetadata {
                         .map(|alias| (alias.clone(), field.name.clone()))
                 })
                 .collect(),
+            requires_constructor_function: false,
+        }
+    }
+
+    /// Build constructor-emission metadata from one compiled-library export.
+    fn from_manifest_fields(library: &str, fields: &[FieldExport]) -> Self {
+        let requires_constructor_function = fields
+            .iter()
+            .any(|field| matches!(field.visibility, FieldVisibilityExport::Private));
+        Self {
+            dependency: Some(library.to_string()),
+            fields: fields.iter().map(|field| field.name.clone()).collect(),
+            field_types: fields
+                .iter()
+                .map(|field| (field.name.clone(), IrEmitter::manifest_type_ref_to_ir_type(&field.ty)))
+                .collect(),
+            field_defaults: fields
+                .iter()
+                .filter(|_| !requires_constructor_function)
+                .filter_map(|field| {
+                    field
+                        .default
+                        .as_ref()
+                        .and_then(|default| IrEmitter::manifest_default_to_ir_expr(library, default))
+                        .map(|default| (field.name.clone(), default))
+                })
+                .collect(),
+            default_fields: fields
+                .iter()
+                .filter(|field| {
+                    if requires_constructor_function {
+                        field.has_default
+                    } else {
+                        field.default.is_some()
+                    }
+                })
+                .map(|field| field.name.clone())
+                .collect(),
+            field_aliases: fields
+                .iter()
+                .filter_map(|field| {
+                    field
+                        .alias
+                        .as_ref()
+                        .filter(|alias| *alias != &field.name)
+                        .map(|alias| (alias.clone(), field.name.clone()))
+                })
+                .collect(),
+            requires_constructor_function,
         }
     }
 
@@ -232,7 +296,7 @@ impl StructConstructorMetadata {
             .collect::<HashSet<_>>();
         self.fields
             .iter()
-            .all(|field| provided.contains(field.as_str()) || self.field_defaults.contains_key(field))
+            .all(|field| provided.contains(field.as_str()) || self.default_fields.contains(field))
     }
 }
 
@@ -302,6 +366,8 @@ pub struct IrEmitter<'a> {
     struct_field_defaults: std::collections::HashMap<(String, String), super::IrExpr>,
     /// Constructor metadata variants for source-defined structs that share a simple name across modules.
     struct_constructor_metadata: HashMap<String, Vec<StructConstructorMetadata>>,
+    /// Constructor metadata keyed by the exact public dependency and public export spelling.
+    pub_dependency_constructor_metadata: HashMap<(String, String), StructConstructorMetadata>,
     /// Transparent local type aliases keyed by alias name.
     type_aliases: HashMap<String, IrType>,
     /// Incan `rusttype` aliases that should use compiler-owned call conversion rules at the surface boundary.
@@ -435,6 +501,7 @@ impl<'a> IrEmitter<'a> {
             struct_field_descriptions: std::collections::HashMap::new(),
             struct_field_defaults: std::collections::HashMap::new(),
             struct_constructor_metadata: HashMap::new(),
+            pub_dependency_constructor_metadata: HashMap::new(),
             type_aliases: HashMap::new(),
             rusttype_alias_names: HashSet::new(),
             method_signatures: HashMap::new(),
@@ -1059,9 +1126,14 @@ impl<'a> IrEmitter<'a> {
     }
 
     /// True when the generated free constructor function for a struct should be retained.
-    pub(super) fn should_emit_struct_constructor(&self, struct_name: &str) -> bool {
+    pub(super) fn should_emit_struct_constructor(&self, s: &IrStruct) -> bool {
         let analysis = self.generated_use_analysis.borrow();
-        analysis.used_constructors.contains(struct_name)
+        let has_private_fields = s
+            .fields
+            .iter()
+            .any(|field| matches!(field.visibility, Visibility::Private));
+        analysis.used_constructors.contains(&s.name)
+            || (has_private_fields && matches!(s.visibility, Visibility::Public))
     }
 
     /// True when a generated private field needs a narrow `dead_code` expectation because Rust cannot see an
@@ -1181,11 +1253,24 @@ impl<'a> IrEmitter<'a> {
             let Some(LibraryManifestIndexEntry::Loaded { manifest, .. }) = index.get(&library) else {
                 continue;
             };
-            for model in &manifest.exports.models {
-                *counts.entry(model.name.clone()).or_default() += 1;
-            }
-            for class in &manifest.exports.classes {
-                *counts.entry(class.name.clone()).or_default() += 1;
+            let mut public_names = manifest
+                .exports
+                .models
+                .iter()
+                .map(|model| model.name.clone())
+                .chain(manifest.exports.classes.iter().map(|class| class.name.clone()))
+                .chain(manifest.exports.aliases.iter().map(|alias| alias.name.clone()))
+                .collect::<Vec<_>>();
+            public_names.sort();
+            public_names.dedup();
+            for public_name in public_names {
+                if let Some(fields) = Self::manifest_constructor_fields_for_public_name(manifest, &public_name) {
+                    self.pub_dependency_constructor_metadata.insert(
+                        (library.clone(), public_name.clone()),
+                        StructConstructorMetadata::from_manifest_fields(&library, &fields),
+                    );
+                    *counts.entry(public_name).or_default() += 1;
+                }
             }
         }
 
@@ -1193,16 +1278,121 @@ impl<'a> IrEmitter<'a> {
             let Some(LibraryManifestIndexEntry::Loaded { manifest, .. }) = index.get(&library) else {
                 continue;
             };
-            for model in &manifest.exports.models {
-                if counts.get(&model.name).copied().unwrap_or_default() == 1 {
-                    self.register_manifest_constructor_metadata(&model.name, &model.fields);
+            let mut public_names = manifest
+                .exports
+                .models
+                .iter()
+                .map(|model| model.name.clone())
+                .chain(manifest.exports.classes.iter().map(|class| class.name.clone()))
+                .chain(manifest.exports.aliases.iter().map(|alias| alias.name.clone()))
+                .collect::<Vec<_>>();
+            public_names.sort();
+            public_names.dedup();
+            for public_name in public_names {
+                if counts.get(&public_name).copied().unwrap_or_default() == 1
+                    && let Some(fields) = Self::manifest_constructor_fields_for_public_name(manifest, &public_name)
+                {
+                    self.register_manifest_constructor_metadata(&library, &public_name, &fields);
                 }
             }
-            for class in &manifest.exports.classes {
-                if counts.get(&class.name).copied().unwrap_or_default() == 1 {
-                    self.register_manifest_constructor_metadata(&class.name, &class.fields);
-                }
-            }
+        }
+    }
+
+    /// Resolve the constructor fields behind one exact public export, including facade aliases backed by checked API
+    /// metadata.
+    fn manifest_constructor_fields_for_public_name(
+        manifest: &LibraryManifest,
+        public_name: &str,
+    ) -> Option<Vec<FieldExport>> {
+        if let Some(model) = manifest.exports.models.iter().find(|model| model.name == public_name) {
+            return Some(model.fields.clone());
+        }
+        if let Some(class) = manifest.exports.classes.iter().find(|class| class.name == public_name) {
+            return Some(class.fields.clone());
+        }
+        let target_path = manifest
+            .contract_metadata
+            .identity_graph
+            .entry_for_public_name(public_name)
+            .and_then(|entry| entry.target_path())
+            .or_else(|| {
+                manifest
+                    .exports
+                    .aliases
+                    .iter()
+                    .find(|alias| alias.name == public_name)
+                    .map(|alias| alias.target_path.as_slice())
+            })?;
+        if let Some(api) = manifest.contract_metadata.api.as_ref()
+            && let Some(declaration) = Self::api_declaration_for_target_path(api, target_path)
+        {
+            return match declaration {
+                ApiDeclaration::Model(model) => Some(model_export_from_api(model).fields),
+                ApiDeclaration::Class(class) => Some(class_export_from_api(class).fields),
+                _ => None,
+            };
+        }
+        let target_name = target_path.last()?;
+        manifest
+            .exports
+            .models
+            .iter()
+            .find(|model| &model.name == target_name)
+            .map(|model| model.fields.clone())
+            .or_else(|| {
+                manifest
+                    .exports
+                    .classes
+                    .iter()
+                    .find(|class| &class.name == target_name)
+                    .map(|class| class.fields.clone())
+            })
+    }
+
+    /// Resolve one exact checked API declaration from its provider-local identity path.
+    fn api_declaration_for_target_path<'api>(
+        api: &'api crate::frontend::api_metadata::CheckedApiMetadataPackage,
+        target_path: &[String],
+    ) -> Option<&'api ApiDeclaration> {
+        let name = target_path.last()?;
+        let path = target_path.strip_prefix(&["crate".to_string()]).unwrap_or(target_path);
+        let module_path = path.get(..path.len().saturating_sub(1))?;
+        let module = api.modules.iter().find(|module| module.module_path == module_path)?;
+        module.declarations.iter().find(|declaration| match declaration {
+            ApiDeclaration::Model(model) => model.name == *name,
+            ApiDeclaration::Class(class) => class.name == *name,
+            _ => false,
+        })
+    }
+
+    /// Bind exact public dependency constructor metadata to the local names introduced by this program's imports.
+    fn bind_public_dependency_constructor_metadata(&mut self, program: &IrProgram) {
+        let bindings = program
+            .declarations
+            .iter()
+            .filter_map(|decl| {
+                let IrDeclKind::Import {
+                    origin: IrImportOrigin::PubLibrary { dependency_key },
+                    items,
+                    ..
+                } = &decl.kind
+                else {
+                    return None;
+                };
+                Some(items.iter().filter_map(|item| {
+                    self.pub_dependency_constructor_metadata
+                        .get(&(dependency_key.clone(), item.name.clone()))
+                        .cloned()
+                        .map(|metadata| (item.alias.clone().unwrap_or_else(|| item.name.clone()), metadata))
+                }))
+            })
+            .flatten()
+            .collect::<Vec<_>>();
+        for (binding, metadata) in bindings {
+            // An explicit import carries exact package/export identity. Replace any short-name fallback seeded before
+            // this program rather than letting a same-shaped declaration from another dependency win by insertion
+            // order.
+            self.struct_constructor_metadata.insert(binding, vec![metadata]);
         }
     }
 
@@ -1212,7 +1402,9 @@ impl<'a> IrEmitter<'a> {
     /// therefore the sole metadata source for whether a receiver uses Incan call semantics and whether a member is an
     /// enum variant rather than a Rust field access.
     pub(crate) fn seed_sdk_provider_manifest_metadata(&mut self, manifest: &LibraryManifest) {
+        let provider_crate = manifest.name.replace('-', "_");
         self.seed_compiled_provider_export_metadata(
+            &provider_crate,
             &manifest.exports.models,
             &manifest.exports.classes,
             &manifest.exports.enums,
@@ -1257,7 +1449,7 @@ impl<'a> IrEmitter<'a> {
                 }
             }
         }
-        self.seed_compiled_provider_export_metadata(&models, &classes, &enums, &newtypes);
+        self.seed_compiled_provider_export_metadata(&provider_crate, &models, &classes, &enums, &newtypes);
         self.seed_compiled_provider_factory_metadata(&functions, &models, &classes);
     }
 
@@ -1299,17 +1491,18 @@ impl<'a> IrEmitter<'a> {
     /// Seed nominal metadata represented by one artifact export surface.
     fn seed_compiled_provider_export_metadata(
         &mut self,
+        provider_crate: &str,
         models: &[crate::library_manifest::ModelExport],
         classes: &[crate::library_manifest::ClassExport],
         enums: &[crate::library_manifest::EnumExport],
         newtypes: &[NewtypeExport],
     ) {
         for model in models {
-            self.register_manifest_constructor_metadata(&model.name, &model.fields);
+            self.register_manifest_constructor_metadata(provider_crate, &model.name, &model.fields);
             self.register_manifest_method_metadata(&model.name, &model.methods, &model.type_params);
         }
         for class in classes {
-            self.register_manifest_constructor_metadata(&class.name, &class.fields);
+            self.register_manifest_constructor_metadata(provider_crate, &class.name, &class.fields);
             self.register_manifest_method_metadata(&class.name, &class.methods, &class.type_params);
         }
         for enum_ in enums {
@@ -1482,45 +1675,28 @@ impl<'a> IrEmitter<'a> {
     /// Register one struct's constructor metadata unless an equivalent field layout is already known.
     fn register_struct_constructor_metadata(&mut self, s: &IrStruct) {
         let metadata = StructConstructorMetadata::from_struct(s);
-        let variants = self.struct_constructor_metadata.entry(s.name.clone()).or_default();
-        if !variants.iter().any(|existing| existing.fields == metadata.fields) {
+        self.register_constructor_metadata_variant(&s.name, metadata);
+    }
+
+    /// Register one constructor metadata variant under a source-visible binding.
+    fn register_constructor_metadata_variant(&mut self, name: &str, metadata: StructConstructorMetadata) {
+        let variants = self.struct_constructor_metadata.entry(name.to_string()).or_default();
+        if !variants.iter().any(|existing| {
+            existing.dependency == metadata.dependency
+                && existing.fields == metadata.fields
+                && existing.field_types == metadata.field_types
+                && existing.default_fields == metadata.default_fields
+                && existing.field_aliases == metadata.field_aliases
+                && existing.requires_constructor_function == metadata.requires_constructor_function
+        }) {
             variants.push(metadata);
         }
     }
 
     /// Register constructor metadata reconstructed from a public dependency manifest.
-    fn register_manifest_constructor_metadata(&mut self, name: &str, fields: &[FieldExport]) {
-        let metadata = StructConstructorMetadata {
-            fields: fields.iter().map(|field| field.name.clone()).collect(),
-            field_types: fields
-                .iter()
-                .map(|field| (field.name.clone(), Self::manifest_type_ref_to_ir_type(&field.ty)))
-                .collect(),
-            field_defaults: fields
-                .iter()
-                .filter_map(|field| {
-                    field
-                        .default
-                        .as_ref()
-                        .and_then(Self::manifest_default_to_ir_expr)
-                        .map(|default| (field.name.clone(), default))
-                })
-                .collect(),
-            field_aliases: fields
-                .iter()
-                .filter_map(|field| {
-                    field
-                        .alias
-                        .as_ref()
-                        .filter(|alias| *alias != &field.name)
-                        .map(|alias| (alias.clone(), field.name.clone()))
-                })
-                .collect(),
-        };
-        let variants = self.struct_constructor_metadata.entry(name.to_string()).or_default();
-        if !variants.iter().any(|existing| existing.fields == metadata.fields) {
-            variants.push(metadata);
-        }
+    fn register_manifest_constructor_metadata(&mut self, library: &str, name: &str, fields: &[FieldExport]) {
+        let metadata = StructConstructorMetadata::from_manifest_fields(library, fields);
+        self.register_constructor_metadata_variant(name, metadata);
         self.struct_field_names.insert(
             name.to_string(),
             fields.iter().map(|field| field.name.clone()).collect(),
@@ -1538,7 +1714,7 @@ impl<'a> IrEmitter<'a> {
     }
 
     /// Convert manifest-safe field defaults into the IR required by artifact-backed constructors.
-    fn manifest_default_to_ir_expr(default: &ParamDefaultExport) -> Option<TypedExpr> {
+    fn manifest_default_to_ir_expr(library: &str, default: &ParamDefaultExport) -> Option<TypedExpr> {
         match default {
             ParamDefaultExport::Int(value) => Some(TypedExpr::new(IrExprKind::Int(*value), IrType::Int)),
             ParamDefaultExport::Float(value) => value
@@ -1556,7 +1732,7 @@ impl<'a> IrEmitter<'a> {
                 IrExprKind::List(
                     values
                         .iter()
-                        .map(|value| Self::manifest_default_to_ir_expr(value).map(IrListEntry::Element))
+                        .map(|value| Self::manifest_default_to_ir_expr(library, value).map(IrListEntry::Element))
                         .collect::<Option<Vec<_>>>()?,
                 ),
                 IrType::List(Box::new(IrType::Unknown)),
@@ -1567,16 +1743,131 @@ impl<'a> IrEmitter<'a> {
                         .iter()
                         .map(|entry| {
                             Some(IrDictEntry::Pair(
-                                Self::manifest_default_to_ir_expr(&entry.key)?,
-                                Box::new(Self::manifest_default_to_ir_expr(&entry.value)?),
+                                Self::manifest_default_to_ir_expr(library, &entry.key)?,
+                                Box::new(Self::manifest_default_to_ir_expr(library, &entry.value)?),
                             ))
                         })
                         .collect::<Option<Vec<_>>>()?,
                 ),
                 IrType::Dict(Box::new(IrType::Unknown), Box::new(IrType::Unknown)),
             )),
-            ParamDefaultExport::ConstRef(_) | ParamDefaultExport::Call { .. } | ParamDefaultExport::Unsupported => None,
+            ParamDefaultExport::ConstRef(path) => Self::manifest_default_const_ref_to_ir_expr(library, path),
+            ParamDefaultExport::Call { path, args, signature } => {
+                let function_name = path.last()?.clone();
+                let args = args
+                    .iter()
+                    .map(|arg| {
+                        Some(IrCallArg {
+                            name: arg.name.clone(),
+                            kind: if arg.name.is_some() {
+                                IrCallArgKind::Named
+                            } else {
+                                IrCallArgKind::Positional
+                            },
+                            expr: Self::manifest_default_to_ir_expr(library, &arg.value)?,
+                        })
+                    })
+                    .collect::<Option<Vec<_>>>()?;
+                let callable_signature = signature
+                    .as_ref()
+                    .map(|signature| Self::manifest_default_call_signature_to_ir(library, signature));
+                let return_type = callable_signature
+                    .as_ref()
+                    .map(|signature| signature.return_type.clone())
+                    .unwrap_or(IrType::Unknown);
+                let mut canonical_path = vec!["pub".to_string(), library.to_string()];
+                canonical_path.extend(path.iter().cloned());
+                Some(TypedExpr::new(
+                    IrExprKind::Call {
+                        func: Box::new(TypedExpr::new(
+                            IrExprKind::Var {
+                                name: function_name,
+                                access: VarAccess::Read,
+                                ref_kind: VarRefKind::Value,
+                            },
+                            IrType::Unknown,
+                        )),
+                        type_args: Vec::new(),
+                        args,
+                        callable_signature,
+                        canonical_path: Some(canonical_path),
+                    },
+                    return_type,
+                ))
+            }
+            ParamDefaultExport::Unsupported => None,
         }
+    }
+
+    /// Convert a compiled-library constant default into an exact dependency-qualified value path.
+    fn manifest_default_const_ref_to_ir_expr(library: &str, path: &[String]) -> Option<TypedExpr> {
+        if path.is_empty() {
+            return None;
+        }
+        let mut expr = TypedExpr::new(
+            IrExprKind::Var {
+                name: library.to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::ExternalName,
+            },
+            IrType::Unknown,
+        );
+        for segment in path {
+            expr = TypedExpr::new(
+                IrExprKind::Field {
+                    object: Box::new(expr),
+                    field: segment.clone(),
+                },
+                IrType::Unknown,
+            );
+        }
+        Some(expr)
+    }
+
+    /// Rebuild the checked callable surface retained for a compiled-library field default helper.
+    fn manifest_default_call_signature_to_ir(
+        library: &str,
+        signature: &ParamDefaultCallSignatureExport,
+    ) -> FunctionSignature {
+        FunctionSignature {
+            params: signature
+                .params
+                .iter()
+                .map(|param| {
+                    let kind = match param.kind {
+                        ParamKindExport::Normal => crate::frontend::ast::ParamKind::Normal,
+                        ParamKindExport::RestPositional => crate::frontend::ast::ParamKind::RestPositional,
+                        ParamKindExport::RestKeyword => crate::frontend::ast::ParamKind::RestKeyword,
+                    };
+                    let base_ty = Self::manifest_type_ref_to_ir_type(&param.ty);
+                    let ty = match kind {
+                        crate::frontend::ast::ParamKind::Normal => base_ty,
+                        crate::frontend::ast::ParamKind::RestPositional => IrType::List(Box::new(base_ty)),
+                        crate::frontend::ast::ParamKind::RestKeyword => {
+                            IrType::Dict(Box::new(IrType::String), Box::new(base_ty))
+                        }
+                    };
+                    FunctionParam {
+                        name: param.name.clone(),
+                        ty,
+                        mutability: Mutability::Immutable,
+                        is_self: false,
+                        kind,
+                        default: Self::manifest_param_default_to_ir_expr(library, param),
+                    }
+                })
+                .collect(),
+            return_type: Self::manifest_type_ref_to_ir_type(&signature.return_type),
+        }
+    }
+
+    /// Lower one nested callable-parameter default retained inside a field-default call signature.
+    fn manifest_param_default_to_ir_expr(library: &str, param: &ParamExport) -> Option<TypedExpr> {
+        param
+            .default
+            .as_ref()
+            .filter(|default| default.is_materializable())
+            .and_then(|default| Self::manifest_default_to_ir_expr(library, default))
     }
 
     /// Convert a public manifest type reference into the IR vocabulary used by emission metadata.
@@ -1587,6 +1878,7 @@ impl<'a> IrEmitter<'a> {
     /// Convert resolved frontend metadata into IR type metadata without requiring an AST lowering context.
     fn resolved_type_to_ir_type(ty: &ResolvedType) -> IrType {
         match ty {
+            ResolvedType::Never => IrType::Unknown,
             ResolvedType::Int => IrType::Int,
             ResolvedType::Float => IrType::Float,
             ResolvedType::Numeric(id) => IrType::Numeric(*id),
@@ -1730,27 +2022,25 @@ impl<'a> IrEmitter<'a> {
         candidates.first().copied().or_else(|| variants.first())
     }
 
-    /// Select a unique constructor metadata variant by provided fields when an imported type was called through a
-    /// source alias and the IR no longer carries the canonical declaration name.
-    pub(super) fn unique_struct_constructor_metadata_for_fields(
+    /// Select constructor metadata by exact `pub::<dependency>` identity carried on a lowered canonical call path.
+    pub(super) fn public_dependency_constructor_metadata_for_path(
         &self,
+        path: &[String],
         fields: &[(String, TypedExpr)],
     ) -> Option<&StructConstructorMetadata> {
+        if path.first().map(String::as_str) != Some("pub") {
+            return None;
+        }
+        let dependency = path.get(1)?;
+        let public_name = path.last()?;
+        let metadata = self
+            .pub_dependency_constructor_metadata
+            .get(&(dependency.clone(), public_name.clone()))?;
         let provided = fields
             .iter()
             .filter_map(|(field, _)| (!field.is_empty()).then_some(field.as_str()))
             .collect::<HashSet<_>>();
-        let candidates = self
-            .struct_constructor_metadata
-            .values()
-            .flat_map(|variants| variants.iter())
-            .filter(|metadata| metadata.supports_named_fields(&provided) && metadata.constructible_from(&provided))
-            .collect::<Vec<_>>();
-        if candidates.len() == 1 {
-            candidates.first().copied()
-        } else {
-            None
-        }
+        (metadata.supports_named_fields(&provided) && metadata.constructible_from(&provided)).then_some(metadata)
     }
 
     /// Return an Incan-owned method signature for a receiver type when typechecker call-site metadata is unavailable.

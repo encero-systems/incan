@@ -1021,6 +1021,7 @@ fn semantic_type_from_function_binding(binding: &FunctionBindingInfo) -> IncanTy
 /// Convert the current typechecker type universe into the backend-neutral Incan semantic type model.
 fn semantic_type_from_resolved(ty: &ResolvedType) -> IncanType {
     match ty {
+        ResolvedType::Never => IncanType::Never,
         ResolvedType::Int => IncanType::Primitive(IncanPrimitiveType::Int),
         ResolvedType::Float => IncanType::Primitive(IncanPrimitiveType::Float),
         ResolvedType::Numeric(_) => IncanType::Primitive(IncanPrimitiveType::Numeric(ty.to_string())),

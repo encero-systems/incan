@@ -83,8 +83,9 @@ use crate::provider::ProviderPlan;
 use crate::rust_inspect::{Inspector, RustMetadataCache};
 use helpers::{collection_name, collection_type_id, render_resolved_type_as_rust_arg, stringlike_type_id};
 use incan_core::interop::{
-    RustFunctionSig, RustItemKind, RustItemMetadata, RustParam, RustTypeShape, metadata_free_method_signature,
-    render_rust_type_shape_path, split_top_level_rust_args, strip_rust_borrow_lifetimes,
+    RUST_NEVER_TYPE_DISPLAY, RustFunctionSig, RustItemKind, RustItemMetadata, RustParam, RustTypeShape,
+    metadata_free_method_signature, render_rust_type_shape_path, split_top_level_rust_args,
+    strip_rust_borrow_lifetimes,
 };
 use incan_core::lang::conventions;
 use incan_core::lang::decorators::{self as core_decorators, DecoratorId};
@@ -1294,6 +1295,7 @@ impl TypeChecker {
     /// use [`Self::render_rust_shape_path`] so generic arguments stay attached to [`ResolvedType::RustPath`].
     pub(crate) fn resolved_type_from_rust_shape(&self, shape: &RustTypeShape) -> ResolvedType {
         match shape {
+            RustTypeShape::Never => ResolvedType::Never,
             RustTypeShape::Bool => ResolvedType::Bool,
             RustTypeShape::Float => ResolvedType::Float,
             RustTypeShape::Int => ResolvedType::Int,
@@ -1373,10 +1375,10 @@ impl TypeChecker {
 
     /// Convert a Rust display type string into a conservative [`ResolvedType`].
     ///
-    /// RFC 041: intentionally best-effort. Common primitive spellings and `Option` / `Result` wrappers are
-    /// recognized, including namespaced aliases whose trailing segment is `Option` or `Result`. Nested generics,
-    /// lifetimes, and crate paths otherwise become [`ResolvedType::RustPath`] (or [`ResolvedType::Unknown`] when
-    /// empty); lowering relies on rustc for fidelity.
+    /// RFC 041: intentionally best-effort. Rust's diverging `!` return is preserved as [`ResolvedType::Never`]. Common
+    /// primitive spellings and `Option` / `Result` wrappers are recognized, including namespaced aliases whose
+    /// trailing segment is `Option` or `Result`. Nested generics, lifetimes, and crate paths otherwise become
+    /// [`ResolvedType::RustPath`] (or [`ResolvedType::Unknown`] when empty); lowering relies on rustc for fidelity.
     ///
     /// ## `Result<T, E>` parsing
     ///
@@ -1386,6 +1388,9 @@ impl TypeChecker {
         let trimmed = rust_ty.trim();
         let display = Self::rust_display_without_lifetimes(trimmed);
         let normalized = display.replace(' ', "");
+        if normalized == RUST_NEVER_TYPE_DISPLAY {
+            return ResolvedType::Never;
+        }
         if let Some(callable) = self.resolved_function_type_from_rust_callable_bound_display(display.as_str()) {
             return callable;
         }
@@ -4441,6 +4446,8 @@ impl TypeChecker {
                         trait_adoptions: Vec::new(),
                         derives: Vec::new(),
                         fields: HashMap::new(),
+                        field_defaults: Box::new(HashMap::new()),
+                        field_default_metadata: HashMap::new(),
                         field_order: Vec::new(),
                         properties: HashMap::new(),
                         methods: HashMap::new(),
@@ -4790,6 +4797,7 @@ impl TypeChecker {
         }
 
         match (actual, expected) {
+            (ResolvedType::Never, _) => true,
             (ResolvedType::Unknown, _) | (_, ResolvedType::Unknown) => true,
             (ResolvedType::TypeVar(_), _) | (_, ResolvedType::TypeVar(_)) => true,
             (actual, _) if self.is_generic_placeholder_type(actual) => true,

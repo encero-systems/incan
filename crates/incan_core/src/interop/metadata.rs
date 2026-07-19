@@ -345,6 +345,7 @@ pub fn metadata_free_method_signature(rust_path: &str, method: &str) -> Option<R
         .iter()
         .find(|rule| rule.receiver_path == rust_path && rule.method == method)?;
     Some(RustFunctionSig {
+        type_params: Vec::new(),
         params: rule
             .params
             .iter()
@@ -367,6 +368,7 @@ pub fn metadata_free_function_signature(rust_path: &str) -> Option<RustFunctionS
         .iter()
         .find(|rule| rule.path == rust_path)?;
     Some(RustFunctionSig {
+        type_params: Vec::new(),
         params: rule
             .params
             .iter()
@@ -393,6 +395,13 @@ pub struct RustParam {
 /// Callable signature extracted from rust-analyzer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RustFunctionSig {
+    /// Method or function type parameters in source declaration order.
+    ///
+    /// Rust permits type arguments on a callable independently from generics on its receiver type. Retaining this
+    /// declaration-level arity lets Incan reject incomplete explicit method turbofishes before generated Rust reaches
+    /// rustc.
+    #[serde(default)]
+    pub type_params: Vec<String>,
     pub params: Vec<RustParam>,
     pub return_type: String,
     pub is_async: bool,
@@ -413,9 +422,14 @@ pub struct RustImplementedTrait {
     pub path: String,
 }
 
+/// Canonical Rust display spelling for the uninhabited never type.
+pub const RUST_NEVER_TYPE_DISPLAY: &str = "!";
+
 /// Structured Rust type information used by Incan interop consumers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RustTypeShape {
+    /// Rust's uninhabited never type (`!`).
+    Never,
     /// Any Rust `bool`.
     Bool,
     /// Any floating-point scalar. Width is intentionally erased at this layer.
@@ -482,6 +496,9 @@ where
     let text = strip_rust_borrow_lifetimes(text).trim().replace(' ', "");
     if text.is_empty() {
         return RustTypeShape::Unknown;
+    }
+    if text == RUST_NEVER_TYPE_DISPLAY {
+        return RustTypeShape::Never;
     }
     match text.as_str() {
         "bool" => return RustTypeShape::Bool,
@@ -588,6 +605,7 @@ pub fn render_rust_type_shape_path(path: &str, args: &[RustTypeShape]) -> String
 #[must_use]
 pub fn render_rust_type_shape(shape: &RustTypeShape) -> String {
     match shape {
+        RustTypeShape::Never => RUST_NEVER_TYPE_DISPLAY.to_string(),
         RustTypeShape::Bool => "bool".to_string(),
         RustTypeShape::Float => "f64".to_string(),
         RustTypeShape::Int => "i64".to_string(),
@@ -1340,6 +1358,14 @@ mod tests {
             parse_rust_type_shape_text("T", |_| None, RustTypeShapePathFallback::RustPath),
             RustTypeShape::TypeParam("T".to_string()),
         );
+    }
+
+    #[test]
+    fn parse_rust_type_shape_text_preserves_never_type() {
+        let shape = parse_rust_type_shape_text(RUST_NEVER_TYPE_DISPLAY, |_| None, RustTypeShapePathFallback::RustPath);
+
+        assert_eq!(shape, RustTypeShape::Never);
+        assert_eq!(render_rust_type_shape(&shape), RUST_NEVER_TYPE_DISPLAY);
     }
 
     fn normalize_probe_type(text: &str) -> Option<String> {

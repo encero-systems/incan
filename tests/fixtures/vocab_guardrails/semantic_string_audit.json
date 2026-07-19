@@ -146,9 +146,9 @@
     },
     {
       "path": "src/backend/ir/emit/mod.rs",
-      "category": "Rust path segment escaping compatibility",
-      "expected_count": 1,
-      "expected_fingerprint": "0x90822765d714d957"
+      "category": "Rust path segment escaping and public dependency identity compatibility",
+      "expected_count": 2,
+      "expected_fingerprint": "0xc2bd138f45463567"
     },
     {
       "path": "src/backend/ir/emit/program.rs",
