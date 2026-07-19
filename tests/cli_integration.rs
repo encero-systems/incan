@@ -4951,6 +4951,101 @@ where
 }
 
 #[test]
+fn rust_method_explicit_generic_arity_issue834() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(
+        tmp.path(),
+        "cli_rust_method_generic_arity",
+        r#"
+
+[rust-dependencies]
+stream_host = { path = "rust/stream_host" }
+"#,
+    )?;
+    fs::write(
+        &main_path,
+        r#"from rust::stream_host import device
+
+def consume(_value: f32) -> None:
+  pass
+
+def main() -> None:
+  stream = device()
+  stream.build_output_stream[f32, _, _](1.0, consume, consume)
+  println("stream-built")
+"#,
+    )?;
+    let partial_path = tmp.path().join("src").join("partial.incn");
+    fs::write(
+        &partial_path,
+        r#"from rust::stream_host import device
+
+def consume(_value: f32) -> None:
+  pass
+
+def main() -> None:
+  stream = device()
+  stream.build_output_stream[f32](1.0, consume, consume)
+"#,
+    )?;
+
+    let helper_src = tmp.path().join("rust").join("stream_host").join("src");
+    fs::create_dir_all(&helper_src)?;
+    fs::write(
+        helper_src
+            .parent()
+            .ok_or("stream host source directory had no parent")?
+            .join("Cargo.toml"),
+        r#"[package]
+name = "stream_host"
+version = "0.1.0"
+edition = "2021"
+"#,
+    )?;
+    fs::write(
+        helper_src.join("lib.rs"),
+        r#"pub struct Device;
+
+pub fn device() -> Device {
+    Device
+}
+
+impl Device {
+    pub fn build_output_stream<T, D, E>(&self, value: T, mut data_callback: D, mut error_callback: E)
+    where
+        T: Copy,
+        D: FnMut(T),
+        E: FnMut(T),
+    {
+        data_callback(value);
+        error_callback(value);
+    }
+}
+"#,
+    )?;
+
+    let partial_arg = partial_path.to_str().ok_or("partial source path was not valid UTF-8")?;
+    let partial = run_incan(tmp.path(), &["--check", partial_arg])?;
+    assert!(
+        !partial.status.success(),
+        "partial Rust method turbofish unexpectedly passed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&partial.stdout),
+        String::from_utf8_lossy(&partial.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&partial.stderr)
+            .contains("build_output_stream expects 3 explicit type argument(s), got 1"),
+        "partial Rust method turbofish should fail during Incan checking:\n{}",
+        String::from_utf8_lossy(&partial.stderr)
+    );
+
+    let complete = run_incan(tmp.path(), &["run"])?;
+    assert_success(&complete, "full Rust method turbofish");
+    assert_eq!(String::from_utf8_lossy(&complete.stdout).trim(), "stream-built");
+    Ok(())
+}
+
+#[test]
 fn rust_method_into_bound_keeps_string_argument_inferable_issue804() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(

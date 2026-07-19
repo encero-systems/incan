@@ -179,6 +179,7 @@ fn rust_item_metadata_prefers_shipped_library_abi() {
         definition_path: Some("demo_runtime::parse".to_string()),
         visibility: RustVisibility::Public,
         kind: RustItemKind::Function(RustFunctionSig {
+            type_params: Vec::new(),
             params: vec![RustParam {
                 name: Some("source".to_string()),
                 type_display: "&str".to_string(),
@@ -3895,6 +3896,7 @@ fn test_rust_inspect_function_signature_preserves_borrowed_rust_path_param() -> 
                 definition_path: Some("demo::takes_ref".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Function(RustFunctionSig {
+                    type_params: Vec::new(),
                     params: vec![RustParam {
                         name: Some("value".to_string()),
                         type_display: "&demo::Thing".to_string(),
@@ -4342,6 +4344,7 @@ def f() -> None:
                 definition_path: Some("demo::accept_kind".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Function(RustFunctionSig {
+                    type_params: Vec::new(),
                     params: vec![RustParam {
                         name: Some("value".to_string()),
                         type_display: "demo::Kind".to_string(),
@@ -4362,6 +4365,7 @@ def f() -> None:
                 definition_path: Some("demo::accept_empty".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Function(RustFunctionSig {
+                    type_params: Vec::new(),
                     params: vec![RustParam {
                         name: Some("value".to_string()),
                         type_display: "demo::Empty".to_string(),
@@ -4453,6 +4457,7 @@ def f(holder: Holder) -> None:
                 definition_path: Some("demo::accept_item".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Function(RustFunctionSig {
+                    type_params: Vec::new(),
                     params: vec![RustParam {
                         name: Some("value".to_string()),
                         type_display: "demo::Item".to_string(),
@@ -4787,6 +4792,7 @@ def render[T](value: Label[T]) -> str:
                     methods: vec![RustMethodSig {
                         name: "as_str".to_string(),
                         signature: RustFunctionSig {
+                            type_params: Vec::new(),
                             params: vec![RustParam {
                                 name: Some("self".to_string()),
                                 type_display: "&self".to_string(),
@@ -4845,6 +4851,7 @@ fn seed_async_rust_method_probe_with_options_param(
                     RustMethodSig {
                         name: "new".to_string(),
                         signature: RustFunctionSig {
+                            type_params: Vec::new(),
                             params: Vec::new(),
                             return_type: "demo::SessionContext".to_string(),
                             is_async: false,
@@ -4854,6 +4861,7 @@ fn seed_async_rust_method_probe_with_options_param(
                     RustMethodSig {
                         name: "register_csv".to_string(),
                         signature: RustFunctionSig {
+                            type_params: Vec::new(),
                             params: vec![
                                 RustParam {
                                     name: Some("self".to_string()),
@@ -4896,6 +4904,7 @@ fn seed_async_rust_method_probe_with_options_param(
                 methods: vec![RustMethodSig {
                     name: "new".to_string(),
                     signature: RustFunctionSig {
+                        type_params: Vec::new(),
                         params: Vec::new(),
                         return_type: "demo::CsvReadOptions".to_string(),
                         is_async: false,
@@ -4915,6 +4924,7 @@ fn seed_async_rust_method_probe_with_options_param(
             definition_path: Some("demo::make_context".to_string()),
             visibility: RustVisibility::Public,
             kind: RustItemKind::Function(RustFunctionSig {
+                type_params: Vec::new(),
                 params: Vec::new(),
                 return_type: "demo::SessionContext".to_string(),
                 is_async: false,
@@ -4929,6 +4939,7 @@ fn seed_async_rust_method_probe_with_options_param(
             definition_path: Some("demo::make_options".to_string()),
             visibility: RustVisibility::Public,
             kind: RustItemKind::Function(RustFunctionSig {
+                type_params: Vec::new(),
                 params: Vec::new(),
                 return_type: "demo::CsvReadOptions".to_string(),
                 is_async: false,
@@ -5067,6 +5078,7 @@ def render(value: Label) -> str:
                     methods: vec![RustMethodSig {
                         name: "as_str".to_string(),
                         signature: RustFunctionSig {
+                            type_params: Vec::new(),
                             params: vec![RustParam {
                                 name: Some("self".to_string()),
                                 type_display: "&self".to_string(),
@@ -9706,6 +9718,7 @@ def f(w: Widget) -> None:
                         items: vec![RustTraitAssoc::Function {
                             name: "render".to_string(),
                             signature: RustFunctionSig {
+                                type_params: Vec::new(),
                                 params: vec![RustParam {
                                     name: Some("self".to_string()),
                                     type_display: "&self".to_string(),
@@ -9785,6 +9798,7 @@ def f(encoded: bytes) -> None:
                     items: vec![RustTraitAssoc::Function {
                         name: "decode".to_string(),
                         signature: RustFunctionSig {
+                            type_params: Vec::new(),
                             params: vec![RustParam {
                                 name: Some("buf".to_string()),
                                 type_display: "implBuf".to_string(),
@@ -9895,6 +9909,7 @@ def f(encoded: bytes) -> None:
                     items: vec![RustTraitAssoc::Function {
                         name: "decode".to_string(),
                         signature: RustFunctionSig {
+                            type_params: Vec::new(),
                             params: vec![RustParam {
                                 name: Some("buf".to_string()),
                                 type_display: "implBuf".to_string(),
@@ -10007,6 +10022,7 @@ def choose(rng: ThreadRng, items: List[str]) -> str:
                     items: vec![RustTraitAssoc::Function {
                         name: "gen_range".to_string(),
                         signature: RustFunctionSig {
+                            type_params: Vec::new(),
                             params: vec![
                                 RustParam {
                                     name: Some("self".to_string()),
@@ -16339,6 +16355,68 @@ def run() -> int:
             .any(|e| e.message.contains("not supported for this call form")),
         "expected unsupported call-site type args diagnostic, got {errs:?}"
     );
+}
+
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn rust_method_explicit_type_args_require_the_metadata_declared_arity() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+from rust::demo import Device
+
+def partial(device: Device) -> None:
+  device.build_output_stream[int]()
+
+def complete(device: Device) -> None:
+  device.build_output_stream[int, _, _]()
+"#;
+    let ast = parse_program(source, "Rust method generic arity");
+    let tmp = seeded_rust_inspect_workspace()?;
+    let manifest_dir = tmp.path().to_path_buf();
+    let mut checker = TypeChecker::new();
+    checker.set_rust_inspect_manifest_dir(manifest_dir.clone());
+    checker.rust_inspect_cache.insert_test_item(
+        &manifest_dir,
+        RustItemMetadata {
+            canonical_path: "demo::Device".to_string(),
+            definition_path: Some("demo::Device".to_string()),
+            visibility: RustVisibility::Public,
+            kind: RustItemKind::Type(RustTypeInfo {
+                alias_target: None,
+                metadata_completeness: Default::default(),
+                methods: vec![RustMethodSig {
+                    name: "build_output_stream".to_string(),
+                    signature: RustFunctionSig {
+                        type_params: vec!["T".to_string(), "D".to_string(), "E".to_string()],
+                        params: vec![RustParam {
+                            name: Some("self".to_string()),
+                            type_display: "&self".to_string(),
+                        }],
+                        return_type: "()".to_string(),
+                        is_async: false,
+                        is_unsafe: false,
+                    },
+                }],
+                implemented_traits: Vec::new(),
+                fields: Vec::new(),
+                variants: Vec::new(),
+            }),
+        },
+    )?;
+
+    let errors = checker
+        .check_program(&ast)
+        .expect_err("the partial Rust method turbofish must be rejected");
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("build_output_stream expects 3 explicit type argument(s), got 1")),
+        "expected Rust method generic arity diagnostic, got {errors:?}"
+    );
+    assert!(
+        !errors.iter().any(|error| error.message.contains("got 3")),
+        "the full Rust method turbofish should remain accepted, got {errors:?}"
+    );
+    Ok(())
 }
 
 #[test]

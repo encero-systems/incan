@@ -22,7 +22,7 @@ use incan_core::interop::{
 use incan_core::lang::types::collections::{self, CollectionTypeId};
 use ra_ap_syntax::{
     AstNode, Edition, SourceFile,
-    ast::{self, HasModuleItem, HasName, HasVisibility},
+    ast::{self, HasGenericParams, HasModuleItem, HasName, HasVisibility},
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -1896,6 +1896,7 @@ fn source_function_metadata(
         definition_path: Some(definition),
         visibility: RustVisibility::Public,
         kind: RustItemKind::Function(RustFunctionSig {
+            type_params: source_function_type_params(&function),
             params,
             return_type,
             is_async: function.async_token().is_some(),
@@ -1951,11 +1952,25 @@ fn source_function_signature(
         .map(|ty| ctx.type_display(ty.syntax().text().to_string().as_str()))
         .unwrap_or_else(|| "()".to_string());
     RustFunctionSig {
+        type_params: source_function_type_params(function),
         params,
         return_type,
         is_async: function.async_token().is_some(),
         is_unsafe: function.unsafe_token().is_some(),
     }
+}
+
+/// Return source-declared type parameters in Rust turbofish order.
+fn source_function_type_params(function: &ast::Fn) -> Vec<String> {
+    function
+        .generic_param_list()
+        .into_iter()
+        .flat_map(|params| params.generic_params())
+        .filter_map(|param| match param {
+            ast::GenericParam::TypeParam(param) => param.name().map(|name| name.text().to_string()),
+            ast::GenericParam::ConstParam(_) | ast::GenericParam::LifetimeParam(_) => None,
+        })
+        .collect()
 }
 
 /// Return the metadata display type for a Rust source `self` parameter.
@@ -2662,6 +2677,7 @@ fn source_macro_function_metadata(
         definition_path: Some(definition.join("::")),
         visibility: RustVisibility::Public,
         kind: RustItemKind::Function(RustFunctionSig {
+            type_params: Vec::new(),
             params,
             return_type: expr_display,
             is_async: false,

@@ -1081,6 +1081,7 @@ mod validate_rust_function_call_tests {
         let arg_expr = Spanned::new(Expr::Literal(Literal::Int(IntLiteral::synthetic(1))), span);
         let args = [CallArg::Positional(arg_expr)];
         let sig = RustFunctionSig {
+            type_params: Vec::new(),
             params: Vec::new(),
             return_type: "()".to_string(),
             is_async: false,
@@ -1122,6 +1123,7 @@ mod validate_rust_function_call_tests {
         let arg_expr = Spanned::new(Expr::Ident("write_output".to_string()), span);
         let args = [CallArg::Positional(arg_expr)];
         let sig = RustFunctionSig {
+            type_params: Vec::new(),
             params: vec![RustParam {
                 name: Some("callback".to_string()),
                 type_display: "impl FnMut(&mut demo::Data, &demo::OutputCallbackInfo)".to_string(),
@@ -1168,6 +1170,7 @@ mod validate_rust_function_call_tests {
         let arg_expr = Spanned::new(Expr::Ident("write_output".to_string()), span);
         let args = [CallArg::Positional(arg_expr)];
         let sig = RustFunctionSig {
+            type_params: Vec::new(),
             params: vec![RustParam {
                 name: Some("callback".to_string()),
                 type_display: "impl FnMut(&mut demo::Data, &demo::OutputCallbackInfo)".to_string(),
@@ -1210,6 +1213,7 @@ mod validate_rust_function_call_tests {
         let arg_expr = Spanned::new(Expr::Ident("task".to_string()), span);
         let args = [CallArg::Positional(arg_expr)];
         let sig = RustFunctionSig {
+            type_params: Vec::new(),
             params: vec![RustParam {
                 name: Some("task".to_string()),
                 type_display: "impl FnOnce() -> T".to_string(),
@@ -1264,6 +1268,7 @@ mod validate_rust_function_call_tests {
         let arg_expr = Spanned::new(Expr::Ident("udf".to_string()), span);
         let args = [CallArg::Positional(arg_expr)];
         let sig = RustFunctionSig {
+            type_params: Vec::new(),
             params: vec![RustParam {
                 name: Some("udf".to_string()),
                 type_display: "Arc<bridge::ScalarUDF>".to_string(),
@@ -1288,6 +1293,7 @@ mod validate_rust_function_call_tests {
         let mut checker = TypeChecker::new();
         let span = Span::new(0, 1);
         let sig = RustFunctionSig {
+            type_params: Vec::new(),
             params: Vec::new(),
             return_type: "()".to_string(),
             is_async: false,
@@ -1310,6 +1316,7 @@ mod validate_rust_function_call_tests {
         let arg_expr = Spanned::new(Expr::Literal(Literal::Int(IntLiteral::synthetic(1))), span);
         let args = [CallArg::Positional(arg_expr)];
         let sig = RustFunctionSig {
+            type_params: Vec::new(),
             params: vec![
                 RustParam {
                     name: Some("a".to_string()),
@@ -1354,6 +1361,7 @@ mod validate_rust_function_call_tests {
             ),
         ];
         let sig = RustFunctionSig {
+            type_params: Vec::new(),
             params: vec![
                 RustParam {
                     name: Some("count".to_string()),
@@ -1440,6 +1448,7 @@ mod validate_rust_function_call_tests {
         let mut checker = TypeChecker::new();
         let span = Span::new(0, 1);
         let sig = RustFunctionSig {
+            type_params: Vec::new(),
             params: vec![
                 RustParam {
                     name: Some("self".to_string()),
@@ -1471,6 +1480,7 @@ mod validate_rust_function_call_tests {
         let mut checker = TypeChecker::new();
         let span = Span::new(0, 1);
         let sig = RustFunctionSig {
+            type_params: Vec::new(),
             params: vec![
                 RustParam {
                     name: Some("self".to_string()),
@@ -1506,6 +1516,7 @@ mod validate_rust_function_call_tests {
         let mut checker = TypeChecker::new();
         let span = Span::new(0, 1);
         let sig = RustFunctionSig {
+            type_params: Vec::new(),
             params: vec![
                 RustParam {
                     name: Some("self".to_string()),
@@ -1550,6 +1561,7 @@ mod validate_rust_function_call_tests {
         let mut checker = TypeChecker::new();
         let span = Span::new(0, 1);
         let sig = RustFunctionSig {
+            type_params: Vec::new(),
             params: vec![
                 RustParam {
                     name: Some("self".to_string()),
@@ -1626,6 +1638,7 @@ mod validate_rust_function_call_tests {
         let arg_expr = Spanned::new(Expr::Literal(Literal::String("{}".to_string())), span);
         let args = [CallArg::Positional(arg_expr)];
         let sig = RustFunctionSig {
+            type_params: Vec::new(),
             params: vec![RustParam {
                 name: Some("value".to_string()),
                 type_display: "&String".to_string(),
@@ -1670,6 +1683,7 @@ mod validate_rust_function_call_tests {
         let arg_expr = Spanned::new(Expr::Literal(Literal::String("{}".to_string())), span);
         let args = [CallArg::Positional(arg_expr)];
         let sig = RustFunctionSig {
+            type_params: Vec::new(),
             params: vec![RustParam {
                 name: Some("value".to_string()),
                 type_display: "&str".to_string(),
@@ -1706,6 +1720,7 @@ mod validate_rust_function_call_tests {
         let arg_expr = Spanned::new(Expr::Literal(Literal::Bytes(b"abc".to_vec())), span);
         let args = [CallArg::Positional(arg_expr)];
         let sig = RustFunctionSig {
+            type_params: Vec::new(),
             params: vec![RustParam {
                 name: Some("value".to_string()),
                 type_display: "&Vec<u8>".to_string(),
@@ -1753,6 +1768,7 @@ mod validate_rust_function_call_tests {
         let arg_expr = Spanned::new(Expr::Ident("plan".to_string()), span);
         let args = [CallArg::Positional(arg_expr)];
         let sig = RustFunctionSig {
+            type_params: Vec::new(),
             params: vec![RustParam {
                 name: Some("value".to_string()),
                 type_display: "&demo::Plan".to_string(),
@@ -1822,6 +1838,7 @@ mod validate_rust_function_call_tests {
         let arg_expr = Spanned::new(Expr::Ident("plan".to_string()), span);
         let args = [CallArg::Positional(arg_expr)];
         let sig = RustFunctionSig {
+            type_params: Vec::new(),
             params: vec![RustParam {
                 name: Some("value".to_string()),
                 type_display: "&substrait::proto::Plan".to_string(),
@@ -1866,6 +1883,7 @@ mod validate_rust_function_call_tests {
         let arg_expr = Spanned::new(Expr::Literal(Literal::String("alice@example.com".to_string())), span);
         let args = [CallArg::Positional(arg_expr)];
         let sig = RustFunctionSig {
+            type_params: Vec::new(),
             params: vec![RustParam {
                 name: Some("value".to_string()),
                 type_display: "Email".to_string(),
@@ -1911,6 +1929,7 @@ mod validate_rust_function_call_tests {
         let args = [CallArg::Positional(arg_expr)];
         let arg_types = [ResolvedType::RustPath("std::io::Cursor<Vec<u8>>".to_string())];
         let sig = RustFunctionSig {
+            type_params: Vec::new(),
             params: vec![RustParam {
                 name: Some("buf".to_string()),
                 type_display: "T".to_string(),
@@ -1954,6 +1973,7 @@ mod validate_rust_function_call_tests {
         let args = [CallArg::Positional(arg_expr)];
         let arg_types = [ResolvedType::Bytes];
         let sig = RustFunctionSig {
+            type_params: Vec::new(),
             params: vec![RustParam {
                 name: Some("buf".to_string()),
                 type_display: "implBuf".to_string(),
@@ -2022,6 +2042,7 @@ mod validate_rust_function_call_tests {
         let args = [CallArg::Positional(arg_expr)];
         let arg_types = [ResolvedType::Str];
         let sig = RustFunctionSig {
+            type_params: Vec::new(),
             params: vec![
                 RustParam {
                     name: Some("self".to_string()),

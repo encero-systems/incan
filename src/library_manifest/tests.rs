@@ -409,6 +409,7 @@ fn manifest_io_round_trip_preserves_rust_abi_metadata() -> Result<(), Box<dyn st
         definition_path: Some("mylib_runtime::parse".to_string()),
         visibility: RustVisibility::Public,
         kind: RustItemKind::Function(RustFunctionSig {
+            type_params: Vec::new(),
             params: vec![RustParam {
                 name: Some("source".to_string()),
                 type_display: "&str".to_string(),
