@@ -6868,7 +6868,7 @@
 <li><strong>Generated-library preheat alignment</strong>: <code>incan build --lib</code> preheats generated-library dependencies into the same release-profile Cargo target directory as the real generated library build, so unchanged lock/profile/target inputs can reuse warmed artifacts instead of compiling into a separate preheat domain (#697).</li>
 <li><strong>Shared generated Cargo target and vocab cache</strong>: <code>incan build --generated-cargo-target-dir &lt;path&gt;</code> makes the generated-project Cargo target explicit instead of relying only on <code>INCAN_GENERATED_CARGO_TARGET_DIR</code>, and unchanged vocab companion metadata/desugarer artifacts are cached by companion input fingerprint beside that shared target. This reduces cold clean-checkout rebuilds for downstream packages without pretending external Rust dependencies never need to compile (#769).</li>
 <li><strong>Rust metadata prewarm reuse</strong>: <code>rust_inspect</code> prewarm now reports warmed, reused, and skipped metadata items, loads persisted disk-cache state before deciding to extract, and exposes cache split reasons through <code>INCAN_RUST_INSPECT_TIMING=1</code> so cold-path work can be measured without pulling heavyweight downstream dependencies into the Incan regression suite (#769).</li>
-<li><strong>Measured downstream proof lanes</strong>: InQL remains the main heavy downstream proof lane for preheat/runtime behavior, but 0.4 keeps the regression suite synthetic and compact so Incan does not need heavyweight downstream dependencies in core tests (#707, #723, #697).</li>
+<li><strong>Measured downstream proof lanes</strong>: IncQL remains the main heavy downstream proof lane for preheat/runtime behavior, but 0.4 keeps the regression suite synthetic and compact so Incan does not need heavyweight downstream dependencies in core tests (#707, #723, #697).</li>
 </ul>
 <h3 id="boundary-parity-and-symbol-identity">Boundary parity and symbol identity<a class="headerlink" href="#boundary-parity-and-symbol-identity" title="Permanent link">&para;</a></h3>
 <ul>
@@ -6953,7 +6953,7 @@
 <li><a href="/dev/RFCs/037_native_web_stdlib_redesign">RFC 037</a> <code>std.web</code> redesign and <a href="/dev/RFCs/066_std_http">RFC 066</a> <code>std.http</code> implementation work are future release lanes, not part of this release.</li>
 <li><a href="/dev/RFCs/097_rust_hosted_incan_caller">RFC 097</a> Rust-hosted caller/ABI architecture is a later backend and integration concern.</li>
 <li>Source-local feature metadata beyond maintaining the generated feature inventory is not part of 0.4.</li>
-<li>Hees.ai, InQL, Pallay, Omerus, and Hees.io product implementation are downstream proof lanes only; they are not Incan 0.4 product scope.</li>
+<li>Hees.ai, IncQL, Pallay, Omerus, and Hees.io product implementation are downstream proof lanes only; they are not Incan 0.4 product scope.</li>
 </ul>
 <h2 id="known-limitations">Known limitations<a class="headerlink" href="#known-limitations" title="Permanent link">&para;</a></h2>
 <ul>

@@ -6427,7 +6427,7 @@
 </ol>
 <p>The important result is not only that the program runs, but that the code shape explains why Incan exists.</p>
 <h2 id="target-source-shape">Target source shape<a class="headerlink" href="#target-source-shape" title="Permanent link">&para;</a></h2>
-<p>This is target syntax, not a claim that every construct belongs in the base language. <code>model</code> is part of Incan's core language surface, while <code>DataFrame</code>, <code>query {}</code>, <code>step</code>, <code>pipeline</code>, and <code>quality:</code> may be owned by domain packages such as InQL or workflow/quality packages rather than the base vocabulary.</p>
+<p>This is target syntax, not a claim that every construct belongs in the base language. <code>model</code> is part of Incan's core language surface, while <code>DataFrame</code>, <code>query {}</code>, <code>step</code>, <code>pipeline</code>, and <code>quality:</code> may be owned by domain packages such as IncQL or workflow/quality packages rather than the base vocabulary.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="c1"># Row contract: a typed shape that downstream query and quality code can reference.</span>
 <span class="k">model</span> <span class="nc">RawRepo</span><span class="p">:</span>
     <span class="nb">id</span><span class="p">:</span> <span class="kt">i64</span>
@@ -6452,7 +6452,7 @@
     <span class="k">return</span> <span class="n">read_json</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">input_path</span><span class="p">)</span>
 
 <span class="n">step</span> <span class="n">aggregate_by_language</span><span class="p">(</span><span class="n">repos</span><span class="p">:</span> <span class="nc">DataFrame</span><span class="p">[</span><span class="nc">RawRepo</span><span class="p">],</span> <span class="n">config</span><span class="p">:</span> <span class="nc">PipelineConfig</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">DataFrame</span><span class="p">[</span><span class="nc">LanguageStats</span><span class="p">]:</span>
-    <span class="c1"># InQL-style query syntax should be checked against RawRepo fields.</span>
+    <span class="c1"># IncQL-style query syntax should be checked against RawRepo fields.</span>
     <span class="k">return</span> <span class="n">query</span> <span class="p">{</span>
         <span class="nc">FROM</span> <span class="n">repos</span>
         <span class="nc">WHERE</span> <span class="o">.</span><span class="n">stars</span> <span class="o">&gt;=</span> <span class="n">config</span><span class="o">.</span><span class="n">min_stars</span>
@@ -6502,7 +6502,7 @@
 </tr>
 <tr>
 <td><code>query {}</code></td>
-<td>InQL/domain package direction.</td>
+<td>IncQL/domain package direction.</td>
 <td>Typechecked relational logic over model-shaped data.</td>
 </tr>
 <tr>

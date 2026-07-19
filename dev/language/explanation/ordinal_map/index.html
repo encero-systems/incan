@@ -6484,7 +6484,7 @@
 <p>Execution engines do not want to compare those names repeatedly while scanning data. They want column slots:</p>
 <div class="language-text highlight"><pre><span></span><code>2, 3, 1
 </code></pre></div>
-<p><code>OrdinalMap[str]</code> lets a planner resolve names once and then carry integer positions through the plan. The map is not the physical table index by itself. It is the stable name-to-slot primitive that larger table indexes, catalogs, and InQL-style planners can build on.</p>
+<p><code>OrdinalMap[str]</code> lets a planner resolve names once and then carry integer positions through the plan. The map is not the physical table index by itself. It is the stable name-to-slot primitive that larger table indexes, catalogs, and IncQL-style planners can build on.</p>
 <p>The same idea applies when the key is not text. A dataset may need stable ordinals for UUID tenants, civil dates, fixed enum values, or generated identifiers. <code>OrdinalMap</code> handles those through the <code>OrdinalKey</code> contract rather than forcing users to stringify precise values.</p>
 <h2 id="why-not-dict-or-frozendict">Why not <code>dict</code> or <code>FrozenDict</code><a class="headerlink" href="#why-not-dict-or-frozendict" title="Permanent link">&para;</a></h2>
 <p>A builtin <code>dict[K, int]</code> is the right default when the mapping is ordinary program state: mutable, incrementally built, and not meant to define a portable byte contract.</p>
