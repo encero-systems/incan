@@ -7417,12 +7417,12 @@
 </ul>
 <h2 id="release-milestones">Release Milestones<a class="headerlink" href="#release-milestones" title="Permanent link">&para;</a></h2>
 <h3 id="04-release-tooling-inspection-and-first-contact">0.4 Release: tooling, inspection, and first contact<a class="headerlink" href="#04-release-tooling-inspection-and-first-contact" title="Permanent link">&para;</a></h3>
-<p>The 0.4 release direction is:</p>
+<p>The 0.4 release established the first-contact and inspection baseline:</p>
 <blockquote>
 <p>0.3 made real programs credible. 0.4 makes the stack tryable.</p>
 </blockquote>
-<p>The release is deliberately not a broad language/runtime reopening. It should make Incan easier to install, start, inspect, diagnose, and debug without requiring users or agents to clone the repository or reverse-engineer compiler internals. The release succeeds when a new evaluator can install Incan, create a starter project, understand failures through stable diagnostics, inspect generated artifacts and semantic graph facts, and see where Incan fits in the Encero stack.</p>
-<p>0.4 should land in seven stages:</p>
+<p>The release was deliberately not a broad language/runtime reopening. It made Incan easier to install, start, inspect, diagnose, and debug without requiring users or agents to clone the repository or reverse-engineer compiler internals. The release baseline is that a new evaluator can install Incan, create a starter project, understand failures through stable diagnostics, inspect generated artifacts and semantic graph facts, and see where Incan fits in the Encero stack.</p>
+<p>0.4 landed across seven stages:</p>
 <ol>
 <li>Scope guard, direction notes, and RFC inspectability prompts.</li>
 <li>Boundary identity and compact release-parity fixtures.</li>
@@ -7433,7 +7433,7 @@
 <li>Installer, starter flow, first-contact docs, and release hardening.</li>
 </ol>
 <h4 id="release-gating-work">Release-gating work<a class="headerlink" href="#release-gating-work" title="Permanent link">&para;</a></h4>
-<p>These issues define the minimum coherent 0.4 release surface:</p>
+<p>These issues defined the minimum coherent 0.4 release surface:</p>
 <ul>
 <li><a href="https://github.com/encero-systems/incan/issues/223">#223</a>: umbrella delivery issue for the tooling, inspection, and first-contact release.</li>
 <li><a href="https://github.com/encero-systems/incan/issues/554">#554</a>: release direction notes and scope guard.</li>
@@ -7455,7 +7455,7 @@
 <h4 id="useful-but-evidence-dependent-work">Useful but evidence-dependent work<a class="headerlink" href="#useful-but-evidence-dependent-work" title="Permanent link">&para;</a></h4>
 <p>No current 0.4 milestone item remains in this bucket. Generated-library preheat alignment was promoted into the release-gating work after downstream timing evidence showed that silent cold dependency work was part of the first-contact and downstream package experience.</p>
 <h4 id="explicit-04-exclusions">Explicit 0.4 exclusions<a class="headerlink" href="#explicit-04-exclusions" title="Permanent link">&para;</a></h4>
-<p>The following are design constraints and future lanes, not 0.4 implementation slices unless the milestone is deliberately changed:</p>
+<p>The following were kept as design constraints and future lanes, not 0.4 implementation slices:</p>
 <ul>
 <li>RFC 037 <code>std.web</code> and RFC 066 <code>std.http</code> implementation work.</li>
 <li>Source-local feature metadata beyond maintaining the generated feature inventory for public 0.4 capabilities.</li>

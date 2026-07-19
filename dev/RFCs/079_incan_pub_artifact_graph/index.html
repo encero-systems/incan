@@ -6394,6 +6394,15 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#integrity-and-event-log-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      Integrity and event log model
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -6482,6 +6491,15 @@
   <a href="#let-the-registry-apply-project-mutations" class="md-nav__link">
     <span class="md-ellipsis">
       Let the registry apply project mutations
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#use-a-blockchain-as-the-core-registry-ledger" class="md-nav__link">
+    <span class="md-ellipsis">
+      Use a blockchain as the core registry ledger
     </span>
   </a>
   
@@ -6716,6 +6734,11 @@ incan capability show cli --source incan.pub
 <p>Discovery output should be machine-readable and should expose why a result matched the query when that information is available.</p>
 <h3 id="advisories-and-yanking">Advisories and yanking<a class="headerlink" href="#advisories-and-yanking" title="Permanent link">&para;</a></h3>
 <p>The graph should represent advisories and yanking as relationships rather than opaque package flags. A yanked capability descriptor, revoked model, or vulnerable template source can then be connected to affected packages, templates, actions, and projects through local provenance.</p>
+<h3 id="integrity-and-event-log-model">Integrity and event log model<a class="headerlink" href="#integrity-and-event-log-model" title="Permanent link">&para;</a></h3>
+<p>The artifact graph should be built from immutable artifact versions and signed registry events rather than from a mutable ad-hoc catalog. Package archives, template bundles, model weights, docs bundles, datasets, eval suites, generated artifacts, and similar versioned payloads should have content-addressed identities. A stable asset name or channel such as <code>latest</code>, <code>stable</code>, or <code>recommended</code> is a registry pointer, not the artifact version itself.</p>
+<p>Registry state changes should be represented as signed events. Event kinds include publish, yank, unyank, supersede, ownership transfer, advisory attach, advisory resolve, revocation, compatibility assertion, and metadata/card update. The queryable artifact graph is then a projection over the accepted event stream plus the immutable artifact payloads it references.</p>
+<p>This keeps the useful properties usually sought from blockchain-style designs: tamper evidence, provenance, auditable state transitions, and independently verifiable artifact identity. It avoids making consensus, token economics, or irreversible public-chain writes part of the core <code>incan.pub</code> contract. Moderation, malware response, accidental secret publication, legal takedowns, private catalogs, and key rotation all require registry-controlled state transitions that remain auditable without pretending every piece of state should be globally immutable.</p>
+<p>The event log should be append-only from the registry's perspective, with corrections represented by later events rather than in-place rewrites. Implementations may publish Merkle checkpoints or anchor event-log roots in an external transparency system later, but that is an optional hardening layer. It must not be required for the first useful artifact graph.</p>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
 <h3 id="relationship-to-rfc-034">Relationship to RFC 034<a class="headerlink" href="#relationship-to-rfc-034" title="Permanent link">&para;</a></h3>
 <p>RFC 034 owns core package registry semantics. This RFC extends the registry's conceptual model from package versions to related artifact nodes and relationships.</p>
@@ -6733,6 +6756,8 @@ incan capability show cli --source incan.pub
 <p>Rejected because not every artifact has package semantics. A prompt template, eval suite, capability descriptor, or advisory is meaningfully related to packages but should not necessarily be published as its own dependency.</p>
 <h3 id="let-the-registry-apply-project-mutations">Let the registry apply project mutations<a class="headerlink" href="#let-the-registry-apply-project-mutations" title="Permanent link">&para;</a></h3>
 <p>Rejected because receiver-side mutation must remain local, reviewable, and policy-controlled.</p>
+<h3 id="use-a-blockchain-as-the-core-registry-ledger">Use a blockchain as the core registry ledger<a class="headerlink" href="#use-a-blockchain-as-the-core-registry-ledger" title="Permanent link">&para;</a></h3>
+<p>Rejected for the core <code>incan.pub</code> design. Blockchain infrastructure adds operational, cost, latency, governance, and user-experience complexity without matching the registry's primary trust boundary. <code>incan.pub</code> needs signed publishers, content-addressed artifacts, auditable registry events, moderation, yanking, recovery, private-catalog compatibility, and predictable EU-hosted operations. A signed append-only event log with optional external checkpoints provides the relevant integrity properties without binding the registry to a token, chain, or external consensus layer.</p>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
 <li>A graph model is more complex than a package index.</li>
@@ -6756,7 +6781,7 @@ incan capability show cli --source incan.pub
 <ul>
 <li>Which artifact kinds should be included in the first graph implementation?</li>
 <li>Should cards live inside package archives, registry-side metadata, or both?</li>
-<li>How should graph relationships be signed or verified?</li>
+<li>Which graph event kinds require publisher signatures, registry signatures, or both?</li>
 <li>What discovery fields are required for v1 search?</li>
 <li>Should advisories be separate artifacts or metadata attached to packages and descriptors?</li>
 <li>How should private catalogs share graph semantics with public <code>incan.pub</code>?</li>

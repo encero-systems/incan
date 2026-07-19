@@ -6344,6 +6344,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#peer-context-and-experimental-baselines" class="md-nav__link">
+    <span class="md-ellipsis">
+      Peer context and experimental baselines
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#rule-authoring-contract" class="md-nav__link">
     <span class="md-ellipsis">
       Rule authoring contract
@@ -6559,6 +6568,8 @@
 <li><strong>Categories are explicit:</strong> Architecture findings, safety findings, idiom findings, maintainability findings, and risk findings remain separate in rule codes and profiles even when they share one command.</li>
 <li><strong>Broad collection, precise classification:</strong> The command should scan the requested scope broadly and emit evidence-backed findings across categories. Confidence, category, profile, baseline, and priority decide presentation and action pressure; they should not erase valid findings up front merely because the finding is local, optional, or not architectural.</li>
 <li><strong>Rule authoring is a product surface:</strong> The feature is only maintainable if adding a rule means using stable typed facts and reusable queries, not hand-parsing raw graph nodes or reimplementing AST walks.</li>
+<li><strong>Peer context is explicit:</strong> Projects may declare locally meaningful peer groups such as command handlers, lowering passes, adapters, registries, or generators. A broad category may contain several valid peer groups; names and filesystem position are useful signals, not sufficient proof of membership or intent.</li>
+<li><strong>Exploration stays subordinate to rules:</strong> Future baseline or similarity analysis may identify review candidates from comparable peers, but it must remain explainable, provenance-aware, and non-authoritative. It cannot silently create an architectural contract or replace deterministic rule detection.</li>
 </ol>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
 <p>Incan already has syntax checks, semantic checks, formatter behavior, tests, and generated-Rust validation. Those tools answer whether a program parses, typechecks, formats, and runs. They do not answer whether a project is accumulating design pressure: repeated dispatch over the same domain, public boundaries that can panic on recoverable input, old-shaped control flow that should now use language features, or small helper functions that add indirection without carrying domain meaning.</p>
@@ -6578,6 +6589,8 @@
 <li>Keep detection deterministic for the first version; no language model is required for core finding generation.</li>
 <li>Support text output for humans and stable JSON output for tools, agents, editors, and CI.</li>
 <li>Make suppression and baselining part of the product model so mature codebases can adopt the command incrementally.</li>
+<li>Define a metadata and fact-model path for project-specific peer context, including peer-group hierarchy, declared boundary constraints, exceptions, and membership provenance.</li>
+<li>Reserve an explicit experimental profile for explainable peer-baseline outliers once the required facts, calibration fixtures, and versioned baseline contract exist.</li>
 </ul>
 <h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
@@ -6585,6 +6598,8 @@
 <li>This RFC does not replace formatter rules, typechecker diagnostics, Clippy-style generated-Rust checks, or project tests.</li>
 <li>This RFC does not require a small language model or remote AI service for rule detection.</li>
 <li>This RFC does not attempt to infer developer intent from names alone.</li>
+<li>This RFC does not make a similarity score, inferred peer membership, or outlier classification an architectural finding by itself.</li>
+<li>This RFC does not allow an exploratory baseline to fail CI by default, silently update itself from a scan, or promote an observed pattern into a deterministic rule automatically.</li>
 <li>This RFC does not require every possible maintainability rule or risk signal to ship in the first version.</li>
 <li>This RFC does not define automatic rewrites or apply fixes.</li>
 <li>This RFC does not decide whether a reported finding should be fixed in the current change. That is a separate user, CI, or fix-loop policy decision.</li>
@@ -6674,7 +6689,7 @@ Risk: Keep the loop if additional statements, logging, early exits, or mutation 
 <p>When <code>PATH</code> is a directory, the command must scan <code>.incn</code> files under that directory recursively. The scan must be deterministic. The scan must de-duplicate modules by source path so a file imported by multiple roots contributes facts once.</p>
 <p>The requested scope is the scan boundary. Maintainability findings are not limited to code that happens to be near another edit. Profiles, baselines, suppressions, and output filters decide which findings are shown or acted on.</p>
 <p>The command must provide <code>--format text</code> and <code>--format json</code>. Text output is for humans. JSON output is the integration surface for agents, editors, CI, dashboards, and future baselining tools.</p>
-<p>The command should provide <code>--profile</code> with at least <code>architecture</code>, <code>safety</code>, <code>idioms</code>, <code>maintainability</code>, <code>risk</code>, and <code>all</code>. The default profile is unresolved by this draft.</p>
+<p>The command should provide <code>--profile</code> with at least <code>architecture</code>, <code>safety</code>, <code>idioms</code>, <code>maintainability</code>, <code>risk</code>, <code>experimental</code>, and <code>all</code>. The default profile is unresolved by this draft. <code>experimental</code> is opt-in and may contain peer-baseline review candidates; <code>all</code> excludes it unless the user requests it explicitly.</p>
 <h3 id="finding-model">Finding model<a class="headerlink" href="#finding-model" title="Permanent link">&para;</a></h3>
 <p>Every finding must have a stable rule code. Rule codes must be namespaced by category.</p>
 <div class="language-text highlight"><pre><span></span><code>arch.repeated_match_dispatch
@@ -6706,6 +6721,26 @@ Low: the rule is exploratory and should normally be hidden outside explicit prof
 <p>Maintainability rules describe local readability, cleanup, or code-shape pressure. Single-use trivial helpers, repeated literals, unnecessary wrappers, long branch-heavy functions, broad type plumbing, parallel fixture lists, and append-only builders belong here when detected with concrete evidence.</p>
 <p>Risk rules describe deterministic prioritization evidence rather than recommendations by themselves. Untested hotspots, churn, ownership spread, co-change without structural edges, decision staleness, and code-age volatility belong here when the required local inputs are available. Risk findings must expose raw contributing measures and caveats rather than only a composite score.</p>
 <p>Rules must not be categorized as architecture findings merely because they are emitted by <code>incan architect</code>.</p>
+<h3 id="peer-context-and-experimental-baselines">Peer context and experimental baselines<a class="headerlink" href="#peer-context-and-experimental-baselines" title="Permanent link">&para;</a></h3>
+<p>Project architecture often has distinctions that compiler facts cannot establish alone. A repository may contain several kinds of command handler, adapter, generator, registry, or lowering pass that share a broad category but have different responsibilities and dependency directions. Architect must therefore support project-specific peer context without treating a filename, directory, declaration name, or one aggregate metric as architectural truth.</p>
+<p>A peer group is a named set of comparable source owners, such as files, modules, declarations, or other codegraph-backed scopes. Peer context may describe a hierarchy from broad category to local archetype, declared dependency boundaries, known exceptions, and the provenance of every membership decision. The first useful provenance states are:</p>
+<ul>
+<li><code>declared</code>: project metadata explicitly assigns the member or boundary;</li>
+<li><code>derived</code>: a deterministic rule or compiler-backed query establishes the membership; and</li>
+<li><code>experimental</code>: an exploratory process proposes a comparable peer set but has not established a project contract.</li>
+</ul>
+<p>Project metadata must be able to represent multiple valid peer groups below one broad role. It must not force a source owner into a single global category merely because its path or name resembles another group.</p>
+<p>Peer signatures may combine compiler-backed declaration kind, parameter and type shape, imports, resolved calls, references, ownership position, body summaries, and source topology. Names and paths may contribute weak context, but the signature must retain the provenance and strength of every fact so a consumer can distinguish checked identity from syntax-only or project-declared context.</p>
+<p>An experimental baseline may compare a changed owner with its peer group and report a review candidate only when it explains the comparison: the selected peers, observed differences, relevant source locations, baseline version, and known counterexamples. For example:</p>
+<div class="language-text highlight"><pre><span></span><code>[Info] Experimental peer-context outlier in `sync_user`
+Pressure: `sync_user` imports a web boundary and calls two HTTP-facing APIs; none of its 31 declared worker peers do.
+Evidence:
+  - peer group: `background-workers` (membership: declared)
+  - src/workers/sync_user.incn:4:1 imports `std.web`
+  - baseline: codegraph schema 1, compiler 0.5.0, project revision abc123
+Risk: the worker may intentionally own a web ingress boundary; record that exception or move the boundary if the dependency is accidental.
+</code></pre></div>
+<p>The candidate is not a deterministic <code>arch.*</code> violation unless a declared boundary or independently testable Architect rule establishes that the dependency is forbidden. Experimental baselines must be opt-in, advisory, and unable to alter their own committed baseline from the scan being evaluated. A baseline snapshot must record the Codegraph schema version, compiler version, project identity, and source revision or equivalent content identity.</p>
 <h3 id="rule-authoring-contract">Rule authoring contract<a class="headerlink" href="#rule-authoring-contract" title="Permanent link">&para;</a></h3>
 <p>Rules must declare metadata: code, category, default priority, default confidence, profile membership, required fact kinds, and a short explanation.</p>
 <p>Rules must consume typed fact views rather than raw serialized facts. A rule that needs match dispatch sites, call sites, assignment shapes, helper usage counts, or loop-builder shapes should ask for those views directly.</p>
@@ -6714,7 +6749,7 @@ Low: the rule is exploratory and should normally be hidden outside explicit prof
 <p>Rules should prefer narrow body-shape facts over broad textual heuristics. For example, a comprehension candidate should be based on an append-only list-builder shape, not the mere presence of a <code>for</code> loop and <code>append</code>.</p>
 <p>Rules must not emit findings for generated stdlib internals or known external code unless the user explicitly scans those sources.</p>
 <h3 id="codegraph-fact-requirements">Codegraph fact requirements<a class="headerlink" href="#codegraph-fact-requirements" title="Permanent link">&para;</a></h3>
-<p>The codegraph exporter must provide enough source facts for rules to avoid command-private AST walks. The first useful fact families are declarations, imports, public API metadata, match dispatches, call sites, references, assignment/update shapes, function body summaries, usage counts, loop-builder shapes, and result-match shapes.</p>
+<p>The codegraph exporter must provide enough source facts for rules to avoid command-private AST walks. The first useful fact families are declarations, imports, public API metadata, match dispatches, call sites, references, assignment/update shapes, function body summaries, usage counts, loop-builder shapes, result-match shapes, declaration signatures, source topology, and stable identity/provenance fields.</p>
 <p>Match dispatch facts must include the matched domain, explicit pattern labels, explicit pattern count, source arm count, and wildcard/default-arm context.</p>
 <p>Call-site facts must include callee key, callee label, receiver shape when available, source location, and owner declaration.</p>
 <p>Reference facts must support usage counting for private declarations and helper functions.</p>
@@ -6761,11 +6796,12 @@ Low: the rule is exploratory and should normally be hidden outside explicit prof
 <p>Project-wide scanning may be slower than entry-point scanning. The implementation should keep scans deterministic and should leave room for caching, but v0.5 should prioritize correctness and evidence over premature optimization.</p>
 <h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
 <p>This section is non-normative.</p>
-<p>The recommended internal shape is a layered pipeline: source collection, compiler-backed codegraph extraction, typed fact views, query indexes, independent rule modules, finding normalization, de-duplication, profile filtering, and text/JSON rendering.</p>
+<p>The recommended internal shape is a layered pipeline: source collection, compiler-backed codegraph extraction, typed fact views, query indexes, project peer context and boundary metadata, independent rule modules, finding normalization, de-duplication, profile filtering, and text/JSON rendering.</p>
 <p>The codegraph layer should remain the producer of source facts. The architect layer should not own parsing or typechecking behavior. Architect rules should operate over typed views such as match dispatch sites, call sites, references, assignment/update candidates, usage counts, loop-builder shapes, and result-match shapes.</p>
-<p>The rule engine should provide a small metadata contract for rule authors. A rule should declare its code, category, default priority, confidence, profiles, required facts, and explanation. A rule should receive a query context and emit findings.</p>
+<p>The rule engine should provide a small metadata contract for rule authors. A rule should declare its code, category, default priority, confidence, profiles, required facts, and explanation. A rule should receive a query context and emit findings. Project peer context is separate from rule metadata: it describes locally meaningful comparable scopes and declared boundary intent, and must preserve whether each claim is declared, derived, or experimental.</p>
 <p>The report layer should be shared by all rules. Sorting, de-duplication, JSON serialization, text formatting, suppression matching, and baseline matching should not be implemented per rule.</p>
 <p>The first version should ship with a small calibrated rule set rather than a large catalogue. New rules should be added only when they have clear positive fixtures, negative fixtures, and calibration evidence from real source.</p>
+<p>Experimental peer-baseline analysis is a later consumer of the same fact and query layers. It may construct explainable signatures and compare declared or derived peer groups, but it must remain outside the deterministic rule path until its calibration, storage, and user-facing contract are independently settled.</p>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Parser / AST</strong>: No new user syntax is required, but source traversal must expose enough body shapes for codegraph facts.</li>
@@ -6775,14 +6811,17 @@ Low: the rule is exploratory and should normally be hidden outside explicit prof
 <li><strong>Stdlib / Runtime (<code>incan_stdlib</code>)</strong>: No required runtime impact, though stdlib feature surfaces such as Result combinators and iterator adapters inform idiom rules.</li>
 <li><strong>Formatter</strong>: No required impact unless future auto-fix support is added.</li>
 <li><strong>LSP / Tooling</strong>: The JSON findings format should be usable by editors, agents, CI, and future diagnostics-style surfaces.</li>
-<li><strong>CLI / Project tooling</strong>: <code>incan architect</code> needs requested-scope scanning, profiles, stable text/JSON output, suppression support, and baseline support.</li>
-<li><strong>Documentation</strong>: The CLI reference must document command behavior, profiles, categories, priorities, confidence, suppressions, and examples.</li>
+<li><strong>CLI / Project tooling</strong>: <code>incan architect</code> needs requested-scope scanning, profiles, stable text/JSON output, suppression support, and baseline support. Future peer-baseline tooling needs opt-in invocation and schema- and compiler-versioned snapshots.</li>
+<li><strong>Documentation</strong>: The CLI reference must document command behavior, profiles, categories, priorities, confidence, suppressions, peer-context provenance, and examples.</li>
 </ul>
 <h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
 <ul>
 <li>What is the default profile for <code>incan architect .</code>: architecture-only, architecture plus safety, or all stable rules?</li>
 <li>What suppression syntax should Incan use for architect findings, and should it share vocabulary with compiler diagnostic suppressions?</li>
 <li>Should baselines live in <code>incan.toml</code>, a separate lock-like file, or a generated artifact under project tooling state?</li>
+<li>Where should peer-group metadata live, and which membership or boundary declarations belong in source, package metadata, or local tooling state?</li>
+<li>Which peer-signature facts are stable and useful enough to expose without turning names, paths, or aggregate similarity into semantic authority?</li>
+<li>How should a project review, accept, version, and retire an experimental baseline or intentional outlier without allowing a scan to rewrite its own comparison set?</li>
 <li>Which finding fields are stable enough to commit as v0.5 JSON output, and which should remain experimental?</li>
 <li>Which maintainability rules belong in the first stable profile, and which should remain experimental until enough corpus evidence exists?</li>
 <li>Should project-wide directory scanning include tests by default, and should findings from tests use a separate priority calibration?</li>

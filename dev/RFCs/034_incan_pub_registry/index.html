@@ -7093,6 +7093,7 @@ Body: { &quot;name&quot;: &quot;mylib&quot;, &quot;version&quot;: &quot;0.1.0&qu
 </tr>
 </tbody>
 </table>
+<p>RFC 079 generalizes this package-level integrity model for the wider <code>incan.pub</code> artifact graph. Package versions remain immutable artifacts covered by checksums and publisher signatures. Wider registry state such as yanks, advisories, ownership transfers, metadata updates, and graph relationships should be modeled as signed registry events over those immutable artifacts, not as a blockchain-backed core ledger.</p>
 <h3 id="consumer-resolution-flow">Consumer resolution flow<a class="headerlink" href="#consumer-resolution-flow" title="Permanent link">&para;</a></h3>
 <p>When <code>incan build</code> encounters a registry dependency:</p>
 <div class="language-text highlight"><pre><span></span><code>[dependencies]
