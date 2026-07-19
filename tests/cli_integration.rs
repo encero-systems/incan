@@ -204,6 +204,102 @@ def main() -> None:
 }
 
 #[test]
+fn rust_stdout_extension_trait_result_supports_try_operator_issue888() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(
+        tmp.path(),
+        "rust_stdout_extension_trait_result",
+        r#"
+
+[rust-dependencies]
+console_interop = { path = "rust/console_interop" }
+"#,
+    )?;
+    fs::write(
+        &main_path,
+        r#"from rust::std::io import Error as IoError, stdout
+from rust::console_interop import EnterAlternateScreen, ExecutableCommand
+
+def enter_alternate_screen() -> Result[None, IoError]:
+    mut output = stdout()
+    _ = output.execute(EnterAlternateScreen)?
+    return Ok(None)
+
+def inspect_alternate_screen_result() -> None:
+    mut output = stdout()
+    match output.execute(EnterAlternateScreen):
+        Ok(_) => pass
+        Err(_) => pass
+
+def main() -> None:
+    inspect_alternate_screen_result()
+    match enter_alternate_screen():
+        Ok(_) => pass
+        Err(_) => pass
+"#,
+    )?;
+
+    let helper_src = tmp.path().join("rust/console_interop/src");
+    fs::create_dir_all(&helper_src)?;
+    fs::write(
+        helper_src
+            .parent()
+            .ok_or("console interop source directory had no parent")?
+            .join("Cargo.toml"),
+        r#"[package]
+name = "console_interop"
+version = "0.1.0"
+edition = "2021"
+"#,
+    )?;
+    fs::write(
+        helper_src.join("lib.rs"),
+        r#"use std::io::{self, Write};
+
+pub struct EnterAlternateScreen;
+
+pub trait Command {}
+
+impl Command for EnterAlternateScreen {}
+
+pub trait ExecutableCommand {
+    fn execute(&mut self, command: impl Command) -> io::Result<&mut Self>;
+}
+
+impl<W: Write + ?Sized> ExecutableCommand for W {
+    fn execute(&mut self, _command: impl Command) -> io::Result<&mut Self> {
+        Ok(self)
+    }
+}
+"#,
+    )?;
+
+    let main_arg = main_path.to_str().ok_or("non-utf8 main path")?;
+    let lock_output = run_incan(tmp.path(), &["lock", main_arg])?;
+    assert_success(&lock_output, "incan lock for stdout extension-trait Result");
+    let build_output = run_incan(tmp.path(), &["build", main_arg, "--locked"])?;
+    assert_success(
+        &build_output,
+        "incan build for stdout extension-trait Result postfix try",
+    );
+
+    let generated = fs::read_to_string(
+        tmp.path()
+            .join("target/incan/rust_stdout_extension_trait_result/src/main.rs"),
+    )?;
+    let compact = generated.split_whitespace().collect::<String>();
+    assert!(
+        compact.contains("output.execute(EnterAlternateScreen)?"),
+        "generated Rust must preserve the fallible extension-trait call:\n{generated}"
+    );
+    assert!(
+        compact.contains("matchoutput.execute(EnterAlternateScreen)"),
+        "generated Rust must preserve direct Result inspection for the extension-trait call:\n{generated}"
+    );
+    Ok(())
+}
+
+#[test]
 fn rust_trait_object_method_arguments_borrow_by_metadata_issue832() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(
