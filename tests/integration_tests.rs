@@ -11160,6 +11160,107 @@ def test_generic_json_result_infers_from_parameter_context() -> None:
             .output()?)
     }
 
+    /// Verifies absolute crate imports across direct checking/building, library re-export, and test-batch compilation.
+    #[test]
+    fn boundary_parity_preserves_absolute_crate_public_types_issue882() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path().join("absolute_crate_public_types");
+        std::fs::create_dir_all(project_root.join("src"))?;
+        std::fs::create_dir_all(project_root.join("tests"))?;
+        std::fs::write(
+            project_root.join("incan.toml"),
+            "[project]\nname = \"absolute_crate_public_types\"\nversion = \"0.1.0\"\n",
+        )?;
+        std::fs::write(
+            project_root.join("src/types.incn"),
+            r#"pub enum Access:
+    Allowed
+    Denied
+
+
+pub model Decision:
+    pub admitted: bool
+    pub reason: str
+"#,
+        )?;
+        let consumer_path = project_root.join("src/consumer.incn");
+        std::fs::write(
+            &consumer_path,
+            r#"from crate.types import Access, Decision
+
+
+pub def allowed() -> Access:
+    return Access.Allowed
+
+
+pub def explain(decision: Decision) -> str:
+    if decision.admitted:
+        return decision.reason
+    return "denied"
+
+
+def main() -> None:
+    decision = Decision(admitted=true, reason="allowed")
+    assert allowed() == Access.Allowed
+    assert explain(decision) == "allowed"
+"#,
+        )?;
+        std::fs::write(
+            project_root.join("src/lib.incn"),
+            r#"pub from crate.consumer import allowed, explain
+pub from crate.types import Access, Decision
+"#,
+        )?;
+        std::fs::write(
+            project_root.join("tests/test_public_types.incn"),
+            r#"from crate.consumer import allowed, explain
+from crate.types import Access, Decision
+
+
+def test_absolute_crate_public_types() -> None:
+    decision = Decision(admitted=true, reason="allowed")
+    assert allowed() == Access.Allowed
+    assert explain(decision) == "allowed"
+"#,
+        )?;
+
+        let check_output = run_check(&consumer_path)?;
+        assert!(
+            check_output.status.success(),
+            "expected direct check to preserve absolute crate import metadata.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&check_output.stdout),
+            String::from_utf8_lossy(&check_output.stderr)
+        );
+
+        let direct_build = run_build(&consumer_path, &project_root.join("out"))?;
+        assert!(
+            direct_build.status.success(),
+            "expected direct build to preserve absolute crate import metadata.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&direct_build.stdout),
+            String::from_utf8_lossy(&direct_build.stderr)
+        );
+
+        let library_build = run_build_lib(&project_root)?;
+        assert!(
+            library_build.status.success(),
+            concat!(
+                "expected library build and re-export to preserve absolute crate import metadata.\n",
+                "stdout:\n{}\nstderr:\n{}",
+            ),
+            String::from_utf8_lossy(&library_build.stdout),
+            String::from_utf8_lossy(&library_build.stderr)
+        );
+
+        let test_output = run_test(&project_root.join("tests"))?;
+        assert!(
+            test_output.status.success(),
+            "expected test-batch parity for absolute crate public types.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&test_output.stdout),
+            String::from_utf8_lossy(&test_output.stderr)
+        );
+        Ok(())
+    }
+
     #[test]
     fn boundary_parity_preserves_dependency_owned_union_helpers_through_facade()
     -> Result<(), Box<dyn std::error::Error>> {

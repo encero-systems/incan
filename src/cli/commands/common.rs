@@ -3513,6 +3513,8 @@ pub(crate) fn module_key_index(modules: &[ParsedModule]) -> HashMap<String, usiz
 /// Public signatures in a directly imported module may reference types from that module's own imports, so the
 /// typechecker needs the transitive source-module dependency closure rather than just the immediate import list.
 /// This helper preserves stable module ordering by returning dependencies in collected-module index order.
+/// Bare sibling paths and absolute `crate.*` paths are both local source-module edges and must contribute to the same
+/// closure.
 ///
 /// Use this variant inside per-module loops to avoid rebuilding the module key map on every iteration.
 pub(crate) fn imported_module_deps_for_with_index<'m>(
@@ -3526,6 +3528,7 @@ pub(crate) fn imported_module_deps_for_with_index<'m>(
     }
 
     // ---- Context: walk the transitive local source-module import closure ----
+    /// Collect immediate local source dependencies for one module from both bare and absolute `crate.*` imports.
     fn direct_local_dep_indexes(
         modules: &[ParsedModule],
         module_index: usize,
@@ -3538,7 +3541,7 @@ pub(crate) fn imported_module_deps_for_with_index<'m>(
             };
             match &import.kind {
                 ImportKind::From { module, .. } => {
-                    if module.parent_levels > 0 || module.is_absolute || module.segments.is_empty() {
+                    if module.parent_levels > 0 || module.segments.is_empty() {
                         continue;
                     }
                     let key = canonicalize_source_module_segments(&module.segments).join("_");
@@ -3549,7 +3552,7 @@ pub(crate) fn imported_module_deps_for_with_index<'m>(
                     }
                 }
                 ImportKind::Module(path) => {
-                    if path.parent_levels > 0 || path.is_absolute || path.segments.is_empty() {
+                    if path.parent_levels > 0 || path.segments.is_empty() {
                         continue;
                     }
                     let full_key = canonicalize_source_module_segments(&path.segments).join("_");
@@ -4654,6 +4657,106 @@ pub def probe() -> SubstraitPlan:
                     "typecheck failed for module {}: {:?}",
                     module.file_path.display(),
                     errs.iter().map(|e| e.message.clone()).collect::<Vec<_>>()
+                )
+                .into());
+            }
+        }
+        Ok(())
+    }
+
+    /// Verifies that absolute from-imports and module imports both contribute local dependency metadata before
+    /// typechecking.
+    #[test]
+    fn imported_module_deps_preserve_absolute_crate_public_type_metadata_issue882()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path();
+        std::fs::write(
+            project_root.join("incan.toml"),
+            r#"[project]
+name = "absolute_crate_public_types"
+version = "0.1.0"
+"#,
+        )?;
+        let src_dir = project_root.join("src");
+        std::fs::create_dir_all(&src_dir)?;
+
+        std::fs::write(
+            src_dir.join("types.incn"),
+            r#"pub enum Access:
+    Allowed
+    Denied
+
+
+pub model Decision:
+    pub admitted: bool
+    pub reason: str
+"#,
+        )?;
+        std::fs::write(
+            src_dir.join("consumer.incn"),
+            r#"from crate.types import Access, Decision
+
+
+pub def allowed() -> Access:
+    return Access.Allowed
+
+
+pub def explain(decision: Decision) -> str:
+    if decision.admitted:
+        return decision.reason
+    return "denied"
+"#,
+        )?;
+        std::fs::write(src_dir.join("module_consumer.incn"), "import crate.types\n")?;
+        let entry = src_dir.join("lib.incn");
+        std::fs::write(
+            &entry,
+            r#"pub from crate.consumer import allowed, explain
+pub from crate.types import Access, Decision
+import crate.module_consumer
+"#,
+        )?;
+
+        let modules = collect_modules(entry.to_string_lossy().as_ref())?;
+        let module_idx_by_key = module_key_index(&modules);
+        let consumer_idx = modules
+            .iter()
+            .position(|module| module.file_path.ends_with("src/consumer.incn"))
+            .ok_or("expected src/consumer.incn module")?;
+        let consumer_deps = imported_module_deps_for_with_index(&modules, consumer_idx, &module_idx_by_key);
+        assert!(
+            consumer_deps.iter().any(|(name, _)| *name == "types"),
+            "expected absolute from-import dependency `consumer -> types`, got: {:?}",
+            consumer_deps
+                .iter()
+                .map(|(name, _)| (*name).to_string())
+                .collect::<Vec<_>>()
+        );
+
+        let module_consumer_idx = modules
+            .iter()
+            .position(|module| module.file_path.ends_with("src/module_consumer.incn"))
+            .ok_or("expected src/module_consumer.incn module")?;
+        let module_consumer_deps =
+            imported_module_deps_for_with_index(&modules, module_consumer_idx, &module_idx_by_key);
+        assert!(
+            module_consumer_deps.iter().any(|(name, _)| *name == "types"),
+            "expected absolute module-import dependency `module_consumer -> types`, got: {:?}",
+            module_consumer_deps
+                .iter()
+                .map(|(name, _)| (*name).to_string())
+                .collect::<Vec<_>>()
+        );
+
+        for (idx, module) in modules.iter().enumerate() {
+            let deps = imported_module_deps_for_with_index(&modules, idx, &module_idx_by_key);
+            let mut checker = typechecker::TypeChecker::new();
+            if let Err(errs) = checker.check_with_imports(&module.ast, &deps) {
+                return Err(format!(
+                    "typecheck failed for module {}: {:?}",
+                    module.file_path.display(),
+                    errs.iter().map(|error| error.message.clone()).collect::<Vec<_>>()
                 )
                 .into());
             }
