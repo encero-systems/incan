@@ -316,6 +316,10 @@ pub fn semantic_lock_state(
 }
 
 /// Assemble independently resolved member graphs into the one canonical workspace semantic lock state.
+///
+/// Member semantic paths are recorded relative to their owning member when possible. This boundary rebases every
+/// nested package and feature-edge coordinate into workspace-root coordinates so the canonical lock remains portable
+/// when the workspace is relocated.
 pub fn workspace_semantic_lock_state(
     workspace_root: &Path,
     members: impl IntoIterator<Item = (PathBuf, SemanticLockState)>,
@@ -329,11 +333,29 @@ pub fn workspace_semantic_lock_state(
                     member_root.display()
                 ));
             }
+            let packages = semantic
+                .packages
+                .into_iter()
+                .map(|mut package| {
+                    package.project_root =
+                        rebase_member_semantic_path(workspace_root, &member_root, &package.project_root);
+                    package
+                })
+                .collect();
+            let feature_edges = semantic
+                .feature_edges
+                .into_iter()
+                .map(|mut edge| {
+                    edge.from = rebase_member_semantic_path(workspace_root, &member_root, &edge.from);
+                    edge.to = rebase_member_semantic_path(workspace_root, &member_root, &edge.to);
+                    edge
+                })
+                .collect();
             Ok(LockedWorkspaceMember {
                 member_root: portable_project_path(workspace_root, &member_root),
                 sdk: semantic.sdk,
-                packages: semantic.packages,
-                feature_edges: semantic.feature_edges,
+                packages,
+                feature_edges,
                 providers: semantic.providers,
             })
         })
@@ -343,6 +365,21 @@ pub fn workspace_semantic_lock_state(
         workspace_members,
         ..SemanticLockState::default()
     })
+}
+
+/// Translate one member-local semantic coordinate into the canonical workspace coordinate space.
+///
+/// Absolute coordinates are retained as their original targets before portability is applied. Relative coordinates,
+/// including the empty member-root marker, are first resolved against the member root. Targets outside the workspace
+/// remain absolute because [`portable_project_path`] only strips paths contained by its project root.
+fn rebase_member_semantic_path(workspace_root: &Path, member_root: &Path, path: &str) -> String {
+    let member_path = Path::new(path);
+    let resolved = if member_path.is_absolute() {
+        member_path.to_path_buf()
+    } else {
+        member_root.join(member_path)
+    };
+    portable_project_path(workspace_root, &resolved)
 }
 
 /// Render one component-selection edge in the stable lockfile vocabulary.
@@ -732,6 +769,62 @@ mod tests {
     }
 
     #[test]
+    fn workspace_semantic_lock_state_rebases_member_paths_to_workspace_root() -> TestResult {
+        let fixture = tempfile::tempdir()?;
+        let workspace_root = fixture.path().join("root_lib");
+        let consumer_root = workspace_root.join("consumer");
+        let external = tempfile::tempdir()?;
+        fs::create_dir_all(&consumer_root)?;
+
+        let member_semantic = SemanticLockState {
+            packages: vec![
+                locked_package("consumer", ""),
+                locked_package("root_lib", &workspace_root.to_string_lossy()),
+                locked_package("external", &external.path().to_string_lossy()),
+            ],
+            feature_edges: vec![
+                locked_feature_edge("", "root_lib", &workspace_root.to_string_lossy()),
+                locked_feature_edge("", "external", &external.path().to_string_lossy()),
+            ],
+            ..SemanticLockState::default()
+        };
+
+        let state = workspace_semantic_lock_state(&workspace_root, [(consumer_root, member_semantic)])?;
+        assert_eq!(state.workspace_members.len(), 1);
+        let member = &state.workspace_members[0];
+        assert_eq!(member.member_root, "consumer");
+        assert_eq!(member.packages[0].project_root, "consumer");
+        assert_eq!(member.packages[1].project_root, "");
+        assert_eq!(
+            member.packages[2].project_root,
+            fs::canonicalize(external.path())?.to_string_lossy().replace('\\', "/")
+        );
+        assert_eq!(member.feature_edges[0].from, "consumer");
+        assert_eq!(member.feature_edges[0].to, "");
+        assert_eq!(
+            member.feature_edges[1].to,
+            fs::canonicalize(external.path())?.to_string_lossy().replace('\\', "/")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn workspace_semantic_fingerprint_is_stable_after_relocation() -> TestResult {
+        let first_fixture = tempfile::tempdir()?;
+        let second_fixture = tempfile::tempdir()?;
+        let first = relocated_workspace_semantic(first_fixture.path())?;
+        let second = relocated_workspace_semantic(second_fixture.path())?;
+
+        assert_eq!(first, second);
+        let selection = CargoFeatureSelection::default();
+        assert_eq!(
+            compute_resolved_fingerprint(&[], &[], &selection, None, &first),
+            compute_resolved_fingerprint(&[], &[], &selection, None, &second)
+        );
+        Ok(())
+    }
+
+    #[test]
     fn lockfile_round_trip() -> TestResult {
         let selection = CargoFeatureSelection {
             cargo_features: vec!["alpha".to_string()],
@@ -960,6 +1053,47 @@ lock = "payload"
         };
         let norm = sel.normalized();
         assert_eq!(norm.cargo_features, vec!["a".to_string(), "b".to_string()]);
+    }
+
+    /// Build one minimal package-feature snapshot using the supplied member-local coordinate.
+    fn locked_package(package: &str, project_root: &str) -> LockedPackageFeatures {
+        LockedPackageFeatures {
+            package: package.to_string(),
+            project_root: project_root.to_string(),
+            active_features: BTreeSet::new(),
+            active_optional_dependencies: BTreeSet::new(),
+            dependency_features: BTreeMap::new(),
+            required_sdk_components: BTreeSet::new(),
+        }
+    }
+
+    /// Build one minimal feature edge using member-local source and target coordinates.
+    fn locked_feature_edge(from: &str, dependency_key: &str, to: &str) -> LockedFeatureEdge {
+        LockedFeatureEdge {
+            from: from.to_string(),
+            dependency_key: dependency_key.to_string(),
+            to: to.to_string(),
+            requested_features: BTreeSet::new(),
+            default_features: true,
+            optional: false,
+        }
+    }
+
+    /// Create the same rooted workspace semantic graph under an arbitrary filesystem location.
+    fn relocated_workspace_semantic(fixture_root: &Path) -> Result<SemanticLockState, Box<dyn std::error::Error>> {
+        let workspace_root = fixture_root.join("root_lib");
+        let consumer_root = workspace_root.join("consumer");
+        fs::create_dir_all(&consumer_root)?;
+        let member_semantic = SemanticLockState {
+            packages: vec![
+                locked_package("consumer", ""),
+                locked_package("root_lib", &workspace_root.to_string_lossy()),
+            ],
+            feature_edges: vec![locked_feature_edge("", "root_lib", &workspace_root.to_string_lossy())],
+            ..SemanticLockState::default()
+        };
+
+        workspace_semantic_lock_state(&workspace_root, [(consumer_root, member_semantic)]).map_err(|error| error.into())
     }
 
     fn sample_semantic_state() -> SemanticLockState {
