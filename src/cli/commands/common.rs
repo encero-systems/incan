@@ -50,8 +50,8 @@ use crate::project_lifecycle::toolchain::ToolchainConstraintSet;
 use crate::provider::{
     BackendImplementationRequirement, FeatureSelection, PackageFeatureGraph, PackageFeaturePlan,
     ProviderModuleResolution, ProviderPlan, ProviderProvenance, ResolvedSdkComponents, SDK_INVENTORY_FILE,
-    SDK_PROVIDER_BUILD_ENV, SDK_SOURCE_CATALOG_FILE, SdkComponent, SdkComponentSelection, SdkInventory,
-    SdkProviderDescriptor, SdkResolutionError, SdkSourceCatalog,
+    SDK_PROVIDER_BUILD_ENV, SDK_SOURCE_CATALOG_FILE, SdkArtifactProjection, SdkComponent, SdkComponentSelection,
+    SdkDependencyRebinding, SdkInventory, SdkProviderDescriptor, SdkResolutionError, SdkSourceCatalog,
 };
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect::{Inspector, InspectorConfig};
@@ -177,6 +177,10 @@ pub(crate) struct ProjectRequirements {
     pub stdlib_features: Vec<String>,
     /// Required Cargo dependencies contributed by stdlib namespaces and provider manifests.
     pub dependencies: Vec<DependencySpec>,
+    /// Immutable compiled-library projections that replace obsolete physical SDK cache coordinates.
+    pub sdk_dependency_rebindings: Vec<SdkDependencyRebinding>,
+    /// Complete compiled-artifact closure whose transitive coordinates must be projected together.
+    pub sdk_artifact_projections: Vec<SdkArtifactProjection>,
 }
 
 /// Select the Incan CLI executable that prepares SDK provider artifacts.
@@ -1199,9 +1203,44 @@ fn extend_requirements_with_selected_sdk_providers(
             dependency.features.dedup();
         }
     }
+    requirements
+        .sdk_dependency_rebindings
+        .extend_from_slice(provider_plan.sdk_dependency_rebindings());
+    normalize_sdk_dependency_rebindings(&mut requirements.sdk_dependency_rebindings);
+    requirements
+        .sdk_artifact_projections
+        .extend_from_slice(provider_plan.sdk_artifact_projections());
+    normalize_sdk_artifact_projections(&mut requirements.sdk_artifact_projections);
     requirements.stdlib_features.sort();
     requirements.stdlib_features.dedup();
     Ok(())
+}
+
+/// Sort and de-duplicate physical SDK projections independently of module-group traversal order.
+fn normalize_sdk_dependency_rebindings(rebindings: &mut Vec<SdkDependencyRebinding>) {
+    rebindings.sort_by(|left, right| {
+        (
+            &left.containing_artifact.crate_root,
+            &left.provider_name,
+            &left.dependency_key,
+            &left.source_crate_root,
+            &left.active_crate_root,
+        )
+            .cmp(&(
+                &right.containing_artifact.crate_root,
+                &right.provider_name,
+                &right.dependency_key,
+                &right.source_crate_root,
+                &right.active_crate_root,
+            ))
+    });
+    rebindings.dedup();
+}
+
+/// Sort and de-duplicate projected artifacts by their immutable compiled crate root.
+fn normalize_sdk_artifact_projections(projections: &mut Vec<SdkArtifactProjection>) {
+    projections.sort_by(|left, right| left.artifact.crate_root.cmp(&right.artifact.crate_root));
+    projections.dedup_by(|left, right| left.artifact.crate_root == right.artifact.crate_root);
 }
 
 /// Translate relocatable provider-owned Cargo metadata at the final Rust-backend boundary.
@@ -1458,9 +1497,12 @@ impl CompilationSession {
             .map(|manifest| manifest.project_root().to_path_buf())
             .unwrap_or(inferred_project_root);
         let source_root = resolve_source_root(&project_root, manifest.as_ref());
+        let sdk_inventory = prepare_or_discover_sdk_inventory()?;
         let package_feature_plan = manifest
             .as_ref()
-            .map(|manifest| PackageFeaturePlan::resolve(manifest, feature_selection))
+            .map(|manifest| {
+                PackageFeaturePlan::resolve_with_sdk_inventory(manifest, feature_selection, sdk_inventory.as_deref())
+            })
             .transpose()
             .map_err(|error| CliError::failure(error.to_string()))?;
         let root_feature_state = package_feature_plan
@@ -1509,7 +1551,6 @@ impl CompilationSession {
         // legacy monolithic stdlib. Besides losing component-aware diagnostics, that made a transient SDK profile
         // fail during collection and allowed the lock projection to drift before execution prepared the artifacts.
         // Publication is content-addressed and reused; parser-only mode still avoids preparing ordinary dependencies.
-        let sdk_inventory = prepare_or_discover_sdk_inventory()?;
         validate_component_inventory_selection(manifest.as_ref(), sdk_profile_override, sdk_inventory.as_deref())?;
         let sdk_selection =
             SdkComponentSelection::from_manifest_with_profile_override(manifest.as_ref(), sdk_profile_override);
@@ -2040,6 +2081,8 @@ pub(crate) fn collect_project_requirements(
     let mut requirements = ProjectRequirements {
         stdlib_features: stdlib_features.into_iter().collect(),
         dependencies: Vec::new(),
+        sdk_dependency_rebindings: Vec::new(),
+        sdk_artifact_projections: Vec::new(),
     };
     let workspace_root = stdlib_extra_crate_workspace_root();
     for namespace_name in &stdlib_namespaces {
@@ -2252,10 +2295,18 @@ pub(crate) fn merge_project_requirements(
         dependencies.push(candidate.clone());
     }
     dependencies.sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
+    let mut sdk_dependency_rebindings = current.sdk_dependency_rebindings.clone();
+    sdk_dependency_rebindings.extend(extra.sdk_dependency_rebindings.iter().cloned());
+    normalize_sdk_dependency_rebindings(&mut sdk_dependency_rebindings);
+    let mut sdk_artifact_projections = current.sdk_artifact_projections.clone();
+    sdk_artifact_projections.extend(extra.sdk_artifact_projections.iter().cloned());
+    normalize_sdk_artifact_projections(&mut sdk_artifact_projections);
 
     Ok(ProjectRequirements {
         stdlib_features,
         dependencies,
+        sdk_dependency_rebindings,
+        sdk_artifact_projections,
     })
 }
 
@@ -2372,12 +2423,15 @@ fn hash_dependency_spec_for_rust_inspect(hasher: &mut Sha256, spec: &DependencyS
 
 /// Stable fingerprint for inputs that define one generated rust-inspect Cargo workspace.
 #[cfg(feature = "rust_inspect")]
+#[allow(clippy::too_many_arguments)]
 fn rust_inspect_workspace_fingerprint(
     project_name: &str,
     cargo_package_name: &str,
     rust_edition: Option<&str>,
     resolved: &ResolvedDependencies,
     stdlib_features: &[String],
+    sdk_dependency_rebindings: &[SdkDependencyRebinding],
+    sdk_artifact_projections: &[SdkArtifactProjection],
     cargo_lock_payload: Option<&str>,
 ) -> String {
     let mut hasher = Sha256::new();
@@ -2400,6 +2454,42 @@ fn rust_inspect_workspace_fingerprint(
     let stdlib = normalized_stdlib_features_for_rust_inspect_fingerprint(stdlib_features);
     for f in &stdlib {
         hasher.update(f.as_bytes());
+        hasher.update(b"\0");
+    }
+    hasher.update(b"|\0");
+
+    let mut projections = sdk_artifact_projections.to_vec();
+    normalize_sdk_artifact_projections(&mut projections);
+    hasher.update(b"sdk_artifact_projections\0");
+    for projection in projections {
+        hasher.update(projection.artifact.crate_root.as_os_str().as_encoded_bytes());
+        hasher.update(b"\0");
+        match digest_provider_artifact(&projection.artifact.crate_root) {
+            Ok(digest) => hasher.update(digest.as_bytes()),
+            Err(error) => hasher.update(error.to_string().as_bytes()),
+        }
+        hasher.update(b"\0");
+    }
+    hasher.update(b"|\0");
+
+    let mut rebindings = sdk_dependency_rebindings.to_vec();
+    normalize_sdk_dependency_rebindings(&mut rebindings);
+    hasher.update(b"sdk_dependency_rebindings\0");
+    for rebinding in rebindings {
+        hasher.update(rebinding.containing_artifact.crate_root.as_os_str().as_encoded_bytes());
+        hasher.update(b"\0");
+        hasher.update(rebinding.provider_name.as_bytes());
+        hasher.update(b"\0");
+        hasher.update(rebinding.dependency_key.as_bytes());
+        hasher.update(b"\0");
+        hasher.update(rebinding.source_crate_root.as_os_str().as_encoded_bytes());
+        hasher.update(b"\0");
+        hasher.update(rebinding.active_crate_root.as_os_str().as_encoded_bytes());
+        hasher.update(b"\0");
+        match digest_provider_artifact(&rebinding.active_crate_root) {
+            Ok(digest) => hasher.update(digest.as_bytes()),
+            Err(error) => hasher.update(error.to_string().as_bytes()),
+        }
         hasher.update(b"\0");
     }
     hasher.update(b"|\0");
@@ -2695,6 +2785,8 @@ pub(crate) fn ensure_rust_inspect_workspace_with_cargo_package_name(
         rust_edition.as_deref(),
         resolved,
         &project_requirements.stdlib_features,
+        &project_requirements.sdk_dependency_rebindings,
+        &project_requirements.sdk_artifact_projections,
         cargo_lock_payload.as_deref(),
     );
     let rust_inspect_manifest_dir = rust_inspect_workspace_dir(project_root, project_name, &fingerprint);
@@ -2707,7 +2799,11 @@ pub(crate) fn ensure_rust_inspect_workspace_with_cargo_package_name(
         Err(_) => false,
     };
 
-    if cargo_toml_path.is_file() && main_rs_path.is_file() && fingerprint_matches {
+    if cargo_toml_path.is_file()
+        && main_rs_path.is_file()
+        && fingerprint_matches
+        && project_requirements.sdk_artifact_projections.is_empty()
+    {
         return Ok(rust_inspect_manifest_dir);
     }
 
@@ -2717,6 +2813,8 @@ pub(crate) fn ensure_rust_inspect_workspace_with_cargo_package_name(
     generator.set_dev_dependencies(resolved.dev_dependencies.clone());
     generator.set_include_dev_dependencies(true);
     generator.set_stdlib_features(project_requirements.stdlib_features.clone());
+    generator.set_sdk_dependency_rebindings(project_requirements.sdk_dependency_rebindings.clone());
+    generator.set_sdk_artifact_projections(project_requirements.sdk_artifact_projections.clone());
     generator.set_rust_edition(rust_edition);
     generator.set_cargo_lock_payload(cargo_lock_payload);
     let mut referenced_crates = std::collections::BTreeSet::new();
@@ -5379,6 +5477,8 @@ pub def main() -> int:
             Some("2021"),
             &resolved,
             &requirements.stdlib_features,
+            &requirements.sdk_dependency_rebindings,
+            &requirements.sdk_artifact_projections,
             Some("lock-bytes"),
         );
         let fp_b = super::rust_inspect_workspace_fingerprint(
@@ -5387,6 +5487,8 @@ pub def main() -> int:
             Some("2021"),
             &resolved,
             &requirements.stdlib_features,
+            &requirements.sdk_dependency_rebindings,
+            &requirements.sdk_artifact_projections,
             Some("lock-bytes"),
         );
         let workspace_fp = super::rust_inspect_workspace_fingerprint(
@@ -5395,6 +5497,8 @@ pub def main() -> int:
             Some("2021"),
             &resolved,
             &requirements.stdlib_features,
+            &requirements.sdk_dependency_rebindings,
+            &requirements.sdk_artifact_projections,
             Some("lock-bytes"),
         );
         assert_eq!(fp_a, fp_b);
@@ -5416,6 +5520,8 @@ pub def main() -> int:
             None,
             &resolved,
             &requirements.stdlib_features,
+            &requirements.sdk_dependency_rebindings,
+            &requirements.sdk_artifact_projections,
             Some("lock-a"),
         );
         let fp_two = super::rust_inspect_workspace_fingerprint(
@@ -5424,9 +5530,185 @@ pub def main() -> int:
             None,
             &resolved,
             &requirements.stdlib_features,
+            &requirements.sdk_dependency_rebindings,
+            &requirements.sdk_artifact_projections,
             Some("lock-b"),
         );
         assert_ne!(fp_one, fp_two);
+    }
+
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn rust_inspect_fingerprint_tracks_same_path_projection_rebuild_issue911() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let workspace = tempfile::tempdir()?;
+        let artifact = workspace.path().join("compiled");
+        fs::create_dir_all(artifact.join("src"))?;
+        fs::write(
+            artifact.join("Cargo.toml"),
+            "[package]\nname = \"issue911_compiled\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )?;
+        fs::write(artifact.join("src/lib.rs"), "pub fn value() -> u8 { 1 }\n")?;
+        let requirements = ProjectRequirements {
+            sdk_artifact_projections: vec![SdkArtifactProjection {
+                artifact: LibraryArtifactMetadata::from_crate_root("issue911_compiled", "issue911_compiled", &artifact),
+            }],
+            ..ProjectRequirements::default()
+        };
+        let resolved = ResolvedDependencies {
+            dependencies: Vec::new(),
+            dev_dependencies: Vec::new(),
+        };
+        let before = super::rust_inspect_workspace_fingerprint(
+            "probe",
+            "probe",
+            None,
+            &resolved,
+            &requirements.stdlib_features,
+            &requirements.sdk_dependency_rebindings,
+            &requirements.sdk_artifact_projections,
+            None,
+        );
+        fs::write(artifact.join("src/lib.rs"), "pub fn value() -> u8 { 2 }\n")?;
+        let after = super::rust_inspect_workspace_fingerprint(
+            "probe",
+            "probe",
+            None,
+            &resolved,
+            &requirements.stdlib_features,
+            &requirements.sdk_dependency_rebindings,
+            &requirements.sdk_artifact_projections,
+            None,
+        );
+
+        assert_ne!(before, after);
+        Ok(())
+    }
+
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn rust_inspect_helper_materializes_sdk_projection_issue911() -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = tempfile::tempdir()?;
+        let artifact = workspace.path().join("compiled");
+        let absent_sdk = workspace.path().join("sdk-cache-a/runtime");
+        let active_sdk = workspace.path().join("sdk-cache-b/runtime");
+        for root in [&artifact, &active_sdk] {
+            fs::create_dir_all(root.join("src"))?;
+        }
+        fs::write(
+            artifact.join("Cargo.toml"),
+            format!(
+                "[package]\nname = \"issue911_compiled\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[workspace]\n\n[dependencies.issue911_runtime]\npath = {:?}\ndefault-features = false\n",
+                absent_sdk.to_string_lossy()
+            ),
+        )?;
+        fs::write(
+            artifact.join("src/lib.rs"),
+            "pub fn value() -> u8 { issue911_runtime::value() }\n",
+        )?;
+        fs::write(
+            active_sdk.join("Cargo.toml"),
+            "[package]\nname = \"issue911_runtime\"\nversion = \"0.5.0\"\nedition = \"2024\"\n\n[workspace]\n",
+        )?;
+        fs::write(active_sdk.join("src/lib.rs"), "pub fn value() -> u8 { 3 }\n")?;
+        let mut manifest = LibraryManifest::new("issue911_compiled", "0.1.0");
+        manifest.contract_metadata.provider.provider_dependencies.push(
+            crate::library_manifest::ProviderDependencyMetadata {
+                kind: crate::library_manifest::ProviderDependencyKind::PrivateImplementation,
+                dependency_key: "issue911_runtime".to_string(),
+                provider_name: "issue911_runtime".to_string(),
+                provider_version: "0.5.0".to_string(),
+                artifact_digest: digest_provider_artifact(&active_sdk)?,
+                relative_artifact_path: "../sdk-cache-a/runtime".to_string(),
+                requested_features: BTreeSet::new(),
+                default_features: false,
+                optional: false,
+            },
+        );
+        let manifest_path = artifact.join("issue911_compiled.incnlib");
+        manifest.write_to_path(&manifest_path)?;
+        let metadata = LibraryArtifactMetadata::from_manifest_path(
+            "issue911_compiled",
+            "issue911_compiled",
+            manifest_path,
+            artifact.clone(),
+        );
+        let requirements = ProjectRequirements {
+            sdk_dependency_rebindings: vec![SdkDependencyRebinding {
+                containing_artifact: metadata.clone(),
+                source_crate_root: absent_sdk.clone(),
+                provider_name: "issue911_runtime".to_string(),
+                dependency_key: "issue911_runtime".to_string(),
+                active_crate_root: active_sdk,
+            }],
+            sdk_artifact_projections: vec![SdkArtifactProjection { artifact: metadata }],
+            ..ProjectRequirements::default()
+        };
+        let resolved = ResolvedDependencies {
+            dependencies: vec![DependencySpec {
+                crate_name: "issue911_compiled".to_string(),
+                version: None,
+                features: Vec::new(),
+                default_features: true,
+                source: DependencySource::Path { path: artifact },
+                optional: false,
+                package: None,
+            }],
+            dev_dependencies: Vec::new(),
+        };
+
+        let generated = ensure_rust_inspect_workspace_with_cargo_package_name(
+            workspace.path(),
+            "issue911_probe",
+            "issue911_probe",
+            Some("2024".to_string()),
+            &resolved,
+            &requirements,
+            None,
+        )?;
+
+        let cargo_manifest = fs::read_to_string(generated.join("Cargo.toml"))?;
+        assert!(cargo_manifest.contains(".incan-sdk-rebound"));
+        assert!(!cargo_manifest.contains(absent_sdk.to_string_lossy().as_ref()));
+        let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+        let output = Command::new(cargo)
+            .arg("check")
+            .arg("--offline")
+            .arg("--manifest-path")
+            .arg(generated.join("Cargo.toml"))
+            .env("CARGO_TARGET_DIR", workspace.path().join("cargo-target"))
+            .output()?;
+        if !output.status.success() {
+            return Err(format!(
+                "rust-inspect projected Cargo graph failed:\n{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            )
+            .into());
+        }
+        let projection_parent = generated
+            .parent()
+            .ok_or("rust-inspect workspace has no parent")?
+            .join(".incan-sdk-rebound");
+        let shadow_root = fs::read_dir(&projection_parent)?
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| path.is_dir())
+            .ok_or("missing rust-inspect projected artifact")?;
+        fs::write(shadow_root.join("src/lib.rs"), "pub fn corrupt() {}\n")?;
+        let regenerated = ensure_rust_inspect_workspace_with_cargo_package_name(
+            workspace.path(),
+            "issue911_probe",
+            "issue911_probe",
+            Some("2024".to_string()),
+            &resolved,
+            &requirements,
+            None,
+        )?;
+        assert_eq!(generated, regenerated);
+        assert!(fs::read_to_string(shadow_root.join("src/lib.rs"))?.contains("value"));
+        assert!(!absent_sdk.exists());
+        Ok(())
     }
 
     #[cfg(feature = "rust_inspect")]

@@ -269,6 +269,13 @@ pub(crate) struct SdkDependencyRebinding {
     pub active_crate_root: PathBuf,
 }
 
+/// One compiled artifact that must be copied into the consumer-owned SDK projection graph.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SdkArtifactProjection {
+    /// Immutable compiled artifact whose dependency coordinates require projection.
+    pub artifact: LibraryArtifactMetadata,
+}
+
 /// Immutable provider catalog and active module projection shared by every compiler stage.
 #[derive(Debug, Clone, Default)]
 pub struct ProviderPlan {
@@ -277,6 +284,7 @@ pub struct ProviderPlan {
     module_catalog: BTreeMap<Vec<String>, String>,
     used_module_paths: BTreeSet<Vec<String>>,
     sdk_dependency_rebindings: Vec<SdkDependencyRebinding>,
+    sdk_artifact_projections: Vec<SdkArtifactProjection>,
     /// Reserved namespace roots owned by the one SDK component currently being compiled from source.
     ///
     /// This bootstrap-only grant disappears once the checked provider manifest is published and must never be
@@ -323,7 +331,8 @@ impl ProviderPlan {
             }
             indexed_records.insert(key, record);
         }
-        let sdk_dependency_rebindings = resolve_sdk_dependency_rebindings(&indexed_records)?;
+        let (sdk_dependency_rebindings, sdk_artifact_projections) =
+            resolve_sdk_dependency_rebindings(&indexed_records)?;
 
         Ok(Self {
             library_manifest_index,
@@ -331,6 +340,7 @@ impl ProviderPlan {
             module_catalog,
             used_module_paths: used_module_paths.into_iter().collect(),
             sdk_dependency_rebindings,
+            sdk_artifact_projections,
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
         })
     }
@@ -343,6 +353,11 @@ impl ProviderPlan {
     /// Return artifact projections needed to replace stale physical SDK cache paths without mutating either artifact.
     pub(crate) fn sdk_dependency_rebindings(&self) -> &[SdkDependencyRebinding] {
         &self.sdk_dependency_rebindings
+    }
+
+    /// Return every compiled artifact whose private or transitive dependency coordinates require projection.
+    pub(crate) fn sdk_artifact_projections(&self) -> &[SdkArtifactProjection] {
+        &self.sdk_artifact_projections
     }
 
     /// Build one provider plan from ordinary dependency artifacts and the active SDK catalog.
@@ -398,6 +413,7 @@ impl ProviderPlan {
             module_catalog,
             used_module_paths: BTreeSet::new(),
             sdk_dependency_rebindings: Vec::new(),
+            sdk_artifact_projections: Vec::new(),
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
         }
     }
@@ -463,6 +479,7 @@ impl ProviderPlan {
             module_catalog: namespace_claims.into_iter().map(|claim| (claim, key.clone())).collect(),
             used_module_paths: BTreeSet::new(),
             sdk_dependency_rebindings: Vec::new(),
+            sdk_artifact_projections: Vec::new(),
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
         }
     }
@@ -680,16 +697,19 @@ impl ProviderPlan {
 /// have been collected. Only an enabled, available active SDK record with the exact identity can replace that path.
 fn resolve_sdk_dependency_rebindings(
     records: &BTreeMap<String, ProviderRecord>,
-) -> Result<Vec<SdkDependencyRebinding>, ProviderPlanError> {
+) -> Result<(Vec<SdkDependencyRebinding>, Vec<SdkArtifactProjection>), ProviderPlanError> {
     let sdk_records = records
         .values()
         .filter(|record| matches!(record.authority, NamespaceAuthority::SdkReserved))
         .collect::<Vec<_>>();
     if sdk_records.is_empty() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     }
 
     let mut rebindings = Vec::new();
+    let mut projected = BTreeMap::<PathBuf, LibraryArtifactMetadata>::new();
+    let mut visited = BTreeSet::new();
+    let mut visiting = BTreeSet::new();
     for library in records
         .values()
         .filter(|record| matches!(record.authority, NamespaceAuthority::ProjectDependency { .. }))
@@ -698,56 +718,16 @@ fn resolve_sdk_dependency_rebindings(
         else {
             continue;
         };
-        for dependency in manifest
-            .contract_metadata
-            .provider
-            .provider_dependencies
-            .iter()
-            .filter(|dependency| dependency.kind == ProviderDependencyKind::PrivateImplementation)
-        {
-            let candidates = sdk_records
-                .iter()
-                .copied()
-                .filter(|record| record.identity.name == dependency.provider_name)
-                .collect::<Vec<_>>();
-            let exact = candidates.iter().copied().find(|record| {
-                record.identity.version == dependency.provider_version
-                    && record.identity.digest == dependency.artifact_digest
-                    && record.identity.feature_projection == dependency.requested_features
-                    && record.enabled
-                    && record.available
-                    && record.artifact.is_some()
-            });
-            let Some(active) = exact else {
-                return Err(incompatible_compiled_sdk_dependency(
-                    library,
-                    containing_artifact,
-                    dependency,
-                    &candidates,
-                ));
-            };
-            let Some(active_artifact) = active.artifact.as_ref() else {
-                return Err(incompatible_compiled_sdk_dependency(
-                    library,
-                    containing_artifact,
-                    dependency,
-                    &candidates,
-                ));
-            };
-            let source_crate_root =
-                normalize_artifact_root(&containing_artifact.crate_root.join(&dependency.relative_artifact_path));
-            let active_crate_root = normalize_artifact_root(&active_artifact.crate_root);
-            if source_crate_root == active_crate_root {
-                continue;
-            }
-            rebindings.push(SdkDependencyRebinding {
-                containing_artifact: containing_artifact.clone(),
-                source_crate_root,
-                provider_name: dependency.provider_name.clone(),
-                dependency_key: dependency.dependency_key.clone(),
-                active_crate_root,
-            });
-        }
+        resolve_sdk_artifact_projection(
+            &library.identity.name,
+            manifest,
+            containing_artifact,
+            &sdk_records,
+            &mut visiting,
+            &mut visited,
+            &mut rebindings,
+            &mut projected,
+        )?;
     }
     rebindings.sort_by(|left, right| {
         (
@@ -766,12 +746,161 @@ fn resolve_sdk_dependency_rebindings(
             ))
     });
     rebindings.dedup();
-    Ok(rebindings)
+    let projections = projected
+        .into_values()
+        .map(|artifact| SdkArtifactProjection { artifact })
+        .collect();
+    Ok((rebindings, projections))
+}
+
+/// Traverse one compiled provider graph and mark every ancestor that must point at a projected child artifact.
+#[allow(clippy::too_many_arguments)]
+fn resolve_sdk_artifact_projection(
+    library_name: &str,
+    manifest: &LibraryManifest,
+    artifact: &LibraryArtifactMetadata,
+    sdk_records: &[&ProviderRecord],
+    visiting: &mut BTreeSet<PathBuf>,
+    visited: &mut BTreeSet<PathBuf>,
+    rebindings: &mut Vec<SdkDependencyRebinding>,
+    projected: &mut BTreeMap<PathBuf, LibraryArtifactMetadata>,
+) -> Result<bool, ProviderPlanError> {
+    let artifact_root = normalize_artifact_root(&artifact.crate_root);
+    if visited.contains(&artifact_root) {
+        return Ok(projected.contains_key(&artifact_root));
+    }
+    if !visiting.insert(artifact_root.clone()) {
+        return Err(ProviderPlanError::ManifestLoad {
+            provider: library_name.to_string(),
+            path: artifact.manifest_path.clone(),
+            message: "compiled provider dependency graph contains a cycle".to_string(),
+        });
+    }
+
+    let mut requires_projection = false;
+    for dependency in &manifest.contract_metadata.provider.provider_dependencies {
+        if dependency.kind == ProviderDependencyKind::PrivateImplementation {
+            let candidates = sdk_records
+                .iter()
+                .copied()
+                .filter(|record| record.identity.name == dependency.provider_name)
+                .collect::<Vec<_>>();
+            let exact = candidates
+                .iter()
+                .copied()
+                .filter(|record| {
+                    record.identity.version == dependency.provider_version
+                        && record.identity.digest == dependency.artifact_digest
+                        && record.identity.feature_projection == dependency.requested_features
+                        && record.enabled
+                        && record.available
+                        && record.artifact.is_some()
+                })
+                .collect::<Vec<_>>();
+            if dependency.default_features || dependency.optional || exact.len() != 1 {
+                return Err(incompatible_compiled_sdk_dependency(
+                    library_name,
+                    artifact,
+                    dependency,
+                    &candidates,
+                ));
+            }
+            let Some(active_artifact) = exact[0].artifact.as_ref() else {
+                return Err(incompatible_compiled_sdk_dependency(
+                    library_name,
+                    artifact,
+                    dependency,
+                    &candidates,
+                ));
+            };
+            let source_crate_root =
+                normalize_artifact_root(&artifact.crate_root.join(&dependency.relative_artifact_path));
+            let active_crate_root = normalize_artifact_root(&active_artifact.crate_root);
+            if source_crate_root != active_crate_root {
+                rebindings.push(SdkDependencyRebinding {
+                    containing_artifact: artifact.clone(),
+                    source_crate_root,
+                    provider_name: dependency.provider_name.clone(),
+                    dependency_key: dependency.dependency_key.clone(),
+                    active_crate_root,
+                });
+                requires_projection = true;
+            }
+            continue;
+        }
+
+        let dependency_root = artifact.crate_root.join(&dependency.relative_artifact_path);
+        let loaded = load_provider_dependency_artifact(&dependency.dependency_key, &dependency_root);
+        let (dependency_manifest, dependency_artifact) = match loaded {
+            LibraryManifestIndexEntry::Loaded { manifest, metadata } => (manifest, metadata),
+            LibraryManifestIndexEntry::Failed(failure) => {
+                return Err(ProviderPlanError::ManifestLoad {
+                    provider: dependency.provider_name.clone(),
+                    path: failure.path,
+                    message: failure.message,
+                });
+            }
+        };
+        validate_transitive_provider_dependency(dependency, &dependency_manifest, &dependency_artifact)?;
+        if resolve_sdk_artifact_projection(
+            &dependency.provider_name,
+            &dependency_manifest,
+            &dependency_artifact,
+            sdk_records,
+            visiting,
+            visited,
+            rebindings,
+            projected,
+        )? {
+            requires_projection = true;
+        }
+    }
+
+    visiting.remove(&artifact_root);
+    visited.insert(artifact_root.clone());
+    if requires_projection {
+        projected.insert(artifact_root, artifact.clone());
+    }
+    Ok(requires_projection)
+}
+
+/// Validate the stable identity on one public compiled-provider edge before traversing it.
+fn validate_transitive_provider_dependency(
+    descriptor: &ProviderDependencyMetadata,
+    manifest: &LibraryManifest,
+    artifact: &LibraryArtifactMetadata,
+) -> Result<(), ProviderPlanError> {
+    if manifest.name != descriptor.provider_name || manifest.version != descriptor.provider_version {
+        return Err(ProviderPlanError::ManifestLoad {
+            provider: descriptor.provider_name.clone(),
+            path: artifact.manifest_path.clone(),
+            message: format!(
+                "expected {}@{}, found {}@{}",
+                descriptor.provider_name, descriptor.provider_version, manifest.name, manifest.version
+            ),
+        });
+    }
+    let digest = digest_provider_artifact(&artifact.crate_root).map_err(|error| ProviderPlanError::ManifestLoad {
+        provider: descriptor.provider_name.clone(),
+        path: artifact.crate_root.clone(),
+        message: error.to_string(),
+    })?;
+    if digest != descriptor.artifact_digest {
+        return Err(ProviderPlanError::ManifestLoad {
+            provider: descriptor.provider_name.clone(),
+            path: artifact.crate_root.clone(),
+            message: format!(
+                "expected artifact digest `{}`, found `{digest}`",
+                descriptor.artifact_digest
+            ),
+        });
+    }
+    Ok(())
 }
 
 /// Preserve a targeted pre-Cargo diagnostic when an active SDK cannot satisfy one frozen private implementation edge.
 fn incompatible_compiled_sdk_dependency(
-    library: &ProviderRecord,
+    library_name: &str,
     artifact: &LibraryArtifactMetadata,
     dependency: &ProviderDependencyMetadata,
     candidates: &[&ProviderRecord],
@@ -795,7 +924,7 @@ fn incompatible_compiled_sdk_dependency(
             .join(", ")
     };
     ProviderPlanError::IncompatibleCompiledSdkDependency {
-        library: library.identity.name.clone(),
+        library: library_name.to_string(),
         manifest_path: artifact.manifest_path.clone(),
         provider: dependency.provider_name.clone(),
         frozen_identity: provider_dependency_stable_identity(dependency),
@@ -1577,6 +1706,104 @@ mod tests {
             std::fs::canonicalize(active_sdk_artifact)?
         );
         assert_eq!(rebindings[0].provider_name, "incan_stdlib_codecs");
+        assert_eq!(plan.sdk_artifact_projections().len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn transitive_private_sdk_rebinding_projects_every_compiled_ancestor_issue911() -> TestResult {
+        let workspace = tempfile::tempdir()?;
+        let root_artifact = workspace.path().join("root");
+        let child_artifact = workspace.path().join("child");
+        let active_sdk_artifact = workspace.path().join("active-sdk/runtime");
+        let absent_sdk_artifact = workspace.path().join("old-sdk/runtime");
+        for artifact in [&root_artifact, &child_artifact, &active_sdk_artifact] {
+            std::fs::create_dir_all(artifact.join("src"))?;
+            std::fs::write(
+                artifact.join("Cargo.toml"),
+                "[package]\nname = \"placeholder\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            )?;
+            std::fs::write(artifact.join("src/lib.rs"), "pub fn marker() {}\n")?;
+        }
+        std::fs::write(
+            child_artifact.join("Cargo.toml"),
+            "[package]\nname = \"child\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )?;
+        let sdk_digest = digest_provider_artifact(&active_sdk_artifact)?;
+        let mut child_manifest = LibraryManifest::new("child", "0.1.0");
+        child_manifest
+            .contract_metadata
+            .provider
+            .provider_dependencies
+            .push(ProviderDependencyMetadata {
+                kind: ProviderDependencyKind::PrivateImplementation,
+                dependency_key: "incan_stdlib_codecs".to_string(),
+                provider_name: "incan_stdlib_codecs".to_string(),
+                provider_version: "0.5.0".to_string(),
+                artifact_digest: sdk_digest.clone(),
+                relative_artifact_path: "../old-sdk/runtime".to_string(),
+                requested_features: BTreeSet::new(),
+                default_features: false,
+                optional: false,
+            });
+        let child_manifest_path = child_artifact.join("child.incnlib");
+        child_manifest.write_to_path(&child_manifest_path)?;
+        let child_digest = digest_provider_artifact(&child_artifact)?;
+        let mut root_manifest = LibraryManifest::new("root", "0.1.0");
+        root_manifest
+            .contract_metadata
+            .provider
+            .provider_dependencies
+            .push(ProviderDependencyMetadata {
+                kind: ProviderDependencyKind::PublicPackage,
+                dependency_key: "child".to_string(),
+                provider_name: "child".to_string(),
+                provider_version: "0.1.0".to_string(),
+                artifact_digest: child_digest,
+                relative_artifact_path: "../child".to_string(),
+                requested_features: BTreeSet::new(),
+                default_features: false,
+                optional: false,
+            });
+        let root_record = ProviderRecord {
+            identity: ProviderIdentity {
+                name: "root".to_string(),
+                version: "0.1.0".to_string(),
+                digest: digest_provider_artifact(&root_artifact)?,
+                feature_projection: BTreeSet::new(),
+            },
+            provenance: ProviderProvenance::ProjectDependency {
+                dependency_key: "root".to_string(),
+                manifest_path: root_artifact.join("root.incnlib"),
+            },
+            authority: NamespaceAuthority::ProjectDependency {
+                dependency_key: "root".to_string(),
+            },
+            namespace_claims: BTreeSet::new(),
+            available: true,
+            enabled: true,
+            manifest: Some(Arc::new(root_manifest)),
+            artifact: Some(LibraryArtifactMetadata::from_crate_root("root", "root", &root_artifact)),
+            implementation_facets: Vec::new(),
+        };
+        let plan = ProviderPlan::new(
+            LibraryManifestIndex::default(),
+            vec![
+                root_record,
+                active_sdk_record(&active_sdk_artifact, &sdk_digest, BTreeSet::new()),
+            ],
+            [],
+        )?;
+
+        assert_eq!(plan.sdk_dependency_rebindings().len(), 1);
+        assert_eq!(plan.sdk_artifact_projections().len(), 2);
+        assert!(plan.sdk_artifact_projections().iter().any(|projection| {
+            normalize_artifact_root(&projection.artifact.crate_root) == normalize_artifact_root(&root_artifact)
+        }));
+        assert!(plan.sdk_artifact_projections().iter().any(|projection| {
+            normalize_artifact_root(&projection.artifact.crate_root) == normalize_artifact_root(&child_artifact)
+        }));
+        assert!(!absent_sdk_artifact.exists());
         Ok(())
     }
 

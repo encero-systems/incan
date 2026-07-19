@@ -4208,6 +4208,8 @@ mod tests {
         let current = ProjectRequirements {
             stdlib_features: vec!["json".to_string()],
             dependencies: vec![test_requirement_dependency("serde", &["derive"])],
+            sdk_dependency_rebindings: Vec::new(),
+            sdk_artifact_projections: Vec::new(),
         };
         let lock_entry = ProjectRequirements {
             stdlib_features: vec!["async".to_string(), "json".to_string()],
@@ -4215,6 +4217,8 @@ mod tests {
                 test_requirement_dependency("serde", &["derive"]),
                 test_requirement_dependency("tokio", &["macros"]),
             ],
+            sdk_dependency_rebindings: Vec::new(),
+            sdk_artifact_projections: Vec::new(),
         };
 
         let merged = match merge_lock_project_requirements(&current, &lock_entry) {
@@ -4238,10 +4242,14 @@ mod tests {
         let current = ProjectRequirements {
             stdlib_features: Vec::new(),
             dependencies: vec![test_requirement_dependency("tokio", &["time"])],
+            sdk_dependency_rebindings: Vec::new(),
+            sdk_artifact_projections: Vec::new(),
         };
         let lock_entry = ProjectRequirements {
             stdlib_features: Vec::new(),
             dependencies: vec![test_requirement_dependency("tokio", &["macros"])],
+            sdk_dependency_rebindings: Vec::new(),
+            sdk_artifact_projections: Vec::new(),
         };
 
         let error = match merge_lock_project_requirements(&current, &lock_entry) {
