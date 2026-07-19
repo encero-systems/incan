@@ -141,6 +141,42 @@ def remove_workspace(path: Path) -> Result[None, IoError]:
 
 `remove_tree()` is for directories. Use `unlink()` for files and symlinks.
 
+## Publish a File Without Exposing Partial Contents
+
+Use a sibling temporary file when readers must see either the previous complete value or the next complete value. Creating the temporary file inside `target.parent()` keeps the final replacement on the same filesystem, while `NamedTemporaryFile` reserves a unique name exclusively and cleans it up if writing or synchronization fails.
+
+```incan
+from std.fs import IoError, Path
+from std.tempfile import NamedTemporaryFile
+
+def publish_bytes(target: Path, contents: bytes) -> Result[None, IoError]:
+    guard = target.lock_exclusive()?
+    staging = NamedTemporaryFile.try_new_with(f".{target.name()}-", ".tmp", Some(target.parent()))?
+    staged_path = staging.path()
+
+    staged_path.write_bytes(contents)?
+    staged_file = staged_path.open("rb")?
+    staged_file.sync()?
+    staged_path.replace(target)?
+    target.parent().sync_directory()?
+    return Ok(None)
+```
+
+Keep the exclusive `guard` live across reading the previous value, preparing the replacement, replacing it, and synchronizing the directory. Other cooperating writers acquire the same target lock, while readers that need a stable multi-step view use `target.lock_shared()`.
+
+Each step provides a different guarantee:
+
+1. `NamedTemporaryFile.try_new_with(...)` creates an exclusively reserved, unpredictable sibling path rather than sharing a predictable `.next` name with another process.
+2. `staged_file.sync()` asks the host to persist the complete staged contents before publication.
+3. `staged_path.replace(target)` atomically changes which complete file the target name identifies. It never deletes the old target first and returns `IoError(kind="cross_device")` rather than falling back to copy-and-delete.
+4. `target.parent().sync_directory()` asks the host to persist the changed directory entry.
+
+If writing, file synchronization, or replacement fails, `?` returns the error, the temporary wrapper cleans up its still-staged path, and `replace()` preserves the previous target instead of deleting it first. If directory synchronization fails, replacement has already happened: return the error and do not claim crash durability, even though readers may already observe the new complete file.
+
+Do not put the staging file in the host's default temporary directory: that directory may be on another filesystem, where atomic replacement cannot be guaranteed. Do not use a fixed sibling name in a directory another user or process can write. The lock is advisory, so it coordinates only software that follows the same locking convention; it is not an authorization boundary. The initial durability and locking contract supports Linux and macOS, including macOS applications running on a Unix-like filesystem, and Windows through WSL. Native Windows filesystem semantics are not yet covered.
+
+If atomic visibility is sufficient but crash durability is not required, the file and directory synchronization requests may be unnecessary for your application. Keep the same unique sibling and `replace()` pattern: atomic visibility, durability, and writer coordination are independent choices.
+
 ## Directory Listings
 
 ```incan
