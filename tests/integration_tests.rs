@@ -179,6 +179,63 @@ main = "src/main.incn"
 }
 
 #[test]
+fn build_rejects_unbound_type_annotation_before_generated_rust_issue902() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let cases = [("simple", "Count", "Count"), ("qualified", "missing::Count", "missing")];
+
+    for (case_name, annotation, expected_symbol) in cases {
+        let project_name = format!("unbound_type_annotation_{case_name}");
+        let project_root = tmp.path().join(case_name);
+        let src_dir = project_root.join("src");
+        fs::create_dir_all(&src_dir)?;
+        fs::write(
+            project_root.join("incan.toml"),
+            format!("[project]\nname = \"{project_name}\"\nversion = \"0.1.0\"\n"),
+        )?;
+        let main_path = src_dir.join("main.incn");
+        fs::write(
+            &main_path,
+            format!(
+                r#"def accepts(value: {annotation}) -> {annotation}:
+  return value
+
+def main() -> None:
+  print(accepts(7))
+"#
+            ),
+        )?;
+
+        let output = incan_command()
+            .args(["build", main_path.to_string_lossy().as_ref(), "--no-locked"])
+            .current_dir(&project_root)
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = strip_ansi_escapes(&String::from_utf8_lossy(&output.stderr));
+        let generated_project = project_root.join("target/incan").join(&project_name);
+
+        assert!(
+            !output.status.success(),
+            "expected the {case_name} unbound annotation to fail"
+        );
+        assert!(
+            stderr.contains(&format!("Unknown symbol '{expected_symbol}'")),
+            "expected an Incan diagnostic for {case_name}, got:\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+        assert!(
+            !stdout.contains("Generated Rust project in:")
+                && !stdout.contains("Building...")
+                && !stderr.contains("E0425")
+                && !stderr.contains("E0433")
+                && !generated_project.exists(),
+            "the {case_name} annotation must fail before generated Rust is published:\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
 fn std_logging_runtime_surfaces_share_one_generated_run() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let project_name = unique_test_project_name("std_logging_runtime_surfaces");
@@ -11258,6 +11315,76 @@ def test_absolute_crate_public_types() -> None:
             String::from_utf8_lossy(&test_output.stdout),
             String::from_utf8_lossy(&test_output.stderr)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn compiled_provider_annotations_survive_generated_test_batch_issue902() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let provider_root = tmp.path().join("count_provider");
+        std::fs::create_dir_all(provider_root.join("src"))?;
+        std::fs::write(
+            provider_root.join("incan.toml"),
+            "[project]\nname = \"counts\"\nversion = \"0.1.0\"\n",
+        )?;
+        std::fs::write(
+            provider_root.join("src/lib.incn"),
+            r#"pub model Count:
+  pub value: int
+"#,
+        )?;
+
+        let provider_build = run_build_lib(&provider_root)?;
+        assert!(
+            provider_build.status.success(),
+            "expected #902 provider library build to succeed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&provider_build.stdout),
+            String::from_utf8_lossy(&provider_build.stderr),
+        );
+
+        let consumer_root = tmp.path().join("consumer");
+        std::fs::create_dir_all(consumer_root.join("src"))?;
+        std::fs::create_dir_all(consumer_root.join("tests"))?;
+        std::fs::write(
+            consumer_root.join("incan.toml"),
+            "[project]\nname = \"count_consumer\"\nversion = \"0.1.0\"\n\n[dependencies]\ncounts = { path = \"../count_provider\" }\n",
+        )?;
+        std::fs::write(
+            consumer_root.join("src/bridge.incn"),
+            r#"from pub::counts import Count
+
+pub def make_count(value: int) -> Count:
+  return Count(value=value)
+"#,
+        )?;
+        std::fs::write(
+            consumer_root.join("tests/count_annotation_test.incn"),
+            r#"from pub::counts import Count
+from crate.bridge import make_count
+
+def identity(value: Count) -> Count:
+  return value
+
+def test_compiled_provider_annotation() -> None:
+  count: Count = identity(make_count(7))
+  assert count.value == 7
+"#,
+        )?;
+
+        let batch = run_test(&consumer_root.join("tests"))?;
+        let stdout = String::from_utf8_lossy(&batch.stdout);
+        let stderr = String::from_utf8_lossy(&batch.stderr);
+        assert!(
+            batch.status.success(),
+            "expected #902 compiled-provider test batch to pass.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(
+            stdout.contains("count_annotation_test.incn::test_compiled_provider_annotation"),
+            "expected the compiled-provider annotation regression to run.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+
         Ok(())
     }
 

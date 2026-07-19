@@ -19,7 +19,7 @@ def test_operators() -> None:
     or_result: bool = True or False
     not_result: bool = not True
     lowercase_bool: bool = true and false
-    using_is: book = True is false
+    using_is: bool = True is false
     
     # Unary operators
     neg_int: int = -42

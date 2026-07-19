@@ -12354,6 +12354,297 @@ def accepts_marker(value: NotExported) -> None:
 }
 
 #[test]
+fn test_unbound_source_type_annotations_are_rejected_issue902() {
+    let cases = [
+        (
+            "callable annotation",
+            r#"
+def accepts(value: Count) -> Count:
+  return value
+
+def main() -> None:
+  print(accepts(7))
+"#,
+        ),
+        (
+            "nested annotation",
+            r#"
+def accepts(values: list[Count]) -> None:
+  pass
+"#,
+        ),
+        (
+            "model field annotation",
+            r#"
+model Counter:
+  value: Count
+"#,
+        ),
+        (
+            "local annotation",
+            r#"
+def main() -> None:
+  value: Count = 7
+  print(value)
+"#,
+        ),
+        (
+            "transparent alias target",
+            r#"
+type Counts = list[Count]
+
+def main() -> None:
+  pass
+"#,
+        ),
+        (
+            "abstract trait method annotation",
+            r#"
+trait Counter:
+  def count(self, value: Count) -> Count: ...
+"#,
+        ),
+        (
+            "abstract trait property annotation",
+            r#"
+trait Counter:
+  property count -> Count
+"#,
+        ),
+        (
+            "trait required-field annotation",
+            r#"
+@requires(count: Count)
+trait Counter:
+  def value(self) -> int: ...
+"#,
+        ),
+        (
+            "supertrait type argument",
+            r#"
+trait Parent[T]:
+  def value(self) -> T: ...
+
+trait Counter with Parent[Count]:
+  def count(self) -> int: ...
+"#,
+        ),
+        (
+            "trait type-parameter bound argument",
+            r#"
+trait Parent[T]:
+  def value(self) -> T: ...
+
+trait Counter[T with Parent[Count]]:
+  def count(self, value: T) -> T: ...
+"#,
+        ),
+        (
+            "abstract method type-parameter bound argument",
+            r#"
+trait Parent[T]:
+  def value(self) -> T: ...
+
+trait Counter:
+  def count[T with Parent[Count]](self, value: T) -> T: ...
+"#,
+        ),
+        (
+            "transparent alias type-parameter bound argument",
+            r#"
+trait Parent[T]:
+  def value(self) -> T: ...
+
+type Counter[T with Parent[Count]] = T
+"#,
+        ),
+        (
+            "newtype type-parameter bound argument",
+            r#"
+trait Parent[T]:
+  def value(self) -> T: ...
+
+type Counter[T with Parent[Count]] = newtype T
+"#,
+        ),
+    ];
+
+    for (context, source) in cases {
+        let errors = check_str_err(source, context);
+        assert!(
+            has_unknown_symbol_error(&errors, "Count"),
+            "expected an Incan unknown-type diagnostic for {context}, got: {errors:?}"
+        );
+    }
+}
+
+#[test]
+fn test_unbound_qualified_source_type_annotation_is_rejected_issue902() {
+    let errors = check_str_err(
+        r#"
+def accepts(value: missing::Count) -> missing::Count:
+  return value
+"#,
+        "unbound qualified annotation",
+    );
+    assert!(
+        has_unknown_symbol_error(&errors, "missing"),
+        "expected the unbound qualified root to receive an Incan diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_revisited_annotation_emits_one_unknown_symbol_diagnostic_issue902() {
+    let errors = check_str_err(
+        r#"
+model Counter:
+  value: Count
+"#,
+        "revisited model field annotation",
+    );
+    let count = errors
+        .iter()
+        .filter(|error| error.message.contains("Unknown symbol 'Count'"))
+        .count();
+    assert_eq!(count, 1, "one source annotation must emit one diagnostic: {errors:?}");
+}
+
+#[test]
+fn test_declared_annotation_names_remain_valid_issue902() {
+    let explicit_generic = r#"
+def accepts[Count](value: Count) -> Count:
+  return value
+
+def main() -> None:
+  print(accepts(7))
+"#;
+    assert!(
+        check_str(explicit_generic).is_ok(),
+        "explicit function type parameters must remain valid"
+    );
+
+    let forward_declared = r#"
+def accepts(value: Count) -> Count:
+  return value
+
+model Count:
+  value: int
+
+def main() -> None:
+  print(accepts(Count(value=7)).value)
+"#;
+    assert!(
+        check_str(forward_declared).is_ok(),
+        "two-pass collection must keep forward-declared nominal types valid"
+    );
+
+    let generic_alias = r#"
+type Counts[T] = list[T]
+
+def identity[T](values: Counts[T]) -> Counts[T]:
+  return values
+"#;
+    assert!(
+        check_str(generic_alias).is_ok(),
+        "declared generic parameters in transparent aliases must remain valid"
+    );
+
+    let generic_class = r#"
+class Box[T]:
+  value: T
+"#;
+    assert!(
+        check_str(generic_class).is_ok(),
+        "declared generic class parameters must remain valid in field annotations"
+    );
+
+    let generic_trait = r#"
+@requires(value: T)
+trait Parent[T]:
+  property current -> T
+  def keep[U](self, value: U) -> T: ...
+
+trait Child[T] with Parent[T]:
+  def child(self, value: T) -> T: ...
+"#;
+    assert!(
+        check_str(generic_trait).is_ok(),
+        "trait and method generic parameters must remain valid across declaration-only trait surfaces"
+    );
+
+    let inline_test_forward_declared = r#"
+module tests:
+  def accepts(value: Count) -> Count:
+    return value
+
+  model Count:
+    value: int
+"#;
+    assert!(
+        check_str(inline_test_forward_declared).is_ok(),
+        "inline test modules must preserve the same forward-declaration phase as the source module"
+    );
+
+    let qualified_rust_path = r#"
+import rust::std::path as path
+
+def accepts_path(value: path::PathBuf) -> path::PathBuf:
+  return value
+"#;
+    assert!(
+        check_str(qualified_rust_path).is_ok(),
+        "qualified paths rooted in an imported Rust module must remain valid"
+    );
+
+    let dependency = parse_program(
+        r#"
+pub model Count:
+  value: int
+"#,
+        "issue902 imported dependency",
+    );
+    let consumer = parse_program(
+        r#"
+from provider import Count
+
+def accepts(value: Count) -> Count:
+  return value
+"#,
+        "issue902 imported consumer",
+    );
+    let mut checker = TypeChecker::new();
+    assert!(
+        checker
+            .check_with_imports(&consumer, &[("provider", &dependency)])
+            .is_ok(),
+        "imported source types must be established before annotation validation"
+    );
+
+    let runtime_error_token = r#"
+from std.testing import assert_raises
+
+def raises_value_error() -> None:
+  pass
+
+def main() -> None:
+  assert_raises[ValueError](raises_value_error)
+"#;
+    assert!(
+        check_str(runtime_error_token).is_ok(),
+        "registered runtime error names must remain valid testing type tokens"
+    );
+
+    let inferred_closure_param = r#"
+def keep_error(value: Result[int, str]) -> Result[int, str]:
+  return value.map_err((error) => error)
+"#;
+    assert!(
+        check_str(inferred_closure_param).is_ok(),
+        "compiler-managed inferred closure parameter annotations must remain valid"
+    );
+}
+
+#[test]
 fn test_stdlib_prelude_reexports_stdlib_imported_types() {
     let source = r#"
 from std.fs import IoError

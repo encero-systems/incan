@@ -23,7 +23,7 @@ fn test_operators() {
     let _or_result: bool = true || false;
     let _not_result: bool = !true;
     let _lowercase_bool: bool = true && false;
-    let _using_is: book = true == false;
+    let _using_is: bool = true == false;
     let _neg_int: i64 = -42;
     let _neg_float: f64 = -3.14;
     let _complex: i64 = (1 + 2) * (3 - 4);
