@@ -1,5 +1,7 @@
 # 7. Strings and formatting
 
+<div class="inc-book-progress" aria-label="Chapter 7 of 13"><div class="inc-book-progress__meta"><strong>Chapter 7 of 13</strong><span>Strings and formatting</span></div><div class="inc-book-progress__bar" aria-hidden="true"><span style="--inc-progress: 53.8%"></span></div></div>
+
 Strings are `str`, and you’ll often build output using f-strings.
 
 ## String methods
@@ -40,11 +42,6 @@ def main() -> None:
 
 - Full strings guide: [Strings](../../reference/strings.md)
 
-## Next
-
-Back: [6. Errors (Result/Option and `?`)](06_errors.md)
-
-Next chapter: [8. Collections and iteration](08_collections_and_iteration.md)
-
+<nav class="inc-prev-next" aria-label="Book chapter navigation"><a href="../06_errors/"><small>Previous chapter</small><strong>← 6. Errors</strong></a><a href="../08_collections_and_iteration/"><small>Next chapter</small><strong>8. Collections and iteration →</strong></a></nav>
 
 

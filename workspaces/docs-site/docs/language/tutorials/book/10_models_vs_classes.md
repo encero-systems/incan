@@ -1,5 +1,7 @@
 # 10. Models vs classes
 
+<div class="inc-book-progress" aria-label="Chapter 10 of 13"><div class="inc-book-progress__meta"><strong>Chapter 10 of 13</strong><span>Models vs classes</span></div><div class="inc-book-progress__bar" aria-hidden="true"><span style="--inc-progress: 76.9%"></span></div></div>
+
 Incan has two “types with fields”:
 
 - `model`: data-first (great for DTOs, configs, payloads)
@@ -104,25 +106,7 @@ def main() -> None:
 ??? example "One possible solution"
 
     ```incan
-    model Product:
-        name: str
-        price: float
-
-    class Cart:
-        items: list[Product]
-
-        def total(self) -> float:
-            total = 0.0
-            for item in self.items:
-                total = total + item.price
-            return total
-
-    def main() -> None:
-        cart = Cart(items=[
-            Product(name="Book", price=10.0),
-            Product(name="Pen", price=2.5),
-        ])
-        println(f"total={cart.total()}")
+    --8<-- "_snippets/language/examples/verified_models_classes_solution.incn"
     ```
 
 ## Where to learn more
@@ -136,8 +120,4 @@ This chapter covers the basics. For the full feature surface—model schema mapp
 - Reflection (reference): [Reflection](../../reference/reflection.md)
 - Error handling (deep dive): [Error handling](../../explanation/error_handling.md)
 
-## Next
-
-Back: [9. Enums and better `match`](09_enums.md)
-
-Next chapter: [11. Traits and derives](11_traits_and_derives.md)
+<nav class="inc-prev-next" aria-label="Book chapter navigation"><a href="../09_enums/"><small>Previous chapter</small><strong>← 9. Enums and match</strong></a><a href="../11_traits_and_derives/"><small>Next chapter</small><strong>11. Traits and derives →</strong></a></nav>

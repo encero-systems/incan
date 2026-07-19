@@ -1,0 +1,29 @@
+"""Typed input and output contracts for the order-report tutorial."""
+
+from std.serde import json
+
+
+@derive(Debug, Clone, json)
+pub model Order:
+    id: str
+    product: str
+    quantity: int
+    unit_price: float
+
+
+@derive(Debug, Clone, json)
+pub model OrderBatch:
+    orders: list[Order]
+
+
+@derive(Debug, Clone, json)
+pub model OrderSummary:
+    id: str
+    product: str
+    total: float
+
+
+@derive(Debug, Clone, json)
+pub model OrderReport:
+    accepted: list[OrderSummary]
+    rejected_count: int

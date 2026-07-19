@@ -89,6 +89,9 @@ Awaiting a `JoinHandle[T]` returns `Result[T, TaskJoinError]`. A task cancelled 
 
 ## Module: `std.async.channel`
 
+!!! note "Availability in Incan 0.4"
+    Typed channels are not part of the supported Incan 0.4 authoring surface. The declarations below record the planned standard-library contract for contributors and future releases. For runnable 0.4 coordination patterns, use [`std.async.task`](#module-stdasynctask) and [`std.async.time`](#module-stdasynctime).
+
 Top-level API:
 
 - `channel[T](buffer: int) -> Tuple[Sender[T], Receiver[T]]`

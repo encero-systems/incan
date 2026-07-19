@@ -1,5 +1,7 @@
 # 3. Functions
 
+<div class="inc-book-progress" aria-label="Chapter 3 of 13"><div class="inc-book-progress__meta"><strong>Chapter 3 of 13</strong><span>Functions</span></div><div class="inc-book-progress__bar" aria-hidden="true"><span style="--inc-progress: 23.1%"></span></div></div>
+
 Functions are named, reusable blocks of code.
 
 ## Defining a function
@@ -207,16 +209,15 @@ def normalize_name(name: str) -> str:
     return name.strip().lower()
 ```
 
-## Multiple returns (with `Result`)
+## Fallible returns (with `Result`)
 
 Many “can fail” functions return `Result[T, E]` instead of throwing exceptions:
 
 ```incan
-def parse_port(s: str) -> Result[int, str]:
-    if len(s.strip()) == 0:
-        return Err("port must not be empty")
-    return Ok(int(s))
+--8<-- "_snippets/language/examples/verified_functions_fallible_result.incn"
 ```
+
+This example validates an already-typed integer. The builtin `int(text)` conversion is intentionally infallible at the type level and raises a runtime conversion error for malformed text; it is not a substitute for a `Result`-returning parser.
 
 You’ll learn the `Result` pattern in Chapter 6.
 
@@ -270,8 +271,4 @@ You'll explore this more in the [Closures](../../explanation/closures.md) chapte
 - Function scoping and name lookup: [Scopes & Name Resolution](../../explanation/scopes_and_name_resolution.md)
 - Closures and higher-order patterns: [Closures](../../explanation/closures.md)
 
-## Next
-
-Back: [2. Values, variables, and types](02_values_variables_and_types.md)
-
-Next chapter: [4. Control flow](04_control_flow.md)
+<nav class="inc-prev-next" aria-label="Book chapter navigation"><a href="../02_values_variables_and_types/"><small>Previous chapter</small><strong>← 2. Values and types</strong></a><a href="../04_control_flow/"><small>Next chapter</small><strong>4. Control flow →</strong></a></nav>

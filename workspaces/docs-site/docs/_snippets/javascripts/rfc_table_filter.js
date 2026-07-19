@@ -3,6 +3,11 @@
 // - Works with MkDocs Material instant navigation (document$.subscribe).
 
 (function () {
+  function statusClass(value) {
+    const category = value.trim().split(/[\s(]/, 1)[0];
+    return category.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  }
+
   function setupFilter(input) {
     if (input.dataset.rfcFilterBound === "true") return;
     input.dataset.rfcFilterBound = "true";
@@ -18,23 +23,82 @@
 
     const tbody = table.querySelector("tbody");
     const rows = Array.from((tbody || table).querySelectorAll("tr"));
+    const counts = new Map();
+
+    for (const row of rows) {
+      const statusCell = row.cells[1];
+      if (!statusCell) continue;
+      const status = statusCell.textContent.trim();
+      row.dataset.rfcStatus = status;
+      counts.set(status, (counts.get(status) || 0) + 1);
+
+      const badge = document.createElement("span");
+      badge.className = `inc-status inc-status--${statusClass(status)}`;
+      badge.textContent = status;
+      statusCell.replaceChildren(badge);
+    }
+
+    const controls = input.closest(".rfc-index-filter");
+    const chips = document.createElement("div");
+    chips.className = "inc-filter-chips";
+    chips.setAttribute("aria-label", "Filter RFCs by status");
+
+    const labels = ["", ...Array.from(counts.keys()).sort((left, right) => left.localeCompare(right))];
+    for (const status of labels) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "inc-filter-chip";
+      button.dataset.rfcStatus = status;
+      button.textContent = status === "" ? `All · ${rows.length}` : `${status} · ${counts.get(status)}`;
+      button.setAttribute("aria-pressed", String(status === ""));
+      chips.appendChild(button);
+    }
+    controls?.appendChild(chips);
+
+    const empty = document.createElement("p");
+    empty.className = "inc-table-empty";
+    empty.hidden = true;
+    empty.textContent = "No RFCs match this filter.";
+    tableHost.appendChild(empty);
 
     function apply() {
       const q = (input.value || "").trim().toLowerCase();
+      const statusFilter = input.dataset.rfcStatus || "";
+      let visible = 0;
       for (const tr of rows) {
         // Keep header rows visible if any slipped into the selection
         if (tr.querySelector("th")) continue;
         const hay = (tr.textContent || "").toLowerCase();
-        tr.style.display = q === "" || hay.includes(q) ? "" : "none";
+        const matches = statusFilter !== ""
+          ? tr.dataset.rfcStatus === statusFilter
+          : q === "" || hay.includes(q);
+        tr.style.display = matches ? "" : "none";
+        if (matches) visible += 1;
       }
+      empty.hidden = visible !== 0;
+      chips.querySelectorAll("button").forEach((button) => {
+        button.setAttribute("aria-pressed", String(button.dataset.rfcStatus === statusFilter));
+      });
     }
 
-    input.addEventListener("input", apply);
+    input.addEventListener("input", () => {
+      input.dataset.rfcStatus = "";
+      apply();
+    });
     input.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
         input.value = "";
+        input.dataset.rfcStatus = "";
         apply();
       }
+    });
+    chips.addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-rfc-status]");
+      if (!button) return;
+      const status = button.dataset.rfcStatus;
+      input.dataset.rfcStatus = status;
+      input.value = status;
+      apply();
     });
 
     apply();

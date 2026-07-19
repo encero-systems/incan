@@ -1,0 +1,17 @@
+from domain import Order, OrderBatch
+from transform import build_report
+from std.testing import assert_eq
+
+
+def test_build_report_keeps_valid_orders() -> None:
+    batch = OrderBatch(orders=[
+        Order(id="A-1", product="keyboard", quantity=2, unit_price=50.0),
+        Order(id="A-2", product="invalid", quantity=0, unit_price=12.0),
+    ])
+
+    report = build_report(batch)
+
+    assert_eq(len(report.accepted), 1)
+    assert_eq(report.accepted[0].id, "A-1")
+    assert_eq(report.accepted[0].total, 100.0)
+    assert_eq(report.rejected_count, 1)

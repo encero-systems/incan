@@ -55,11 +55,11 @@ jobs:
           git fetch origin +gh-pages:gh-pages
           git worktree add "$tmp" gh-pages
 
-          rm -rf "$tmp/shared/incapunk"
+          rm -rf "$tmp/shared"
           mkdir -p "$tmp/shared"
-          cp -R docs/shared/incapunk "$tmp/shared/incapunk"
+          cp -R docs/shared/. "$tmp/shared/"
 
-          git -C "$tmp" add -A shared/incapunk
+          git -C "$tmp" add -A shared
           if git -C "$tmp" diff --cached --quiet; then
             exit 0
           fi

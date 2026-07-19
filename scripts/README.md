@@ -6,6 +6,7 @@ Utility scripts for development and CI.
 
 - `generated_rust_audit.py`: Emits an objective generated Rust strict-surface report for selected generated `.rs` files or artifact directories.
 - `run_examples.sh`: Smoke-tests all examples. It pre-builds nested example library projects, typechecks every `.incn` file under `examples/`, and then runs files that define `def main(...)` with a configurable timeout. Invoked by `make examples`.
+- `check_docs_examples.sh`: Typechecks the verified Incan snippets embedded in the language tutorials and fully builds the web-framework snippets. Invoked by `make smoke-test-examples`; set `INCAN_DOCS_OFFLINE=1` for a cache-only local run.
 
 ## Generated Rust audit helper
 

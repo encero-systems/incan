@@ -2,6 +2,11 @@
 
 This page is a routing guide for TypeScript and JavaScript developers evaluating Incan for application code, command-line tools, services, and typed domain packages.
 
+<aside class="inc-bridge-note inc-incus-slot" data-incus-category="javascript" aria-label="TypeScript and JavaScript to Incan mental model">
+  <span class="inc-eyebrow">TypeScript / JavaScript → Incan</span>
+  <strong>Keep explicit application structure. Move runtime-only assumptions into types, results, and compiler-owned project facts.</strong>
+</aside>
+
 ## Install first
 
 If you already use Node-based tooling, install the npm adapter. It installs command shims plus a host-specific optional platform package for the same prebuilt Incan toolchain payloads used by the release installers, without running an npm lifecycle script:

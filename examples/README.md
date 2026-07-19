@@ -14,11 +14,14 @@ Programs that exercise richer language surfaces: collections, comprehensions, de
 
 ### `advanced/`
 
-Programs that combine multiple features or rely on advanced capabilities: async/await, channels, synchronization primitives, file I/O, bytes, JSON serialization, custom traits, iterators, Rust crate interop, multi-file projects, and nested projects.
+Programs and small projects that combine multiple features or rely on advanced capabilities: async/await, synchronization primitives, file I/O, bytes, JSON serialization, custom traits, iterators, Rust crate interop, reusable libraries, multi-file projects, and nested projects.
 
 Notable advanced Rust interop examples:
 
 - `advanced/using_rust_crates.incn` - broad Rust crate integration patterns.
+- `advanced/async_worker_pipeline.incn` - task fan-out, typed join results, and a deadline.
+- `advanced/typed_data_processor` - a multi-module JSON-in/JSON-out project with tests.
+- `advanced/library_package` - a reusable Incan library and a path-dependent consumer.
 
 ### `pro/`
 

@@ -54,6 +54,17 @@ When you import a local module, the compiler:
 3. Parses and type-checks that file
 4. Makes its types and functions available in your importing file
 
+```mermaid
+flowchart LR
+  A["main.incn import"] --> B["resolve module path"]
+  B --> C["models.incn or models/mod.incn"]
+  C --> D["parse and type-check module"]
+  D --> E["checked public symbols"]
+  E --> F["importing module scope"]
+```
+
+<p class="inc-diagram-caption">Imports resolve files first, then expose checked symbols. They do not paste source text into the caller.</p>
+
 ## Examples from the repo
 
 - Multi-file example: `examples/advanced/multifile/`

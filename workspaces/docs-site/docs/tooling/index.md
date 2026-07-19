@@ -11,6 +11,9 @@ If you’re not sure where you fit, start at [Start here](../start_here/index.md
 ## Tutorials (learn)
 
 - [Getting Started](tutorials/getting_started.md)
+- [Your first project](tutorials/your_first_project.md)
+- [Build and consume an Incan library](tutorials/build_and_consume_library.md)
+- [Pipeline mini-project](tutorials/pipeline_mini_project.md)
 
 ## How-to guides (do)
 

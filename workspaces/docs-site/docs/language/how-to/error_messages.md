@@ -253,4 +253,4 @@ If an error message is unclear:
 - [Async Programming](async_programming.md) - Async/await with Tokio
 - [Imports & Modules](imports_and_modules.md) - Module system, imports, and built-in functions
 - [Rust Interop](rust_interop.md) - Using Rust crates directly from Incan
-- [Web Framework](../tutorials/web_framework.md) - Building web apps with Axum
+- [Web framework guide](../tutorials/web_framework.md) - Building web apps with Axum

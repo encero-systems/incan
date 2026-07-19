@@ -1,0 +1,33 @@
+"""Spawn independent workers, preserve join failures, and bound slow work."""
+
+from std.async.task import TaskJoinError, spawn
+from std.async.time import sleep, timeout
+
+
+async def process_job(name: str, delay: float) -> str:
+    println(f"starting {name}")
+    await sleep(delay)
+    return f"finished {name}"
+
+
+def show_result(name: str, result: Result[str, TaskJoinError]) -> None:
+    match result:
+        case Ok(value): println(value)
+        case Err(error): println(f"{name} failed: {error.message()}")
+
+
+async def bounded_job() -> None:
+    match await timeout(0.05, process_job("slow", 0.50)):
+        case Ok(value): println(value)
+        case Err(error): println(f"deadline reached: {error.message()}")
+
+
+async def main() -> None:
+    first = spawn(process_job("orders", 0.20))
+    second = spawn(process_job("customers", 0.10))
+    third = spawn(process_job("inventory", 0.15))
+
+    show_result("orders", await first)
+    show_result("customers", await second)
+    show_result("inventory", await third)
+    await bounded_job()

@@ -12,6 +12,8 @@ In the current beta, Incan checks `.incn` source code, lowers it through the Rus
 --8<-- "_snippets/diagrams/compiler_pipeline.mmd"
 ```
 
+<p class="inc-diagram-caption">The checked Incan program owns the public meaning. Generated Rust is inspectable backend output, while diagnostics and reports expose stable tooling facts.</p>
+
 ## What this means in practice
 
 - Incan programs are compiled (not interpreted).

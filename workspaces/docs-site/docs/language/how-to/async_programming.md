@@ -10,6 +10,20 @@ Incan supports async/await through the current Tokio-backed runtime path. This g
 
     The key difference is under the hood: the current beta builds through Rust and uses Tokio, giving you familiar Python-shaped syntax with a native async runtime.
 
+```mermaid
+sequenceDiagram
+  participant Caller
+  participant Future
+  participant Runtime as Tokio-backed runtime
+  Caller->>Future: call async function
+  Caller->>Runtime: await or spawn
+  Runtime->>Future: poll until ready
+  Future-->>Runtime: value or join error
+  Runtime-->>Caller: resume with typed result
+```
+
+<p class="inc-diagram-caption">Calling creates async work; <code>await</code> or task APIs let the runtime drive it to a typed result.</p>
+
 ## Quick Start
 
 ```incan
@@ -226,202 +240,6 @@ async def cooperative_loop() -> None:
         if i % 100 == 0:
             await yield_now()  # Let other tasks run
 ```
-
-## Channels
-
-Channels enable safe message passing between concurrent tasks. They're the primary way to communicate between async tasks without shared mutable state.
-
-### MPSC Channel (Multi-Producer, Single-Consumer)
-
-**MPSC** stands for **M**ulti-**P**roducer, **S**ingle-**C**onsumer:
-
-- **Multiple senders** can send messages (clone the sender to share it)
-- **One receiver** processes all messages
-- Messages arrive in order (FIFO)
-
-#### When to use MPSC
-
-| Use Case                       | Why MPSC                            |
-| ------------------------------ | ----------------------------------- |
-| Worker pool → result collector | Many workers, one aggregator        |
-| Event bus                      | Multiple event sources, one handler |
-| Logging                        | Multiple tasks → single log writer  |
-| Request queue                  | Multiple clients → one server       |
-
-**Bounded channel** (recommended):
-
-```incan
-from std.async.channel import channel
-
-# Create channel with buffer size 32
-tx, rx = channel[str](32)
-
-# Sender - blocks if buffer is full (backpressure)
-async def producer() -> None:
-    await tx.send("hello")  # Waits if buffer full
-    await tx.send("world")
-
-# Receiver - blocks until message available
-async def consumer() -> None:
-    while let Some(msg) = await rx.recv():
-        println(f"Got: {msg}")
-```
-
-Cancellation contracts:
-
-- `tx.send(value)` is cancel-safe-but-lossy. If it is cancelled while waiting for bounded-channel capacity, the value is not sent and is dropped.
-- `tx.reserve()` waits for capacity before a value is committed. Use it for critical sends where cancellation must not drop the message value.
-- `permit.send(value)` is synchronous and either delivers the value or returns it in `SendError[T]`.
-- `rx.recv()` is cancel-safe. If it is cancelled while waiting, no message is removed from the channel.
-- `try_send()` and `try_recv()` return immediately, so there is no pending wait to cancel.
-
-Reserve capacity before building or moving a critical message:
-
-```incan
-match await tx.reserve():
-    Ok(permit) =>
-        match permit.send("audit-event"):
-            Ok(_) => println("sent")
-            Err(err) => println(f"send failed: {err.value}")
-    Err(err) => println(err.message())
-```
-
-**Multiple producers** (clone the sender):
-
-```incan
-from std.async.channel import channel
-from std.async.task import spawn
-
-tx, rx = channel[int](100)
-
-# Clone sender for each producer
-tx1 = tx.clone()
-tx2 = tx.clone()
-
-spawn(async () -> None:
-    await tx1.send(1)
-    await tx1.send(2)
-)
-
-spawn(async () -> None:
-    await tx2.send(100)
-    await tx2.send(200)
-)
-
-# Single consumer receives from all producers
-async def consume() -> None:
-    while let Some(n) = await rx.recv():
-        println(f"Received: {n}")
-```
-
-!!! note "Coming from Python?"
-    Incan channels are inspired by Rust's `tokio::sync::mpsc`, not Python's `asyncio.Queue`. Key differences:
-
-    - **Sender/Receiver split**: You get a `(tx, rx)` pair — clone `tx` for multiple producers
-    - **Ownership semantics**: When all senders are dropped, the channel closes and `recv()` returns `None`
-    - **No shared queue**: Unlike `asyncio.Queue`, you can't just pass the queue around — you pass senders or the receiver
-
-    The Python equivalent would use `asyncio.Queue` with `put()`/`get()`, but lacks the automatic "channel closed" signal when producers finish.
-
-**Bounded vs Unbounded:**
-
-| Type                     | Backpressure                | Memory Safety    | Use When                |
-| ------------------------ | --------------------------- | ---------------- | ----------------------- |
-| `channel[T](n)`          | Yes - send blocks when full | Bounded memory   | Production code         |
-| `unbounded_channel[T]()` | No - send never blocks      | Can grow forever | Prototyping, low-volume |
-
-### Unbounded Channel
-
-`send` never blocks, but use with caution — if producers outpace consumers, memory grows without limit:
-
-```incan
-from std.async.channel import unbounded_channel
-
-# No capacity limit - send always succeeds immediately
-tx, rx = unbounded_channel[int]()
-
-# These never block
-tx.send(1)
-tx.send(2)
-tx.send(3)
-
-# Consumer still blocks waiting for messages
-match await rx.recv():
-    case Some(n): println(f"Got: {n}")
-    case None: println("Channel closed")
-```
-
-**When unbounded is OK:**
-
-- Low message volume
-- Consumers always faster than producers
-- Prototyping (switch to bounded before production)
-
-### One-Shot Channel
-
-A **oneshot channel** sends exactly one value. After sending, the sender is consumed and can't be used again. This is perfect for "request-response" patterns where you spawn a task and wait for its result.
-
-**When to use oneshot vs regular channel:**
-
-| Use Case                        | Channel Type |
-| ------------------------------- | ------------ |
-| Stream of messages              | `channel[T]` |
-| Single result from spawned task | `oneshot[T]` |
-| Producer-consumer queue         | `channel[T]` |
-| Async function return value     | `oneshot[T]` |
-
-**Basic usage:**
-
-```incan
-from std.async.channel import oneshot
-from std.async.task import spawn
-
-tx, rx = oneshot[int]()
-
-spawn(async () -> None:
-    result = expensive_computation()
-    tx.send(result)  # Consumes sender - can only send once
-)
-
-# Wait for the result
-match await rx.recv():
-    case Ok(value): println(f"Got result: {value}")
-    case Err(e): println("Sender dropped without sending")
-```
-
-The one-shot receiver is cancel-safe: cancelling `rx.recv()` does not consume the value. `tx.send(value)` is synchronous, so it either delivers the value or returns it immediately if the receiver is gone.
-
-**Common pattern - returning results from spawned tasks:**
-
-```incan
-from std.async.channel import oneshot
-from std.async.task import spawn
-
-async def compute_in_background(input: Data) -> Result[Output, ComputeError]:
-    # Create oneshot for the result
-    tx, rx = oneshot[Result[Output, ComputeError]]()
-    
-    # Spawn the computation
-    spawn(async () -> None:
-        result = heavy_computation(input)
-        tx.send(result)
-    )
-    
-    # Do other work while computation runs...
-    do_other_stuff()
-    
-    # Wait for result
-    match await rx.recv():
-        case Ok(result): return result
-        case Err(_): return Err(ComputeError.TaskFailed)
-```
-
-**Key differences from regular channels:**
-
-- `send()` consumes the sender (can only call once)
-- No buffering - it's either empty or has exactly one value
-- Lighter weight than MPSC channels
-- `recv()` returns `Err` if sender was dropped without sending
 
 ## Synchronization Primitives
 
@@ -667,21 +485,7 @@ async def good() -> int:
     return await spawn_blocking(heavy_computation)
 ```
 
-### 3. Use Bounded Channels
-
-Prefer bounded channels to prevent memory issues:
-
-```incan
-from std.async.channel import channel, unbounded_channel
-
-# Prefer this:
-tx, rx = channel[Data](100)
-
-# Over this (unbounded can grow forever):
-tx, rx = unbounded_channel[Data]()
-```
-
-### 4. Handle Cancellation Explicitly
+### 3. Handle Cancellation Explicitly
 
 Dropping a task handle detaches the task and loses its result. It does not cancel the task:
 
@@ -713,31 +517,10 @@ match result:
     case Err(e): println(f"Timed out: {e}")
 ```
 
-### Channel Closed
-
-When sending fails because the receiver was dropped, `SendError[T]` contains the value that couldn't be sent in its `.value` field:
-
-```incan
-from std.async.channel import Sender
-
-async def sender(tx: Sender[Message]) -> None:
-    msg = Message(id=1, content="important data")
-    
-    match await tx.send(msg):
-        case Ok(_): println("Sent successfully")
-        case Err(e):
-            # Recover the unsent value - it's not lost!
-            println(f"Channel closed, saving for retry: {e.value:?}")
-            save_for_later(e.value)
-```
-
-This pattern is important for reliability. If a channel closes unexpectedly, you can recover and handle the data that failed to send.
-
 ## See Also
 
 - [Error handling](../explanation/error_handling.md) - Concepts: `Result`, `Option`, `?`, `match`
 - [Error handling recipes](../how-to/error_handling_recipes.md) - Patterns and best practices
 - [Error trait](../reference/stdlib_traits/error.md) - Stdlib trait reference
 - [Examples: Async Tasks](https://github.com/encero-systems/incan/blob/main/examples/advanced/async_tasks.incn)
-- [Examples: Channels](https://github.com/encero-systems/incan/blob/main/examples/advanced/async_channels.incn)
 - [Examples: Synchronization](https://github.com/encero-systems/incan/blob/main/examples/advanced/async_sync.incn)

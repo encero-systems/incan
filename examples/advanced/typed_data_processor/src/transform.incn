@@ -1,0 +1,20 @@
+"""Pure transformation logic for the order-report tutorial."""
+
+from domain import OrderBatch, OrderReport, OrderSummary
+
+
+pub def build_report(batch: OrderBatch) -> OrderReport:
+    mut accepted: list[OrderSummary] = []
+    mut rejected_count = 0
+
+    for order in batch.orders:
+        if order.quantity > 0 and order.unit_price >= 0.0:
+            accepted.append(OrderSummary(
+                id=order.id,
+                product=order.product,
+                total=float(order.quantity) * order.unit_price,
+            ))
+        else:
+            rejected_count += 1
+
+    return OrderReport(accepted=accepted, rejected_count=rejected_count)

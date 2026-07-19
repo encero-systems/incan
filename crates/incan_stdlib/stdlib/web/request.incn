@@ -4,22 +4,21 @@ HTTP Request Extractors
 Types for extracting data from HTTP requests.
 
 `Query[T]` and `Path[T]` are direct re-exports of Axum extractor tuple structs.
-They already implement `FromRequestParts`, so no extra wrapper types are needed.
+They implement Axum's request-part extraction on the Rust side.
+
+Current compiler note: typed `Query[T]`, `Path[T]`, and `Json[T]` route
+parameters are blocked by the generated-handler signature bug tracked in issue
+#867. Keep public examples on direct scalar path parameters until that
+code-generation boundary is fixed.
 
 Example:
     ```incan
     from std.web.routing import route
-    from std.web.request import Query, Path
-    from std.web.response import Json
-
-    @route("/search")
-    async def search(params: Query[SearchParams]) -> Json[list[Result]]:
-        results = do_search(params.q, params.limit)
-        return Json(results)
+    from std.web.response import Response
 
     @route("/users/{id}")
-    async def get_user(id: Path[int]) -> Json[User]:
-        return Json(find_user(id.0))
+    async def get_user(id: int) -> Response:
+        return Response.ok()
     ```
 """
 rust.module("incan_stdlib::web")
@@ -31,34 +30,14 @@ from rust::axum::extract import Query
 `T` must implement `serde::Deserialize`. If deserialization fails, Axum returns
 `400 Bad Request` automatically.
 
-Example:
-    ```incan
-    from std.web.request import Query
-
-    class SearchParams:
-        q: str
-        limit: int = 20
-
-    @route("/search")
-    async def search(params: Query[SearchParams]) -> ...:
-        ...
-    ```
+Handler use is temporarily blocked by issue #867.
 """
 
 from rust::axum::extract import Path
 """
 `Path[T]` — extract path parameters (`/users/{id}`) into a typed value or struct.
 
-For a single parameter, `T` can be a primitive like `int` or `str`.
-For multiple parameters, use a struct with matching field names.
-
-Example:
-    ```incan
-    from std.web.request import Path
-
-    @route("/users/{id}")
-    async def get_user(id: Path[int]) -> ...:
-        user_id = id.0
-        ...
-    ```
+For now, declare single path parameters directly in the handler signature, for
+example `async def get_user(id: int) -> Response`. Wrapped `Path[T]` handler
+parameters are temporarily blocked by issue #867.
 """

@@ -2,6 +2,18 @@
 
 This tutorial shows how to choose between plain return values, `Option`, `Result`, and panics.
 
+```mermaid
+flowchart TD
+  A["Can valid input fail?"] -->|"No"| B["Return T"]
+  A -->|"Yes"| C["Is absence ordinary?"]
+  C -->|"Yes"| D["Return Option T"]
+  C -->|"No"| E["Can the caller recover?"]
+  E -->|"Yes"| F["Return Result T E"]
+  E -->|"No: broken invariant"| G["panic or narrowly proven unwrap"]
+```
+
+<p class="inc-diagram-caption">Choose the return shape from the caller's decision, not from how inconvenient the failure is locally.</p>
+
 ## Coming from Python
 
 Python code often uses `None`, `raise`, `try`/`except`, and `assert` to describe paths that do not produce the ordinary value. Incan keeps those paths visible in signatures and at call sites.

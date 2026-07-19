@@ -1,5 +1,7 @@
 # 6. Errors (Result/Option and `?`)
 
+<div class="inc-book-progress" aria-label="Chapter 6 of 13"><div class="inc-book-progress__meta"><strong>Chapter 6 of 13</strong><span>Result, Option, and ?</span></div><div class="inc-book-progress__bar" aria-hidden="true"><span style="--inc-progress: 46.2%"></span></div></div>
+
 Incan uses explicit error values (`Result` and `Option`) instead of Python-style exceptions.
 
 ## `Result[T, E]`
@@ -59,6 +61,7 @@ def main() -> None:
     def first(items: list[str]) -> Optional[str]:
         return items[0] if items else None
     ```
+
     In Python, `Optional[T]` is mostly a type-hinting/tooling concept. In Incan, `Option[T]` is an explicit enum that the compiler can reason about and enforce.
 
 ## Propagating errors with `?`
@@ -91,34 +94,15 @@ def normalize(name: str) -> Result[str, NameError]:
 
 1. Write `def safe_div(a: float, b: float) -> Result[float, str]`.
 2. Write `def first(items: List[str]) -> Option[str]` and handle `None` vs `Some(...)` with `match`.
-3. Write `def parse_and_divide(n: float, s: str) -> Result[float, str]` that uses `?` to parse `s` into a `float`, then calls `safe_div`.
+3. Write `def greeting_for(name: str) -> Result[str, str]` that uses `?` to propagate a validation error from a `normalize_name` helper.
 
 ??? example "One possible solution"
 
     ```incan
-    def safe_div(a: float, b: float) -> Result[float, str]:
-        if b == 0.0:
-            return Err("division by zero")
-        return Ok(a / b)
-
-    def first(items: List[str]) -> Option[str]:
-        if len(items) == 0:
-            return None
-        return Some(items[0])
-
-    def parse_and_divide(n: float, s: str) -> Result[float, str]:
-        denom = float(s)?
-        return safe_div(n, denom)
-
-    def main() -> None:
-        match first(["a", "b"]):
-            case Some(x): println(f"first={x}")
-            case None: println("empty")
-
-        match parse_and_divide(10.0, "2.0"):
-            case Ok(x): println(f"10 / 2 = {x}")
-            case Err(e): println(f"error: {e}")
+    --8<-- "_snippets/language/examples/verified_errors_solution.incn"
     ```
+
+The builtin `float(text)` conversion raises a runtime conversion error for malformed text; it does not return `Result`. The exercise therefore uses an explicitly fallible helper so the `?` example matches the type system.
 
 ## What to learn next
 
@@ -126,8 +110,4 @@ def normalize(name: str) -> Result[str, NameError]:
 - Results, Options, and the `?` operator (deep dive): [Error Handling](../../explanation/error_handling.md)
 - Common error message patterns: [Error Messages](../../how-to/error_messages.md)
 
-## Next
-
-Back: [5. Modules and imports](05_modules_and_imports.md)
-
-Next chapter: [7. Strings and formatting](07_strings_and_formatting.md)
+<nav class="inc-prev-next" aria-label="Book chapter navigation"><a href="../05_modules_and_imports/"><small>Previous chapter</small><strong>← 5. Modules and imports</strong></a><a href="../07_strings_and_formatting/"><small>Next chapter</small><strong>7. Strings and formatting →</strong></a></nav>

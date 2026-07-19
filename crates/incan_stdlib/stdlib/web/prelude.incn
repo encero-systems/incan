@@ -20,7 +20,7 @@ Example:
     def main():
         App.run(host="127.0.0.1", port=8080)
 
-Compiles to Axum with Tokio — native Rust performance, no GC.
+Compiles to Axum with Tokio and uses a native Rust server backend.
 
 Note: ``from std.web import route`` relies on this prelude re-exporting ``route``
 from ``std.web.routing``. If import resolution does not resolve re-exports yet,

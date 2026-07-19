@@ -315,6 +315,8 @@ smoke-test-examples:
 	@$(MAKE) -s smoke-test-require-release-bin
 	@echo "\033[1mRunning examples...\033[0m"
 	@INCAN_NO_BANNER=1 INCAN_EXAMPLES_TIMEOUT=$${INCAN_EXAMPLES_TIMEOUT:-30} bash scripts/run_examples.sh
+	@echo "\033[1mChecking documentation examples...\033[0m"
+	@INCAN_NO_BANNER=1 INCAN_BIN=./target/release/incan bash scripts/check_docs_examples.sh
 
 .PHONY: smoke-test-benchmarks-incan
 smoke-test-benchmarks-incan:

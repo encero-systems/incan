@@ -1,5 +1,7 @@
 # 9. Enums and better `match`
 
+<div class="inc-book-progress" aria-label="Chapter 9 of 13"><div class="inc-book-progress__meta"><strong>Chapter 9 of 13</strong><span>Enums and better match</span></div><div class="inc-book-progress__bar" aria-hidden="true"><span style="--inc-progress: 69.2%"></span></div></div>
+
 Enums let you represent “one of several shapes” as a real type, and `match` lets you handle it exhaustively.
 
 ## A small command enum
@@ -104,8 +106,4 @@ Unlike a stringly-typed “command name”, enums:
 
 - Enums deep dive: [Enums](../../explanation/enums.md)
 
-## Next
-
-Back: [8. Collections and iteration](08_collections_and_iteration.md)
-
-Next chapter: [10. Models vs classes](10_models_vs_classes.md)
+<nav class="inc-prev-next" aria-label="Book chapter navigation"><a href="../08_collections_and_iteration/"><small>Previous chapter</small><strong>← 8. Collections</strong></a><a href="../10_models_vs_classes/"><small>Next chapter</small><strong>10. Models vs classes →</strong></a></nav>

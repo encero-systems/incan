@@ -13,12 +13,16 @@ If you’re not sure where you fit, start at [Start here](../start_here/index.md
 
 - The Incan Book (Basics): [Book index](tutorials/book/index.md)
 - Dates and times: [Dates and times](tutorials/dates_and_times.md)
+- Typed data processor: [Build a typed data processor](tutorials/typed_data_processor.md)
+- First API: [Build your first API](tutorials/build_your_first_api.md)
+- Async workers: [Build an asynchronous worker pipeline](tutorials/async_worker_pipeline.md)
+- Rust dependency: [Add a Rust crate](tutorials/add_a_rust_crate.md)
 - Fallible and infallible paths: [Fallible and infallible paths](tutorials/fallible_and_infallible_paths.md)
-- Web framework tutorial: [Web Framework](tutorials/web_framework.md) (advanced; reads like tutorial + how-to)
 
 ## How-to guides (do)
 
 - [Async Programming](how-to/async_programming.md)
+- [Web framework guide](tutorials/web_framework.md)
 - [Dates and times](how-to/dates_and_times.md)
 - [Error Messages](how-to/error_messages.md)
 - [File I/O](how-to/file_io.md)

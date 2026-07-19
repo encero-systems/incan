@@ -1,5 +1,7 @@
 # 2. Values, variables, and types
 
+<div class="inc-book-progress" aria-label="Chapter 2 of 13"><div class="inc-book-progress__meta"><strong>Chapter 2 of 13</strong><span>Values, variables, and types</span></div><div class="inc-book-progress__bar" aria-hidden="true"><span style="--inc-progress: 15.4%"></span></div></div>
+
 This chapter introduces basic values and types.
 
 If you get stuck on terminology, see: [Glossary](../../reference/glossary.md).
@@ -69,8 +71,4 @@ def add(a: int, b: int) -> int:
         println(f"add={add(10, 32)}")
     ```
 
-## Next
-
-Back: [1. Hello world](01_hello_world.md)
-
-Next: [3. Functions](03_functions.md)
+<nav class="inc-prev-next" aria-label="Book chapter navigation"><a href="../01_hello_world/"><small>Previous chapter</small><strong>← 1. Hello world</strong></a><a href="../03_functions/"><small>Next chapter</small><strong>3. Functions →</strong></a></nav>
