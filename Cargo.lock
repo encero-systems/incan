@@ -1485,6 +1485,7 @@ dependencies = [
  "incan_syntax",
  "incan_vocab",
  "insta",
+ "libc",
  "md-5",
  "miette",
  "prettyplease",

@@ -79,7 +79,11 @@ fn run_incan_with_timeout(
     use std::os::unix::process::CommandExt;
 
     let mut command = configured_incan_command(current_dir, args);
-    command.process_group(0).stdout(Stdio::piped()).stderr(Stdio::piped());
+    command
+        .process_group(0)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env("INCAN_LOCK_PREHEAT", "1");
     let mut child = command.spawn()?;
     let started = std::time::Instant::now();
     loop {
@@ -87,14 +91,55 @@ fn run_incan_with_timeout(
             return Ok((child.wait_with_output()?, false));
         }
         if started.elapsed() >= timeout {
-            let process_group = format!("-{}", child.id());
-            let killed_group = Command::new("kill").args(["-TERM", process_group.as_str()]).status()?;
-            if !killed_group.success() {
-                child.kill()?;
+            // TERM is best-effort because the group can disappear between the timeout check and this signal. The
+            // group-wide KILL below is the authoritative cleanup before any output pipe is reaped.
+            let _ = signal_process_group(child.id(), libc::SIGTERM);
+            let grace_started = std::time::Instant::now();
+            while grace_started.elapsed() < std::time::Duration::from_secs(2) {
+                std::thread::sleep(std::time::Duration::from_millis(25));
             }
-            return Ok((child.wait_with_output()?, true));
+            // Always address the full group with SIGKILL after the grace window. The group may contain a descendant
+            // that retained the output pipes after the leader exited or ignored SIGTERM.
+            if let Err(error) = signal_process_group(child.id(), libc::SIGKILL) {
+                let leader_kill = child.kill();
+                let leader_wait = child.wait();
+                if let Err(kill_error) = leader_kill {
+                    return Err(std::io::Error::other(format!(
+                        "process-group SIGKILL failed ({error}); leader kill also failed ({kill_error})"
+                    ))
+                    .into());
+                }
+                leader_wait?;
+                return Err(error.into());
+            }
+            let kill_started = std::time::Instant::now();
+            while kill_started.elapsed() < std::time::Duration::from_secs(2) {
+                if child.try_wait()?.is_some() {
+                    return Ok((child.wait_with_output()?, true));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            return Err("timed-out Incan process group did not exit after SIGKILL".into());
         }
         std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+}
+
+/// Send one signal to the complete Unix process group owned by a bounded CLI probe.
+#[cfg(unix)]
+fn signal_process_group(child_id: u32, signal: libc::c_int) -> std::io::Result<()> {
+    let process_group = i32::try_from(child_id).map_err(|error| std::io::Error::other(error.to_string()))?;
+    // SAFETY: The child was spawned with its PID as its process-group ID, and negating that validated positive ID
+    // targets only the task-owned group. `signal` is one of libc's SIGTERM/SIGKILL constants supplied above.
+    let result = unsafe { libc::kill(-process_group, signal) };
+    if result == 0 {
+        return Ok(());
+    }
+    let error = std::io::Error::last_os_error();
+    if error.raw_os_error() == Some(libc::ESRCH) {
+        Ok(())
+    } else {
+        Err(error)
     }
 }
 
