@@ -16,6 +16,8 @@ use crate::library_manifest::{
 };
 use crate::manifest::{ExpandedProjectFeature, MANIFEST_FILENAME, ProjectFeatureDefinition, ProjectManifest};
 
+use super::SdkInventory;
+
 /// Root feature selection supplied by the project manifest and current command.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FeatureSelection {
@@ -271,6 +273,19 @@ impl PackageFeaturePlan {
         root_manifest: &ProjectManifest,
         root_selection: &FeatureSelection,
     ) -> Result<Self, PackageFeaturePlanError> {
+        Self::resolve_with_sdk_inventory(root_manifest, root_selection, None)
+    }
+
+    /// Resolve package features while rebasing frozen private SDK dependencies onto the active inventory.
+    ///
+    /// Private implementation paths in compiled artifacts are physical coordinates, not semantic package identities.
+    /// Feature planning must therefore select an equivalent current SDK artifact before attempting filesystem access;
+    /// an older content-addressed cache generation may already have been collected.
+    pub fn resolve_with_sdk_inventory(
+        root_manifest: &ProjectManifest,
+        root_selection: &FeatureSelection,
+        sdk_inventory: Option<&SdkInventory>,
+    ) -> Result<Self, PackageFeaturePlanError> {
         let root = normalize_project_root(root_manifest.project_root());
         let mut manifests = BTreeMap::from([(root.clone(), root_manifest.clone())]);
         let mut compiled_packages = BTreeMap::<PathBuf, CompiledFeaturePackage>::new();
@@ -402,10 +417,21 @@ impl PackageFeaturePlan {
                 );
 
                 for dependency in dependencies {
-                    let dependency_artifact_root = compiled_package
+                    let frozen_artifact_root = compiled_package
                         .artifact
                         .crate_root
                         .join(&dependency.relative_artifact_path);
+                    let dependency_artifact_root = if dependency.kind == ProviderDependencyKind::PrivateImplementation {
+                        active_sdk_dependency_root(
+                            sdk_inventory,
+                            &package_name,
+                            artifact_path,
+                            dependency,
+                            &frozen_artifact_root,
+                        )?
+                    } else {
+                        frozen_artifact_root
+                    };
                     let entry =
                         load_provider_dependency_artifact(&dependency.dependency_key, &dependency_artifact_root);
                     let (dependency_manifest, dependency_artifact) = match entry {
@@ -604,6 +630,67 @@ impl PackageFeaturePlan {
     }
 }
 
+/// Select an active-inventory crate root for one frozen private SDK edge before reading its historical cache path.
+fn active_sdk_dependency_root(
+    inventory: Option<&SdkInventory>,
+    package_name: &str,
+    package_manifest_path: &Path,
+    dependency: &ProviderDependencyMetadata,
+    frozen_artifact_root: &Path,
+) -> Result<PathBuf, PackageFeaturePlanError> {
+    let Some(inventory) = inventory else {
+        return Ok(frozen_artifact_root.to_path_buf());
+    };
+    let candidates = inventory
+        .components
+        .values()
+        .flat_map(|component| component.providers.iter())
+        .filter(|provider| provider.name == dependency.provider_name)
+        .collect::<Vec<_>>();
+    let exact = candidates
+        .iter()
+        .copied()
+        .filter(|provider| {
+            provider.version == dependency.provider_version && provider.digest == dependency.artifact_digest
+        })
+        .collect::<Vec<_>>();
+    if dependency.default_features || dependency.optional || exact.len() != 1 {
+        let active = if candidates.is_empty() {
+            "missing from the active SDK inventory".to_string()
+        } else {
+            candidates
+                .iter()
+                .map(|provider| format!("{}@{}#{}", provider.name, provider.version, provider.digest))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        return Err(PackageFeaturePlanError::ProviderDependencyArtifact {
+            package: package_name.to_string(),
+            dependency: dependency.dependency_key.clone(),
+            path: package_manifest_path.to_path_buf(),
+            message: format!(
+                "private SDK provider `{}` froze {}@{}#{}, but the active SDK provides {active}; rebuild the compiled library with the active Incan SDK",
+                dependency.provider_name,
+                dependency.provider_name,
+                dependency.provider_version,
+                dependency.artifact_digest
+            ),
+        });
+    }
+    let provider = exact[0];
+    provider.crate_root.clone().ok_or_else(|| {
+        PackageFeaturePlanError::ProviderDependencyArtifact {
+            package: package_name.to_string(),
+            dependency: dependency.dependency_key.clone(),
+            path: package_manifest_path.to_path_buf(),
+            message: format!(
+                "equivalent private SDK provider `{}` is unavailable in the active SDK installation; install the required component or rebuild with an available SDK profile",
+                dependency.provider_name
+            ),
+        }
+    })
+}
+
 /// Validate a resolved transitive artifact against the exact identity frozen by its parent provider.
 fn validate_provider_dependency_descriptor(
     package_name: &str,
@@ -620,6 +707,14 @@ fn validate_provider_dependency_descriptor(
         Some(format!(
             "expected provider version `{}`, found `{}`",
             descriptor.provider_version, manifest.version
+        ))
+    } else if descriptor.kind == ProviderDependencyKind::PrivateImplementation
+        && manifest.contract_metadata.provider.active_features != descriptor.requested_features
+    {
+        Some(format!(
+            "expected private SDK feature projection [{}], found [{}]",
+            render_features(&descriptor.requested_features),
+            render_features(&manifest.contract_metadata.provider.active_features)
         ))
     } else {
         None
@@ -1464,6 +1559,81 @@ serializer = { path = "../serializer", optional = true, default-features = false
             .err()
             .ok_or("corrupt transitive provider artifact should fail integrity validation")?;
         assert!(error.to_string().contains("expected artifact digest"));
+        Ok(())
+    }
+
+    #[test]
+    fn package_feature_plan_rebinds_private_sdk_before_reading_absent_cache_issue911() -> TestResult {
+        let workspace = tempfile::tempdir()?;
+        let reporting_root = workspace.path().join("reporting");
+        let reporting_artifact = reporting_root.join("target/lib");
+        let absent_sdk = workspace.path().join("sdk-cache-a/runtime");
+        let active_sdk = workspace.path().join("sdk-cache-b/runtime");
+        write_test_provider_artifact(&reporting_artifact, "reporting")?;
+        write_test_provider_artifact(&active_sdk, "incan_issue911_runtime")?;
+
+        let active_manifest_path = active_sdk.join("incan_issue911_runtime.incnlib");
+        LibraryManifest::new("incan_issue911_runtime", "0.5.0").write_to_path(&active_manifest_path)?;
+        let active_digest = digest_provider_artifact(&active_sdk)?;
+        let mut reporting = LibraryManifest::new("reporting", "0.5.0");
+        reporting
+            .contract_metadata
+            .provider
+            .provider_dependencies
+            .push(ProviderDependencyMetadata {
+                kind: ProviderDependencyKind::PrivateImplementation,
+                dependency_key: "incan_issue911_runtime".to_string(),
+                provider_name: "incan_issue911_runtime".to_string(),
+                provider_version: "0.5.0".to_string(),
+                artifact_digest: active_digest.clone(),
+                relative_artifact_path: "../../../sdk-cache-a/runtime".to_string(),
+                requested_features: BTreeSet::new(),
+                default_features: false,
+                optional: false,
+            });
+        reporting.write_to_path(&reporting_artifact.join("reporting.incnlib"))?;
+
+        let consumer_root = workspace.path().join("consumer");
+        fs::create_dir_all(&consumer_root)?;
+        fs::write(
+            consumer_root.join(MANIFEST_FILENAME),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nreporting = { path = \"../reporting\" }\n",
+        )?;
+        let inventory = SdkInventory {
+            root: workspace.path().join("sdk-cache-b"),
+            sdk_id: "incan".to_string(),
+            sdk_version: "0.5.0".to_string(),
+            compiler_requirement: ">=0.5.0-dev.16,<0.6.0".to_string(),
+            components: BTreeMap::from([(
+                "runtime".to_string(),
+                crate::provider::SdkComponent {
+                    id: "runtime".to_string(),
+                    version: "0.5.0".to_string(),
+                    mandatory: true,
+                    available: true,
+                    dependencies: BTreeSet::new(),
+                    providers: vec![crate::provider::SdkProviderDescriptor {
+                        name: "incan_issue911_runtime".to_string(),
+                        version: "0.5.0".to_string(),
+                        digest: active_digest,
+                        namespace_claims: BTreeSet::new(),
+                        manifest_path: Some(active_manifest_path),
+                        crate_root: Some(active_sdk),
+                    }],
+                },
+            )]),
+            profiles: BTreeMap::new(),
+        };
+        let consumer = ProjectManifest::discover(&consumer_root)?.ok_or("missing consumer manifest")?;
+
+        let plan =
+            PackageFeaturePlan::resolve_with_sdk_inventory(&consumer, &FeatureSelection::default(), Some(&inventory))?;
+
+        assert!(plan.packages().any(|package| package.package_name == "reporting"));
+        assert!(
+            !absent_sdk.exists(),
+            "feature planning must not reopen the stale cache root"
+        );
         Ok(())
     }
 

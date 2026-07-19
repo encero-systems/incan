@@ -33,8 +33,8 @@ use crate::frontend::{diagnostics, typechecker};
 use crate::library_manifest::LibraryRustAbi;
 use crate::library_manifest::{
     CompiledProviderMetadata, LibraryManifest, ProviderCargoDependency, ProviderCargoDependencySource,
-    ProviderDependencyMetadata, ProviderFactKind, ProviderFactRequirement, ProviderImplementationFacet,
-    ProviderModuleClaim, digest_provider_artifact,
+    ProviderDependencyKind, ProviderDependencyMetadata, ProviderFactKind, ProviderFactRequirement,
+    ProviderImplementationFacet, ProviderModuleClaim, digest_provider_artifact,
 };
 use crate::lockfile::{CargoFeatureSelection, semantic_lock_state};
 use crate::manifest::{DependencySource, DependencySpec, ProjectManifest};
@@ -877,6 +877,7 @@ fn prepare_project_with_options(
         generator.set_package_metadata(project.version.clone(), project.license.clone());
     }
     generator.set_provider_plan(&provider_plan);
+    generator.set_sdk_path_dependencies(project_requirements.sdk_path_dependencies.clone());
     generator.set_cargo_target_dir_override(options.generated_cargo_target_dir.map(Path::to_path_buf));
     generator.set_stdlib_features(project_requirements.stdlib_features.clone());
     generator.set_include_dev_dependencies(false);
@@ -1595,6 +1596,7 @@ fn prepare_library_project(
     generator.set_package_name(Some(project_name.clone()));
     generator.set_package_metadata(Some(project_version.clone()), project_license);
     generator.set_provider_plan(&provider_plan);
+    generator.set_sdk_path_dependencies(project_requirements.sdk_path_dependencies.clone());
     generator.set_cargo_target_dir_override(generated_cargo_target_dir.map(Path::to_path_buf));
     generator.set_stdlib_features(project_requirements.stdlib_features.clone());
     generator.set_include_dev_dependencies(lock_payload_for_typecheck.is_some());
@@ -1672,6 +1674,13 @@ fn prepare_library_project(
             .generate_nested(&main_code, &rust_modules)
             .map_err(|e| CliError::failure(format!("Error generating project: {e}")))?;
     }
+    synchronize_projected_provider_dependencies(
+        &mut library_manifest,
+        &out_dir,
+        &generator.effective_dependencies().map_err(|error| {
+            CliError::failure(format!("failed to resolve projected provider dependencies: {error}"))
+        })?,
+    )?;
     record_timing(&mut timings_ms, "library_generate_rust", codegen_start);
     record_timing(&mut timings_ms, "library_prepare_total", prepare_start);
 
@@ -1693,6 +1702,47 @@ fn prepare_library_project(
         timings_ms,
         report: report_draft,
     })
+}
+
+/// Synchronize newly published public dependency metadata with the exact projected paths rendered into Cargo.toml.
+fn synchronize_projected_provider_dependencies(
+    library_manifest: &mut LibraryManifest,
+    artifact_root: &Path,
+    dependencies: &[DependencySpec],
+) -> CliResult<()> {
+    for descriptor in library_manifest
+        .contract_metadata
+        .provider
+        .provider_dependencies
+        .iter_mut()
+        .filter(|dependency| dependency.kind == ProviderDependencyKind::PublicPackage)
+    {
+        let Some(dependency) = dependencies
+            .iter()
+            .find(|dependency| dependency.crate_name == descriptor.dependency_key)
+        else {
+            continue;
+        };
+        let cargo_package = dependency.package.as_deref().unwrap_or(dependency.crate_name.as_str());
+        if cargo_package != descriptor.provider_name {
+            return Err(CliError::failure(format!(
+                "projected Cargo dependency `{}` names package `{cargo_package}`, but its checked provider edge names `{}`",
+                descriptor.dependency_key, descriptor.provider_name
+            )));
+        }
+        let DependencySource::Path { path } = &dependency.source else {
+            continue;
+        };
+        descriptor.relative_artifact_path = relative_provider_artifact_path(artifact_root, path)?;
+        descriptor.artifact_digest = digest_provider_artifact(path).map_err(|error| {
+            CliError::failure(format!(
+                "failed to hash projected provider dependency `{}` artifact {}: {error}",
+                descriptor.dependency_key,
+                path.display()
+            ))
+        })?;
+    }
+    Ok(())
 }
 
 /// Build transport-stable provider facts from the checked physical artifact projection.
@@ -2675,6 +2725,57 @@ mod tests {
         assert!(dependency_artifact_skips_canonical_lock(true, false));
         assert!(!dependency_artifact_skips_canonical_lock(true, true));
         assert!(!dependency_artifact_skips_canonical_lock(false, false));
+    }
+
+    #[test]
+    fn emitted_library_metadata_tracks_projected_dependency_issue911() -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = tempfile::tempdir()?;
+        let artifact_root = workspace.path().join("published");
+        let projected_root = workspace.path().join("projected");
+        fs::create_dir_all(&artifact_root)?;
+        fs::create_dir_all(projected_root.join("src"))?;
+        fs::write(
+            projected_root.join("Cargo.toml"),
+            "[package]\nname = \"projected_provider\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )?;
+        fs::write(projected_root.join("src/lib.rs"), "pub fn marker() {}\n")?;
+        let mut manifest = LibraryManifest::new("published", "0.1.0");
+        manifest
+            .contract_metadata
+            .provider
+            .provider_dependencies
+            .push(ProviderDependencyMetadata {
+                kind: ProviderDependencyKind::PublicPackage,
+                dependency_key: "provider_alias".to_string(),
+                provider_name: "projected_provider".to_string(),
+                provider_version: "0.1.0".to_string(),
+                artifact_digest: "sha256:stale".to_string(),
+                relative_artifact_path: "../stale".to_string(),
+                requested_features: BTreeSet::new(),
+                default_features: false,
+                optional: false,
+            });
+        let dependencies = vec![DependencySpec {
+            crate_name: "provider_alias".to_string(),
+            version: None,
+            features: Vec::new(),
+            default_features: false,
+            source: DependencySource::Path {
+                path: projected_root.clone(),
+            },
+            optional: false,
+            package: Some("projected_provider".to_string()),
+        }];
+
+        synchronize_projected_provider_dependencies(&mut manifest, &artifact_root, &dependencies)?;
+
+        let descriptor = &manifest.contract_metadata.provider.provider_dependencies[0];
+        assert_eq!(descriptor.artifact_digest, digest_provider_artifact(&projected_root)?);
+        assert_eq!(
+            fs::canonicalize(artifact_root.join(&descriptor.relative_artifact_path))?,
+            fs::canonicalize(projected_root)?
+        );
+        Ok(())
     }
 
     #[test]

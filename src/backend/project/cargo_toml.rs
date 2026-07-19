@@ -226,6 +226,7 @@ impl ProjectGenerator {
     pub(super) fn generate_cargo_toml(&self) -> io::Result<String> {
         let edition = self.rust_edition.as_deref().unwrap_or("2021").to_string();
         let package_name = self.cargo_package_name().to_string();
+        let (dependencies, dev_dependencies) = self.dependencies_with_sdk_rebindings()?;
 
         // ---- Resolve toolchain-owned support crates for generated Rust projects ----
         let stdlib_path = toolchain_crate_path(INCAN_STDLIB_CRATE_NAME);
@@ -241,7 +242,7 @@ impl ProjectGenerator {
         // authoritative for generated projects.
         let mut stdlib_features = self.stdlib_features.clone();
         stdlib_features.extend(
-            self.dependencies
+            dependencies
                 .iter()
                 .filter(|dependency| rendered_dependency_key(dependency) == INCAN_STDLIB_CRATE_NAME)
                 .flat_map(|dependency| dependency.features.iter().cloned()),
@@ -268,7 +269,7 @@ impl ProjectGenerator {
 
         // Add resolved user dependencies
         let mut optional_features = Vec::new();
-        for spec in &self.dependencies {
+        for spec in &dependencies {
             let dependency_key = rendered_dependency_key(spec);
             if added_crates.contains(&dependency_key) {
                 continue;
@@ -282,9 +283,9 @@ impl ProjectGenerator {
         }
 
         // ---- Build dev-dependencies table ----
-        let dev_deps = if self.include_dev_dependencies && !self.dev_dependencies.is_empty() {
+        let dev_deps = if self.include_dev_dependencies && !dev_dependencies.is_empty() {
             let mut dev = toml::Table::new();
-            for spec in &self.dev_dependencies {
+            for spec in &dev_dependencies {
                 let dependency_key = rendered_dependency_key(spec);
                 if added_crates.contains(&dependency_key) {
                     continue;
