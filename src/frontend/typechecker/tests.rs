@@ -16805,6 +16805,370 @@ def main() -> float:
 }
 
 #[test]
+fn test_derived_traits_on_direct_newtype_satisfy_generic_bounds() {
+    let source = r#"
+@derive(Clone, Eq)
+type Identifier = newtype str
+
+def require_traits[T with (Clone, Eq)](value: T) -> T:
+  return value
+
+def main() -> Identifier:
+  return require_traits(Identifier("one"))
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_derived_trait_on_newtype_satisfies_imported_alias_bound() {
+    let source = r#"
+from std.derives.comparison import Eq as Equality
+
+@derive(Eq)
+type Identifier = newtype str
+
+def require_equality[T with Equality](value: T) -> T:
+  return value
+
+def main() -> Identifier:
+  return require_equality(Identifier("one"))
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_derived_trait_on_newtype_does_not_satisfy_unrelated_imported_trait_alias()
+-> Result<(), Box<dyn std::error::Error>> {
+    let unrelated_source = r#"
+pub trait Eq:
+  def unrelated(self) -> int: ...
+"#;
+    let source = r#"
+from unrelated import Eq as Equality
+
+@derive(Eq)
+type Identifier = newtype str
+
+def require_equality[T with Equality](value: T) -> T:
+  return value
+
+def main() -> Identifier:
+  return require_equality(Identifier("one"))
+"#;
+    let unrelated_ast = parse_program(unrelated_source, "unrelated Eq provider");
+    let ast = parse_program(source, "unrelated Eq alias consumer");
+    let mut checker = TypeChecker::new();
+    let errors = match checker.check_with_imports(&ast, &[("unrelated", &unrelated_ast)]) {
+        Ok(()) => return Err("builtin Eq derive unexpectedly satisfied an unrelated imported Eq trait".into()),
+        Err(errors) => errors,
+    };
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("violates generic bound") && error.message.contains("Equality")),
+        "expected unrelated Equality bound rejection, got: {errors:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_derived_trait_on_newtype_does_not_satisfy_unrelated_unaliased_import() -> Result<(), Box<dyn std::error::Error>>
+{
+    let unrelated_source = r#"
+pub trait Eq:
+  def unrelated(self) -> int: ...
+"#;
+    let source = r#"
+from unrelated import Eq
+
+@derive(Eq)
+type Identifier = newtype str
+
+def require_equality[T with Eq](value: T) -> T:
+  return value
+
+def main() -> Identifier:
+  return require_equality(Identifier("one"))
+"#;
+    let unrelated_ast = parse_program(unrelated_source, "unrelated unaliased Eq provider");
+    let ast = parse_program(source, "unrelated unaliased Eq consumer");
+    let mut checker = TypeChecker::new();
+    let errors = match checker.check_with_imports(&ast, &[("unrelated", &unrelated_ast)]) {
+        Ok(()) => return Err("builtin Eq derive unexpectedly satisfied an unrelated unaliased Eq trait".into()),
+        Err(errors) => errors,
+    };
+    let eq_name = builtin_traits::as_str(TraitId::Eq);
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("violates generic bound") && error.message.contains(eq_name)),
+        "expected unrelated {eq_name} bound rejection, got: {errors:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_imported_stdlib_newtype_derives_satisfy_generic_bounds() {
+    let source = r#"
+from std.graph import NodeId
+
+def require_traits[T with (Clone, Eq)](value: T) -> T:
+  return value
+
+def main() -> NodeId:
+  return require_traits(NodeId(1))
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_user_module_derive_on_newtype_uses_identity_bearing_trait_adoption() -> Result<(), Box<dyn std::error::Error>> {
+    let yaml_source = r#"
+__derives__ = [Serialize]
+
+@rust.derive("serde::Serialize")
+pub trait Serialize:
+  def to_yaml(self) -> str:
+    return str("yaml")
+"#;
+    let source = r#"
+import yaml
+
+@derive(yaml)
+pub type Token = newtype str
+
+def encode[T with yaml.Serialize](value: T) -> str:
+  return value.to_yaml()
+
+def main() -> str:
+  return encode(Token("one"))
+"#;
+
+    let yaml_ast = parse_program(yaml_source, "yaml module");
+    let ast = parse_program(source, "custom derived newtype consumer");
+    let mut checker = TypeChecker::new();
+    checker
+        .check_with_imports(&ast, &[("yaml", &yaml_ast)])
+        .map_err(|errors| std::io::Error::other(format!("custom newtype derive failed: {errors:?}")))?;
+    let exports = collect_checked_public_exports(&ast, &checker);
+    let manifest = LibraryManifest::from_checked_exports("custom_newtype", "0.1.0", &exports);
+    let token = manifest.exports.newtypes.first().ok_or("missing Token export")?;
+    assert!(
+        token
+            .trait_adoptions
+            .iter()
+            .any(|adoption| adoption.name == "yaml.Serialize" && adoption.source_name.as_deref() == Some("Serialize")),
+        "expected identity-bearing yaml.Serialize adoption, got {:?}",
+        token.trait_adoptions
+    );
+    Ok(())
+}
+
+#[test]
+fn test_imported_newtype_custom_derive_spelling_does_not_satisfy_unrelated_consumer_trait()
+-> Result<(), Box<dyn std::error::Error>> {
+    let producer = r#"
+pub type Token = newtype str
+"#;
+    let ast = parse_program(producer, "custom derive spelling provider");
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errors| std::io::Error::other(format!("provider typecheck failed: {errors:?}")))?;
+    let exports = collect_checked_public_exports(&ast, &checker);
+    let mut manifest = LibraryManifest::from_checked_exports("custom_derive_provider", "0.1.0", &exports);
+    let token = manifest.exports.newtypes.first_mut().ok_or("missing Token export")?;
+    token.derives = vec!["Capability".to_string()];
+    token.trait_adoptions.clear();
+
+    let index = LibraryManifestIndex::from_entries(HashMap::from([(
+        "custom_derive_provider".to_string(),
+        LibraryManifestIndexEntry::Loaded {
+            manifest: Box::new(manifest),
+            metadata: LibraryArtifactMetadata::from_crate_root(
+                "custom_derive_provider",
+                "custom_derive_provider",
+                synthetic_artifact_root("custom_derive_provider"),
+            ),
+        },
+    )]));
+    let consumer = r#"
+from pub::custom_derive_provider import Token
+
+trait Capability:
+  def marker(self) -> int: ...
+
+def require_capability[T with Capability](value: T) -> T:
+  return value
+
+def main() -> Token:
+  return require_capability(Token("one"))
+"#;
+    let errors = check_str_with_library_index_err(
+        consumer,
+        index,
+        "a provider-local custom derive spelling must not satisfy an unrelated consumer trait",
+    )?;
+    assert!(
+        errors
+            .iter()
+            .any(|error| { error.message.contains("violates generic bound") && error.message.contains("Capability") }),
+        "expected unrelated Capability bound rejection, got: {errors:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_public_nested_newtype_derives_satisfy_consumer_generic_bounds() -> Result<(), Box<dyn std::error::Error>> {
+    let producer = r#"
+@derive(Clone, Eq)
+pub type BaseId = newtype str
+
+@derive(Clone, Eq)
+pub type ChildId = newtype BaseId
+"#;
+    let ast = parse_program(producer, "public derived nested newtype provider");
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errors| std::io::Error::other(format!("provider typecheck failed: {errors:?}")))?;
+    let exports = collect_checked_public_exports(&ast, &checker);
+    let manifest = LibraryManifest::from_checked_exports("derived_ids", "0.1.0", &exports);
+    let temp = tempfile::tempdir()?;
+    let manifest_path = temp.path().join("derived_ids.incnlib");
+    manifest.write_to_path(&manifest_path)?;
+    let manifest = LibraryManifest::read_from_path(&manifest_path)?;
+    let child = manifest
+        .exports
+        .newtypes
+        .iter()
+        .find(|newtype| newtype.name == "ChildId")
+        .ok_or("missing ChildId export")?;
+    for trait_id in [TraitId::Clone, TraitId::Eq] {
+        let trait_name = builtin_traits::as_str(trait_id);
+        assert!(
+            child.derives.iter().any(|derive| derive == trait_name),
+            "expected exported ChildId derives to contain {trait_name}, got {:?}",
+            child.derives
+        );
+    }
+
+    let index = LibraryManifestIndex::from_entries(HashMap::from([(
+        "derived_ids".to_string(),
+        LibraryManifestIndexEntry::Loaded {
+            manifest: Box::new(manifest),
+            metadata: LibraryArtifactMetadata::from_crate_root(
+                "derived_ids",
+                "derived_ids",
+                synthetic_artifact_root("derived_ids"),
+            ),
+        },
+    )]));
+    let consumer = r#"
+from pub::derived_ids import BaseId, ChildId
+
+def require_traits[T with (Clone, Eq)](value: T) -> T:
+  return value
+
+def same(left: ChildId, right: ChildId) -> bool:
+  return left == right
+
+def main() -> bool:
+  identifier = require_traits(ChildId(BaseId("one")))
+  return same(identifier, identifier)
+"#;
+    check_str_with_library_index(consumer, index)
+        .map_err(|errors| std::io::Error::other(format!("consumer typecheck failed: {errors:?}")))?;
+    Ok(())
+}
+
+#[test]
+fn test_derived_traits_on_nested_newtype_satisfy_generic_bounds_and_equality() {
+    let source = r#"
+@derive(Clone, Eq)
+type BaseId = newtype str
+
+@derive(Clone, Eq)
+type ChildId = newtype BaseId
+
+def has_duplicates[T with (Clone, Eq)](values: list[T]) -> bool:
+  for left in range(len(values)):
+    for right in range(len(values)):
+      if right > left and values[left] == values[right]:
+        return true
+  return false
+
+def main() -> bool:
+  first = ChildId(BaseId("one"))
+  second = ChildId(BaseId("one"))
+  identifiers = [first, second]
+  return first == second and has_duplicates(identifiers)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_nested_newtype_does_not_inherit_underlying_derives_for_generic_bounds() {
+    let source = r#"
+@derive(Clone, Eq)
+type BaseId = newtype str
+
+type ChildId = newtype BaseId
+
+def require_traits[T with (Clone, Eq)](value: T) -> T:
+  return value
+
+def main() -> ChildId:
+  return require_traits(ChildId(BaseId("one")))
+"#;
+    let errors = check_str_err(
+        source,
+        "an undecorated nested newtype must not inherit its underlying type's derives",
+    );
+    for trait_id in [TraitId::Clone, TraitId::Eq] {
+        let trait_name = builtin_traits::as_str(trait_id);
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains("violates generic bound") && error.message.contains(trait_name)),
+            "expected missing {trait_name} bound diagnostic, got: {errors:?}"
+        );
+    }
+}
+
+#[test]
+fn test_nested_newtype_missing_one_derive_still_rejects_generic_bound() {
+    let source = r#"
+@derive(Clone, Eq)
+type BaseId = newtype str
+
+@derive(Clone)
+type ChildId = newtype BaseId
+
+def require_traits[T with (Clone, Eq)](value: T) -> T:
+  return value
+
+def main() -> ChildId:
+  return require_traits(ChildId(BaseId("one")))
+"#;
+    let errors = check_str_err(source, "a nested newtype missing Eq must fail the Eq bound");
+    let eq_name = builtin_traits::as_str(TraitId::Eq);
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("violates generic bound") && error.message.contains(eq_name)),
+        "expected missing {eq_name} bound diagnostic, got: {errors:?}"
+    );
+    let clone_name = builtin_traits::as_str(TraitId::Clone);
+    assert!(
+        !errors
+            .iter()
+            .any(|error| error.message.contains("violates generic bound") && error.message.contains(clone_name)),
+        "the explicitly derived {clone_name} capability must remain visible, got: {errors:?}"
+    );
+}
+
+#[test]
 fn test_explicit_trait_bound_accepts_transitive_supertrait_adopter() {
     let source = r#"
 trait Capability:

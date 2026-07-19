@@ -1021,6 +1021,7 @@ fn extract_type_signatures(program: &ast::Program) -> Vec<(String, TypeInfo)> {
                         method_rebindings,
                         traits: nt.traits.iter().map(|trait_ref| trait_ref.node.name.clone()).collect(),
                         trait_adoptions: trait_adoption_infos_from_bounds(&nt.traits, &tp_names, &stdlib_imports),
+                        derives: derive_names_from_decorators(&nt.decorators),
                         method_aliases,
                         methods,
                         method_overloads,
@@ -1477,6 +1478,24 @@ fn extract_trait_meta(program: &ast::Program) -> HashMap<String, TraitMeta> {
         }
     }
     meta
+}
+
+/// Extract compiler-owned and module derive names from one stdlib type declaration.
+fn derive_names_from_decorators(items: &[ast::Spanned<ast::Decorator>]) -> Vec<String> {
+    items
+        .iter()
+        .filter(|decorator| decorators::from_str(&decorator.node.path.segments.join(".")) == Some(DecoratorId::Derive))
+        .flat_map(|decorator| decorator.node.args.iter())
+        .filter_map(|arg| {
+            let ast::DecoratorArg::Positional(expr) = arg else {
+                return None;
+            };
+            let ast::Expr::Ident(name) = &expr.node else {
+                return None;
+            };
+            Some(name.clone())
+        })
+        .collect()
 }
 
 /// Extract RFC 024 `@rust.derive(...)` path strings from stdlib trait decorators.

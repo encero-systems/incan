@@ -90,6 +90,7 @@ use incan_core::interop::{
 use incan_core::lang::conventions;
 use incan_core::lang::decorators::{self as core_decorators, DecoratorId};
 use incan_core::lang::errors as runtime_errors;
+use incan_core::lang::stdlib;
 use incan_core::lang::surface::functions::SurfaceFnId;
 use incan_core::lang::surface::types as surface_types;
 use incan_core::lang::surface::types::{SurfaceTypeId, SurfaceTypeKind};
@@ -1982,6 +1983,24 @@ impl TypeChecker {
         }
     }
 
+    /// Return whether a compiler-owned derive provides the visible trait bound, including imported aliases.
+    fn builtin_derive_satisfies_trait(&self, derive: &str, trait_name: &str) -> bool {
+        let Some(derive_id) = incan_core::lang::derives::from_str(derive) else {
+            return false;
+        };
+        let canonical_derive = incan_core::lang::derives::as_str(derive_id);
+        if canonical_derive == trait_name && !self.import_aliases.contains_key(trait_name) {
+            return self.lookup_semantic_trait_info(trait_name).is_some();
+        }
+        let Some((module_path, source_trait)) = self.resolve_bound_trait_path(trait_name) else {
+            return false;
+        };
+        source_trait == canonical_derive
+            && stdlib::trait_method_module_segments(canonical_derive)
+                .is_some_and(|builtin_module_path| builtin_module_path == module_path)
+            && self.lookup_semantic_trait_info(trait_name).is_some()
+    }
+
     /// Instantiate `supertrait_name`'s type arguments when `subtrait_name` is known with `subtrait_args`.
     ///
     /// Used for trait-to-supertrait compatibility: a value typed `Subtrait[A1,...]` may appear where
@@ -2025,7 +2044,7 @@ impl TypeChecker {
             TypeInfo::Model(m) => (m.trait_adoptions.as_slice(), Some(m.derives.as_slice())),
             TypeInfo::Class(c) => (c.trait_adoptions.as_slice(), Some(c.derives.as_slice())),
             TypeInfo::Enum(e) => (e.trait_adoptions.as_slice(), Some(e.derives.as_slice())),
-            TypeInfo::Newtype(n) => (n.trait_adoptions.as_slice(), None),
+            TypeInfo::Newtype(n) => (n.trait_adoptions.as_slice(), Some(n.derives.as_slice())),
             _ => return false,
         };
         for t in adopted {
@@ -2045,8 +2064,9 @@ impl TypeChecker {
             }
         }
         if let Some(derives) = derives
-            && derives.iter().any(|d| d == trait_name)
-            && self.lookup_semantic_trait_info(trait_name).is_some()
+            && derives
+                .iter()
+                .any(|derive| self.builtin_derive_satisfies_trait(derive, trait_name))
         {
             return true;
         }
@@ -4813,6 +4833,7 @@ impl TypeChecker {
                         method_rebindings: HashMap::new(),
                         traits: nt.traits.iter().map(|trait_ref| trait_ref.node.name.clone()).collect(),
                         trait_adoptions: Vec::new(),
+                        derives: Vec::new(),
                         method_aliases: HashMap::new(),
                         methods: HashMap::new(),
                         method_overloads: HashMap::new(),

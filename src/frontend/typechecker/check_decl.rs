@@ -3276,7 +3276,9 @@ impl TypeChecker {
         self.validate_type_param_bound_type_names(&nt.type_params);
 
         self.validate_decorators_rejecting_user_defined(&nt.decorators, "newtype");
+        self.validate_derives(&nt.decorators);
         self.validate_rust_derives(&nt.decorators, "newtype", nt.is_rusttype, &nt.traits);
+        let derives = self.extract_derive_names(&nt.decorators);
 
         // Check underlying type exists
         let underlying = self.resolve_type_checked(&nt.underlying);
@@ -3353,6 +3355,13 @@ impl TypeChecker {
             } else if self.lookup_symbol(trait_name).is_none() {
                 self.errors.push(errors::unknown_symbol(trait_name, trait_ref.span));
             }
+        }
+        let derive_adoption_span = Self::first_derive_span(&nt.decorators);
+        for adoption in self.collect_derive_trait_adoption_infos(&derives) {
+            let Some(resolved) = self.resolve_collected_trait_adoption(&adoption, derive_adoption_span) else {
+                continue;
+            };
+            resolved_trait_adoptions.push(resolved);
         }
 
         for associated_type in &nt.associated_types {

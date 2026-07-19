@@ -2750,6 +2750,7 @@ impl TypeChecker {
             method_rebindings: std::collections::HashMap::new(),
             traits: export.traits.clone(),
             trait_adoptions: Self::trait_adoptions_from_manifest(&export.traits, &export.trait_adoptions),
+            derives: export.derives.clone(),
             method_aliases: Self::method_aliases_from_manifest(&export.methods),
             methods: self.methods_from_manifest(&export.methods),
             method_overloads: self.method_overloads_from_manifest(&export.methods),

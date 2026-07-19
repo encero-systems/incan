@@ -381,13 +381,20 @@ impl TypeChecker {
                 en.trait_adoptions.as_slice(),
                 Some(en.derives.as_slice()),
             ),
-            TypeInfo::Newtype(newtype) => (newtype.type_params.as_slice(), newtype.trait_adoptions.as_slice(), None),
+            TypeInfo::Newtype(newtype) => (
+                newtype.type_params.as_slice(),
+                newtype.trait_adoptions.as_slice(),
+                Some(newtype.derives.as_slice()),
+            ),
             TypeInfo::Builtin | TypeInfo::TypeAlias => return false,
         };
 
         if expected_args.is_empty()
-            && derives.is_some_and(|items| items.iter().any(|derive| derive == bound_trait))
-            && self.lookup_semantic_trait_info(bound_trait).is_some()
+            && derives.is_some_and(|items| {
+                items
+                    .iter()
+                    .any(|derive| self.builtin_derive_satisfies_trait(derive, bound_trait))
+            })
         {
             return true;
         }
@@ -871,7 +878,13 @@ impl TypeChecker {
             Some(TypeInfo::Enum(info)) => {
                 info.traits.iter().any(|t| t == bound) || info.derives.iter().any(|d| d == bound)
             }
-            Some(TypeInfo::Newtype(info)) => info.traits.iter().any(|t| t == bound),
+            Some(TypeInfo::Newtype(info)) => {
+                info.traits.iter().any(|trait_name| trait_name == bound)
+                    || info
+                        .derives
+                        .iter()
+                        .any(|derive| self.builtin_derive_satisfies_trait(derive, bound))
+            }
             Some(TypeInfo::TypeAlias) => false,
             None => false,
         }

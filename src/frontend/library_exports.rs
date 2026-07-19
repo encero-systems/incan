@@ -351,6 +351,8 @@ pub struct CheckedNewtypeExport {
     pub type_params: Vec<CheckedTypeParam>,
     pub traits: Vec<String>,
     pub trait_adoptions: Vec<CheckedTypeBound>,
+    /// `@derive(...)` names that must remain available to `pub::` consumers.
+    pub derives: Vec<String>,
     pub is_rusttype: bool,
     pub underlying: ResolvedType,
     pub checked_constructor: Option<String>,
@@ -1246,6 +1248,7 @@ fn checked_newtype_export(newtype_decl: &NewtypeDecl, checker: &TypeChecker) -> 
         implicit_coercion_enabled,
         traits,
         trait_adoptions,
+        derives,
         method_overloads,
         ..
     } = info;
@@ -1255,6 +1258,7 @@ fn checked_newtype_export(newtype_decl: &NewtypeDecl, checker: &TypeChecker) -> 
         type_params: checked_type_params(&newtype_decl.type_params, checker),
         traits: sorted_vec(traits.clone()),
         trait_adoptions: sorted_type_bounds(map_type_bound_infos(trait_adoptions)),
+        derives: sorted_vec(derives.clone()),
         is_rusttype: *is_rusttype,
         underlying: underlying.clone(),
         checked_constructor: TypeChecker::validated_newtype_ctor_name(&newtype_decl.name, info),

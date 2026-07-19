@@ -674,6 +674,8 @@ pub struct NewtypeInfo {
     pub traits: Vec<String>,
     /// Explicit traits adopted by this newtype/rusttype, preserving generic trait arguments when present.
     pub trait_adoptions: Vec<TypeBoundInfo>,
+    /// Source-level `@derive(...)` names declared by this newtype.
+    pub derives: Vec<String>,
     pub method_aliases: HashMap<String, String>,
     pub methods: HashMap<String, MethodInfo>,
     /// All newtype/rusttype method declarations grouped by name for trait-backed overload resolution.
