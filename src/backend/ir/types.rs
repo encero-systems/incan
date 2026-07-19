@@ -126,6 +126,50 @@ pub enum IrType {
 }
 
 impl IrType {
+    /// Remove one owning provider's qualification from nominal paths while preserving the complete type shape.
+    ///
+    /// Public-library expressions retain qualified names in consumer IR. Provider-owned signature and anonymous-union
+    /// metadata use names local to the compiled provider, so only the matching provider prefix may be removed when
+    /// comparing or hashing those boundary types.
+    pub(crate) fn provider_localized(&self, library: &str) -> Self {
+        let prefix = format!("{library}::");
+        let local_name = |name: &str| name.strip_prefix(&prefix).unwrap_or(name).to_string();
+        match self {
+            Self::Struct(name) => Self::Struct(local_name(name)),
+            Self::Enum(name) => Self::Enum(local_name(name)),
+            Self::Trait(name) => Self::Trait(local_name(name)),
+            Self::NamedGeneric(name, args) => Self::NamedGeneric(
+                local_name(name),
+                args.iter().map(|arg| arg.provider_localized(library)).collect(),
+            ),
+            Self::List(inner) => Self::List(Box::new(inner.provider_localized(library))),
+            Self::Dict(key, value) => Self::Dict(
+                Box::new(key.provider_localized(library)),
+                Box::new(value.provider_localized(library)),
+            ),
+            Self::Set(inner) => Self::Set(Box::new(inner.provider_localized(library))),
+            Self::Tuple(items) => Self::Tuple(items.iter().map(|item| item.provider_localized(library)).collect()),
+            Self::Option(inner) => Self::Option(Box::new(inner.provider_localized(library))),
+            Self::Result(ok, err) => Self::Result(
+                Box::new(ok.provider_localized(library)),
+                Box::new(err.provider_localized(library)),
+            ),
+            Self::Function { params, ret } => Self::Function {
+                params: params.iter().map(|param| param.provider_localized(library)).collect(),
+                ret: Box::new(ret.provider_localized(library)),
+            },
+            Self::Ref(inner) => Self::Ref(Box::new(inner.provider_localized(library))),
+            Self::RefMut(inner) => Self::RefMut(Box::new(inner.provider_localized(library))),
+            Self::TypeToken(inner) => Self::TypeToken(Box::new(inner.provider_localized(library))),
+            Self::ExternalUnion { library: owner, union } if owner == library => Self::ExternalUnion {
+                library: owner.clone(),
+                union: Box::new(union.provider_localized(library)),
+            },
+            Self::ExternalUnion { .. } => self.clone(),
+            other => other.clone(),
+        }
+    }
+
     /// Return whether this type mentions an unbound generic type parameter.
     pub fn contains_generic_parameter(&self) -> bool {
         match self {
@@ -355,9 +399,13 @@ impl IrType {
     /// Find the union variant index that can hold `member_ty`.
     pub fn union_variant_index_for_member(&self, member_ty: &IrType) -> Option<usize> {
         let members = self.union_members()?;
+        let member_ty = match self {
+            Self::ExternalUnion { library, .. } => member_ty.provider_localized(library),
+            _ => member_ty.clone(),
+        };
         members
             .iter()
-            .position(|member| union_member_type_matches(member, member_ty))
+            .position(|member| union_member_type_matches(member, &member_ty))
     }
 }
 
@@ -712,5 +760,40 @@ mod tests {
     fn test_incan_name_named_generic() {
         let ty = IrType::NamedGeneric("Json".to_string(), vec![IrType::Struct("User".to_string())]);
         assert_eq!(ty.incan_name(), "Json[User]");
+    }
+
+    /// Regression for #755/#892: external unions accept only members qualified by their own provider.
+    #[test]
+    fn external_union_member_matching_is_provider_aware_issue892() {
+        let union = IrType::ExternalUnion {
+            library: "widgets".to_string(),
+            union: Box::new(IrType::NamedGeneric(
+                IR_UNION_TYPE_NAME.to_string(),
+                vec![IrType::Struct("Widget".to_string())],
+            )),
+        };
+
+        assert_eq!(
+            union.union_variant_index_for_member(&IrType::Struct("widgets::Widget".to_string())),
+            Some(0)
+        );
+        assert_eq!(
+            union.union_variant_index_for_member(&IrType::Struct("other::Widget".to_string())),
+            None
+        );
+    }
+
+    /// Regression for #892: localizing one provider must not rewrite a union owned by another provider.
+    #[test]
+    fn provider_localization_preserves_foreign_external_union_issue892() {
+        let foreign_union = IrType::ExternalUnion {
+            library: "other".to_string(),
+            union: Box::new(IrType::NamedGeneric(
+                IR_UNION_TYPE_NAME.to_string(),
+                vec![IrType::Struct("widgets::Widget".to_string())],
+            )),
+        };
+
+        assert_eq!(foreign_union.provider_localized("widgets"), foreign_union);
     }
 }

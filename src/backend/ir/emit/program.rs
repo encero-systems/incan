@@ -2266,7 +2266,15 @@ impl<'a> IrEmitter<'a> {
     /// payloads can preserve public dependency ownership across nested argument and collection positions.
     fn target_external_union_covers_expr(target_ty: &IrType, expr_ty: &IrType) -> bool {
         match (target_ty, expr_ty) {
-            (IrType::ExternalUnion { .. }, _) => target_ty.union_type_name() == expr_ty.union_type_name(),
+            (
+                IrType::ExternalUnion { library, .. },
+                IrType::ExternalUnion {
+                    library: expr_library, ..
+                },
+            ) if library != expr_library => false,
+            (IrType::ExternalUnion { library, .. }, _) => {
+                target_ty.union_type_name() == expr_ty.provider_localized(library).union_type_name()
+            }
             (IrType::List(target), IrType::List(expr)) | (IrType::Set(target), IrType::Set(expr)) => {
                 Self::target_external_union_covers_expr(target, expr)
             }
@@ -3582,6 +3590,27 @@ mod tests {
         assert!(!IrEmitter::target_external_union_covers_expr(
             &IrType::Result(Box::new(external_provider_union()), Box::new(IrType::String)),
             &IrType::Result(Box::new(provider_union()), Box::new(local_union()))
+        ));
+    }
+
+    #[test]
+    fn external_union_coverage_localizes_only_the_target_provider_issue892() {
+        let qualified_provider_union = union(vec![
+            IrType::Struct("provider::ProviderColumn".to_string()),
+            IrType::Int,
+        ]);
+        let foreign_union = IrType::ExternalUnion {
+            library: "other".to_string(),
+            union: Box::new(qualified_provider_union.clone()),
+        };
+
+        assert!(IrEmitter::target_external_union_covers_expr(
+            &external_provider_union(),
+            &qualified_provider_union
+        ));
+        assert!(!IrEmitter::target_external_union_covers_expr(
+            &external_provider_union(),
+            &foreign_union
         ));
     }
 

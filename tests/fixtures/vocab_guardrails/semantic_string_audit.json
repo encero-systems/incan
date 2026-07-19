@@ -333,8 +333,8 @@
     {
       "path": "src/frontend/typechecker/collect/stdlib_imports.rs",
       "category": "stdlib import, checked API target paths, provider-bound roots, and extension-trait compatibility",
-      "expected_count": 10,
-      "expected_fingerprint": "0x6b541f0e7968ad59"
+      "expected_count": 11,
+      "expected_fingerprint": "0xe1b6f3637cf605f3"
     },
     {
       "path": "src/frontend/typechecker/const_eval.rs",

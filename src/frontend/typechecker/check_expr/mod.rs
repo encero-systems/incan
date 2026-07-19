@@ -124,12 +124,8 @@ impl TypeChecker {
             return Some(kind);
         }
         if module_path.len() == 2 && module_path.first().is_some_and(|seg| seg == "pub") {
-            let entry = self.provider_plan.library_manifest_index().get(&module_path[1])?;
-            let crate::frontend::library_manifest_index::LibraryManifestIndexEntry::Loaded { manifest, .. } = entry
-            else {
-                return None;
-            };
-            return self.pub_library_function_symbol(manifest, member);
+            let kind = self.lookup_pub_library_symbol_member(&module_path[1], member)?;
+            return matches!(kind, SymbolKind::Function(_) | SymbolKind::FunctionOverloads(_)).then_some(kind);
         }
         None
     }
