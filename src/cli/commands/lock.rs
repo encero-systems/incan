@@ -117,6 +117,7 @@ pub fn lock_project(
         &cargo_features,
         package_features,
         sdk_profile_override,
+        None,
     )?
     .ok_or_else(|| CliError::failure("incan lock requires a FILE argument or at least one [project.scripts] entry"))?;
 
@@ -429,6 +430,7 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
             cargo_features,
             package_features.unwrap_or(&default_package_features),
             sdk_profile_override,
+            None,
         )?
     } else {
         None
@@ -688,7 +690,17 @@ fn collect_workspace_lock_context(
     sdk_profile_override: Option<&str>,
 ) -> CliResult<WorkspaceLockContext> {
     let explicit_entry = entry_file.map(resolve_explicit_lock_entry).transpose()?;
-    let mut explicit_entry_was_selected = explicit_entry.is_none();
+    let explicit_entry_owner = explicit_entry
+        .as_deref()
+        .and_then(|entry| workspace.member_containing_path(entry));
+    if let Some(entry) = explicit_entry.as_deref()
+        && explicit_entry_owner.is_none()
+    {
+        return Err(CliError::failure(format!(
+            "lock entry {} is not contained by any selected workspace member",
+            entry.display()
+        )));
+    }
     let mut resolved = ResolvedDependencies {
         dependencies: Vec::new(),
         dev_dependencies: Vec::new(),
@@ -704,16 +716,16 @@ fn collect_workspace_lock_context(
             .effective_member_manifest(member)
             .map_err(|error| CliError::failure(error.to_string()))?;
         enforce_project_toolchain_constraint(&manifest)?;
-        let member_entry = explicit_entry.as_deref().filter(|path| path.starts_with(member.root()));
-        if member_entry.is_some() {
-            explicit_entry_was_selected = true;
-        }
+        let member_entry = explicit_entry
+            .as_deref()
+            .filter(|_| explicit_entry_owner.is_some_and(|owner| owner.root() == member.root()));
         let Some(member_context) = collect_project_lock_context(
             &manifest,
             member_entry,
             cargo_features,
             package_features,
             sdk_profile_override,
+            Some(workspace),
         )?
         else {
             continue;
@@ -727,15 +739,6 @@ fn collect_workspace_lock_context(
         rust_inspect_query_paths.extend(member_context.rust_inspect_query_paths);
     }
 
-    if !explicit_entry_was_selected {
-        let entry = explicit_entry.ok_or_else(|| {
-            CliError::failure("workspace lock selection lost the explicit entry path during resolution")
-        })?;
-        return Err(CliError::failure(format!(
-            "lock entry {} is not contained by any selected workspace member",
-            entry.display()
-        )));
-    }
     if !has_context {
         return Err(CliError::failure(
             "incan lock requires a FILE argument or at least one [project.scripts] entry across the workspace",
@@ -923,13 +926,17 @@ fn project_lock_entry_paths(manifest: &ProjectManifest, explicit_entry_file: Opt
     paths.into_iter().collect()
 }
 
-/// Collect the project-wide script and test dependency inputs used for both lock generation and freshness checks.
+/// Collect the project-wide script and owned test dependency inputs used for lock generation and freshness checks.
+///
+/// When `workspace` is present, descendant member tests are excluded so every test is resolved against the effective
+/// manifest of its deepest owning workspace member. Standalone projects retain unrestricted recursive discovery.
 fn collect_project_lock_context(
     manifest: &ProjectManifest,
     explicit_entry_file: Option<&Path>,
     cargo_features: &CargoFeatureSelection,
     package_features: &FeatureSelection,
     sdk_profile_override: Option<&str>,
+    workspace: Option<&WorkspaceGraph>,
 ) -> CliResult<Option<ProjectLockContext>> {
     let entry_paths = project_lock_entry_paths(manifest, explicit_entry_file);
     if entry_paths.is_empty() {
@@ -981,6 +988,7 @@ fn collect_project_lock_context(
 
     let test_inputs = collect_test_lock_inputs(
         manifest.project_root(),
+        workspace,
         Some(&library_imported_vocab),
         Some(&library_imported_dsl_surfaces),
         Some(&library_manifest_index),
@@ -1623,9 +1631,10 @@ pub(crate) fn generate_lockfile(
     Ok(lock)
 }
 
-/// Collect inline Rust crate imports and stdlib/provider requirements from test files for lock resolution.
+/// Collect inline Rust crate imports and stdlib/provider requirements from test files owned by this project.
 fn collect_test_lock_inputs(
     project_root: &Path,
+    workspace: Option<&WorkspaceGraph>,
     library_imported_vocab: Option<&parser::ImportedLibraryVocab>,
     library_imported_dsl_surfaces: Option<&parser::ImportedLibraryDslSurfaces>,
     library_manifest_index: Option<&LibraryManifestIndex>,
@@ -1634,7 +1643,7 @@ fn collect_test_lock_inputs(
     let mut inline_imports = Vec::new();
     let mut project_requirement_modules = Vec::new();
     let mut provider_module_groups = Vec::new();
-    let test_files = crate::cli::test_runner::discover_test_files(project_root);
+    let test_files = discover_project_test_files(project_root, workspace);
     let source_root = project_root.join("src");
 
     for file_path in test_files {
@@ -1698,6 +1707,20 @@ fn collect_test_lock_inputs(
         project_requirement_modules,
         provider_module_groups,
     })
+}
+
+/// Discover test files owned by one project, excluding descendant workspace members in rooted workspaces.
+fn discover_project_test_files(project_root: &Path, workspace: Option<&WorkspaceGraph>) -> Vec<PathBuf> {
+    crate::cli::test_runner::discover_test_files(project_root)
+        .into_iter()
+        .filter(|path| {
+            workspace.is_none_or(|graph| {
+                graph
+                    .member_containing_path(path)
+                    .is_some_and(|owner| owner.root() == project_root)
+            })
+        })
+        .collect()
 }
 
 /// Check whether any resolved dependency uses a git branch source, which is forbidden in strict
@@ -1844,7 +1867,7 @@ mod tests {
             "from internal import SessionContext\nfrom rust::tokio @ \"1\" import spawn\n",
         )?;
 
-        let inputs = collect_test_lock_inputs(project_root, None, None, None, &ProviderPlan::default())?;
+        let inputs = collect_test_lock_inputs(project_root, None, None, None, None, &ProviderPlan::default())?;
         let imports = inputs.inline_imports;
         let tokio = imports
             .iter()
@@ -1857,6 +1880,52 @@ mod tests {
 
         assert!(tokio.is_test_context);
         assert!(!datafusion.is_test_context);
+        Ok(())
+    }
+
+    #[test]
+    fn project_test_discovery_excludes_descendant_workspace_members() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = tempfile::tempdir()?;
+        let root = temp_dir.path();
+        let consumer_root = root.join("packages/consumer");
+        fs::create_dir_all(root.join("tests/nested"))?;
+        fs::create_dir_all(consumer_root.join("tests"))?;
+        fs::write(
+            root.join("incan.toml"),
+            r#"
+[project]
+name = "root"
+
+[workspace]
+members = ["packages/consumer"]
+"#,
+        )?;
+        fs::write(
+            consumer_root.join("incan.toml"),
+            r#"
+[project]
+name = "consumer"
+"#,
+        )?;
+        let root_test = root.join("tests/test_root.incn");
+        let nested_root_test = root.join("tests/nested/test_nested.incn");
+        let consumer_test = consumer_root.join("tests/test_consumer.incn");
+        fs::write(&root_test, "def test_root() -> None:\n    pass\n")?;
+        fs::write(&nested_root_test, "def test_nested() -> None:\n    pass\n")?;
+        fs::write(&consumer_test, "def test_consumer() -> None:\n    pass\n")?;
+
+        let workspace = WorkspaceGraph::load_from_root(root)?;
+        let root_files = discover_project_test_files(workspace.root(), Some(&workspace));
+        let consumer = workspace
+            .members()
+            .find(|member| member.name() == "consumer")
+            .ok_or("consumer workspace member should exist")?;
+        let consumer_files = discover_project_test_files(consumer.root(), Some(&workspace));
+        let mut expected_root_files = vec![fs::canonicalize(root_test)?, fs::canonicalize(nested_root_test)?];
+        expected_root_files.sort();
+
+        assert_eq!(root_files, expected_root_files);
+        assert_eq!(consumer_files, [fs::canonicalize(consumer_test)?]);
         Ok(())
     }
 
