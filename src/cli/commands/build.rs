@@ -2469,7 +2469,7 @@ pub(crate) fn build_library_report(
     {
         run_generated_library_dependency_preheat(GeneratedLibraryDependencyPreheatRequest {
             project_root: &prepared.project_root,
-            lock_dir: &prepared.project_root.join("target").join("incan_lock"),
+            lock_dir: &crate::lockfile::compiler_lock_state_dir(&prepared.project_root),
             project_name: &prepared.lock_cargo_package_name,
             rust_edition: prepared.rust_edition.clone(),
             resolved: &prepared.resolved_dependencies,

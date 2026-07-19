@@ -1611,7 +1611,7 @@ pub(crate) fn generate_lockfile(
         None
     };
     let publication_lock = publication_lock.or(owned_publication_lock.as_ref());
-    let lock_dir = project_root.join("target").join("incan_lock");
+    let lock_dir = crate::lockfile::compiler_lock_state_dir(project_root);
     let mut generator = ProjectGenerator::new(&lock_dir, project_name, true);
     #[cfg(feature = "rust_inspect")]
     let rust_edition_for_prewarm = rust_edition.clone();

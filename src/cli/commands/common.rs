@@ -2636,9 +2636,7 @@ fn rust_inspect_workspace_dir(project_root: &Path, project_name: &str, fingerpri
         .chars()
         .take(16)
         .collect::<String>();
-    project_root
-        .join("target")
-        .join("incan_lock")
+    crate::lockfile::compiler_lock_state_dir(project_root)
         .join("rust_inspect")
         .join(format!("{safe_name}-{suffix}"))
 }
