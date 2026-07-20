@@ -231,8 +231,8 @@
     {
       "path": "src/backend/ir/ownership.rs",
       "category": "central external Rust duckborrower buffer planning",
-      "expected_count": 5,
-      "expected_fingerprint": "0xe0f92591a022208b"
+      "expected_count": 4,
+      "expected_fingerprint": "0xa966759c04bff596"
     },
     {
       "path": "src/backend/ir/reference_shape.rs",

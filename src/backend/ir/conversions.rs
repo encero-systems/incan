@@ -332,14 +332,9 @@ fn non_negative_integer_literal(expr: &TypedExpr) -> bool {
 
 /// Determine a BinOpPlan: conversions + emit strategy in one place.
 pub fn determine_binop_plan(op: &BinOp, left: &TypedExpr, right: &TypedExpr) -> BinOpPlan {
-    let is_stringish = |ty: &IrType| match ty {
-        IrType::String | IrType::StaticStr | IrType::StrRef | IrType::FrozenStr => true,
-        IrType::Ref(inner) | IrType::RefMut(inner) => matches!(inner.as_ref(), IrType::String),
-        _ => false,
-    };
     let is_runtime_list = |ty: &IrType| matches!(ty, IrType::List(_));
 
-    if matches!(op, BinOp::Add) && is_stringish(&left.ty) && is_stringish(&right.ty) {
+    if matches!(op, BinOp::Add) && is_string_like_type(&left.ty) && is_string_like_type(&right.ty) {
         return BinOpPlan {
             lhs_conv: NumericConversion::None,
             rhs_conv: NumericConversion::None,
@@ -366,8 +361,8 @@ pub fn determine_binop_plan(op: &BinOp, left: &TypedExpr, right: &TypedExpr) -> 
     if matches!(
         op,
         BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
-    ) && is_stringish(&left.ty)
-        && is_stringish(&right.ty)
+    ) && is_string_like_type(&left.ty)
+        && is_string_like_type(&right.ty)
     {
         let path = match op {
             BinOp::Eq => quote! { incan_stdlib::strings::str_eq },
@@ -620,18 +615,34 @@ fn is_borrowed_string_like_type(ty: &IrType) -> bool {
     matches!(ty, IrType::StaticStr | IrType::StrRef | IrType::FrozenStr)
 }
 
-/// Return whether a target IR type stores an owned Rust `String` value.
+/// Return whether an IR type stores an owned Rust `String` value.
 ///
 /// Incan `str` lowers to [`IrType::String`], while inspected Rust metadata for external structs and functions may
-/// surface the same sink as `String`, `std::string::String`, or `alloc::string::String`. Treating those shapes
+/// surface the same value as `String`, `std::string::String`, or `alloc::string::String`. Treating those shapes
 /// together keeps string materialization in the duckborrower instead of scattering Rust-path checks through emitters.
-fn is_owned_string_target(ty: &IrType) -> bool {
+pub(super) fn is_owned_string_type(ty: &IrType) -> bool {
     matches!(ty, IrType::String)
         || matches!(
             ty,
-            IrType::Struct(name) | IrType::NamedGeneric(name, _)
+            IrType::Struct(name) | IrType::NamedGeneric(name, _) | IrType::RustDisplay(name)
                 if matches!(name.as_str(), "String" | "std::string::String" | "alloc::string::String")
         )
+}
+
+/// Return whether an IR value participates in Incan string operators.
+///
+/// Rust inspection can preserve an owned `String` result as a Rust-path shape instead of canonicalizing it to
+/// [`IrType::String`]. Operator planning must recognize both representations so generated code does not depend on the
+/// inspection cache or host platform.
+fn is_string_like_type(ty: &IrType) -> bool {
+    is_owned_string_type(ty)
+        || is_borrowed_string_like_type(ty)
+        || matches!(ty, IrType::Ref(inner) | IrType::RefMut(inner) if is_owned_string_type(inner))
+}
+
+/// Return whether a target IR type stores an owned Rust `String` value.
+fn is_owned_string_target(ty: &IrType) -> bool {
+    is_owned_string_type(ty)
 }
 
 /// Return whether a string literal needs ordinary owned `String` materialization at an Incan boundary.
@@ -1052,6 +1063,61 @@ mod tests {
     use crate::backend::ir::decl::FunctionParam;
     use crate::backend::ir::expr::{MethodCallArgPolicy, VarAccess, VarRefKind};
     use crate::backend::ir::types::Mutability;
+
+    #[test]
+    fn string_addition_recognizes_inspected_owned_rust_string_shapes_issue896() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let left = IrExpr::new(
+            IrExprKind::Var {
+                name: "out".to_string(),
+                access: VarAccess::Move,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::String,
+        );
+
+        for right_ty in [
+            IrType::Struct("String".to_string()),
+            IrType::Struct("std::string::String".to_string()),
+            IrType::Struct("alloc::string::String".to_string()),
+            IrType::NamedGeneric("String".to_string(), Vec::new()),
+            IrType::NamedGeneric("std::string::String".to_string(), Vec::new()),
+            IrType::NamedGeneric("alloc::string::String".to_string(), Vec::new()),
+            IrType::RustDisplay("String".to_string()),
+            IrType::RustDisplay("std::string::String".to_string()),
+            IrType::RustDisplay("alloc::string::String".to_string()),
+        ] {
+            let right = IrExpr::new(
+                IrExprKind::Call {
+                    func: Box::new(IrExpr::new(
+                        IrExprKind::Var {
+                            name: "slice".to_string(),
+                            access: VarAccess::Read,
+                            ref_kind: VarRefKind::ExternalRustName,
+                        },
+                        IrType::Unknown,
+                    )),
+                    args: Vec::new(),
+                    type_args: Vec::new(),
+                    canonical_path: None,
+                    callable_signature: None,
+                },
+                right_ty.clone(),
+            );
+
+            let plan = determine_binop_plan(&BinOp::Add, &left, &right);
+            let BinOpEmitKind::StdlibCall { path, borrow_args } = plan.emit else {
+                return Err(format!(
+                    "String + inspected Rust String must use string-aware lowering, right={right_ty:?}"
+                )
+                .into());
+            };
+            assert_eq!(path.to_string(), "incan_stdlib :: strings :: str_concat");
+            assert!(borrow_args);
+            assert_eq!(plan.result_ty, IrType::String);
+        }
+        Ok(())
+    }
 
     // === IncanFunctionArg Tests ===
 

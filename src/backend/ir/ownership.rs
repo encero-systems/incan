@@ -13,7 +13,7 @@ use quote::quote;
 
 use super::conversions::{
     Conversion as OwnershipPlan, ConversionContext, determine_conversion, determine_conversion_for_incan_call,
-    incan_mutable_param_passed_as_rust_mut_ref,
+    incan_mutable_param_passed_as_rust_mut_ref, is_owned_string_type,
 };
 use super::decl::FunctionParam;
 use super::expr::{IrExpr, IrExprKind, MethodCallArgPolicy, VarAccess, VarRefKind};
@@ -461,12 +461,7 @@ pub fn is_byte_buffer_type(ty: &IrType) -> bool {
 
 /// Return whether an IR type is represented as an owned mutable Rust string buffer at Rust boundaries.
 pub fn is_string_buffer_type(ty: &IrType) -> bool {
-    matches!(ty, IrType::String)
-        || matches!(
-            ty,
-            IrType::Struct(name) | IrType::RustDisplay(name)
-                if matches!(name.as_str(), "String" | "std::string::String" | "alloc::string::String")
-        )
+    is_owned_string_type(ty)
 }
 
 /// Parse a Rust display type through the same shared shape parser rust-inspect uses for textual fallbacks.
@@ -1198,12 +1193,14 @@ mod tests {
     #[test]
     fn rust_string_buffer_detection_is_owned_string_only() {
         assert!(is_string_buffer_type(&IrType::String));
-        assert!(is_string_buffer_type(&IrType::RustDisplay(
-            "std::string::String".to_string()
-        )));
-        assert!(is_string_buffer_type(&IrType::Struct(
-            "alloc::string::String".to_string()
-        )));
+        for name in ["String", "std::string::String", "alloc::string::String"] {
+            assert!(is_string_buffer_type(&IrType::Struct(name.to_string())));
+            assert!(is_string_buffer_type(&IrType::NamedGeneric(
+                name.to_string(),
+                Vec::new()
+            )));
+            assert!(is_string_buffer_type(&IrType::RustDisplay(name.to_string())));
+        }
         assert!(!is_string_buffer_type(&IrType::StrRef));
         assert!(!is_string_buffer_type(&IrType::FrozenStr));
     }
