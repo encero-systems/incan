@@ -14198,6 +14198,203 @@ def main() -> None:
     }
 
     #[test]
+    fn compiled_parent_fields_lower_into_consumer_subclasses_issue885() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let rust_shadow_root = tmp.path().join("rust_shadow");
+        std::fs::create_dir_all(rust_shadow_root.join("src"))?;
+        std::fs::write(
+            rust_shadow_root.join("Cargo.toml"),
+            "[package]\nname = \"rust_shadow\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        std::fs::write(
+            rust_shadow_root.join("src/lib.rs"),
+            r#"#[derive(Clone, Debug)]
+pub struct Token(pub i64);
+
+pub fn make_token() -> Token {
+    Token(7)
+}
+"#,
+        )?;
+
+        let provider_root = tmp.path().join("compiled_parent");
+        std::fs::create_dir_all(provider_root.join("src"))?;
+        std::fs::write(
+            provider_root.join("incan.toml"),
+            "[project]\nname = \"compiled_parent\"\nversion = \"0.1.0\"\n\n[rust-dependencies]\nrust_shadow = { path = \"../rust_shadow\" }\n",
+        )?;
+        std::fs::write(
+            provider_root.join("src/lib.incn"),
+            r#"from rust::rust_shadow import Token as RustToken
+
+pub class Base:
+  private_text: str = "authority"
+  pub base_count: int
+  pub rust_token: RustToken
+
+pub class Child extends Base:
+  pub own_flag: bool
+"#,
+        )?;
+
+        let provider_build = run_build_lib(&provider_root)?;
+        assert!(
+            provider_build.status.success(),
+            "expected compiled-parent provider build to succeed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&provider_build.stdout),
+            String::from_utf8_lossy(&provider_build.stderr)
+        );
+
+        let decoy_root = tmp.path().join("compiled_parent_decoy");
+        std::fs::create_dir_all(decoy_root.join("src"))?;
+        std::fs::write(
+            decoy_root.join("incan.toml"),
+            "[project]\nname = \"compiled_parent_decoy\"\nversion = \"0.1.0\"\n",
+        )?;
+        std::fs::write(
+            decoy_root.join("src/lib.incn"),
+            r#"pub class Child:
+  pub base_count: str
+  pub own_flag: int
+"#,
+        )?;
+        let decoy_build = run_build_lib(&decoy_root)?;
+        assert!(
+            decoy_build.status.success(),
+            "expected same-leaf-name decoy provider build to succeed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&decoy_build.stdout),
+            String::from_utf8_lossy(&decoy_build.stderr)
+        );
+
+        let consumer_root = tmp.path().join("consumer");
+        let consumer_main = write_project_files(
+            &consumer_root,
+            "[project]\nname = \"compiled_parent_consumer\"\nversion = \"0.1.0\"\n\n[dependencies]\ncompiled_parent = { path = \"../compiled_parent\" }\ncompiled_parent_decoy = { path = \"../compiled_parent_decoy\" }\n\n[rust-dependencies]\nrust_shadow = { path = \"../rust_shadow\" }\n",
+            r#"from pub::compiled_parent import Child
+from pub::compiled_parent_decoy import Child as DecoyChild
+from rust::rust_shadow import make_token
+
+class rust_shadow:
+  pub marker: int
+
+class GrandChild extends Child:
+  pub extra: float
+
+def main() -> None:
+  value: GrandChild = GrandChild(base_count=7, rust_token=make_token(), own_flag=true, extra=1.5)
+  shadow = rust_shadow(marker=1)
+  println(value.base_count)
+  println(value.own_flag)
+  println(shadow.marker)
+"#,
+        )?;
+
+        let check_output = run_check(&consumer_main)?;
+        assert!(
+            check_output.status.success(),
+            "expected a consumer subclass of a compiled class to typecheck.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&check_output.stdout),
+            String::from_utf8_lossy(&check_output.stderr)
+        );
+
+        let lock_output = run_lock(&consumer_main)?;
+        assert!(
+            lock_output.status.success(),
+            "expected the compiled-parent consumer lock to resolve.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&lock_output.stdout),
+            String::from_utf8_lossy(&lock_output.stderr)
+        );
+
+        let out_dir = consumer_root.join("out");
+        let build_output = super::incan_command()
+            .args([
+                "build",
+                consumer_main.to_string_lossy().as_ref(),
+                out_dir.to_string_lossy().as_ref(),
+                "--locked",
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            build_output.status.success(),
+            "expected inherited compiled-parent fields to survive generated Rust lowering.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&build_output.stdout),
+            String::from_utf8_lossy(&build_output.stderr)
+        );
+
+        let generated_main = std::fs::read_to_string(out_dir.join("src/main.rs"))?;
+        let private_index = generated_main
+            .find("private_text: String")
+            .ok_or("expected inherited private_text field in generated GrandChild")?;
+        assert!(
+            !generated_main.contains("pub private_text: String"),
+            "expected inherited private_text to preserve private visibility.\ngenerated main.rs:\n{generated_main}"
+        );
+        let base_index = generated_main
+            .find("pub base_count: i64")
+            .ok_or("expected inherited base_count field in generated GrandChild")?;
+        let rust_token_index = generated_main.find("pub rust_token: ::rust_shadow::Token").ok_or_else(|| {
+            let rust_token_lines = generated_main
+                .lines()
+                .filter(|line| line.contains("rust_token") || line.contains("rust_shadow::Token"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!(
+                "expected the compiled-parent Rust field to use an unshadowable absolute crate path, got:\n{rust_token_lines}"
+            )
+        })?;
+        assert!(
+            generated_main.contains("struct rust_shadow"),
+            "expected the consumer collision class in generated Rust.\ngenerated main.rs:\n{generated_main}"
+        );
+        let child_index = generated_main
+            .find("pub own_flag: bool")
+            .ok_or("expected inherited own_flag field in generated GrandChild")?;
+        let local_index = generated_main
+            .find("pub extra: f64")
+            .ok_or("expected local extra field in generated GrandChild")?;
+        assert!(
+            private_index < base_index
+                && base_index < rust_token_index
+                && rust_token_index < child_index
+                && child_index < local_index,
+            "expected compiled inheritance fields in parent-first constructor order.\ngenerated main.rs:\n{generated_main}"
+        );
+
+        let tests_dir = consumer_root.join("tests");
+        std::fs::create_dir_all(&tests_dir)?;
+        std::fs::write(
+            tests_dir.join("test_compiled_parent_subclass.incn"),
+            r#"from pub::compiled_parent import Child
+from rust::rust_shadow import make_token
+
+class TestGrandChild extends Child:
+  pub extra: float
+
+def test_compiled_parent_subclass_fields() -> None:
+  value = TestGrandChild(base_count=11, rust_token=make_token(), own_flag=true, extra=2.5)
+  assert value.base_count == 11
+  assert value.own_flag
+"#,
+        )?;
+        let test_output = run_test(&tests_dir)?;
+        assert!(
+            test_output.status.success(),
+            "expected the compiled-parent subclass to survive package test-batch lowering.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&test_output.stdout),
+            String::from_utf8_lossy(&test_output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&test_output.stdout)
+                .contains("test_compiled_parent_subclass.incn::test_compiled_parent_subclass_fields"),
+            "expected the compiled-parent subclass regression in test output.\nstdout:\n{}",
+            String::from_utf8_lossy(&test_output.stdout)
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn build_succeeds_for_pub_import_regression_batch() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let project_root = tmp.path().join("pub_import_regression_batch_project");

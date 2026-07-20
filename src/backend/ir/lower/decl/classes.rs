@@ -4,35 +4,129 @@ use super::super::super::decl::{IrStruct, StructField};
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
 use crate::frontend::ast::{self, Spanned};
+use crate::frontend::symbols::ResolvedType;
 use incan_core::lang::derives::{self, DeriveId};
 
+/// Make canonical external Rust paths unshadowable when no source import alias survives into the current module.
+fn absolutize_external_rust_paths(ty: &mut ResolvedType) {
+    match ty {
+        ResolvedType::FrozenList(inner)
+        | ResolvedType::FrozenSet(inner)
+        | ResolvedType::TypeToken(inner)
+        | ResolvedType::Ref(inner)
+        | ResolvedType::RefMut(inner) => absolutize_external_rust_paths(inner),
+        ResolvedType::FrozenDict(key, value) => {
+            absolutize_external_rust_paths(key);
+            absolutize_external_rust_paths(value);
+        }
+        ResolvedType::Generic(_, args) | ResolvedType::Tuple(args) => {
+            for arg in args {
+                absolutize_external_rust_paths(arg);
+            }
+        }
+        ResolvedType::Function(params, ret) => {
+            for param in params {
+                absolutize_external_rust_paths(&mut param.ty);
+            }
+            absolutize_external_rust_paths(ret);
+        }
+        ResolvedType::RustPath(path) => {
+            let canonical = path.strip_prefix("rust::").unwrap_or(path).to_string();
+            let is_already_qualified = canonical.starts_with("::")
+                || canonical.starts_with("crate::")
+                || canonical.starts_with("self::")
+                || canonical.starts_with("super::");
+            let first_separator = canonical.find("::");
+            let first_type_syntax = canonical.find(['<', '(', '[', '&', '*', ' ', '\'']);
+            if !is_already_qualified
+                && first_separator.is_some_and(|separator| first_type_syntax.is_none_or(|syntax| separator < syntax))
+            {
+                *path = format!("::{canonical}");
+            } else if canonical != *path {
+                *path = canonical;
+            }
+        }
+        ResolvedType::Never
+        | ResolvedType::Int
+        | ResolvedType::Float
+        | ResolvedType::Numeric(_)
+        | ResolvedType::Bool
+        | ResolvedType::Str
+        | ResolvedType::Bytes
+        | ResolvedType::FrozenStr
+        | ResolvedType::FrozenBytes
+        | ResolvedType::Unit
+        | ResolvedType::Named(_)
+        | ResolvedType::TypeVar(_)
+        | ResolvedType::SelfType
+        | ResolvedType::CallSiteInfer
+        | ResolvedType::Unknown => {}
+    }
+}
+
 impl AstLowering {
-    /// Lower a class declaration to struct.
+    /// Lower a checked class declaration into its flattened struct layout.
+    ///
+    /// Production compilation consumes the typechecker's parent-first layout so imported compiled parents remain
+    /// semantically identical to source parents. Direct AST-lowering tests temporarily retain the syntax-only fallback
+    /// documented below.
     pub(in crate::backend::ir::lower) fn lower_class(&mut self, c: &ast::ClassDecl) -> Result<IrStruct, LoweringError> {
-        let mut fields: Vec<StructField> = Vec::new();
-
-        // If class extends a parent, include parent fields first
-        if let Some(parent_name) = &c.extends {
-            self.collect_inherited_fields(parent_name, &mut fields)?;
-        }
-
-        // Add this class' own fields
-        for f in &c.fields {
-            let default = f
-                .node
-                .default
-                .as_ref()
-                .map(|d| self.lower_expr_spanned(d))
-                .transpose()?;
-            fields.push(StructField {
-                name: f.node.name.clone(),
-                ty: self.lower_type(&f.node.ty.node),
-                visibility: Self::map_visibility(f.node.visibility),
-                default,
-                alias: f.node.metadata.alias.clone(),
-                description: f.node.metadata.description.clone(),
-            });
-        }
+        let fields = if let Some(layout) = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.declarations.class_layouts.get(&c.name))
+            .cloned()
+        {
+            layout
+                .fields
+                .into_iter()
+                .map(|field| {
+                    let default = field
+                        .default
+                        .as_ref()
+                        .map(|default| self.lower_expr_spanned(default))
+                        .transpose()?;
+                    Ok(StructField {
+                        name: field.name,
+                        ty: if let Some(emission_ty) = &field.emission_ty {
+                            self.lower_type(emission_ty)
+                        } else {
+                            let mut emission_ty = field.ty.clone();
+                            absolutize_external_rust_paths(&mut emission_ty);
+                            self.lower_resolved_type(&emission_ty)
+                        },
+                        visibility: Self::map_visibility(field.visibility),
+                        default,
+                        alias: field.alias,
+                        description: field.description,
+                    })
+                })
+                .collect::<Result<Vec<_>, LoweringError>>()?
+        } else {
+            // Direct AST-lowering tests do not always supply checked artifacts yet. Remove this fallback after every
+            // AstLowering test constructs its input through TypeChecker and supplies TypeCheckInfo.
+            let mut fields = Vec::new();
+            if let Some(parent_name) = &c.extends {
+                self.collect_inherited_fields(parent_name, &mut fields)?;
+            }
+            for field in &c.fields {
+                let default = field
+                    .node
+                    .default
+                    .as_ref()
+                    .map(|default| self.lower_expr_spanned(default))
+                    .transpose()?;
+                fields.push(StructField {
+                    name: field.node.name.clone(),
+                    ty: self.lower_type(&field.node.ty.node),
+                    visibility: Self::map_visibility(field.node.visibility),
+                    default,
+                    alias: field.node.metadata.alias.clone(),
+                    description: field.node.metadata.description.clone(),
+                });
+            }
+            fields
+        };
 
         let (mut derives, derive_rust_modules) = self.extract_derives(&c.decorators);
         self.extend_derives_with_adopted_serde_traits(&mut derives, &c.traits);

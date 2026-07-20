@@ -5,7 +5,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::frontend::ast::{Expr, ParamKind, Span, Spanned};
+use crate::frontend::ast::{Expr, ParamKind, Span, Spanned, Type, Visibility};
 use crate::frontend::symbols::{
     CallableParam, FunctionOverloadInfo, NewtypePrimitiveConstraint, ResolvedType, TypeBoundInfo,
 };
@@ -216,6 +216,12 @@ pub struct RustInteropArtifacts {
 /// Declaration-level binding rewrites and visibility facts consumed by lowering.
 #[derive(Debug, Default, Clone)]
 pub struct DeclarationArtifacts {
+    /// Checked, parent-first field layouts for every class visible to the current module.
+    ///
+    /// Local subclasses can inherit from classes reconstructed from compiled dependency manifests. Those parents do
+    /// not have consumer-side AST declarations, so lowering must consume this checked layout instead of rediscovering
+    /// inherited fields from syntax.
+    pub(crate) class_layouts: HashMap<String, ClassLayoutInfo>,
     /// Compiler-checked construction semantics for local newtypes.
     ///
     /// Lowering consumes this snapshot instead of rediscovering newtypes from tuple-struct shape or raw decorators.
@@ -318,6 +324,35 @@ pub struct RegistryExplicitEntryInfo {
     pub key_span: (usize, usize),
     pub subject_span: (usize, usize),
     pub descriptor_span: (usize, usize),
+}
+
+/// Typechecker-owned class layout consumed by backend struct lowering.
+#[derive(Debug, Clone)]
+pub(crate) struct ClassLayoutInfo {
+    /// Flattened fields in constructor ABI order: oldest ancestor first, then local fields.
+    pub(crate) fields: Vec<ClassFieldLayoutInfo>,
+}
+
+/// One checked class field retained across the frontend/backend boundary.
+#[derive(Debug, Clone)]
+pub(crate) struct ClassFieldLayoutInfo {
+    /// Source-visible field name.
+    pub(crate) name: String,
+    /// Fully resolved field type selected by the typechecker.
+    pub(crate) ty: ResolvedType,
+    /// Original type spelling when this field belongs to the class currently being lowered.
+    ///
+    /// This is emission identity, not semantic authority. In particular, it preserves collision-safe aliases for
+    /// local Rust imports while inherited and compiled-library fields continue to lower from [`Self::ty`].
+    pub(crate) emission_ty: Option<Type>,
+    /// Checked source visibility, including visibility reconstructed from compiled manifests.
+    pub(crate) visibility: Visibility,
+    /// Materializable initializer expression, when one is available to the consumer.
+    pub(crate) default: Option<Spanned<Expr>>,
+    /// Canonical source field alias used for construction and access.
+    pub(crate) alias: Option<String>,
+    /// Source-authored field description preserved for generated reflection metadata.
+    pub(crate) description: Option<String>,
 }
 
 /// One compiler-checked newtype construction plan shared by lowering and generated bridges.

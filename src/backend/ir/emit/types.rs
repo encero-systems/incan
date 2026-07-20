@@ -54,8 +54,13 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Emit a Rust path without discarding an explicit absolute-path marker.
+    ///
+    /// Checked external types can deliberately start with `::` so a consumer declaration cannot shadow their crate
+    /// root. Reconstructing the path segment by segment must preserve that semantic emission identity.
     fn emit_path_ident(path: &str) -> TokenStream {
         if path.contains("::") {
+            let is_absolute = path.starts_with("::");
             let segments: Vec<TokenStream> = path
                 .split("::")
                 .filter(|s| !s.is_empty())
@@ -68,7 +73,12 @@ impl<'a> IrEmitter<'a> {
             let Some(first) = iter.next() else {
                 return quote! { _ };
             };
-            iter.fold(first, |acc, seg| quote! { #acc :: #seg })
+            let emitted = iter.fold(first, |acc, seg| quote! { #acc :: #seg });
+            if is_absolute {
+                quote! { :: #emitted }
+            } else {
+                emitted
+            }
         } else {
             let ident = Self::rust_ident(path);
             quote! { #ident }
@@ -546,5 +556,17 @@ impl<'a> IrEmitter<'a> {
             #(#bindings)*
             #body
         }})
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::IrEmitter;
+
+    #[test]
+    fn absolute_rust_type_paths_remain_absolute() {
+        let emitted = IrEmitter::<'static>::emit_path_ident("::rust_shadow::Token");
+
+        assert_eq!(emitted.to_string(), ":: rust_shadow :: Token");
     }
 }
