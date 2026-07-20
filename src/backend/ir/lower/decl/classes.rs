@@ -7,32 +7,62 @@ use crate::frontend::ast::{self, Spanned};
 use incan_core::lang::derives::{self, DeriveId};
 
 impl AstLowering {
-    /// Lower a class declaration to struct.
+    /// Lower a checked class declaration into its flattened struct layout.
+    ///
+    /// Production compilation consumes the typechecker's parent-first layout so imported compiled parents remain
+    /// semantically identical to source parents. Direct AST-lowering tests temporarily retain the syntax-only fallback
+    /// documented below.
     pub(in crate::backend::ir::lower) fn lower_class(&mut self, c: &ast::ClassDecl) -> Result<IrStruct, LoweringError> {
-        let mut fields: Vec<StructField> = Vec::new();
-
-        // If class extends a parent, include parent fields first
-        if let Some(parent_name) = &c.extends {
-            self.collect_inherited_fields(parent_name, &mut fields)?;
-        }
-
-        // Add this class' own fields
-        for f in &c.fields {
-            let default = f
-                .node
-                .default
-                .as_ref()
-                .map(|d| self.lower_expr_spanned(d))
-                .transpose()?;
-            fields.push(StructField {
-                name: f.node.name.clone(),
-                ty: self.lower_type(&f.node.ty.node),
-                visibility: Self::map_visibility(f.node.visibility),
-                default,
-                alias: f.node.metadata.alias.clone(),
-                description: f.node.metadata.description.clone(),
-            });
-        }
+        let fields = if let Some(layout) = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.declarations.class_layouts.get(&c.name))
+            .cloned()
+        {
+            layout
+                .fields
+                .into_iter()
+                .map(|field| {
+                    let default = field
+                        .default
+                        .as_ref()
+                        .map(|default| self.lower_expr_spanned(default))
+                        .transpose()?;
+                    Ok(StructField {
+                        name: field.name,
+                        ty: self.lower_resolved_type(&field.ty),
+                        visibility: Self::map_visibility(field.visibility),
+                        default,
+                        alias: field.alias,
+                        description: field.description,
+                    })
+                })
+                .collect::<Result<Vec<_>, LoweringError>>()?
+        } else {
+            // Direct AST-lowering tests do not always supply checked artifacts yet. Remove this fallback after every
+            // AstLowering test constructs its input through TypeChecker and supplies TypeCheckInfo.
+            let mut fields = Vec::new();
+            if let Some(parent_name) = &c.extends {
+                self.collect_inherited_fields(parent_name, &mut fields)?;
+            }
+            for field in &c.fields {
+                let default = field
+                    .node
+                    .default
+                    .as_ref()
+                    .map(|default| self.lower_expr_spanned(default))
+                    .transpose()?;
+                fields.push(StructField {
+                    name: field.node.name.clone(),
+                    ty: self.lower_type(&field.node.ty.node),
+                    visibility: Self::map_visibility(field.node.visibility),
+                    default,
+                    alias: field.node.metadata.alias.clone(),
+                    description: field.node.metadata.description.clone(),
+                });
+            }
+            fields
+        };
 
         let (mut derives, derive_rust_modules) = self.extract_derives(&c.decorators);
         self.extend_derives_with_adopted_serde_traits(&mut derives, &c.traits);
