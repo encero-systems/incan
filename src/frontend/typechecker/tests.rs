@@ -8187,6 +8187,24 @@ class Bad with Inc:
 }
 
 #[test]
+fn test_trait_required_method_allows_nested_self_return_for_generic_model() {
+    let source = r#"
+model Wrapper[T]:
+  value: T
+
+trait Wraps:
+  def wrap(self) -> Wrapper[Self]: ...
+
+model Reader[T] with Wraps:
+  value: T
+
+  def wrap(self) -> Wrapper[Reader[T]]:
+    return Wrapper(value=self)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
 fn test_trait_conformance_allows_inherited_members() {
     let source = r#"
 @requires(name: str)
@@ -14400,6 +14418,26 @@ def main() -> None:
         "expected custom iteration metadata, got {:?}",
         checker.type_info().protocols.iterations
     );
+    Ok(())
+}
+
+#[test]
+fn test_fallible_iteration_protocol_propagates_next_errors() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+model ChunkStream:
+  def __iter__(self) -> ChunkStream:
+    return self
+
+  def __next__(self) -> Result[Option[int], str]:
+    return Ok(None)
+
+def main() -> Result[None, str]:
+  for chunk in ChunkStream()?:
+    seen = chunk
+  return Ok(None)
+"#;
+
+    assert_check_ok(source);
     Ok(())
 }
 

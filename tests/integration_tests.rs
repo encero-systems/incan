@@ -4039,7 +4039,27 @@ def main() -> None:
                 "run",
                 "-c",
                 r#"
-from std.io import BytesIO, Endian, IoError
+from std.io import BinaryReader, BytesIO, Endian, IoError, ReaderChunks
+
+model FailingReader with BinaryReader:
+    def read_bytes(self, size: int) -> Result[bytes, IoError]:
+        return Err(IoError(kind="other", detail="read failed", operation="read_bytes"))
+
+    def chunks(self, chunk_size: int) -> ReaderChunks[FailingReader]:
+        return ReaderChunks[FailingReader](reader=self, chunk_size=chunk_size)
+
+def propagate_reader_error() -> Result[None, IoError]:
+    for _ in FailingReader().chunks(2)?:
+        pass
+    return Ok(None)
+
+def error_kind(err: IoError) -> str:
+    return err.kind
+
+def map_reader_error() -> Result[None, str]:
+    for _ in FailingReader().chunks(2).map_err(error_kind)?:
+        pass
+    return Ok(None)
 
 def run() -> Result[None, IoError]:
     buf = BytesIO(b"abc\0rest")
@@ -4057,6 +4077,20 @@ def run() -> Result[None, IoError]:
     match buf.read_exact(1):
         Ok(_) => println("bad")
         Err(err) => println(err.kind)
+
+    for chunk in BytesIO(b"abcde").chunks(2)?:
+        println(len(chunk))
+    for _ in BytesIO(b"").chunks(2)?:
+        println("bad")
+    match BytesIO(b"abc").chunks(0).__next__():
+        Ok(_) => println("bad")
+        Err(err) => println(err.kind)
+    match propagate_reader_error():
+        Ok(_) => println("bad")
+        Err(err) => println(err.kind)
+    match map_reader_error():
+        Ok(_) => println("bad")
+        Err(kind) => println(kind)
 
     out = BytesIO()
     u32_value: u32 = 258
@@ -4094,6 +4128,10 @@ def main() -> None:
 "#,
             ])
             .env("CARGO_NET_OFFLINE", "true")
+            .env(
+                "INCAN_STDLIB",
+                format!("{}/crates/incan_stdlib", env!("CARGO_MANIFEST_DIR")),
+            )
             .output()?;
         assert!(
             output.status.success(),
@@ -4114,6 +4152,12 @@ def main() -> None:
                 "4",
                 "0",
                 "unexpected_eof",
+                "2",
+                "2",
+                "1",
+                "invalid_input",
+                "other",
+                "other",
                 "30",
                 "258",
                 "-2",

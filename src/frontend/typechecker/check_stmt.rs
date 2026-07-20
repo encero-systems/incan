@@ -1055,10 +1055,23 @@ impl TypeChecker {
 
     /// Type-check a statement-form `for`, binding the loop pattern from builtin collections or RFC 068 iteration hooks.
     fn check_for_stmt(&mut self, for_stmt: &ForStmt) {
-        let iter_ty = self.check_expr(&for_stmt.iter);
-
-        // Infer element type from iterator
-        let elem_ty = self.infer_iterator_element_type_from_expr(&for_stmt.iter, &iter_ty);
+        let elem_ty = match &for_stmt.iter.node {
+            Expr::Try(inner) => {
+                let iter_ty = self.check_expr(inner);
+                if iter_ty.result_ok_type().is_some() {
+                    // Preserve the established `for item in result_of_iterable?` spelling. Here `?` unwraps the
+                    // iterable before ordinary `Option`-based iteration; it is not the fallible-poll protocol.
+                    let unwrapped_iter_ty = self.check_expr(&for_stmt.iter);
+                    self.infer_iterator_element_type_from_expr(&for_stmt.iter, &unwrapped_iter_ty)
+                } else {
+                    self.infer_fallible_iterator_element_type_from_expr(inner, &iter_ty, for_stmt.iter.span)
+                }
+            }
+            _ => {
+                let iter_ty = self.check_expr(&for_stmt.iter);
+                self.infer_iterator_element_type_from_expr(&for_stmt.iter, &iter_ty)
+            }
+        };
 
         self.symbols.enter_scope(ScopeKind::Block);
         self.define_for_pattern_bindings(&for_stmt.pattern, &elem_ty);
@@ -1398,5 +1411,29 @@ impl TypeChecker {
                 .unwrap_or(ResolvedType::Unknown);
         }
         elem_ty
+    }
+
+    /// Infer a loop item from a `for item in iterable?` header.
+    ///
+    /// The trailing `?` belongs to the loop protocol rather than to the iterable expression: it asks lowering to
+    /// propagate errors returned from each `__next__` poll. Ordinary `expr?` remains the existing Result expression.
+    fn infer_fallible_iterator_element_type_from_expr(
+        &mut self,
+        iter_expr: &Spanned<Expr>,
+        iter_ty: &ResolvedType,
+        loop_span: Span,
+    ) -> ResolvedType {
+        if self.is_user_operator_receiver(iter_ty) {
+            return self
+                .resolve_fallible_iteration_protocol(iter_ty, loop_span)
+                .unwrap_or(ResolvedType::Unknown);
+        }
+
+        self.errors.push(errors::type_mismatch(
+            "fallible iterator with __iter__() and __next__() -> Result[Option[_], _]",
+            &iter_ty.to_string(),
+            iter_expr.span,
+        ));
+        ResolvedType::Unknown
     }
 }

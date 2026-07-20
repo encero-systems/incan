@@ -1261,16 +1261,22 @@ impl AstLowering {
 
             ast::Statement::For(f) => {
                 // Lower iterable before entering loop scope
-                let iterable = self.lower_expr_spanned(&f.iter)?;
+                let protocol_iteration = self
+                    .type_info
+                    .as_ref()
+                    .and_then(|info| info.protocol_iteration(f.iter.span).cloned());
+                let fallible_protocol = protocol_iteration
+                    .as_ref()
+                    .and_then(|protocol| protocol.fallible_error_type.as_ref());
+                let iterable = match (&f.iter.node, fallible_protocol) {
+                    (ast::Expr::Try(inner), Some(_)) => self.lower_expr_spanned(inner)?,
+                    _ => self.lower_expr_spanned(&f.iter)?,
+                };
 
                 // Push a new scope for the for-loop body
                 self.push_scope();
 
                 // Infer loop variable type from iterable and add to scope
-                let protocol_iteration = self
-                    .type_info
-                    .as_ref()
-                    .and_then(|info| info.protocol_iteration(f.iter.span).cloned());
                 let loop_var_ty = if let Some(protocol) = &protocol_iteration {
                     self.lower_resolved_type(&protocol.item_type)
                 } else {
@@ -1313,7 +1319,15 @@ impl AstLowering {
                         },
                         iterator_ty,
                     );
-                    let next_value = TypedExpr::new(
+                    let next_ty = if let Some(error_ty) = &protocol.fallible_error_type {
+                        IrType::Result(
+                            Box::new(option_item_ty.clone()),
+                            Box::new(self.lower_resolved_type(error_ty)),
+                        )
+                    } else {
+                        option_item_ty.clone()
+                    };
+                    let next_call = TypedExpr::new(
                         IrExprKind::MethodCall {
                             receiver: Box::new(iter_var),
                             method: protocol.next_method,
@@ -1323,8 +1337,13 @@ impl AstLowering {
                             callable_signature: None,
                             arg_policy: MethodCallArgPolicy::Default,
                         },
-                        option_item_ty.clone(),
+                        next_ty,
                     );
+                    let next_value = if protocol.fallible_error_type.is_some() {
+                        TypedExpr::new(IrExprKind::Try(Box::new(next_call)), option_item_ty.clone())
+                    } else {
+                        next_call
+                    };
                     let some_pattern = IrPattern::Enum {
                         name: "Option".to_string(),
                         variant: constructors::as_str(ConstructorId::Some).to_string(),

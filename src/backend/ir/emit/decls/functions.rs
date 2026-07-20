@@ -423,7 +423,7 @@ impl<'a> IrEmitter<'a> {
         self.emit_method(&helper).map(Some)
     }
 
-    /// Rust trait methods that return `Self` from an associated function position need `where Self: Sized`.
+    /// Rust trait methods that mention `Self` in their return type may require `where Self: Sized`.
     ///
     /// Walk the emitted return type recursively so wrappers like `Result<Self, E>` or function types preserve the same
     /// constraint.
@@ -1071,9 +1071,8 @@ impl<'a> IrEmitter<'a> {
 
         // RFC 023: emit generic type parameters with trait bounds.
         let generics = self.emit_type_params(&func.type_params);
-        let has_self_receiver = func.params.iter().any(|param| param.is_self);
         let mut where_bounds = Vec::new();
-        if !has_self_receiver && Self::trait_method_return_mentions_self(&func.return_type) {
+        if Self::trait_method_return_mentions_self(&func.return_type) {
             where_bounds.push(quote! { Self: Sized });
         }
         if let Some(extra_where_bound) = extra_where_bound {

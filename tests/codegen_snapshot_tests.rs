@@ -1212,6 +1212,30 @@ def main() -> None:
 }
 
 #[test]
+fn test_fallible_iteration_protocol_propagates_next_errors_codegen() {
+    let source = r#"
+model ChunkStream:
+  def __iter__(self) -> ChunkStream:
+    return self
+
+  def __next__(self) -> Result[Option[int], str]:
+    return Ok(None)
+
+def main() -> Result[None, str]:
+  for chunk in ChunkStream()?:
+    seen = chunk
+  return Ok(None)
+"#;
+    let rust_code = generate_rust(source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+
+    assert!(
+        compact.contains(".__next__()?"),
+        "expected fallible for-loop lowering to propagate each __next__ error; generated:\n{rust_code}"
+    );
+}
+
+#[test]
 fn test_mixed_numeric_codegen() {
     let source = load_test_file("mixed_numeric");
     let rust_code = generate_rust(&source);

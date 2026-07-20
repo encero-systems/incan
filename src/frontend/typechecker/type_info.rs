@@ -493,6 +493,8 @@ pub struct ProtocolIterationInfo {
     pub next_method: String,
     /// Element type unwrapped from `__next__() -> Option[T]`.
     pub item_type: ResolvedType,
+    /// Error type propagated by `for item in iterable?`, when this is a fallible iteration route.
+    pub fallible_error_type: Option<ResolvedType>,
 }
 
 /// Lowering metadata for one RFC 046 computed property read.

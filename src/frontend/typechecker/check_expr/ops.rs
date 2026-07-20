@@ -812,6 +812,77 @@ impl TypeChecker {
                 iterator_type: iterator_ty,
                 next_method: next_method.to_string(),
                 item_type: item_ty.clone(),
+                fallible_error_type: None,
+            },
+        );
+        Some(item_ty)
+    }
+
+    /// Resolve `for item in iterable?` through `__iter__(self)` and a fallible
+    /// `iterator.__next__() -> Result[Option[T], E]` protocol.
+    pub(in crate::frontend::typechecker) fn resolve_fallible_iteration_protocol(
+        &mut self,
+        receiver_ty: &ResolvedType,
+        span: Span,
+    ) -> Option<ResolvedType> {
+        let iter_method = "__iter__";
+        let next_method = "__next__";
+        let args: Vec<CallArg> = Vec::new();
+        let arg_types: Vec<ResolvedType> = Vec::new();
+        let iterator_ty = match self.resolve_operator_dunder(receiver_ty, iter_method, &args, &arg_types, span, None) {
+            Some(iterator_ty) => iterator_ty,
+            None => {
+                self.errors
+                    .push(errors::missing_method(&receiver_ty.to_string(), iter_method, span));
+                return None;
+            }
+        };
+
+        let next_ret = match self.resolve_operator_dunder(&iterator_ty, next_method, &args, &arg_types, span, None) {
+            Some(next_ret) => next_ret,
+            None => {
+                self.errors
+                    .push(errors::missing_method(&iterator_ty.to_string(), next_method, span));
+                return None;
+            }
+        };
+
+        let Some(item_ty) = next_ret
+            .result_ok_type()
+            .and_then(ResolvedType::option_inner_type)
+            .cloned()
+        else {
+            self.errors.push(errors::type_mismatch(
+                "Result[Option[_], _]",
+                &next_ret.to_string(),
+                span,
+            ));
+            return Some(ResolvedType::Unknown);
+        };
+        let Some(error_ty) = next_ret.result_err_type().cloned() else {
+            return Some(ResolvedType::Unknown);
+        };
+
+        match self.current_return_error_type.clone() {
+            Some(expected_error) if !self.types_compatible(&error_ty, &expected_error) => {
+                self.errors.push(errors::incompatible_error_type(
+                    &expected_error.to_string(),
+                    &error_ty.to_string(),
+                    span,
+                ));
+            }
+            None => self.errors.push(errors::try_without_result_return(span)),
+            _ => {}
+        }
+
+        self.type_info.record_protocol_iteration(
+            span,
+            ProtocolIterationInfo {
+                iter_method: iter_method.to_string(),
+                iterator_type: iterator_ty,
+                next_method: next_method.to_string(),
+                item_type: item_ty.clone(),
+                fallible_error_type: Some(error_ty),
             },
         );
         Some(item_ty)

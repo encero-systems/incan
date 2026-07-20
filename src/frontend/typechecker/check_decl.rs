@@ -417,6 +417,69 @@ impl TypeChecker {
         }
     }
 
+    /// Return the generic-aware concrete surface for a nominal type that is adopting a trait.
+    ///
+    /// Trait requirements retain `Self` in their collected signatures. Before comparing one of those requirements
+    /// with a model, class, newtype, or enum implementation, replace `Self` with the adopting nominal type. This is
+    /// necessary for nested occurrences such as `ReaderChunks[Self]`, not just a bare `Self` return.
+    fn trait_conformance_self_type(&self, type_name: &str) -> ResolvedType {
+        let type_params = self
+            .lookup_type_info(type_name)
+            .map(|info| match info {
+                TypeInfo::Class(info) => info.type_params.clone(),
+                TypeInfo::Model(info) => info.type_params.clone(),
+                TypeInfo::Newtype(info) => info.type_params.clone(),
+                TypeInfo::Enum(info) => info.type_params.clone(),
+                TypeInfo::Builtin | TypeInfo::TypeAlias => Vec::new(),
+            })
+            .unwrap_or_default();
+        if type_params.is_empty() {
+            ResolvedType::Named(type_name.to_string())
+        } else {
+            ResolvedType::Generic(
+                type_name.to_string(),
+                type_params.into_iter().map(ResolvedType::TypeVar).collect(),
+            )
+        }
+    }
+
+    /// Concretize `Self` in a trait method requirement for one nominal adopter.
+    fn concretize_trait_method_requirement(&self, method: &MethodInfo, self_ty: &ResolvedType) -> MethodInfo {
+        let mut concrete = method.clone();
+        concrete.params = method
+            .params
+            .iter()
+            .map(|param| CallableParam {
+                name: param.name.clone(),
+                ty: Self::concretize_self_type_in_annotation(&param.ty, self_ty),
+                kind: param.kind,
+                has_default: param.has_default,
+            })
+            .collect();
+        concrete.return_type = Self::concretize_self_type_in_annotation(&method.return_type, self_ty);
+        concrete
+    }
+
+    /// Materialize concrete `Self` in the methods declared by a nominal trait adopter.
+    fn concretize_trait_conformance_method_overloads(
+        &self,
+        method_overloads: &HashMap<String, Vec<MethodInfo>>,
+        self_ty: &ResolvedType,
+    ) -> HashMap<String, Vec<MethodInfo>> {
+        method_overloads
+            .iter()
+            .map(|(method_name, overloads)| {
+                (
+                    method_name.clone(),
+                    overloads
+                        .iter()
+                        .map(|method| self.concretize_trait_method_requirement(method, self_ty))
+                        .collect(),
+                )
+            })
+            .collect()
+    }
+
     /// Build the resolved surface type that represents `nt` in interop signature validation.
     ///
     /// Generic rusttypes are represented as `Generic(Name, TypeVar...)` so adapter checks compare against the
@@ -1696,8 +1759,21 @@ impl TypeChecker {
         adoption_span: Span,
         method_overloads: &HashMap<String, Vec<MethodInfo>>,
     ) {
-        let grouped =
-            self.grouped_trait_abstract_method_obligations(trait_name, trait_args.map(|args| (trait_info, args)));
+        let self_ty = self.trait_conformance_self_type(type_name);
+        let concrete_method_overloads = self.concretize_trait_conformance_method_overloads(method_overloads, &self_ty);
+        let grouped = self
+            .grouped_trait_abstract_method_obligations(trait_name, trait_args.map(|args| (trait_info, args)))
+            .into_iter()
+            .map(|(method_name, entries)| {
+                (
+                    method_name,
+                    entries
+                        .into_iter()
+                        .map(|(origin, info)| (origin, self.concretize_trait_method_requirement(&info, &self_ty)))
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<HashMap<_, _>>();
         let mut method_names: Vec<String> = grouped.keys().cloned().collect();
         method_names.sort();
         for method_name in method_names {
@@ -1714,7 +1790,7 @@ impl TypeChecker {
                     &group[0].0,
                     method_name.as_str(),
                     exp0,
-                    method_overloads,
+                    &concrete_method_overloads,
                     adoption_span,
                 );
                 continue;
@@ -1738,16 +1814,18 @@ impl TypeChecker {
                     &group[0].0,
                     method_name.as_str(),
                     exp0,
-                    method_overloads,
+                    &concrete_method_overloads,
                     adoption_span,
                 );
                 continue;
             }
-            let satisfies_all = method_overloads.get(method_name.as_str()).is_some_and(|found_group| {
-                found_group
-                    .iter()
-                    .any(|found| group.iter().all(|(_, e)| self.method_sigs_compatible(e, found)))
-            });
+            let satisfies_all = concrete_method_overloads
+                .get(method_name.as_str())
+                .is_some_and(|found_group| {
+                    found_group
+                        .iter()
+                        .any(|found| group.iter().all(|(_, e)| self.method_sigs_compatible(e, found)))
+                });
             if satisfies_all {
                 continue;
             }
@@ -1783,18 +1861,21 @@ impl TypeChecker {
             module_path: None,
             span: adoption_span,
         };
+        let self_ty = self.trait_conformance_self_type(type_name);
+        let concrete_method_overloads = self.concretize_trait_conformance_method_overloads(method_overloads, &self_ty);
         for entry in self.trait_method_entries_for_adoption(&adoption) {
             if !entry.info.has_body {
                 continue;
             }
-            let Some(found_group) = method_overloads.get(&entry.method_name) else {
+            let Some(found_group) = concrete_method_overloads.get(&entry.method_name) else {
                 continue;
             };
+            let expected = self.concretize_trait_method_requirement(&entry.info, &self_ty);
             if !found_group
                 .iter()
-                .any(|found| self.method_sigs_compatible(&entry.info, found))
+                .any(|found| self.method_sigs_compatible(&expected, found))
             {
-                let expected_sig = self.method_sig_string_named(&entry.method_name, &entry.info);
+                let expected_sig = self.method_sig_string_named(&entry.method_name, &expected);
                 let found_sig = found_group
                     .first()
                     .map(|found| self.method_sig_string_named(&entry.method_name, found))

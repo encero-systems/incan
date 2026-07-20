@@ -746,7 +746,10 @@ impl AstLowering {
     /// generated impl body. At this matching boundary it denotes the same owner as the concrete trait target.
     fn trait_impl_type_matches(expected: &IrType, actual: &IrType) -> bool {
         match (expected, actual) {
-            (_, IrType::SelfType) => true,
+            // At trait-implementation matching boundaries, `Self` on either side names the adopting nominal type.
+            // The typechecker has already checked the concrete signature; this only decides whether lowering keeps
+            // the concrete body instead of expanding the trait declaration's default body.
+            (IrType::SelfType, _) | (_, IrType::SelfType) => true,
             (IrType::List(expected), IrType::List(actual))
             | (IrType::Set(expected), IrType::Set(actual))
             | (IrType::Option(expected), IrType::Option(actual))
