@@ -125,13 +125,15 @@ This RFC changes the safety contract of the existing `Path.replace(...)` surface
 
 Directory synchronization belongs on `Path` because it names the directory entry whose persistence is being requested. File content synchronization remains on `File`, as defined by RFC 055. The resulting sequence makes the boundary visible in source: staged file content, namespace replacement, then parent-directory durability.
 
-The lock identity is deliberately separate from the published file. Renaming a staged artifact over the target changes the target inode or equivalent host object, so locking that mutable object directly would create a coordination gap. A stable sibling lock entry gives cooperating publishers one identity before, during, and after replacement.
+The public `Path.lock_*` identity is deliberately separate from the protected file. Renaming a staged artifact over the target changes the target inode or equivalent host object, so locking that mutable object directly would create a coordination gap. A stable sibling lock entry gives callers of the public API one identity before, during, and after replacement.
+
+Canonical workspace lock publication mirrors this RFC's staging, synchronization, atomic-replacement, and directory-synchronization sequence but uses a compiler-private active guard under ignored `target/incan_lock` state. This avoids leaving a newly created synchronization artifact in the project root without changing the public `Path.lock_*` identity. When the legacy project-root sibling already exists, the compiler acquires and retains it before the active guard so processes using that existing identity remain serialized; a clean project does not create or unlink the legacy entry. Whenever the legacy identity is absent—whether it never existed or was removed—old and new compilers must not publish concurrently because an older compiler cannot discover the compiler-private guard.
 
 ### Interaction with existing features
 
 - **Error propagation:** all publication and lock operations return `Result`; `?` remains the ordinary way to stop a failed publication before a later step claims success.
 - **Temporary files:** temporary-file helpers may provide staging locations, but a staged publisher must ensure the final replacement stays on the target filesystem.
-- **Workspaces:** workspace lock publication uses the recipe in this RFC. Workspace selection and dependency semantics remain owned by RFC 077.
+- **Workspaces:** workspace lock publication uses the crash-safe sequence in this RFC with the compiler-private guard described above. Workspace selection and dependency semantics remain owned by RFC 077.
 - **Generated artifacts:** compiled local artifacts may use the same recipe, but this RFC does not define artifact format, discovery, or validity rules.
 - **Async:** this RFC supplies no async locking API and does not permit a lock guard to span suspension.
 
@@ -159,7 +161,7 @@ An in-process mutex does not coordinate separate commands and does not survive p
 
 ### Lock the target file itself
 
-Replacing the target changes the object that a file-backed lock would protect. A stable sibling lock entry keeps the coordination identity independent of the published artifact.
+Replacing the target changes the object that a public `Path.lock_*` operation would protect. A stable sibling lock entry keeps that public coordination identity independent of the published artifact; the compiler-private workspace guard follows the separate target-state placement described above.
 
 ## Drawbacks
 

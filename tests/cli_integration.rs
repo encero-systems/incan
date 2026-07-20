@@ -1486,6 +1486,7 @@ root_lib = { workspace = true }
 #[test]
 fn workspace_lock_concurrent_publishers_leave_one_parseable_root_lock() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
+    fs::write(root.path().join(".gitignore"), "target/\n.incan-home/\n")?;
     fs::write(
         root.path().join("incan.toml"),
         "[workspace]\nmembers = [\"packages/*\"]\n",
@@ -1516,6 +1517,35 @@ fn workspace_lock_concurrent_publishers_leave_one_parseable_root_lock() -> Resul
             .env("INCAN_GENERATED_CARGO_TARGET_DIR", &generated_target)
             .spawn()?)
     };
+
+    let baseline_output = spawn_lock("alpha")?.wait_with_output()?;
+    assert_success(&baseline_output, "baseline workspace lock publisher");
+    let run_git = |args: &[&str]| -> Result<Output, Box<dyn std::error::Error>> {
+        Ok(Command::new("git").args(args).current_dir(root.path()).output()?)
+    };
+    let init_output = run_git(&["init", "--quiet"])?;
+    assert_success(&init_output, "initialize workspace hygiene fixture");
+    let add_output = run_git(&["add", "."])?;
+    assert_success(&add_output, "stage workspace hygiene fixture");
+    let commit_output = run_git(&[
+        "-c",
+        "user.name=Incan Tests",
+        "-c",
+        "user.email=tests@incan.invalid",
+        "commit",
+        "--quiet",
+        "-m",
+        "baseline",
+    ])?;
+    assert_success(&commit_output, "commit workspace hygiene fixture");
+    let status_before = run_git(&["status", "--short"])?;
+    assert_success(&status_before, "inspect clean workspace fixture before publication");
+    assert!(
+        status_before.stdout.is_empty(),
+        "workspace fixture was not clean before lock publication: {}",
+        String::from_utf8_lossy(&status_before.stdout)
+    );
+
     let left = spawn_lock("alpha")?;
     let right = spawn_lock("zebra")?;
     let left_output = left.wait_with_output()?;
@@ -1527,10 +1557,27 @@ fn workspace_lock_concurrent_publishers_leave_one_parseable_root_lock() -> Resul
     let lock = incan::lockfile::IncanLock::load(&lock_path)?;
     assert!(!lock.deps_fingerprint.is_empty());
     assert!(
+        root.path()
+            .join("target/incan_lock/.incan.lock.publication.lock")
+            .is_file(),
+        "concurrent publishers must share one stable compiler-owned publication lock"
+    );
+    assert!(
+        !root.path().join(".incan.lock.incan.lock").exists(),
+        "concurrent lock publication must not leave a persistent project-root sidecar"
+    );
+    assert!(
         fs::read_dir(root.path())?
             .filter_map(Result::ok)
             .all(|entry| !entry.file_name().to_string_lossy().contains(".incan-stage-")),
         "failed workspace lock publication left a private staging file behind"
+    );
+    let status_after = run_git(&["status", "--short"])?;
+    assert_success(&status_after, "inspect workspace fixture after publication");
+    assert!(
+        status_after.stdout.is_empty(),
+        "incan lock dirtied a clean Git checkout:\n{}",
+        String::from_utf8_lossy(&status_after.stdout)
     );
     Ok(())
 }
