@@ -45,6 +45,11 @@ struct LockedCargoPackage {
     dependencies: Vec<String>,
 }
 
+struct PathCargoPackageIdentity {
+    name: String,
+    version: String,
+}
+
 /// Split Cargo's compact lock dependency reference into package name, optional version, and optional source.
 fn locked_dependency_parts(dependency: &str) -> (&str, Option<&str>, Option<&str>) {
     let mut parts = dependency.splitn(3, ' ');
@@ -63,8 +68,14 @@ fn locked_dependency_resolves_to(dependency: &str, candidate: &LockedCargoPackag
 }
 
 /// Return whether a locked package satisfies the complete source identity and version requirement of `spec`.
-fn dependency_spec_matches_locked_package(spec: &DependencySpec, candidate: &LockedCargoPackage) -> bool {
-    let package_name = spec.package.as_deref().unwrap_or(&spec.crate_name);
+fn dependency_spec_matches_locked_package(
+    spec: &DependencySpec,
+    path_identity: Option<&PathCargoPackageIdentity>,
+    candidate: &LockedCargoPackage,
+) -> bool {
+    let package_name = path_identity
+        .map(|identity| identity.name.as_str())
+        .unwrap_or_else(|| spec.package.as_deref().unwrap_or(&spec.crate_name));
     if candidate.name != package_name {
         return false;
     }
@@ -83,21 +94,150 @@ fn dependency_spec_matches_locked_package(spec: &DependencySpec, candidate: &Loc
             .source
             .as_deref()
             .is_some_and(|source| source.starts_with("registry+") || source.starts_with("sparse+")),
-        DependencySource::Path { .. } => candidate.source.is_none(),
+        DependencySource::Path { .. } => {
+            candidate.source.is_none() && path_identity.is_some_and(|identity| candidate.version == identity.version)
+        }
         DependencySource::Git { url, reference } => candidate.source.as_deref().is_some_and(|source| {
             let Some(git_source) = source.strip_prefix("git+") else {
                 return false;
             };
-            if git_source.split(['?', '#']).next() != Some(url.as_str()) {
+            if normalized_git_repository_url(git_source) != normalized_git_repository_url(url) {
                 return false;
             }
             match reference {
-                GitReference::Branch(branch) => git_source.contains(&format!("branch={branch}")),
-                GitReference::Tag(tag) => git_source.contains(&format!("tag={tag}")),
-                GitReference::Rev(revision) => git_source.contains(&format!("rev={revision}")),
+                GitReference::Branch(branch) => git_reference_matches(git_source, "branch", branch),
+                GitReference::Tag(tag) => git_reference_matches(git_source, "tag", tag),
+                GitReference::Rev(revision) => git_reference_matches(git_source, "rev", revision),
             }
         }),
     }
+}
+
+/// Normalize repository spellings Cargo treats as the same source before comparing selected Git dependencies.
+fn normalized_git_repository_url(value: &str) -> String {
+    let repository = value
+        .strip_prefix("git+")
+        .unwrap_or(value)
+        .split(['?', '#'])
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches('/');
+    repository.strip_suffix(".git").unwrap_or(repository).to_string()
+}
+
+/// Match one percent-encoded Cargo Git source query selector against the source manifest reference.
+fn git_reference_matches(source: &str, key: &str, expected: &str) -> bool {
+    source
+        .split_once('?')
+        .map(|(_, query)| query.split('#').next().unwrap_or_default())
+        .into_iter()
+        .flat_map(|query| query.split('&'))
+        .filter_map(|pair| pair.split_once('='))
+        .any(|(candidate_key, value)| candidate_key == key && percent_decode(value).as_deref() == Some(expected))
+}
+
+/// Decode one URL query component without applying form-encoding's unrelated `+`-as-space rule.
+fn percent_decode(value: &str) -> Option<String> {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0usize;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let high = char::from(*bytes.get(index + 1)?).to_digit(16)?;
+            let low = char::from(*bytes.get(index + 2)?).to_digit(16)?;
+            decoded.push(u8::try_from((high << 4) | low).ok()?);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(decoded).ok()
+}
+
+/// Read the exact package identity Cargo assigns to one selected path dependency.
+fn path_cargo_package_identity(spec: &DependencySpec) -> io::Result<Option<PathCargoPackageIdentity>> {
+    let DependencySource::Path { path } = &spec.source else {
+        return Ok(None);
+    };
+    let manifest_path = path.join("Cargo.toml");
+    let contents = fs::read_to_string(&manifest_path).map_err(|error| {
+        io::Error::other(format!(
+            "failed to read selected path dependency manifest {}: {error}",
+            manifest_path.display()
+        ))
+    })?;
+    let manifest = toml::from_str::<toml::Value>(&contents).map_err(|error| {
+        io::Error::other(format!(
+            "failed to parse selected path dependency manifest {}: {error}",
+            manifest_path.display()
+        ))
+    })?;
+    let package = manifest
+        .get("package")
+        .and_then(toml::Value::as_table)
+        .ok_or_else(|| io::Error::other(format!("{} has no [package] table", manifest_path.display())))?;
+    let name = package
+        .get("name")
+        .and_then(toml::Value::as_str)
+        .ok_or_else(|| io::Error::other(format!("{} has no package name", manifest_path.display())))?;
+    let expected_name = spec.package.as_deref().unwrap_or(&spec.crate_name);
+    if name != expected_name {
+        return Err(io::Error::other(format!(
+            "selected path dependency `{}` expects package `{expected_name}`, but {} declares `{name}`",
+            spec.crate_name,
+            manifest_path.display()
+        )));
+    }
+    let version = if let Some(version) = package.get("version").and_then(toml::Value::as_str) {
+        version.to_string()
+    } else if package
+        .get("version")
+        .and_then(toml::Value::as_table)
+        .and_then(|version| version.get("workspace"))
+        .and_then(toml::Value::as_bool)
+        == Some(true)
+    {
+        inherited_cargo_package_version(&manifest_path)?
+    } else {
+        return Err(io::Error::other(format!(
+            "{} has no concrete or workspace-inherited package version",
+            manifest_path.display()
+        )));
+    };
+    Ok(Some(PathCargoPackageIdentity {
+        name: name.to_string(),
+        version,
+    }))
+}
+
+/// Resolve Cargo's `version.workspace = true` package form through the nearest ancestor workspace manifest.
+fn inherited_cargo_package_version(manifest_path: &Path) -> io::Result<String> {
+    for ancestor in manifest_path.parent().into_iter().flat_map(Path::ancestors) {
+        let candidate = ancestor.join("Cargo.toml");
+        if candidate == manifest_path || !candidate.is_file() {
+            continue;
+        }
+        let contents = fs::read_to_string(&candidate)?;
+        let manifest = toml::from_str::<toml::Value>(&contents).map_err(|error| {
+            io::Error::other(format!(
+                "failed to parse ancestor Cargo manifest {}: {error}",
+                candidate.display()
+            ))
+        })?;
+        if let Some(version) = manifest
+            .get("workspace")
+            .and_then(|workspace| workspace.get("package"))
+            .and_then(|package| package.get("version"))
+            .and_then(toml::Value::as_str)
+        {
+            return Ok(version.to_string());
+        }
+    }
+    Err(io::Error::other(format!(
+        "failed to resolve workspace-inherited package version for {}",
+        manifest_path.display()
+    )))
 }
 
 /// Compare locked versions by SemVer where possible, with a deterministic textual fallback.
@@ -1557,13 +1697,16 @@ impl ProjectGenerator {
                     version: None,
                     features: Vec::new(),
                     default_features: true,
-                    source: DependencySource::Path { path: PathBuf::new() },
+                    source: DependencySource::Path {
+                        path: super::cargo_toml::toolchain_crate_path(crate_name),
+                    },
                     optional: false,
                     package: None,
                 });
-            let selected_dependencies = support_dependencies.iter().chain(self.dependencies.iter()).chain(
+            let (effective_dependencies, effective_dev_dependencies) = self.dependencies_with_sdk_rebindings()?;
+            let selected_dependencies = support_dependencies.iter().chain(effective_dependencies.iter()).chain(
                 self.include_dev_dependencies
-                    .then_some(self.dev_dependencies.as_slice())
+                    .then_some(effective_dev_dependencies.as_slice())
                     .unwrap_or_default(),
             );
             let mut selected_specs = Vec::new();
@@ -1576,11 +1719,12 @@ impl ProjectGenerator {
             }
             let mut dependencies = BTreeSet::new();
             for spec in selected_specs {
+                let path_identity = path_cargo_package_identity(spec)?;
                 let mut best_match: Option<(&String, &LockedCargoPackage)> = None;
                 for dependency in &workspace_root.dependencies {
                     for candidate in &locked_packages {
                         if !locked_dependency_resolves_to(dependency, candidate)
-                            || !dependency_spec_matches_locked_package(spec, candidate)
+                            || !dependency_spec_matches_locked_package(spec, path_identity.as_ref(), candidate)
                         {
                             continue;
                         }
@@ -2871,6 +3015,93 @@ dependencies = ["itoa"]
             ]
         );
         Ok(())
+    }
+
+    #[test]
+    fn cargo_lock_payload_disambiguates_selected_path_package_identity() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let first = temp.path().join("foo-v1");
+        let second = temp.path().join("foo-v2");
+        for (path, version) in [(&first, "1.0.0"), (&second, "2.0.0")] {
+            fs::create_dir_all(path)?;
+            fs::write(
+                path.join("Cargo.toml"),
+                format!("[package]\nname = \"foo\"\nversion = \"{version}\"\nedition = \"2021\"\n"),
+            )?;
+        }
+
+        let mut generator = ProjectGenerator::new(temp.path().join("generated"), "leaf", false);
+        generator.set_package_metadata(Some("0.2.0".to_string()), None);
+        generator.set_dependencies(vec![DependencySpec {
+            crate_name: "foo_old".to_string(),
+            version: None,
+            features: Vec::new(),
+            default_features: true,
+            source: DependencySource::Path { path: first },
+            optional: false,
+            package: Some("foo".to_string()),
+        }]);
+        let payload = r#"version = 4
+
+[[package]]
+name = "incan_workspace"
+version = "0.5.0-dev.19"
+dependencies = ["foo 1.0.0", "foo 2.0.0"]
+
+[[package]]
+name = "foo"
+version = "1.0.0"
+
+[[package]]
+name = "foo"
+version = "2.0.0"
+"#;
+
+        let projected = generator.cargo_lock_payload_for_package(payload)?;
+        let lock: toml::Value = toml::from_str(projected.as_ref())?;
+        let foo_versions = lock["package"]
+            .as_array()
+            .ok_or("projected lock had no package array")?
+            .iter()
+            .filter(|package| package["name"].as_str() == Some("foo"))
+            .filter_map(|package| package["version"].as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(foo_versions, vec!["1.0.0"]);
+        Ok(())
+    }
+
+    #[test]
+    fn selected_git_dependency_matching_normalizes_cargo_source_spelling() {
+        let spec = DependencySpec {
+            crate_name: "git_alias".to_string(),
+            version: Some("1".to_string()),
+            features: Vec::new(),
+            default_features: true,
+            source: DependencySource::Git {
+                url: "https://github.com/example/repository.git/".to_string(),
+                reference: GitReference::Branch("feature/lock projection".to_string()),
+            },
+            optional: false,
+            package: Some("git_package".to_string()),
+        };
+        let matching = LockedCargoPackage {
+            name: "git_package".to_string(),
+            version: "1.4.0".to_string(),
+            source: Some(
+                "git+https://github.com/example/repository?branch=feature%2Flock%20projection#0123456789abcdef"
+                    .to_string(),
+            ),
+            dependencies: Vec::new(),
+        };
+        assert!(dependency_spec_matches_locked_package(&spec, None, &matching));
+
+        let wrong_reference = LockedCargoPackage {
+            source: Some(
+                "git+https://github.com/example/repository?branch=feature%2Fother#0123456789abcdef".to_string(),
+            ),
+            ..matching.clone()
+        };
+        assert!(!dependency_spec_matches_locked_package(&spec, None, &wrong_reference));
     }
 
     #[test]

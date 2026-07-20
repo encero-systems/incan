@@ -1554,6 +1554,17 @@ default-members = ["root_lib", "leaf", "sibling"]
         "pub def root_value() -> int:\n  return 1\n",
     )?;
 
+    let vendor = root.path().join("vendor");
+    for (directory, version) in [("foo-v1", "1.0.0"), ("foo-v2", "2.0.0")] {
+        let package = vendor.join(directory);
+        fs::create_dir_all(package.join("src"))?;
+        fs::write(
+            package.join("Cargo.toml"),
+            format!("[package]\nname = \"foo\"\nversion = \"{version}\"\nedition = \"2021\"\n"),
+        )?;
+        fs::write(package.join("src/lib.rs"), "pub fn value() -> i64 { 1 }\n")?;
+    }
+
     let leaf = root.path().join("leaf");
     fs::create_dir_all(leaf.join("src"))?;
     fs::write(
@@ -1572,11 +1583,15 @@ version = "1"
 [rust-dependencies.old_flags]
 package = "bitflags"
 version = "=1.3.2"
+
+[rust-dependencies.foo_old]
+package = "foo"
+path = "../vendor/foo-v1"
 "#,
     )?;
     fs::write(
         leaf.join("src/lib.incn"),
-        "from rust::json_alias import Value\nfrom rust::old_flags import bitflags\n\n\npub def leaf_value() -> int:\n  return 2\n",
+        "from rust::json_alias import Value\nfrom rust::old_flags import bitflags\nfrom rust::foo_old import value\n\n\npub def leaf_value() -> int:\n  return 2\n",
     )?;
 
     let sibling = root.path().join("sibling");
@@ -1596,11 +1611,15 @@ regex = "1"
 [rust-dependencies.new_flags]
 package = "bitflags"
 version = "=2.11.0"
+
+[rust-dependencies.foo_new]
+package = "foo"
+path = "../vendor/foo-v2"
 "#,
     )?;
     fs::write(
         sibling.join("src/lib.incn"),
-        "from rust::regex import Regex\nfrom rust::new_flags import bitflags\n\n\npub def sibling_value() -> int:\n  return 3\n",
+        "from rust::regex import Regex\nfrom rust::new_flags import bitflags\nfrom rust::foo_new import value\n\n\npub def sibling_value() -> int:\n  return 3\n",
     )?;
 
     let lock_output = run_incan(root.path(), &["lock"])?;
@@ -1631,6 +1650,16 @@ version = "=2.11.0"
         canonical_bitflags_versions,
         vec!["1.3.2", "2.11.0"],
         "the aggregate lock must contain both aliased sibling resolutions for this regression"
+    );
+    let canonical_foo_versions = canonical_packages
+        .iter()
+        .filter(|package| package["name"].as_str() == Some("foo"))
+        .filter_map(|package| package["version"].as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        canonical_foo_versions,
+        vec!["1.0.0", "2.0.0"],
+        "the aggregate lock must contain both same-name path package identities for this regression"
     );
 
     let _ = fs::remove_dir_all(root.path().join("target"));
@@ -1665,6 +1694,16 @@ version = "=2.11.0"
         selected_bitflags_versions,
         vec!["1.3.2"],
         "the sibling's incompatible aliased package resolution leaked into the selected member Cargo lock"
+    );
+    let selected_foo_versions = packages
+        .iter()
+        .filter(|package| package["name"].as_str() == Some("foo"))
+        .filter_map(|package| package["version"].as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        selected_foo_versions,
+        vec!["1.0.0"],
+        "the sibling's different same-name path package leaked into the selected member Cargo lock"
     );
     assert!(
         packages.iter().all(|package| package["name"].as_str() != Some("regex")),

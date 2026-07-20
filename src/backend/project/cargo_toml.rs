@@ -206,7 +206,7 @@ fn installed_toolchain_crate_path(crate_name: &str) -> Option<PathBuf> {
 }
 
 /// Resolve a toolchain-owned support crate for generated Cargo manifests.
-fn toolchain_crate_path(crate_name: &str) -> PathBuf {
+pub(super) fn toolchain_crate_path(crate_name: &str) -> PathBuf {
     installed_toolchain_crate_path(crate_name).unwrap_or_else(|| {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("crates")
