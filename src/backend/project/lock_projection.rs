@@ -1,5 +1,6 @@
 //! Pure validation for Cargo-owned projections of canonical Incan lock payloads.
 
+use std::collections::BTreeSet;
 use std::io;
 
 use toml::Value;
@@ -8,6 +9,7 @@ use toml::Value;
 #[derive(Debug, Clone)]
 pub(crate) struct CargoLockProjection {
     canonical_payload: String,
+    canonical_root_name: String,
 }
 
 /// One Cargo-owned attempt to move a regenerated package back onto a canonical coordinate.
@@ -37,7 +39,10 @@ impl CargoLockProjection {
             )));
         }
         validate_dependency_references(&canonical, "canonical")?;
-        Ok(Self { canonical_payload })
+        Ok(Self {
+            canonical_payload,
+            canonical_root_name,
+        })
     }
 
     /// Return the exact canonical payload that must seed Cargo's first offline resolution pass.
@@ -142,9 +147,32 @@ impl CargoLockProjection {
                  `{generated_package_name}` at version `{generated_package_version}`; expected exactly one"
             )));
         }
+        let generated_root = projected_packages
+            .iter()
+            .find(|package| {
+                package_name(package) == Some(generated_package_name)
+                    && package_version(package) == Some(generated_package_version)
+                    && package.get("source").is_none()
+            })
+            .ok_or_else(|| io::Error::other("projected Cargo.lock generated root disappeared"))?;
+        let canonical_root = canonical_packages
+            .iter()
+            .find(|package| {
+                package_name(package) == Some(self.canonical_root_name.as_str())
+                    && package_version(package) == Some(crate::version::INCAN_VERSION)
+                    && package.get("source").is_none()
+            })
+            .ok_or_else(|| io::Error::other("canonical Cargo.lock source root disappeared"))?;
+        validate_dependency_edge_subset(
+            generated_root,
+            &projected_packages,
+            canonical_root,
+            &canonical_packages,
+            "generated root",
+        )?;
 
         let mut skipped_generated_root = false;
-        for package in projected_packages {
+        for package in &projected_packages {
             if !skipped_generated_root
                 && package_name(package) == Some(generated_package_name)
                 && package_version(package) == Some(generated_package_version)
@@ -171,6 +199,13 @@ impl CargoLockProjection {
                     coordinate.render()
                 )));
             }
+            validate_dependency_edge_subset(
+                package,
+                &projected_packages,
+                canonical_package,
+                &canonical_packages,
+                &format!("package `{}`", coordinate.render()),
+            )?;
         }
         validate_dependency_references(&projected, "projected")
     }
@@ -275,6 +310,23 @@ struct PackageCoordinate<'a> {
     source: Option<&'a str>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct OwnedPackageCoordinate {
+    name: String,
+    version: String,
+    source: Option<String>,
+}
+
+impl From<PackageCoordinate<'_>> for OwnedPackageCoordinate {
+    fn from(coordinate: PackageCoordinate<'_>) -> Self {
+        Self {
+            name: coordinate.name.to_string(),
+            version: coordinate.version.to_string(),
+            source: coordinate.source.map(ToOwned::to_owned),
+        }
+    }
+}
+
 impl PackageCoordinate<'_> {
     fn render(&self) -> String {
         match self.source {
@@ -336,6 +388,53 @@ fn validate_dependency_references(document: &Value, role: &str) -> io::Result<()
         }
     }
     Ok(())
+}
+
+/// Require every Cargo-produced dependency edge to have been authorized by the matching canonical package.
+fn validate_dependency_edge_subset(
+    projected_package: &toml::Table,
+    projected_packages: &[&toml::Table],
+    canonical_package: &toml::Table,
+    canonical_packages: &[&toml::Table],
+    label: &str,
+) -> io::Result<()> {
+    let projected = resolved_dependency_coordinates(projected_package, projected_packages, "projected")?;
+    let canonical = resolved_dependency_coordinates(canonical_package, canonical_packages, "canonical")?;
+    let unauthorized = projected.difference(&canonical).collect::<Vec<_>>();
+    if unauthorized.is_empty() {
+        return Ok(());
+    }
+    Err(io::Error::other(format!(
+        "Cargo projected unauthorized dependency edge(s) from {label}: {unauthorized:?}"
+    )))
+}
+
+/// Resolve dependency strings to full package coordinates, rejecting ambiguous or dangling references.
+fn resolved_dependency_coordinates(
+    package: &toml::Table,
+    packages: &[&toml::Table],
+    role: &str,
+) -> io::Result<BTreeSet<OwnedPackageCoordinate>> {
+    package
+        .get("dependencies")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(|reference| {
+            let matches = packages
+                .iter()
+                .filter(|candidate| dependency_reference_matches_package(reference, candidate))
+                .collect::<Vec<_>>();
+            let [package] = matches.as_slice() else {
+                return Err(io::Error::other(format!(
+                    "{role} Cargo.lock dependency `{reference}` resolves to {} packages; expected exactly one",
+                    matches.len()
+                )));
+            };
+            package_coordinate(package).map(OwnedPackageCoordinate::from)
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -445,6 +544,103 @@ dependencies = ["missing 1.0.0"]
                 .validate_projected(&projected, "caller", crate::version::INCAN_VERSION)
                 .is_err()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn projection_rejects_forged_generated_root_edge_to_unreferenced_canonical_package()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let canonical = format!(
+            r#"version = 4
+
+[[package]]
+name = "incan_workspace"
+version = "{}"
+dependencies = ["foo"]
+
+[[package]]
+name = "bar"
+version = "1.0.0"
+
+[[package]]
+name = "foo"
+version = "1.0.0"
+"#,
+            crate::version::INCAN_VERSION
+        );
+        let projection = CargoLockProjection::new(canonical, "incan_workspace".to_string())?;
+        let projected = format!(
+            r#"version = 4
+
+[[package]]
+name = "caller"
+version = "{}"
+dependencies = ["bar", "foo"]
+
+[[package]]
+name = "bar"
+version = "1.0.0"
+
+[[package]]
+name = "foo"
+version = "1.0.0"
+"#,
+            crate::version::INCAN_VERSION
+        );
+
+        let error = projection
+            .validate_projected(&projected, "caller", crate::version::INCAN_VERSION)
+            .expect_err("forged generated-root edge must be rejected");
+        assert!(error.to_string().contains("unauthorized dependency edge"));
+        Ok(())
+    }
+
+    #[test]
+    fn projection_rejects_forged_transitive_edge_between_canonical_packages() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let canonical = format!(
+            r#"version = 4
+
+[[package]]
+name = "incan_workspace"
+version = "{}"
+dependencies = ["bar", "foo"]
+
+[[package]]
+name = "bar"
+version = "1.0.0"
+
+[[package]]
+name = "foo"
+version = "1.0.0"
+"#,
+            crate::version::INCAN_VERSION
+        );
+        let projection = CargoLockProjection::new(canonical, "incan_workspace".to_string())?;
+        let projected = format!(
+            r#"version = 4
+
+[[package]]
+name = "caller"
+version = "{}"
+dependencies = ["foo"]
+
+[[package]]
+name = "bar"
+version = "1.0.0"
+
+[[package]]
+name = "foo"
+version = "1.0.0"
+dependencies = ["bar"]
+"#,
+            crate::version::INCAN_VERSION
+        );
+
+        let error = projection
+            .validate_projected(&projected, "caller", crate::version::INCAN_VERSION)
+            .expect_err("forged transitive edge must be rejected");
+        assert!(error.to_string().contains("unauthorized dependency edge"));
         Ok(())
     }
 
