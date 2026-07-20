@@ -289,7 +289,7 @@ fn sort_update_candidates(mut candidates: Vec<CargoLockUpdate>) -> Vec<CargoLock
     candidates
 }
 
-fn parse_lock<'a>(payload: &'a str, role: &str) -> io::Result<Value> {
+fn parse_lock(payload: &str, role: &str) -> io::Result<Value> {
     toml::from_str(payload)
         .map_err(|error| io::Error::other(format!("failed to parse {role} Cargo.lock payload: {error}")))
 }

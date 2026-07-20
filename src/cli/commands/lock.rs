@@ -79,6 +79,15 @@ pub(crate) struct GeneratedLibraryDependencyPreheatRequest<'a> {
     pub cargo_lock_projection_root: Option<&'a str>,
 }
 
+/// Dependency graph and Cargo policy shared by generated lock-workspace preheat consumers.
+struct DependencyPreheatContext<'a> {
+    project_name: &'a str,
+    rust_edition: Option<&'a str>,
+    resolved: &'a ResolvedDependencies,
+    project_requirements: &'a ProjectRequirements,
+    cargo_policy_flags: &'a [String],
+}
+
 /// Generate or update incan.lock for a project.
 pub fn lock_project(
     entry_file: Option<&PathBuf>,
@@ -1533,15 +1542,18 @@ pub(crate) fn run_generated_library_dependency_preheat(
     }
 
     let cargo_flags = cargo_command_flags(cargo_policy, cargo_features);
-    materialize_dependency_preheat_workspace(
-        lock_dir,
+    let preheat_context = DependencyPreheatContext {
         project_name,
-        rust_edition,
+        rust_edition: rust_edition.as_deref(),
         resolved,
         project_requirements,
+        cargo_policy_flags: &cargo_flags,
+    };
+    materialize_dependency_preheat_workspace(
+        lock_dir,
+        &preheat_context,
         cargo_lock_payload,
         cargo_lock_projection_root,
-        &cargo_flags,
     )?;
 
     let fingerprint =
@@ -1642,26 +1654,22 @@ pub(crate) fn run_generated_library_dependency_preheat(
 /// payload.
 fn materialize_dependency_preheat_workspace(
     lock_dir: &Path,
-    project_name: &str,
-    rust_edition: Option<String>,
-    resolved: &ResolvedDependencies,
-    project_requirements: &ProjectRequirements,
+    context: &DependencyPreheatContext<'_>,
     cargo_lock_payload: &str,
     cargo_lock_projection_root: Option<&str>,
-    cargo_policy_flags: &[String],
 ) -> CliResult<()> {
-    let mut generator = ProjectGenerator::new(lock_dir, project_name, false);
-    generator.set_dependencies(resolved.dependencies.clone());
-    generator.set_dev_dependencies(resolved.dev_dependencies.clone());
+    let mut generator = ProjectGenerator::new(lock_dir, context.project_name, false);
+    generator.set_dependencies(context.resolved.dependencies.clone());
+    generator.set_dev_dependencies(context.resolved.dev_dependencies.clone());
     generator.set_include_dev_dependencies(true);
-    generator.set_rust_edition(rust_edition);
-    generator.set_stdlib_features(project_requirements.stdlib_features.clone());
-    generator.set_sdk_dependency_rebindings(project_requirements.sdk_dependency_rebindings.clone());
-    generator.set_sdk_path_dependencies(project_requirements.sdk_path_dependencies.clone());
-    generator.set_sdk_artifact_projections(project_requirements.sdk_artifact_projections.clone());
+    generator.set_rust_edition(context.rust_edition.map(ToOwned::to_owned));
+    generator.set_stdlib_features(context.project_requirements.stdlib_features.clone());
+    generator.set_sdk_dependency_rebindings(context.project_requirements.sdk_dependency_rebindings.clone());
+    generator.set_sdk_path_dependencies(context.project_requirements.sdk_path_dependencies.clone());
+    generator.set_sdk_artifact_projections(context.project_requirements.sdk_artifact_projections.clone());
     generator.set_cargo_lock_payload(Some(cargo_lock_payload.to_string()));
     generator.set_cargo_lock_projection_root(cargo_lock_projection_root.map(ToOwned::to_owned));
-    generator.set_cargo_policy_flags(cargo_policy_flags.to_vec());
+    generator.set_cargo_policy_flags(context.cargo_policy_flags.to_vec());
     generator
         .generate("pub fn __incan_dependency_preheat() {}")
         .map_err(|err| CliError::failure(format!("Failed to generate dependency preheat project: {err}")))?;
@@ -1677,13 +1685,9 @@ fn materialize_dependency_preheat_workspace(
 #[cfg(feature = "rust_inspect")]
 fn run_lock_rust_inspect_prewarm(
     project_root: &Path,
-    project_name: &str,
-    rust_edition: Option<String>,
-    resolved: &ResolvedDependencies,
-    project_requirements: &ProjectRequirements,
+    context: &DependencyPreheatContext<'_>,
     lock: &IncanLock,
     query_paths: &[String],
-    cargo_policy_flags: &[String],
 ) -> CliResult<()> {
     if query_paths.is_empty() {
         return Ok(());
@@ -1691,12 +1695,12 @@ fn run_lock_rust_inspect_prewarm(
 
     let rust_inspect_manifest_dir = ensure_rust_inspect_workspace(
         project_root,
-        project_name,
-        rust_edition,
-        resolved,
-        project_requirements,
+        context.project_name,
+        context.rust_edition.map(ToOwned::to_owned),
+        context.resolved,
+        context.project_requirements,
         Some(lock.cargo_lock_payload.clone()),
-        cargo_policy_flags,
+        context.cargo_policy_flags,
     )?;
     prewarm_rust_inspect_workspace(&rust_inspect_manifest_dir, query_paths)
 }
@@ -1727,12 +1731,10 @@ pub(crate) fn generate_lockfile(
     let publication_lock = publication_lock.or(owned_publication_lock.as_ref());
     let lock_dir = crate::lockfile::compiler_lock_state_dir(project_root);
     let mut generator = ProjectGenerator::new(&lock_dir, project_name, true);
-    #[cfg(feature = "rust_inspect")]
-    let rust_edition_for_prewarm = rust_edition.clone();
     generator.set_dependencies(resolved.dependencies.clone());
     generator.set_dev_dependencies(resolved.dev_dependencies.clone());
     generator.set_include_dev_dependencies(true);
-    generator.set_rust_edition(rust_edition);
+    generator.set_rust_edition(rust_edition.clone());
     generator.set_stdlib_features(project_requirements.stdlib_features.clone());
     generator.set_sdk_dependency_rebindings(project_requirements.sdk_dependency_rebindings.clone());
     generator.set_sdk_path_dependencies(project_requirements.sdk_path_dependencies.clone());
@@ -1779,16 +1781,17 @@ pub(crate) fn generate_lockfile(
         run_lock_dependency_preheat(project_root, &lock_dir, cargo_features, cargo_policy)?;
     }
     #[cfg(feature = "rust_inspect")]
-    run_lock_rust_inspect_prewarm(
-        project_root,
+    let rust_inspect_cargo_flags = cargo_command_flags(cargo_policy, cargo_features);
+    #[cfg(feature = "rust_inspect")]
+    let preheat_context = DependencyPreheatContext {
         project_name,
-        rust_edition_for_prewarm,
+        rust_edition: rust_edition.as_deref(),
         resolved,
         project_requirements,
-        &lock,
-        rust_inspect_query_paths,
-        &cargo_command_flags(cargo_policy, cargo_features),
-    )?;
+        cargo_policy_flags: &rust_inspect_cargo_flags,
+    };
+    #[cfg(feature = "rust_inspect")]
+    run_lock_rust_inspect_prewarm(project_root, &preheat_context, &lock, rust_inspect_query_paths)?;
 
     let publication_lock = publication_lock
         .ok_or_else(|| CliError::failure("internal error: lock generation lost its publication guard"))?;
@@ -2061,17 +2064,17 @@ mod tests {
             crate::version::INCAN_VERSION
         );
         let flags = vec!["--offline".to_string()];
+        let resolved = empty_resolved();
+        let project_requirements = empty_project_requirements();
+        let context = DependencyPreheatContext {
+            project_name: "caller",
+            rust_edition: None,
+            resolved: &resolved,
+            project_requirements: &project_requirements,
+            cargo_policy_flags: &flags,
+        };
 
-        let result = materialize_dependency_preheat_workspace(
-            &lock_dir,
-            "caller",
-            None,
-            &empty_resolved(),
-            &empty_project_requirements(),
-            &canonical,
-            Some("incan_workspace"),
-            &flags,
-        );
+        let result = materialize_dependency_preheat_workspace(&lock_dir, &context, &canonical, Some("incan_workspace"));
         assert!(
             result.is_err(),
             "the deliberately incomplete canonical fixture must fail closed"
