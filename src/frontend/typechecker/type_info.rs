@@ -5,7 +5,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::frontend::ast::{Expr, ParamKind, Span, Spanned};
+use crate::frontend::ast::{Expr, ParamKind, Span, Spanned, Visibility};
 use crate::frontend::symbols::{
     CallableParam, FunctionOverloadInfo, NewtypePrimitiveConstraint, ResolvedType, TypeBoundInfo,
 };
@@ -213,6 +213,12 @@ pub struct RustInteropArtifacts {
 /// Declaration-level binding rewrites and visibility facts consumed by lowering.
 #[derive(Debug, Default, Clone)]
 pub struct DeclarationArtifacts {
+    /// Checked, parent-first field layouts for every class visible to the current module.
+    ///
+    /// Local subclasses can inherit from classes reconstructed from compiled dependency manifests. Those parents do
+    /// not have consumer-side AST declarations, so lowering must consume this checked layout instead of rediscovering
+    /// inherited fields from syntax.
+    pub(crate) class_layouts: HashMap<String, ClassLayoutInfo>,
     /// Compiler-checked construction semantics for local newtypes.
     ///
     /// Lowering consumes this snapshot instead of rediscovering newtypes from tuple-struct shape or raw decorators.
@@ -257,6 +263,30 @@ pub struct DeclarationArtifacts {
     pub decorated_function_bindings_by_span: HashMap<(usize, usize), DecoratedFunctionBindingInfo>,
     /// RFC 036: Method names whose declaration was rebound through a user-defined decorator chain.
     pub decorated_method_bindings: HashMap<(String, String), DecoratedMethodBindingInfo>,
+}
+
+/// Typechecker-owned class layout consumed by backend struct lowering.
+#[derive(Debug, Clone)]
+pub(crate) struct ClassLayoutInfo {
+    /// Flattened fields in constructor ABI order: oldest ancestor first, then local fields.
+    pub(crate) fields: Vec<ClassFieldLayoutInfo>,
+}
+
+/// One checked class field retained across the frontend/backend boundary.
+#[derive(Debug, Clone)]
+pub(crate) struct ClassFieldLayoutInfo {
+    /// Source-visible field name.
+    pub(crate) name: String,
+    /// Fully resolved field type selected by the typechecker.
+    pub(crate) ty: ResolvedType,
+    /// Checked source visibility, including visibility reconstructed from compiled manifests.
+    pub(crate) visibility: Visibility,
+    /// Materializable initializer expression, when one is available to the consumer.
+    pub(crate) default: Option<Spanned<Expr>>,
+    /// Canonical source field alias used for construction and access.
+    pub(crate) alias: Option<String>,
+    /// Source-authored field description preserved for generated reflection metadata.
+    pub(crate) description: Option<String>,
 }
 
 /// One compiler-checked newtype construction plan shared by lowering and generated bridges.

@@ -2301,6 +2301,41 @@ impl TypeChecker {
         }
     }
 
+    /// Snapshot checked class layouts for backend lowering.
+    ///
+    /// The symbol table already contains inherited fields from source and compiled-library parents. Persisting that
+    /// flattened view makes it the semantic authority for lowering and avoids requiring imported classes to have a
+    /// synthetic consumer-side AST declaration.
+    fn record_class_layouts_for_lowering(&mut self) {
+        let layouts = self
+            .symbols
+            .all_symbols()
+            .iter()
+            .filter_map(|symbol| {
+                let SymbolKind::Type(TypeInfo::Class(info)) = &symbol.kind else {
+                    return None;
+                };
+                let fields = info
+                    .field_order
+                    .iter()
+                    .filter_map(|name| {
+                        let field = info.fields.get(name)?;
+                        Some(type_info::ClassFieldLayoutInfo {
+                            name: name.clone(),
+                            ty: field.ty.clone(),
+                            visibility: field.visibility,
+                            default: info.field_defaults.get(name).cloned(),
+                            alias: field.alias.clone(),
+                            description: field.description.clone(),
+                        })
+                    })
+                    .collect();
+                Some((symbol.name.clone(), type_info::ClassLayoutInfo { fields }))
+            })
+            .collect();
+        self.type_info.declarations.class_layouts = layouts;
+    }
+
     /// Validate local static dependencies before declaration checking.
     ///
     /// `static` initializers may only reference earlier local statics, and dependency cycles are rejected.
@@ -4251,6 +4286,7 @@ impl TypeChecker {
         }
 
         self.record_trait_metadata_for_lowering();
+        self.record_class_layouts_for_lowering();
 
         // ---- RFC 023: validate rust.module() and @rust.extern rules ----
         self.validate_rust_module_and_extern(program);
