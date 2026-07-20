@@ -49,8 +49,9 @@ pub fn digest_provider_artifact(root: &Path) -> Result<String, ProviderArtifactD
 /// Hash the Cargo-semantic closure of one compiler-owned support crate.
 ///
 /// Only package inputs that can affect compiled code are included: the normalized package manifest, inherited
-/// workspace package/dependency values, Rust sources, a build script, and recursive normal/build/target path
-/// dependencies. Repository noise such as README files, tests, editor files, and target caches is intentionally absent.
+/// workspace package/dependency values, every regular file under `src/`, a build script, explicitly declared
+/// `package.metadata.incan.semantic-inputs` outside `src/`, and recursive normal/build/target path dependencies.
+/// Undeclared repository noise such as README files, tests, editor files, and target caches is intentionally absent.
 #[cfg(test)]
 fn digest_toolchain_source_tree(root: &Path) -> Result<String, ProviderArtifactDigestError> {
     digest_toolchain_source_tree_with_cache(root, &mut BTreeMap::new())
@@ -382,7 +383,7 @@ fn hash_compiled_source_inputs(
     Ok(())
 }
 
-/// Hash package-relative files explicitly declared as out-of-tree compiled inputs.
+/// Hash package-relative compiled inputs explicitly declared outside `src/`.
 fn hash_declared_semantic_inputs(
     package_root: &Path,
     manifest: &toml::Value,

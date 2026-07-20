@@ -111,7 +111,7 @@ incan lock
 
 If `incan.lock` doesn't exist and you run `incan build` or `incan test` without strict flags, the lock file is created automatically on first build.
 
-If `incan.lock` already exists but is stale, default `incan build` and `incan test` warn and reuse the existing embedded `Cargo.lock` payload without rewriting `incan.lock`. Run `incan lock` when you intentionally want to refresh the committed lock file.
+If `incan.lock` already exists but is stale, default `incan build` and `incan test` warn and leave the file untouched, but do not use its embedded `Cargo.lock` as dependency authority. Run `incan lock` when you intentionally want to refresh the committed lock file. Strict `--locked` and `--frozen` commands reject the stale lock.
 
 For `incan test`, a generated or changed lock can make the generated Rust harness stale. The runner preheats stale harnesses before executing tests so later test commands can reuse the compiled Cargo state. When lock generation sees Rust dependency inputs or stdlib feature requirements, it also preheats those dependencies with `cargo test --no-run` into the generated test target domain before writing `incan.lock`; unchanged relocks reuse a dependency preheat fingerprint, while cold preheats stream Cargo's own progress instead of leaving the terminal silent.
 

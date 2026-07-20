@@ -199,9 +199,10 @@ fn lock_workspace(
 
 /// Resolve the canonical dependency context and lock payload for a project build.
 ///
-/// Manifest-less standalone builds retain their caller-local dependency context and have no lock payload. A
-/// manifest-backed build receives the same project- or workspace-wide dependency context that owns the lock payload,
-/// so generated Cargo manifests cannot diverge from the embedded Cargo.lock.
+/// Manifest-less standalone builds retain their caller-local dependency context and have no lock payload.
+/// Manifest-backed builds keep caller-local resolved dependencies and requirements for generated Cargo manifests,
+/// while project- or workspace-wide aggregation owns canonical lock generation. A fresh canonical payload authorizes
+/// Cargo-owned projection onto the caller manifest only after package coordinates, checksums, and edges validate.
 pub(crate) struct LockResolutionRequest<'a> {
     pub project_root: &'a Path,
     pub project_name: &'a str,
@@ -392,8 +393,8 @@ pub(crate) fn prepare_rust_inspect_typecheck_workspace(
 /// Resolve the canonical Cargo context that generated projects must consume as one unit.
 ///
 /// Manifest-less single-file builds retain their caller context and have no payload. Project builds generate
-/// `incan.lock` only when it is missing in default mode; stale existing lockfiles are reused with a warning unless
-/// `--locked` or `--frozen` requires a hard failure.
+/// `incan.lock` only when it is missing in default mode. A stale existing lock remains untouched and produces a
+/// warning, but supplies no Cargo lock authority; `--locked` or `--frozen` rejects it before projection.
 pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliResult<LockResolution> {
     let LockResolutionRequest {
         project_root,
