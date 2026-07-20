@@ -1,6 +1,6 @@
 //! Map rust-analyzer `hir` definitions into [`incan_core::interop::RustItemMetadata`].
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use incan_core::interop::{
     RustFieldInfo, RustFunctionSig, RustImplementedTrait, RustItemKind, RustItemMetadata, RustMethodSig,
@@ -714,13 +714,38 @@ fn collect_inherent_methods(ty: Type<'_>, db: &RootDatabase, dt: DisplayTarget) 
     by_name.into_values().collect()
 }
 
-/// Collect non-blanket trait impls that rust-analyzer can associate directly with `ty`.
-fn collect_implemented_traits(ty: Type<'_>, db: &RootDatabase) -> Vec<RustImplementedTrait> {
+/// Collect the queried surface crate and every transitive crate dependency that can define its Rust API traits.
+fn crate_dependency_closure(surface_crate: Crate, db: &RootDatabase) -> HashSet<Crate> {
+    let mut closure = HashSet::new();
+    let mut pending = vec![surface_crate];
+    while let Some(krate) = pending.pop() {
+        if !closure.insert(krate) {
+            continue;
+        }
+        pending.extend(krate.dependencies(db).into_iter().map(|dependency| dependency.krate));
+    }
+    closure
+}
+
+/// Collect non-blanket trait impls whose traits belong to the queried Rust surface dependency closure.
+///
+/// `Impl::all_for_type` scans the entire loaded rust-analyzer graph. Rust's orphan rules allow a downstream crate to
+/// define its own trait and implement it for an imported type, but that trait is not part of the queried crate's API.
+/// Restricting the trait's defining crate preserves intrinsic dependency traits while excluding ambient downstream
+/// impls whose presence varies with workspace, cache, and host-platform graph shape.
+fn collect_implemented_traits(
+    ty: Type<'_>,
+    authorized_trait_crates: &HashSet<Crate>,
+    db: &RootDatabase,
+) -> Vec<RustImplementedTrait> {
     let mut traits = BTreeMap::new();
     for impl_def in Impl::all_for_type(db, ty) {
         let Some(trait_def) = impl_def.trait_(db) else {
             continue;
         };
+        if !authorized_trait_crates.contains(&trait_def.module(db).krate(db)) {
+            continue;
+        }
         let path = canonical_module_def_path(ModuleDef::Trait(trait_def), db)
             .unwrap_or_else(|| trait_def.name(db).as_str().to_owned());
         traits.insert(path.clone(), RustImplementedTrait { path });
@@ -974,6 +999,7 @@ fn extract_rust_item_inner(
     let krate =
         find_crate(workspace, crate_name).ok_or_else(|| RustMetadataError::CrateNotFound(crate_name.to_owned()))?;
     let dt = DisplayTarget::from_crate(db, krate.base());
+    let authorized_trait_crates = crate_dependency_closure(krate, db);
     let def = resolve_module_def(db, krate, &segments)?;
     let vis = map_visibility(def.visibility(db));
     let kind = match def {
@@ -985,7 +1011,7 @@ fn extract_rust_item_inner(
                 alias_target: None,
                 metadata_completeness: Default::default(),
                 methods: collect_inherent_methods(ty.clone(), db, dt),
-                implemented_traits: collect_implemented_traits(ty.clone(), db),
+                implemented_traits: collect_implemented_traits(ty.clone(), &authorized_trait_crates, db),
                 fields: collect_public_fields(ty.clone(), db, dt, crate_name),
                 variants: match adt {
                     Adt::Enum(enum_) => collect_enum_variant_payloads(enum_, ty, db, dt, crate_name),
@@ -999,7 +1025,7 @@ fn extract_rust_item_inner(
                 alias_target: None,
                 metadata_completeness: Default::default(),
                 methods: collect_inherent_methods(ty.clone(), db, dt),
-                implemented_traits: collect_implemented_traits(ty.clone(), db),
+                implemented_traits: collect_implemented_traits(ty.clone(), &authorized_trait_crates, db),
                 fields: collect_public_fields(ty, db, dt, crate_name),
                 variants: Vec::new(),
             })
@@ -1017,7 +1043,7 @@ fn extract_rust_item_inner(
                 alias_target: source_type_alias_target_display(a, db).or_else(|| Some(format_ty(&ty, db, dt))),
                 metadata_completeness: Default::default(),
                 methods: collect_inherent_methods(ty.clone(), db, dt),
-                implemented_traits: collect_implemented_traits(ty.clone(), db),
+                implemented_traits: collect_implemented_traits(ty.clone(), &authorized_trait_crates, db),
                 fields: collect_public_fields(ty, db, dt, crate_name),
                 variants: Vec::new(),
             })
@@ -1085,6 +1111,90 @@ impl Labelled for Thing {}
                 .any(|implemented| implemented.path == "demo_trait_probe::Labelled"),
             "expected direct Labelled impl in metadata, got {:?}",
             info.implemented_traits
+        );
+        Ok(())
+    }
+
+    /// Proves ambient downstream impl crates cannot change ADT or alias metadata for an upstream Rust surface.
+    #[test]
+    fn type_metadata_ignores_traits_from_loaded_downstream_crates() -> Result<(), Box<dyn std::error::Error>> {
+        // ---- Fixture: upstream API plus an unrelated loaded downstream impl ----
+        let tmp = tempfile::tempdir()?;
+        let trait_api = tmp.path().join("trait-api");
+        let surface_api = tmp.path().join("surface-api");
+        let downstream_api = tmp.path().join("downstream-api");
+        let clean_probe = tmp.path().join("clean-probe");
+        let polluted_probe = tmp.path().join("polluted-probe");
+        for root in [&trait_api, &surface_api, &downstream_api, &clean_probe, &polluted_probe] {
+            fs::create_dir_all(root.join("src"))?;
+        }
+
+        fs::write(
+            trait_api.join("Cargo.toml"),
+            "[package]\nname = \"trait_api\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        fs::write(trait_api.join("src/lib.rs"), "pub trait Intrinsic {}\n")?;
+        fs::write(
+            surface_api.join("Cargo.toml"),
+            "[package]\nname = \"surface_api\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\ntrait_api = { path = \"../trait-api\" }\n",
+        )?;
+        fs::write(
+            surface_api.join("src/lib.rs"),
+            "pub struct Thing;\npub type ThingAlias = Thing;\n\nimpl trait_api::Intrinsic for Thing {}\n",
+        )?;
+        fs::write(
+            downstream_api.join("Cargo.toml"),
+            "[package]\nname = \"downstream_api\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nsurface_api = { path = \"../surface-api\" }\n",
+        )?;
+        fs::write(
+            downstream_api.join("src/lib.rs"),
+            "pub trait Ambient {}\n\nimpl Ambient for surface_api::Thing {}\n",
+        )?;
+        fs::write(
+            clean_probe.join("Cargo.toml"),
+            "[package]\nname = \"clean_probe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nsurface_api = { path = \"../surface-api\" }\n",
+        )?;
+        fs::write(clean_probe.join("src/lib.rs"), "pub fn load_surface() {}\n")?;
+        fs::write(
+            polluted_probe.join("Cargo.toml"),
+            "[package]\nname = \"polluted_probe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nsurface_api = { path = \"../surface-api\" }\ndownstream_api = { path = \"../downstream-api\" }\n",
+        )?;
+        fs::write(polluted_probe.join("src/lib.rs"), "pub fn load_graph() {}\n")?;
+
+        // ---- Extraction: compare the same surface under clean and polluted graphs ----
+        let clean_workspace = RustWorkspace::load(&clean_probe, &|_| ())?;
+        let clean = extract_rust_item(&clean_workspace, "surface_api::Thing")?;
+        let polluted_workspace = RustWorkspace::load(&polluted_probe, &|_| ())?;
+        let polluted = extract_rust_item(&polluted_workspace, "surface_api::Thing")?;
+        let RustItemKind::Type(info) = &polluted.kind else {
+            return Err(std::io::Error::other("expected type metadata").into());
+        };
+
+        // ---- Contract: retain intrinsic traits and reject ambient downstream traits ----
+        assert!(
+            info.implemented_traits
+                .iter()
+                .any(|implemented| implemented.path == "trait_api::Intrinsic"),
+            "expected intrinsic dependency trait in metadata, got {:?}",
+            info.implemented_traits
+        );
+        assert!(
+            info.implemented_traits
+                .iter()
+                .all(|implemented| implemented.path != "downstream_api::Ambient"),
+            "downstream-only trait leaked into metadata: {:?}",
+            info.implemented_traits
+        );
+        assert_eq!(
+            clean, polluted,
+            "loaded downstream crates must not change surface metadata"
+        );
+
+        let clean_alias = extract_rust_item(&clean_workspace, "surface_api::ThingAlias")?;
+        let polluted_alias = extract_rust_item(&polluted_workspace, "surface_api::ThingAlias")?;
+        assert_eq!(
+            clean_alias, polluted_alias,
+            "loaded downstream crates must not change type-alias metadata"
         );
         Ok(())
     }
