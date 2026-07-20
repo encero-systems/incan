@@ -1530,6 +1530,117 @@ regex = "1"
     Ok(())
 }
 
+#[test]
+fn locked_build_synthesizes_unreferenced_selected_workspace_member_cargo_root() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("src"))?;
+    fs::write(
+        root.path().join("incan.toml"),
+        r#"[project]
+name = "root_lib"
+version = "0.1.0"
+
+[project.scripts]
+library = "src/lib.incn"
+
+[workspace]
+members = ["leaf", "sibling"]
+default-members = ["root_lib", "leaf", "sibling"]
+"#,
+    )?;
+    fs::write(
+        root.path().join("src/lib.incn"),
+        "pub def root_value() -> int:\n  return 1\n",
+    )?;
+
+    let leaf = root.path().join("leaf");
+    fs::create_dir_all(leaf.join("src"))?;
+    fs::write(
+        leaf.join("incan.toml"),
+        r#"[project]
+name = "leaf"
+version = "0.2.0"
+
+[project.scripts]
+library = "src/lib.incn"
+
+[rust-dependencies.json_alias]
+package = "serde_json"
+version = "1"
+"#,
+    )?;
+    fs::write(
+        leaf.join("src/lib.incn"),
+        "from rust::json_alias import Value\n\n\npub def leaf_value() -> int:\n  return 2\n",
+    )?;
+
+    let sibling = root.path().join("sibling");
+    fs::create_dir_all(sibling.join("src"))?;
+    fs::write(
+        sibling.join("incan.toml"),
+        r#"[project]
+name = "sibling"
+version = "0.3.0"
+
+[project.scripts]
+library = "src/lib.incn"
+
+[rust-dependencies]
+regex = "1"
+"#,
+    )?;
+    fs::write(
+        sibling.join("src/lib.incn"),
+        "from rust::regex import Regex\n\n\npub def sibling_value() -> int:\n  return 3\n",
+    )?;
+
+    let lock_output = run_incan(root.path(), &["lock"])?;
+    assert_success(
+        &lock_output,
+        "canonical lock for an unreferenced workspace library member",
+    );
+    let canonical = incan::lockfile::IncanLock::load(&root.path().join("incan.lock"))?;
+    let canonical_cargo: toml::Value = toml::from_str(&canonical.cargo_lock_payload)?;
+    assert!(
+        canonical_cargo["package"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .all(|package| package["name"].as_str() != Some("leaf") || package.get("source").is_some()),
+        "the regression requires an unreferenced member absent from the aggregate Cargo lock roots"
+    );
+
+    let _ = fs::remove_dir_all(root.path().join("target"));
+    let _ = fs::remove_dir_all(leaf.join("target"));
+    let locked_build = run_incan(root.path(), &["build", "--lib", "--member", "leaf", "--locked"])?;
+    assert_success(
+        &locked_build,
+        "target-free locked build of an unreferenced selected workspace member",
+    );
+
+    let generated_lock = fs::read_to_string(leaf.join("target/lib/Cargo.lock"))?;
+    let generated: toml::Value = toml::from_str(&generated_lock)?;
+    let packages = generated["package"]
+        .as_array()
+        .ok_or("generated selected-member Cargo.lock had no package array")?;
+    assert!(packages.iter().any(|package| {
+        package["name"].as_str() == Some("leaf")
+            && package["version"].as_str() == Some("0.2.0")
+            && package.get("source").is_none()
+    }));
+    assert!(
+        packages
+            .iter()
+            .any(|package| package["name"].as_str() == Some("serde_json"))
+    );
+    assert!(
+        packages.iter().all(|package| package["name"].as_str() != Some("regex")),
+        "an unrelated sibling dependency leaked into the selected member Cargo lock"
+    );
+    Ok(())
+}
+
 #[cfg(unix)]
 #[test]
 fn workspace_lock_concurrent_publishers_leave_one_parseable_root_lock() -> Result<(), Box<dyn std::error::Error>> {
@@ -4195,6 +4306,61 @@ fn lock_generates_lockfile_for_manifest_project() -> Result<(), Box<dyn std::err
     assert_success(&second_output, "second incan lock");
     let second_lock = fs::read_to_string(tmp.path().join("incan.lock"))?;
     assert_eq!(lock, second_lock, "relocking unchanged inputs must be deterministic");
+    Ok(())
+}
+
+#[test]
+fn canonical_lock_records_exact_registry_resolution_changes() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(
+        tmp.path(),
+        "registry_resolution_lock",
+        r#"
+[rust-dependencies]
+bitflags = "=1.3.2"
+"#,
+    )?;
+    fs::write(
+        &main_path,
+        "rust.module(\"bitflags\")\n\n\ndef main() -> None:\n  pass\n",
+    )?;
+
+    let first_output = run_incan_with_env(tmp.path(), &["lock"], &[("INCAN_LOCK_PREHEAT", "0")])?;
+    assert_success(&first_output, "canonical lock with bitflags 1.3.2");
+    let first_bytes = fs::read(tmp.path().join("incan.lock"))?;
+    let first = incan::lockfile::IncanLock::load(&tmp.path().join("incan.lock"))?;
+    let first_cargo: toml::Value = toml::from_str(&first.cargo_lock_payload)?;
+    assert!(first_cargo["package"].as_array().into_iter().flatten().any(|package| {
+        package["name"].as_str() == Some("bitflags")
+            && package["version"].as_str() == Some("1.3.2")
+            && package["source"]
+                .as_str()
+                .is_some_and(|source| source.starts_with("registry+"))
+    }));
+
+    let manifest_path = tmp.path().join("incan.toml");
+    let first_manifest = fs::read_to_string(&manifest_path)?;
+    fs::write(&manifest_path, first_manifest.replace("=1.3.2", "=2.11.0"))?;
+    let second_output = run_incan_with_env(tmp.path(), &["lock"], &[("INCAN_LOCK_PREHEAT", "0")])?;
+    assert_success(&second_output, "canonical lock with bitflags 2.11.0");
+    let second_bytes = fs::read(tmp.path().join("incan.lock"))?;
+    let second = incan::lockfile::IncanLock::load(&tmp.path().join("incan.lock"))?;
+    let second_cargo: toml::Value = toml::from_str(&second.cargo_lock_payload)?;
+    assert!(second_cargo["package"].as_array().into_iter().flatten().any(|package| {
+        package["name"].as_str() == Some("bitflags")
+            && package["version"].as_str() == Some("2.11.0")
+            && package["source"]
+                .as_str()
+                .is_some_and(|source| source.starts_with("registry+"))
+    }));
+    assert_ne!(
+        first.cargo_lock_payload, second.cargo_lock_payload,
+        "the embedded canonical Cargo payload must change with the registry resolution"
+    );
+    assert_ne!(
+        first_bytes, second_bytes,
+        "the published canonical lock must change byte-for-byte"
+    );
     Ok(())
 }
 

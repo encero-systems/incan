@@ -24,6 +24,9 @@ use crate::provider::{
 
 const LOCKFILE_FORMAT_VERSION: u32 = 2;
 const LEGACY_LOCKFILE_FORMAT_VERSION: u32 = 1;
+/// Synthetic Cargo package used to resolve one canonical lock across all workspace members.
+pub(crate) const WORKSPACE_LOCK_CARGO_PACKAGE_NAME: &str = "incan_workspace";
+
 #[derive(Debug, thiserror::Error)]
 pub enum LockfileError {
     #[error("failed to read {path}: {source}")]

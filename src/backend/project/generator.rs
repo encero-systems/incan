@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use crate::compiled_sdk::CompiledSdkModules;
 use crate::frontend::library_manifest_index::LibraryArtifactMetadata;
 use crate::library_manifest::{LibraryManifest, ProviderDependencyKind, digest_provider_artifact};
+use crate::lockfile::WORKSPACE_LOCK_CARGO_PACKAGE_NAME;
 use crate::manifest::{DependencySource, DependencySpec};
 use crate::provider::{ProviderPlan, SDK_PROVIDER_BUILD_ENV, SdkArtifactProjection, SdkDependencyRebinding};
 use incan_core::lang::{rust_keywords, stdlib};
@@ -1444,7 +1445,7 @@ impl ProjectGenerator {
         let Some(packages) = document.get("package").and_then(toml::Value::as_array) else {
             return Ok(Cow::Borrowed(payload));
         };
-        let locked_packages = packages
+        let mut locked_packages = packages
             .iter()
             .map(|package| LockedPackage {
                 name: package
@@ -1471,11 +1472,69 @@ impl ProjectGenerator {
                     .unwrap_or_default(),
             })
             .collect::<Vec<_>>();
-        let Some(root_index) = locked_packages
+        let existing_root_index = locked_packages
             .iter()
-            .position(|package| package.name == package_name && package.source.is_none())
-        else {
-            return Ok(Cow::Borrowed(payload));
+            .position(|package| package.name == package_name && package.source.is_none());
+        let mut synthesized_root = false;
+        let root_index = if let Some(root_index) = existing_root_index {
+            root_index
+        } else {
+            let Some(workspace_root) = locked_packages
+                .iter()
+                .find(|package| package.name == WORKSPACE_LOCK_CARGO_PACKAGE_NAME && package.source.is_none())
+            else {
+                return Ok(Cow::Borrowed(payload));
+            };
+            let mut selected_package_names = BTreeSet::from([
+                super::INCAN_STDLIB_CRATE_NAME.to_string(),
+                super::INCAN_DERIVE_CRATE_NAME.to_string(),
+            ]);
+            let selected_dependencies = self.dependencies.iter().chain(
+                self.include_dev_dependencies
+                    .then_some(self.dev_dependencies.as_slice())
+                    .unwrap_or_default(),
+            );
+            for dependency in selected_dependencies {
+                selected_package_names.insert(
+                    dependency
+                        .package
+                        .as_deref()
+                        .unwrap_or(&dependency.crate_name)
+                        .to_string(),
+                );
+            }
+            let dependencies = workspace_root
+                .dependencies
+                .iter()
+                .filter(|dependency| {
+                    let package_name = dependency.split_once(' ').map_or(dependency.as_str(), |(name, _)| name);
+                    selected_package_names.contains(package_name)
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            let root_index = locked_packages.len();
+            locked_packages.push(LockedPackage {
+                name: package_name.to_string(),
+                version: package_version.to_string(),
+                source: None,
+                dependencies: dependencies.clone(),
+            });
+            let packages = document
+                .get_mut("package")
+                .and_then(toml::Value::as_array_mut)
+                .ok_or_else(|| io::Error::other("generated Cargo.lock package array disappeared during projection"))?;
+            let mut root = toml::Table::new();
+            root.insert("name".to_string(), toml::Value::String(package_name.to_string()));
+            root.insert("version".to_string(), toml::Value::String(package_version.to_string()));
+            if !dependencies.is_empty() {
+                root.insert(
+                    "dependencies".to_string(),
+                    toml::Value::Array(dependencies.into_iter().map(toml::Value::String).collect()),
+                );
+            }
+            packages.push(toml::Value::Table(root));
+            synthesized_root = true;
+            root_index
         };
 
         let mut reachable = BTreeSet::from([root_index]);
@@ -1500,7 +1559,7 @@ impl ProjectGenerator {
             }
         }
 
-        let mut changed = reachable.len() != locked_packages.len();
+        let mut changed = synthesized_root || reachable.len() != locked_packages.len();
         let packages = document
             .get_mut("package")
             .and_then(toml::Value::as_array_mut)
@@ -2624,6 +2683,75 @@ dependencies = ["path_helper"]
             .collect::<Vec<_>>();
         assert_eq!(names, vec!["path_helper", "root_lib"]);
         assert_eq!(packages[1]["version"].as_str(), Some("0.1.0"));
+        Ok(())
+    }
+
+    #[test]
+    fn cargo_lock_payload_synthesizes_unreferenced_selected_workspace_member_root()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut generator = ProjectGenerator::new("/tmp/generated_unreferenced_member_lock", "leaf", false);
+        generator.set_package_metadata(Some("0.2.0".to_string()), None);
+        generator.set_dependencies(vec![DependencySpec {
+            crate_name: "json_alias".to_string(),
+            version: Some("1".to_string()),
+            features: Vec::new(),
+            default_features: true,
+            source: DependencySource::Registry,
+            optional: false,
+            package: Some("serde_json".to_string()),
+        }]);
+        let payload = r#"version = 4
+
+[[package]]
+name = "incan_workspace"
+version = "0.5.0-dev.19"
+dependencies = [
+ "regex",
+ "serde_json 1.0.149 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "itoa"
+version = "1.0.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "regex"
+version = "1.12.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "serde_json"
+version = "1.0.149"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = ["itoa"]
+"#;
+
+        let projected = generator.cargo_lock_payload_for_package(payload)?;
+        let lock: toml::Value = toml::from_str(projected.as_ref())?;
+        let packages = lock["package"]
+            .as_array()
+            .ok_or("projected lock had no package array")?;
+        let names = packages
+            .iter()
+            .filter_map(|package| package["name"].as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec!["itoa", "serde_json", "leaf"]);
+        let leaf = packages
+            .iter()
+            .find(|package| package["name"].as_str() == Some("leaf"))
+            .ok_or("projected lock had no synthesized selected-member root")?;
+        assert_eq!(leaf["version"].as_str(), Some("0.2.0"));
+        let dependencies = leaf["dependencies"]
+            .as_array()
+            .ok_or("synthesized selected-member root had no dependency array")?
+            .iter()
+            .filter_map(toml::Value::as_str)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            dependencies,
+            vec!["serde_json 1.0.149 (registry+https://github.com/rust-lang/crates.io-index)"]
+        );
         Ok(())
     }
 

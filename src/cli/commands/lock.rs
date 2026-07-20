@@ -23,7 +23,7 @@ use crate::frontend::ast::{Declaration, ImportKind};
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::{diagnostics, lexer, parser};
 use crate::lockfile::{
-    CargoFeatureSelection, IncanLock, PublicationLock, SemanticLockState,
+    CargoFeatureSelection, IncanLock, PublicationLock, SemanticLockState, WORKSPACE_LOCK_CARGO_PACKAGE_NAME,
     compute_resolved_fingerprint_with_sdk_paths, semantic_lock_state, workspace_semantic_lock_state,
 };
 use crate::manifest::{DependencySpec, ProjectManifest};
@@ -52,7 +52,6 @@ const LOCK_DEPENDENCY_PREHEAT_LOCK_FILE: &str = ".incan_dependency_preheat.lock"
 const LOCK_DEPENDENCY_PREHEAT_STALE_LOCK_SECS: u64 = 30 * 60;
 const LIBRARY_DEPENDENCY_PREHEAT_FINGERPRINT_FILE: &str = ".incan_library_dependency_preheat_fingerprint";
 const LIBRARY_DEPENDENCY_PREHEAT_LOCK_FILE: &str = ".incan_library_dependency_preheat.lock";
-const WORKSPACE_LOCK_CARGO_PACKAGE_NAME: &str = "incan_workspace";
 
 /// Inputs needed to preheat generated-library dependencies into the real generated-library Cargo target domain.
 pub(crate) struct GeneratedLibraryDependencyPreheatRequest<'a> {
