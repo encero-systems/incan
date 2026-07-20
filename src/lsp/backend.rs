@@ -929,6 +929,7 @@ fn prepare_lsp_rust_inspect_workspace(
         &resolved,
         &project_requirements,
         None,
+        &[],
     )
     .map_err(|err| err.to_string())?;
     let query_paths = collect_rust_inspect_query_paths(modules);

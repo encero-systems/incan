@@ -12,14 +12,21 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::library_manifest::{
+    ProviderSemanticToolchainDependency, digest_provider_semantic_artifact_with_context_and_cache,
+    digest_toolchain_source_tree_with_cache,
+};
 use crate::manifest::{DependencySource, DependencySpec, GitReference};
 use crate::provider::{
     BackendImplementationRequirement, ComponentSelectionReason, PackageFeaturePlan, ProviderParticipation,
-    ProviderPlan, ResolvedSdkComponents, SdkInventory,
+    ProviderPlan, ProviderProvenance, ProviderRecord, ResolvedSdkComponents, SdkInventory,
 };
 
 const LOCKFILE_FORMAT_VERSION: u32 = 2;
 const LEGACY_LOCKFILE_FORMAT_VERSION: u32 = 1;
+/// Synthetic Cargo package used to resolve one canonical lock across all workspace members.
+pub(crate) const WORKSPACE_LOCK_CARGO_PACKAGE_NAME: &str = "incan_workspace";
+
 #[derive(Debug, thiserror::Error)]
 pub enum LockfileError {
     #[error("failed to read {path}: {source}")]
@@ -238,11 +245,25 @@ pub fn semantic_lock_state(
     sdk_components: Option<&ResolvedSdkComponents>,
     package_features: Option<&PackageFeaturePlan>,
     provider_plan: &ProviderPlan,
+    sdk_path_dependencies: &[DependencySpec],
 ) -> Result<SemanticLockState, String> {
+    let semantic_toolchain_dependencies = semantic_toolchain_dependencies(sdk_path_dependencies)?;
+    let dependency_semantic_digests =
+        provider_dependency_semantic_digests(provider_plan, &semantic_toolchain_dependencies)?;
+    let mut provider_digest_cache = BTreeMap::new();
+    let mut provider_semantic_identities = Vec::new();
+    for provider in provider_plan.records() {
+        let identity = locked_provider_semantic_identity(
+            provider,
+            &dependency_semantic_digests,
+            &semantic_toolchain_dependencies,
+            &mut provider_digest_cache,
+        )?;
+        provider_semantic_identities.push((provider, identity));
+    }
     let sdk = match (sdk_inventory, sdk_components) {
         (Some(inventory), Some(components)) => {
-            let payload = inventory.to_json().map_err(|error| error.to_string())?;
-            let inventory_digest = digest_bytes(payload.as_bytes());
+            let inventory_digest = semantic_sdk_inventory_digest(inventory, &provider_semantic_identities)?;
             let selected = components
                 .enabled
                 .iter()
@@ -295,11 +316,11 @@ pub fn semantic_lock_state(
             optional: edge.optional,
         })
         .collect();
-    let providers = provider_plan
-        .records()
-        .filter(|provider| provider.enabled)
-        .map(|provider| LockedProvider {
-            identity: provider.identity.stable_key(),
+    let providers = provider_semantic_identities
+        .into_iter()
+        .filter(|(provider, _)| provider.enabled)
+        .map(|(provider, identity)| LockedProvider {
+            identity,
             participation: participation_name(provider_plan.participation(provider)).to_string(),
             namespace_claims: provider.namespace_claims.clone(),
             used_modules: provider_plan.used_modules(provider),
@@ -322,6 +343,174 @@ pub fn semantic_lock_state(
         providers,
         workspace_members: Vec::new(),
     })
+}
+
+/// Project a physical provider record into its path-independent semantic lock identity.
+///
+/// Runtime catalog matching keeps the byte-exact provider digest. Only the lock projection substitutes a digest that
+/// removes checked delivery paths from generated metadata while retaining source, API, dependency-content, and
+/// feature changes.
+fn locked_provider_semantic_identity(
+    provider: &ProviderRecord,
+    dependency_semantic_digests: &BTreeMap<String, String>,
+    semantic_toolchain_dependencies: &[ProviderSemanticToolchainDependency],
+    resolved_artifacts: &mut BTreeMap<PathBuf, String>,
+) -> Result<String, String> {
+    let digest = match (provider.manifest.as_deref(), provider.artifact.as_ref()) {
+        (Some(manifest), Some(artifact)) => digest_provider_semantic_artifact_with_context_and_cache(
+            &artifact.crate_root,
+            &artifact.manifest_path,
+            &artifact.cargo_toml_path,
+            manifest,
+            dependency_semantic_digests,
+            semantic_toolchain_dependencies,
+            resolved_artifacts,
+        )
+        .map_err(|error| error.to_string())?,
+        _ if matches!(provider.provenance, ProviderProvenance::Sdk { .. }) && !provider.available => {
+            "unavailable".to_string()
+        }
+        _ => provider.identity.digest.clone(),
+    };
+    let features = provider
+        .identity
+        .feature_projection
+        .iter()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(",");
+    Ok(format!(
+        "{}@{}#{}[{}]",
+        provider.identity.name, provider.identity.version, digest, features
+    ))
+}
+
+/// Resolve exact compiler-owned SDK support roots into path-independent content identities.
+fn semantic_toolchain_dependencies(
+    sdk_path_dependencies: &[DependencySpec],
+) -> Result<Vec<ProviderSemanticToolchainDependency>, String> {
+    let mut resolved_packages = BTreeMap::new();
+    sdk_path_dependencies
+        .iter()
+        .filter_map(|dependency| {
+            let DependencySource::Path { path } = &dependency.source else {
+                return None;
+            };
+            let package_name = dependency
+                .package
+                .clone()
+                .unwrap_or_else(|| dependency.crate_name.clone());
+            // Generated provider artifacts carry their checked `.incnlib` identity and are hashed by the provider
+            // graph below. Only compiler support Cargo packages need the separate recursive source closure.
+            if path.join(format!("{package_name}.incnlib")).is_file() {
+                return None;
+            }
+            Some(
+                digest_toolchain_source_tree_with_cache(path, &mut resolved_packages)
+                    .map(|content_digest| ProviderSemanticToolchainDependency {
+                        crate_name: dependency.crate_name.clone(),
+                        package_name,
+                        artifact_root: path.clone(),
+                        content_digest,
+                    })
+                    .map_err(|error| error.to_string()),
+            )
+        })
+        .collect()
+}
+
+/// Precompute path-independent identities for every locally available physical provider digest.
+fn provider_dependency_semantic_digests(
+    provider_plan: &ProviderPlan,
+    semantic_toolchain_dependencies: &[ProviderSemanticToolchainDependency],
+) -> Result<BTreeMap<String, String>, String> {
+    let mut candidates = BTreeMap::<String, BTreeSet<String>>::new();
+    let mut resolved_artifacts = BTreeMap::new();
+    for provider in provider_plan.records() {
+        let (Some(manifest), Some(artifact)) = (provider.manifest.as_deref(), provider.artifact.as_ref()) else {
+            continue;
+        };
+        let semantic_digest = digest_provider_semantic_artifact_with_context_and_cache(
+            &artifact.crate_root,
+            &artifact.manifest_path,
+            &artifact.cargo_toml_path,
+            manifest,
+            &BTreeMap::new(),
+            semantic_toolchain_dependencies,
+            &mut resolved_artifacts,
+        )
+        .map_err(|error| error.to_string())?;
+        candidates
+            .entry(provider.identity.digest.clone())
+            .or_default()
+            .insert(semantic_digest);
+    }
+    Ok(candidates
+        .into_iter()
+        .filter_map(|(physical, semantic)| {
+            (semantic.len() == 1).then(|| semantic.into_iter().next().map(|semantic| (physical, semantic)))?
+        })
+        .collect())
+}
+
+/// Hash the relocatable SDK inventory after replacing physical provider digests with semantic lock identities.
+fn semantic_sdk_inventory_digest(
+    inventory: &SdkInventory,
+    provider_semantic_identities: &[(&ProviderRecord, String)],
+) -> Result<String, String> {
+    let mut identities = BTreeMap::<(String, String, String), String>::new();
+    for (provider, identity) in provider_semantic_identities {
+        let ProviderProvenance::Sdk { component_id, .. } = &provider.provenance else {
+            continue;
+        };
+        let key = (
+            component_id.clone(),
+            provider.identity.name.clone(),
+            provider.identity.version.clone(),
+        );
+        if identities.insert(key.clone(), identity.clone()).is_some() {
+            return Err(format!(
+                "SDK component `{}` contains duplicate provider {}@{} while computing semantic inventory identity",
+                key.0, key.1, key.2
+            ));
+        }
+    }
+
+    let payload = inventory.to_json().map_err(|error| error.to_string())?;
+    let mut value: serde_json::Value = serde_json::from_str(&payload).map_err(|error| error.to_string())?;
+    let components = value
+        .get_mut("components")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| "serialized SDK inventory has no component map".to_string())?;
+    for (component_id, component) in components {
+        let Some(providers) = component.get_mut("providers").and_then(serde_json::Value::as_array_mut) else {
+            continue;
+        };
+        for provider in providers {
+            let Some(provider_object) = provider.as_object_mut() else {
+                continue;
+            };
+            let Some(name) = provider_object
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+            else {
+                continue;
+            };
+            let Some(version) = provider_object
+                .get("version")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+            else {
+                continue;
+            };
+            if let Some(identity) = identities.get(&(component_id.clone(), name, version)) {
+                provider_object.insert("digest".to_string(), serde_json::Value::String(identity.clone()));
+            }
+        }
+    }
+    let normalized = serde_json::to_vec(&value).map_err(|error| error.to_string())?;
+    Ok(digest_bytes(&normalized))
 }
 
 /// Assemble independently resolved member graphs into the one canonical workspace semantic lock state.
@@ -597,17 +786,49 @@ pub fn compute_resolved_fingerprint(
     project_root: Option<&Path>,
     semantic: &SemanticLockState,
 ) -> String {
+    compute_resolved_fingerprint_with_sdk_paths(
+        dependencies,
+        dev_dependencies,
+        cargo_features,
+        project_root,
+        semantic,
+        &[],
+    )
+}
+
+/// Compute lock freshness while replacing compiler-owned SDK delivery paths with their checked semantic identities.
+///
+/// SDK provider roots are immutable cache coordinates, not project dependency identities. The semantic state already
+/// records each provider's name, version, artifact digest, and selected feature projection, so hashing the physical
+/// path as well would make an equivalent relocated provider store appear to be a dependency change.
+pub fn compute_resolved_fingerprint_with_sdk_paths(
+    dependencies: &[DependencySpec],
+    dev_dependencies: &[DependencySpec],
+    cargo_features: &CargoFeatureSelection,
+    project_root: Option<&Path>,
+    semantic: &SemanticLockState,
+    sdk_path_dependencies: &[DependencySpec],
+) -> String {
     let mut specs = Vec::new();
 
     for spec in dependencies {
-        specs.push(SpecFingerprint::from_spec(spec, "normal", project_root));
+        specs.push(SpecFingerprint::from_spec(
+            spec,
+            "normal",
+            project_root,
+            sdk_path_dependencies,
+        ));
     }
     for spec in dev_dependencies {
-        specs.push(SpecFingerprint::from_spec(spec, "dev", project_root));
+        specs.push(SpecFingerprint::from_spec(
+            spec,
+            "dev",
+            project_root,
+            sdk_path_dependencies,
+        ));
     }
 
     specs.sort_by(|a, b| (a.kind.as_str(), a.crate_name.as_str()).cmp(&(b.kind.as_str(), b.crate_name.as_str())));
-
     let input = FingerprintInput {
         cargo_feature_selection: CargoFeatureSelectionFingerprint::from_selection(cargo_features),
         specs,
@@ -728,7 +949,13 @@ struct SpecFingerprint {
 }
 
 impl SpecFingerprint {
-    fn from_spec(spec: &DependencySpec, kind: &str, project_root: Option<&Path>) -> Self {
+    /// Snapshot one Cargo dependency while distinguishing semantic SDK ownership from ordinary project paths.
+    fn from_spec(
+        spec: &DependencySpec,
+        kind: &str,
+        project_root: Option<&Path>,
+        sdk_path_dependencies: &[DependencySpec],
+    ) -> Self {
         let mut features = spec.features.clone();
         features.sort();
         features.dedup();
@@ -736,13 +963,52 @@ impl SpecFingerprint {
         Self {
             crate_name: spec.crate_name.clone(),
             kind: kind.to_string(),
-            source: source_fingerprint(&spec.source, project_root),
+            source: sdk_dependency_source_fingerprint(spec, sdk_path_dependencies)
+                .unwrap_or_else(|| source_fingerprint(&spec.source, project_root)),
             version_req: spec.version.as_deref().map(normalize_version_req),
             default_features: spec.default_features,
             features,
             optional: spec.optional,
             package: spec.package.clone(),
         }
+    }
+}
+
+/// Return a stable source coordinate for one dependency proven to come from the exact active SDK path catalog.
+///
+/// Provider and toolchain content identity already lives in the semantic lock state hashed beside this spec. Keeping
+/// the source projection tied only to the typed catalog record avoids both physical cache paths and ambiguous
+/// provider-name lookups when workspace members select different feature projections of the same provider.
+fn sdk_dependency_source_fingerprint(
+    spec: &DependencySpec,
+    sdk_path_dependencies: &[DependencySpec],
+) -> Option<String> {
+    let DependencySource::Path { path } = &spec.source else {
+        return None;
+    };
+    let owned_by_sdk = sdk_path_dependencies.iter().any(|candidate| {
+        candidate.crate_name == spec.crate_name
+            && candidate.package == spec.package
+            && matches!(&candidate.source, DependencySource::Path { path: candidate_path } if dependency_paths_match(path, candidate_path))
+    });
+    if !owned_by_sdk {
+        return None;
+    }
+    Some(format!(
+        "sdk-path:{}?package={}",
+        spec.crate_name,
+        spec.package.as_deref().unwrap_or(&spec.crate_name)
+    ))
+}
+
+/// Compare SDK delivery paths without requiring an artifact to remain present after cache relocation.
+fn dependency_paths_match(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+    match (fs::canonicalize(left), fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
     }
 }
 
@@ -1113,6 +1379,140 @@ mod tests {
         )
     }
 
+    fn sdk_path_spec(name: &str, path: &Path) -> DependencySpec {
+        DependencySpec {
+            crate_name: name.to_string(),
+            version: None,
+            features: Vec::new(),
+            default_features: false,
+            source: DependencySource::Path {
+                path: path.to_path_buf(),
+            },
+            optional: false,
+            package: None,
+        }
+    }
+
+    fn production_toolchain_semantic_fixture(
+        checkout: &Path,
+    ) -> Result<(Vec<DependencySpec>, ProviderPlan, SdkInventory, ResolvedSdkComponents), Box<dyn std::error::Error>>
+    {
+        let derive_root = checkout.join("crates/incan_derive");
+        fs::create_dir_all(derive_root.join("src"))?;
+        fs::write(
+            derive_root.join("Cargo.toml"),
+            "[package]\nname = \"incan_derive\"\nversion = \"0.5.0\"\n",
+        )?;
+        fs::write(derive_root.join("src/lib.rs"), "pub fn derive_marker() {}\n")?;
+
+        let provider_root = checkout.join("sdk/components/support-provider");
+        fs::create_dir_all(provider_root.join("src"))?;
+        fs::write(
+            provider_root.join("Cargo.toml"),
+            format!(
+                "[package]\nname = \"support_provider\"\nversion = \"0.5.0\"\n\n[dependencies]\nincan_derive = {{ path = \"{}\" }}\n",
+                derive_root.display()
+            ),
+        )?;
+        fs::write(provider_root.join("src/lib.rs"), "pub fn support() {}\n")?;
+        let manifest_path = provider_root.join("support_provider.incnlib");
+        let mut manifest = crate::library_manifest::LibraryManifest::new("support_provider", "0.5.0");
+        manifest.contract_metadata.provider.implementation_facets.push(
+            crate::library_manifest::ProviderImplementationFacet {
+                id: "derive-support".to_string(),
+                required_modules: BTreeSet::new(),
+                required_features: BTreeSet::new(),
+                cargo_features: BTreeMap::new(),
+                cargo_dependencies: vec![crate::library_manifest::ProviderCargoDependency {
+                    crate_name: "incan_derive".to_string(),
+                    package: None,
+                    version: None,
+                    features: BTreeSet::new(),
+                    default_features: false,
+                    source: crate::library_manifest::ProviderCargoDependencySource::Toolchain {
+                        relative_path: "crates/incan_derive".to_string(),
+                    },
+                }],
+            },
+        );
+        manifest.write_to_path(&manifest_path)?;
+        let physical_digest = crate::library_manifest::digest_provider_artifact(&provider_root)?;
+        let artifact = crate::frontend::library_manifest_index::LibraryArtifactMetadata::from_manifest_path(
+            "support_provider",
+            "support_provider",
+            manifest_path.clone(),
+            provider_root.clone(),
+        );
+        let provider = ProviderRecord {
+            identity: crate::provider::ProviderIdentity {
+                name: "support_provider".to_string(),
+                version: "0.5.0".to_string(),
+                digest: physical_digest.clone(),
+                feature_projection: BTreeSet::new(),
+            },
+            provenance: ProviderProvenance::Sdk {
+                sdk_identity: "incan@0.5.0".to_string(),
+                component_id: "support".to_string(),
+                inventory_path: None,
+            },
+            authority: crate::provider::NamespaceAuthority::SdkReserved,
+            namespace_claims: BTreeSet::new(),
+            available: true,
+            enabled: true,
+            manifest: Some(std::sync::Arc::new(manifest)),
+            artifact: Some(artifact),
+            implementation_facets: Vec::new(),
+        };
+        let provider_plan = ProviderPlan::new(
+            crate::frontend::library_manifest_index::LibraryManifestIndex::default(),
+            vec![provider],
+            std::iter::empty::<Vec<String>>(),
+        )?;
+        let inventory = SdkInventory {
+            root: checkout.join("sdk"),
+            sdk_id: "incan".to_string(),
+            sdk_version: "0.5.0".to_string(),
+            compiler_requirement: "^0.5".to_string(),
+            components: BTreeMap::from([(
+                "support".to_string(),
+                crate::provider::SdkComponent {
+                    id: "support".to_string(),
+                    version: "0.5.0".to_string(),
+                    mandatory: false,
+                    available: true,
+                    dependencies: BTreeSet::new(),
+                    providers: vec![crate::provider::SdkProviderDescriptor {
+                        name: "support_provider".to_string(),
+                        version: "0.5.0".to_string(),
+                        digest: physical_digest,
+                        namespace_claims: BTreeSet::new(),
+                        manifest_path: Some(manifest_path),
+                        crate_root: Some(provider_root),
+                    }],
+                },
+            )]),
+            profiles: BTreeMap::from([("default".to_string(), BTreeSet::from(["support".to_string()]))]),
+        };
+        let components = ResolvedSdkComponents {
+            sdk_identity: "incan@0.5.0".to_string(),
+            profile: "default".to_string(),
+            enabled: BTreeSet::from(["support".to_string()]),
+            unavailable: BTreeSet::new(),
+            reasons: BTreeMap::from([(
+                "support".to_string(),
+                ComponentSelectionReason::Profile {
+                    profile: "default".to_string(),
+                },
+            )]),
+        };
+        Ok((
+            vec![sdk_path_spec("incan_derive", &derive_root)],
+            provider_plan,
+            inventory,
+            components,
+        ))
+    }
+
     #[test]
     fn fingerprint_is_stable_across_feature_order() {
         let deps = vec![sample_spec("alpha", vec!["b", "a"])];
@@ -1122,6 +1522,277 @@ mod tests {
         let first = compute_deps_fingerprint(&deps, &[], &selection, None);
         let second = compute_deps_fingerprint(&deps_reordered, &[], &selection, None);
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn sdk_provider_fingerprint_uses_semantic_identity_across_relocated_stores_issue921() -> TestResult {
+        let temp = tempfile::tempdir()?;
+        let first_path = temp.path().join("provider-home-a/components/stdlib-core");
+        let second_path = temp.path().join("provider-home-b/components/stdlib-core");
+        let first = sdk_path_spec("incan_stdlib_core", &first_path);
+        let second = sdk_path_spec("incan_stdlib_core", &second_path);
+        let semantic = SemanticLockState {
+            providers: vec![LockedProvider {
+                identity: "incan_stdlib_core@0.5.0#sha256:stable[]".to_string(),
+                participation: "used".to_string(),
+                namespace_claims: BTreeSet::new(),
+                used_modules: BTreeSet::new(),
+                implementation_facets: Vec::new(),
+                backend_requirements: BTreeSet::new(),
+            }],
+            ..SemanticLockState::default()
+        };
+        let selection = CargoFeatureSelection::default();
+
+        let first_fingerprint = compute_resolved_fingerprint_with_sdk_paths(
+            std::slice::from_ref(&first),
+            &[],
+            &selection,
+            Some(temp.path()),
+            &semantic,
+            std::slice::from_ref(&first),
+        );
+        let second_fingerprint = compute_resolved_fingerprint_with_sdk_paths(
+            std::slice::from_ref(&second),
+            &[],
+            &selection,
+            Some(temp.path()),
+            &semantic,
+            std::slice::from_ref(&second),
+        );
+        assert_eq!(first_fingerprint, second_fingerprint);
+
+        let first_lock = IncanLock::new_with_semantic(
+            first_fingerprint,
+            selection.clone(),
+            semantic.clone(),
+            "version = 4\n".to_string(),
+        );
+        let second_lock = IncanLock::new_with_semantic(
+            second_fingerprint,
+            selection.clone(),
+            semantic.clone(),
+            "version = 4\n".to_string(),
+        );
+        let first_lock_path = temp.path().join("first/incan.lock");
+        let second_lock_path = temp.path().join("second/incan.lock");
+        fs::create_dir_all(first_lock_path.parent().ok_or("first lock path has no parent")?)?;
+        fs::create_dir_all(second_lock_path.parent().ok_or("second lock path has no parent")?)?;
+        first_lock.write(&first_lock_path)?;
+        second_lock.write(&second_lock_path)?;
+        assert_eq!(fs::read(first_lock_path)?, fs::read(second_lock_path)?);
+
+        let ambiguous_semantic = SemanticLockState {
+            providers: vec![
+                LockedProvider {
+                    identity: "incan_stdlib_core@0.5.0#sha256:stable[feature-a]".to_string(),
+                    participation: "used".to_string(),
+                    namespace_claims: BTreeSet::new(),
+                    used_modules: BTreeSet::new(),
+                    implementation_facets: Vec::new(),
+                    backend_requirements: BTreeSet::new(),
+                },
+                LockedProvider {
+                    identity: "incan_stdlib_core@0.5.0#sha256:stable[feature-b]".to_string(),
+                    participation: "used".to_string(),
+                    namespace_claims: BTreeSet::new(),
+                    used_modules: BTreeSet::new(),
+                    implementation_facets: Vec::new(),
+                    backend_requirements: BTreeSet::new(),
+                },
+            ],
+            ..SemanticLockState::default()
+        };
+        let ambiguous_first = compute_resolved_fingerprint_with_sdk_paths(
+            std::slice::from_ref(&first),
+            &[],
+            &selection,
+            Some(temp.path()),
+            &ambiguous_semantic,
+            std::slice::from_ref(&first),
+        );
+        let ambiguous_second = compute_resolved_fingerprint_with_sdk_paths(
+            std::slice::from_ref(&second),
+            &[],
+            &selection,
+            Some(temp.path()),
+            &ambiguous_semantic,
+            std::slice::from_ref(&second),
+        );
+        assert_eq!(ambiguous_first, ambiguous_second);
+        let mut changed_ambiguous = ambiguous_semantic.clone();
+        changed_ambiguous.providers[1].identity = "incan_stdlib_core@0.5.0#sha256:changed[feature-b]".to_string();
+        assert_ne!(
+            ambiguous_second,
+            compute_resolved_fingerprint_with_sdk_paths(
+                std::slice::from_ref(&second),
+                &[],
+                &selection,
+                Some(temp.path()),
+                &changed_ambiguous,
+                std::slice::from_ref(&second),
+            )
+        );
+
+        let changed_semantic = SemanticLockState {
+            providers: vec![LockedProvider {
+                identity: "incan_stdlib_core@0.5.0#sha256:changed[]".to_string(),
+                participation: "used".to_string(),
+                namespace_claims: BTreeSet::new(),
+                used_modules: BTreeSet::new(),
+                implementation_facets: Vec::new(),
+                backend_requirements: BTreeSet::new(),
+            }],
+            ..SemanticLockState::default()
+        };
+        let changed_fingerprint = compute_resolved_fingerprint_with_sdk_paths(
+            std::slice::from_ref(&second),
+            &[],
+            &selection,
+            Some(temp.path()),
+            &changed_semantic,
+            std::slice::from_ref(&second),
+        );
+        assert_ne!(second_lock.deps_fingerprint, changed_fingerprint);
+
+        let ordinary_first = compute_resolved_fingerprint(&[first], &[], &selection, Some(temp.path()), &semantic);
+        let ordinary_second = compute_resolved_fingerprint(&[second], &[], &selection, Some(temp.path()), &semantic);
+        assert_ne!(ordinary_first, ordinary_second);
+        Ok(())
+    }
+
+    #[test]
+    fn sdk_toolchain_fingerprint_tracks_content_not_source_checkout_path_issue921() -> TestResult {
+        let temp = tempfile::tempdir()?;
+        let first_checkout = temp.path().join("source-checkout-a");
+        let second_checkout = temp.path().join("source-checkout-b");
+        let (first_specs, first_plan, first_inventory, first_components) =
+            production_toolchain_semantic_fixture(&first_checkout)?;
+        let (second_specs, second_plan, second_inventory, second_components) =
+            production_toolchain_semantic_fixture(&second_checkout)?;
+        let first_semantic = semantic_lock_state(
+            &first_checkout,
+            Some(&first_inventory),
+            Some(&first_components),
+            None,
+            &first_plan,
+            &first_specs,
+        )?;
+        let second_semantic = semantic_lock_state(
+            &second_checkout,
+            Some(&second_inventory),
+            Some(&second_components),
+            None,
+            &second_plan,
+            &second_specs,
+        )?;
+        assert_eq!(first_semantic, second_semantic);
+        let selection = CargoFeatureSelection::default();
+        let first_fingerprint = compute_resolved_fingerprint_with_sdk_paths(
+            &first_specs,
+            &[],
+            &selection,
+            Some(&first_checkout),
+            &first_semantic,
+            &first_specs,
+        );
+        let second_fingerprint = compute_resolved_fingerprint_with_sdk_paths(
+            &second_specs,
+            &[],
+            &selection,
+            Some(&second_checkout),
+            &second_semantic,
+            &second_specs,
+        );
+        assert_eq!(first_fingerprint, second_fingerprint);
+
+        fs::write(
+            second_checkout.join("crates/incan_derive/src/lib.rs"),
+            "pub fn derive_marker() { changed(); }\n",
+        )?;
+        let changed_semantic = semantic_lock_state(
+            &second_checkout,
+            Some(&second_inventory),
+            Some(&second_components),
+            None,
+            &second_plan,
+            &second_specs,
+        )?;
+        assert_ne!(second_semantic, changed_semantic);
+        let changed_fingerprint = compute_resolved_fingerprint_with_sdk_paths(
+            &second_specs,
+            &[],
+            &selection,
+            Some(&second_checkout),
+            &changed_semantic,
+            &second_specs,
+        );
+        assert_ne!(second_fingerprint, changed_fingerprint);
+        Ok(())
+    }
+
+    #[test]
+    fn sdk_inventory_digest_uses_provider_semantics_not_physical_artifact_digest_issue921() -> TestResult {
+        let inventory = |root: &Path, physical_digest: &str| SdkInventory {
+            root: root.to_path_buf(),
+            sdk_id: "incan".to_string(),
+            sdk_version: "0.5.0".to_string(),
+            compiler_requirement: "^0.5".to_string(),
+            components: BTreeMap::from([(
+                "stdlib-data".to_string(),
+                crate::provider::SdkComponent {
+                    id: "stdlib-data".to_string(),
+                    version: "0.5.0".to_string(),
+                    mandatory: false,
+                    available: true,
+                    dependencies: BTreeSet::new(),
+                    providers: vec![crate::provider::SdkProviderDescriptor {
+                        name: "incan_stdlib_data".to_string(),
+                        version: "0.5.0".to_string(),
+                        digest: physical_digest.to_string(),
+                        namespace_claims: BTreeSet::from([vec!["std".to_string(), "regex".to_string()]]),
+                        manifest_path: Some(root.join("components/stdlib-data/incan_stdlib_data.incnlib")),
+                        crate_root: Some(root.join("components/stdlib-data")),
+                    }],
+                },
+            )]),
+            profiles: BTreeMap::from([("default".to_string(), BTreeSet::from(["stdlib-data".to_string()]))]),
+        };
+        let provider = ProviderRecord {
+            identity: crate::provider::ProviderIdentity {
+                name: "incan_stdlib_data".to_string(),
+                version: "0.5.0".to_string(),
+                digest: "sha256:physical-a".to_string(),
+                feature_projection: BTreeSet::new(),
+            },
+            provenance: ProviderProvenance::Sdk {
+                sdk_identity: "incan@0.5.0".to_string(),
+                component_id: "stdlib-data".to_string(),
+                inventory_path: None,
+            },
+            authority: crate::provider::NamespaceAuthority::SdkReserved,
+            namespace_claims: BTreeSet::new(),
+            available: true,
+            enabled: true,
+            manifest: None,
+            artifact: None,
+            implementation_facets: Vec::new(),
+        };
+        let semantic_identity = "incan_stdlib_data@0.5.0#sha256:semantic[]".to_string();
+        let first = inventory(Path::new("/provider-home-a"), "sha256:physical-a");
+        let second = inventory(Path::new("/provider-home-b"), "sha256:physical-b");
+        assert_eq!(
+            semantic_sdk_inventory_digest(&first, &[(&provider, semantic_identity.clone())])?,
+            semantic_sdk_inventory_digest(&second, &[(&provider, semantic_identity.clone())])?
+        );
+        assert_ne!(
+            semantic_sdk_inventory_digest(&second, &[(&provider, semantic_identity)])?,
+            semantic_sdk_inventory_digest(
+                &second,
+                &[(&provider, "incan_stdlib_data@0.5.0#sha256:changed[]".to_string())],
+            )?
+        );
+        Ok(())
     }
 
     #[test]

@@ -14,8 +14,8 @@ use std::sync::{Arc, LazyLock, Mutex};
 #[cfg(feature = "rust_inspect")]
 use crate::backend::ProjectGenerator;
 use crate::backend::ir::detect_serde_non_import_usage;
-use crate::backend::project::INCAN_STDLIB_CRATE_NAME;
 use crate::backend::project::generator::GENERATED_CARGO_TARGET_DIR_ENV;
+use crate::backend::project::{GENERATED_TOOLCHAIN_SUPPORT_CRATES, INCAN_STDLIB_CRATE_NAME};
 use crate::cli::prelude::ParsedModule;
 use crate::cli::{CliError, CliResult};
 use crate::dependency_resolver::ResolvedDependencies;
@@ -1288,7 +1288,7 @@ fn provider_cargo_dependency_spec(dependency: &ProviderCargoDependency) -> Depen
     let source = match &dependency.source {
         ProviderCargoDependencySource::Registry => DependencySource::Registry,
         ProviderCargoDependencySource::Toolchain { relative_path } => DependencySource::Path {
-            path: stdlib_extra_crate_workspace_root().join(relative_path),
+            path: crate::toolchain_layout::resolve_toolchain_relative_path(Path::new(relative_path)),
         },
     };
     DependencySpec {
@@ -1953,7 +1953,7 @@ fn parser_only_library_manifest_entry(
 }
 
 /// Ensure clean check/format/test entrypoints see the same public dependency manifests as warmed worktrees.
-fn prepare_library_dependency_artifacts(
+pub(crate) fn prepare_library_dependency_artifacts(
     manifest: &ProjectManifest,
     feature_plan: Option<&PackageFeaturePlan>,
     active_dependencies: &BTreeSet<String>,
@@ -2125,13 +2125,12 @@ pub(crate) fn collect_project_requirements(
         sdk_path_dependencies: Vec::new(),
         sdk_artifact_projections: Vec::new(),
     };
-    let workspace_root = stdlib_extra_crate_workspace_root();
     for namespace_name in &stdlib_namespaces {
         let Some(namespace) = stdlib::find_namespace(namespace_name) else {
             continue;
         };
         for dep in namespace.extra_crate_deps {
-            let spec = dependency_spec_from_stdlib_dep(dep, &workspace_root);
+            let spec = dependency_spec_from_stdlib_dep(dep);
             if matches!(spec.source, DependencySource::Path { .. }) {
                 merge_requirement_dependency(
                     &mut requirements.sdk_path_dependencies,
@@ -2185,6 +2184,39 @@ pub(crate) fn collect_project_requirements(
     Ok(requirements)
 }
 
+/// Return the exact compiler-owned path catalog used only for semantic generated-artifact identity.
+pub(crate) fn semantic_sdk_path_dependencies(requirements: &ProjectRequirements) -> Vec<DependencySpec> {
+    let mut dependencies = requirements.sdk_path_dependencies.clone();
+    for crate_name in GENERATED_TOOLCHAIN_SUPPORT_CRATES {
+        if dependencies
+            .iter()
+            .any(|dependency| dependency.crate_name == crate_name)
+        {
+            continue;
+        }
+        dependencies.push(compiler_support_dependency_spec(crate_name));
+    }
+    dependencies.sort_by(|left, right| {
+        (&left.crate_name, left.package.as_deref()).cmp(&(&right.crate_name, right.package.as_deref()))
+    });
+    dependencies
+}
+
+/// Describe one support crate emitted into every generated Cargo project as an exact compiler-owned path.
+fn compiler_support_dependency_spec(crate_name: &str) -> DependencySpec {
+    DependencySpec {
+        crate_name: crate_name.to_string(),
+        version: None,
+        features: Vec::new(),
+        default_features: true,
+        source: DependencySource::Path {
+            path: crate::toolchain_layout::resolve_toolchain_crate_path(crate_name),
+        },
+        optional: false,
+        package: None,
+    }
+}
+
 /// Build a dependency specification from a stdlib extra crate requirement.
 fn dependency_spec_from_stdlib_extra_crate(crate_name: &str) -> CliResult<DependencySpec> {
     let dep = stdlib::find_extra_crate_dep(crate_name).ok_or_else(|| {
@@ -2192,32 +2224,11 @@ fn dependency_spec_from_stdlib_extra_crate(crate_name: &str) -> CliResult<Depend
             "stdlib dependency metadata for `{crate_name}` is missing from the registry"
         ))
     })?;
-    let workspace_root = stdlib_extra_crate_workspace_root();
-    Ok(dependency_spec_from_stdlib_dep(dep, &workspace_root))
-}
-
-/// Resolve the workspace root that owns bundled stdlib support crates.
-///
-/// A release host compiler can generate an artifact inside a staged target archive, and an installed compiler runs
-/// beside that archive's `crates/` directory. Both must resolve path-backed stdlib requirements against the target
-/// toolchain rather than the checkout that originally compiled the host executable.
-fn stdlib_extra_crate_workspace_root() -> PathBuf {
-    if let Some(crates_dir) = env::var_os("INCAN_TOOLCHAIN_CRATES_DIR").filter(|path| !path.is_empty()) {
-        let crates_dir = PathBuf::from(crates_dir);
-        if let Some(root) = crates_dir.parent() {
-            return root.to_path_buf();
-        }
-    }
-    for base in crate::toolchain_layout::current_executable_search_bases() {
-        if base.join("crates/incan_web_macros/Cargo.toml").is_file() {
-            return base;
-        }
-    }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    Ok(dependency_spec_from_stdlib_dep(dep))
 }
 
 /// Build a dependency specification from a stdlib dependency requirement.
-fn dependency_spec_from_stdlib_dep(dep: &StdlibExtraCrateDep, workspace_root: &Path) -> DependencySpec {
+fn dependency_spec_from_stdlib_dep(dep: &StdlibExtraCrateDep) -> DependencySpec {
     match dep.source {
         StdlibExtraCrateSource::Version(version) => DependencySpec {
             crate_name: dep.crate_name.to_string(),
@@ -2234,7 +2245,7 @@ fn dependency_spec_from_stdlib_dep(dep: &StdlibExtraCrateDep, workspace_root: &P
             features: dep.features.iter().map(|feature| (*feature).to_string()).collect(),
             default_features: true,
             source: DependencySource::Path {
-                path: workspace_root.join(relative_path),
+                path: crate::toolchain_layout::resolve_toolchain_relative_path(Path::new(relative_path)),
             },
             optional: false,
             package: None,
@@ -2498,6 +2509,8 @@ fn rust_inspect_workspace_fingerprint(
     sdk_path_dependencies: &[DependencySpec],
     sdk_artifact_projections: &[SdkArtifactProjection],
     cargo_lock_payload: Option<&str>,
+    cargo_lock_projection_root: Option<&str>,
+    clear_cargo_lock: bool,
 ) -> String {
     let mut hasher = Sha256::new();
     hasher.update(b"incan_rust_inspect_workspace/2\0");
@@ -2505,6 +2518,14 @@ fn rust_inspect_workspace_fingerprint(
     hasher.update(b"\0");
     hasher.update(cargo_package_name.as_bytes());
     hasher.update(b"\0");
+    if clear_cargo_lock {
+        hasher.update(b"clear_cargo_lock\0");
+    }
+    if let Some(root) = cargo_lock_projection_root {
+        hasher.update(b"lock_projection\0");
+        hasher.update(root.as_bytes());
+        hasher.update(b"\0");
+    }
     match rust_edition {
         Some(e) => {
             hasher.update(b"ed\0");
@@ -2835,6 +2856,7 @@ pub(crate) fn ensure_rust_inspect_workspace(
     resolved: &ResolvedDependencies,
     project_requirements: &ProjectRequirements,
     cargo_lock_payload: Option<String>,
+    cargo_policy_flags: &[String],
 ) -> CliResult<PathBuf> {
     ensure_rust_inspect_workspace_with_cargo_package_name(
         project_root,
@@ -2844,6 +2866,9 @@ pub(crate) fn ensure_rust_inspect_workspace(
         resolved,
         project_requirements,
         cargo_lock_payload,
+        None,
+        false,
+        cargo_policy_flags,
     )
 }
 
@@ -2858,6 +2883,9 @@ pub(crate) fn ensure_rust_inspect_workspace_with_cargo_package_name(
     resolved: &ResolvedDependencies,
     project_requirements: &ProjectRequirements,
     cargo_lock_payload: Option<String>,
+    cargo_lock_projection_root: Option<&str>,
+    clear_cargo_lock: bool,
+    cargo_policy_flags: &[String],
 ) -> CliResult<PathBuf> {
     let fingerprint = rust_inspect_workspace_fingerprint(
         project_name,
@@ -2869,6 +2897,8 @@ pub(crate) fn ensure_rust_inspect_workspace_with_cargo_package_name(
         &project_requirements.sdk_path_dependencies,
         &project_requirements.sdk_artifact_projections,
         cargo_lock_payload.as_deref(),
+        cargo_lock_projection_root,
+        clear_cargo_lock,
     );
     let rust_inspect_manifest_dir = rust_inspect_workspace_dir(project_root, project_name, &fingerprint);
     let fingerprint_path = rust_inspect_manifest_dir.join(RUST_INSPECT_WORKSPACE_FINGERPRINT_FILE);
@@ -2899,6 +2929,9 @@ pub(crate) fn ensure_rust_inspect_workspace_with_cargo_package_name(
     generator.set_sdk_artifact_projections(project_requirements.sdk_artifact_projections.clone());
     generator.set_rust_edition(rust_edition);
     generator.set_cargo_lock_payload(cargo_lock_payload);
+    generator.set_cargo_lock_projection_root(cargo_lock_projection_root.map(ToOwned::to_owned));
+    generator.set_clear_cargo_lock(clear_cargo_lock);
+    generator.set_cargo_policy_flags(cargo_policy_flags.to_vec());
     let mut referenced_crates = std::collections::BTreeSet::new();
     for dep in resolved.dependencies.iter().chain(resolved.dev_dependencies.iter()) {
         referenced_crates.insert(dep.crate_name.replace('-', "_"));
@@ -2915,6 +2948,12 @@ pub(crate) fn ensure_rust_inspect_workspace_with_cargo_package_name(
     generator.generate(rust_inspect_stub.as_str()).map_err(|e| {
         CliError::failure(format!(
             "Failed to generate rust-inspect lock project at {}: {e}",
+            rust_inspect_manifest_dir.display()
+        ))
+    })?;
+    generator.materialize_cargo_lock_projection().map_err(|error| {
+        CliError::failure(format!(
+            "Failed to project rust-inspect Cargo.lock at {}: {error}",
             rust_inspect_manifest_dir.display()
         ))
     })?;
@@ -5563,6 +5602,8 @@ pub def main() -> int:
             &requirements.sdk_path_dependencies,
             &requirements.sdk_artifact_projections,
             Some("lock-bytes"),
+            None,
+            false,
         );
         let fp_b = super::rust_inspect_workspace_fingerprint(
             "probe",
@@ -5574,6 +5615,8 @@ pub def main() -> int:
             &requirements.sdk_path_dependencies,
             &requirements.sdk_artifact_projections,
             Some("lock-bytes"),
+            None,
+            false,
         );
         let workspace_fp = super::rust_inspect_workspace_fingerprint(
             "probe",
@@ -5585,6 +5628,8 @@ pub def main() -> int:
             &requirements.sdk_path_dependencies,
             &requirements.sdk_artifact_projections,
             Some("lock-bytes"),
+            None,
+            false,
         );
         assert_eq!(fp_a, fp_b);
         assert_ne!(fp_a, workspace_fp);
@@ -5609,6 +5654,8 @@ pub def main() -> int:
             &requirements.sdk_path_dependencies,
             &requirements.sdk_artifact_projections,
             Some("lock-a"),
+            None,
+            false,
         );
         let fp_two = super::rust_inspect_workspace_fingerprint(
             "p",
@@ -5620,8 +5667,63 @@ pub def main() -> int:
             &requirements.sdk_path_dependencies,
             &requirements.sdk_artifact_projections,
             Some("lock-b"),
+            None,
+            false,
         );
         assert_ne!(fp_one, fp_two);
+    }
+
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn rust_inspect_projection_receives_frozen_cargo_policy() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let requirements = ProjectRequirements::default();
+        let resolved = ResolvedDependencies {
+            dependencies: Vec::new(),
+            dev_dependencies: Vec::new(),
+        };
+        let canonical = format!(
+            "version = 4\n\n[[package]]\nname = \"incan_workspace\"\nversion = \"{}\"\n",
+            crate::version::INCAN_VERSION
+        );
+        let fingerprint = super::rust_inspect_workspace_fingerprint(
+            "policy_probe",
+            "caller",
+            None,
+            &resolved,
+            &requirements.stdlib_features,
+            &requirements.sdk_dependency_rebindings,
+            &requirements.sdk_path_dependencies,
+            &requirements.sdk_artifact_projections,
+            Some(&canonical),
+            Some("incan_workspace"),
+            false,
+        );
+        let output_dir = super::rust_inspect_workspace_dir(tmp.path(), "policy_probe", &fingerprint);
+        let flags = vec!["--frozen".to_string()];
+
+        let result = ensure_rust_inspect_workspace_with_cargo_package_name(
+            tmp.path(),
+            "policy_probe",
+            "caller",
+            None,
+            &resolved,
+            &requirements,
+            Some(canonical),
+            Some("incan_workspace"),
+            false,
+            &flags,
+        );
+        assert!(
+            result.is_err(),
+            "the deliberately incomplete canonical fixture must fail closed"
+        );
+        assert_eq!(
+            crate::backend::project::runner::test_projection_cargo_policy(&output_dir),
+            Some(flags),
+            "rust-inspect must set frozen policy before attempting Cargo lock projection"
+        );
+        Ok(())
     }
 
     #[cfg(feature = "rust_inspect")]
@@ -5656,6 +5758,8 @@ pub def main() -> int:
             &requirements.sdk_path_dependencies,
             &requirements.sdk_artifact_projections,
             None,
+            None,
+            false,
         );
         fs::write(artifact.join("src/lib.rs"), "pub fn value() -> u8 { 2 }\n")?;
         let after = super::rust_inspect_workspace_fingerprint(
@@ -5668,6 +5772,8 @@ pub def main() -> int:
             &requirements.sdk_path_dependencies,
             &requirements.sdk_artifact_projections,
             None,
+            None,
+            false,
         );
 
         assert_ne!(before, after);
@@ -5820,6 +5926,9 @@ pub def main() -> int:
             &resolved,
             &requirements,
             None,
+            None,
+            false,
+            &[],
         )?;
 
         let cargo_manifest = fs::read_to_string(generated.join("Cargo.toml"))?;
@@ -5859,6 +5968,9 @@ pub def main() -> int:
             &resolved,
             &requirements,
             None,
+            None,
+            false,
+            &[],
         )?;
         assert_eq!(generated, regenerated);
         assert!(fs::read_to_string(shadow_root.join("src/lib.rs"))?.contains("value"));
@@ -5954,6 +6066,7 @@ pub def main() -> int:
             &resolved,
             &requirements,
             Some("[[package]]\nname = \"metadata_probe\"\n".to_string()),
+            &[],
         )?;
         assert_eq!(
             super::test_rust_inspect_workspace_generations(&out_dir),
@@ -6010,6 +6123,7 @@ pub def main() -> int:
             &resolved,
             &requirements,
             lock.clone(),
+            &[],
         )?;
         assert_eq!(
             super::test_rust_inspect_workspace_generations(&out_dir),
@@ -6024,6 +6138,7 @@ pub def main() -> int:
             &resolved,
             &requirements,
             lock,
+            &[],
         )?;
         assert_eq!(
             super::test_rust_inspect_workspace_generations(&out_dir),

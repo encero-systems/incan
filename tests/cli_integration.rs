@@ -636,6 +636,32 @@ fn concurrent_sdk_provider_publication_reuses_one_complete_identity() -> Result<
         inventory.components.values().all(|component| component.available),
         "the reused full-profile provider identity must contain every component"
     );
+    for component_id in inventory.components.keys() {
+        let manifest_path = artifact_roots
+            .first()
+            .ok_or("concurrent provider publication did not produce an artifact root")?
+            .join("components")
+            .join(component_id)
+            .join("Cargo.toml");
+        let manifest: toml::Value = toml::from_str(&fs::read_to_string(&manifest_path)?)?;
+        let package = manifest.get("package").and_then(toml::Value::as_table).ok_or_else(|| {
+            format!(
+                "SDK provider manifest {} has no [package] table",
+                manifest_path.display()
+            )
+        })?;
+        assert_eq!(
+            package.get("license").and_then(toml::Value::as_str),
+            Some("Apache-2.0"),
+            "official SDK provider `{component_id}` must preserve its source-owned SPDX license: {}",
+            manifest_path.display()
+        );
+        assert!(
+            package.get("license-file").is_none(),
+            "SPDX-licensed SDK provider `{component_id}` must not invent a Cargo license-file: {}",
+            manifest_path.display()
+        );
+    }
     Ok(())
 }
 
@@ -1398,12 +1424,12 @@ library = "src/lib.incn"
     )?;
     fs::write(
         root.path().join("src/lib.incn"),
-        "pub def answer() -> int:\n  return 42\n",
+        "from std.json import JsonValue\n\n\npub def answer() -> int:\n  return 42\n",
     )?;
 
     let warmup = run_incan(root.path(), &["build", "--lib"])?;
     assert_success(&warmup, "standalone SDK and library artifact warmup");
-    fs::remove_dir_all(root.path().join("target/lib"))?;
+    fs::remove_dir_all(root.path().join("target"))?;
     fs::remove_file(root.path().join("incan.lock"))?;
 
     fs::write(
@@ -1436,11 +1462,14 @@ main = "src/main.incn"
 
 [dependencies]
 root_lib = { workspace = true }
+
+[rust-dependencies]
+regex = "1"
 "#,
     )?;
     fs::write(
         consumer.join("src/main.incn"),
-        "from pub::root_lib import answer\n\n\ndef main() -> None:\n  println(answer())\n",
+        "from pub::root_lib import answer\nfrom rust::regex import Regex\n\n\ndef main() -> None:\n  println(answer())\n",
     )?;
 
     let (lock_output, timed_out) = run_incan_with_timeout(root.path(), &["lock"], std::time::Duration::from_secs(60))?;
@@ -1452,16 +1481,40 @@ root_lib = { workspace = true }
     );
     assert_success(&lock_output, "fresh rooted workspace lock generation");
 
-    // The first lock prepares the previously missing root artifact, which currently changes the semantic fingerprint.
-    // Refresh once so this regression reaches the independent library package-identity boundary from #909.
+    let first_lock = fs::read(root.path().join("incan.lock"))?;
     let lock_refresh = run_incan(root.path(), &["lock"])?;
     assert_success(
         &lock_refresh,
-        "rooted workspace lock refresh after artifact preparation",
+        "rooted workspace lock convergence check after artifact preparation",
+    );
+    assert_eq!(
+        first_lock,
+        fs::read(root.path().join("incan.lock"))?,
+        "the first lock must snapshot the root artifact it prepared and converge without a fingerprint-only refresh"
     );
 
     let library_output = run_incan(root.path(), &["build", "--lib", "--member", "root_lib", "--locked"])?;
-    assert_success(&library_output, "selected rooted library build");
+    assert_success(
+        &library_output,
+        "target-free selected rooted library build from the first canonical lock",
+    );
+
+    let lock_after_library_build = run_incan(root.path(), &["lock"])?;
+    assert_success(
+        &lock_after_library_build,
+        "rooted workspace lock convergence check after selected library build",
+    );
+    assert_eq!(
+        first_lock,
+        fs::read(root.path().join("incan.lock"))?,
+        "the selected root library build must preserve the first canonical lock byte-for-byte"
+    );
+
+    let second_library_output = run_incan(root.path(), &["build", "--lib", "--member", "root_lib", "--locked"])?;
+    assert_success(
+        &second_library_output,
+        "second selected rooted library build from the unchanged canonical lock",
+    );
 
     let cargo_toml: toml::Value = toml::from_str(&fs::read_to_string(root.path().join("target/lib/Cargo.toml"))?)?;
     assert_eq!(cargo_toml["package"]["name"].as_str(), Some("root_lib"));
@@ -1472,13 +1525,305 @@ root_lib = { workspace = true }
     );
     assert!(root.path().join("target/lib/root_lib.incnlib").is_file());
 
-    let consumer_lock_refresh = run_incan(root.path(), &["lock"])?;
-    assert_success(
-        &consumer_lock_refresh,
-        "rooted workspace lock refresh after selected library rebuild",
-    );
     let consumer_output = run_incan(&consumer, &["run", "src/main.incn", "--locked"])?;
     assert_success(&consumer_output, "consumer of the freshly rebuilt root library");
+    Ok(())
+}
+
+#[test]
+fn locked_build_synthesizes_unreferenced_selected_workspace_member_cargo_root() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("src"))?;
+    fs::write(
+        root.path().join("incan.toml"),
+        r#"[project]
+name = "root_lib"
+version = "0.1.0"
+
+[project.scripts]
+library = "src/lib.incn"
+
+[workspace]
+members = ["leaf", "sibling"]
+default-members = ["root_lib", "leaf", "sibling"]
+"#,
+    )?;
+    fs::write(
+        root.path().join("src/lib.incn"),
+        "pub def root_value() -> int:\n  return 1\n",
+    )?;
+
+    let vendor = root.path().join("vendor");
+    fs::create_dir_all(&vendor)?;
+    fs::write(
+        vendor.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"foo-v1\", \"foo-v2\"]\n\n[workspace.package]\nversion = \"1.0.0\"\n",
+    )?;
+    for (directory, version) in [("foo-v1", "1.0.0"), ("foo-v2", "2.0.0")] {
+        let package = vendor.join(directory);
+        fs::create_dir_all(package.join("src"))?;
+        let version = if directory == "foo-v1" {
+            "version.workspace = true".to_string()
+        } else {
+            format!("version = \"{version}\"")
+        };
+        fs::write(
+            package.join("Cargo.toml"),
+            format!("[package]\nname = \"foo\"\n{version}\nedition = \"2021\"\n"),
+        )?;
+        fs::write(package.join("src/lib.rs"), "pub fn value() -> i64 { 1 }\n")?;
+    }
+
+    let leaf = root.path().join("leaf");
+    fs::create_dir_all(leaf.join("src"))?;
+    fs::write(
+        leaf.join("incan.toml"),
+        r#"[project]
+name = "leaf"
+version = "0.2.0"
+
+[project.scripts]
+library = "src/lib.incn"
+
+[rust-dependencies.json_alias]
+package = "serde_json"
+version = "1"
+
+[rust-dependencies.old_flags]
+package = "bitflags"
+version = "=1.3.2"
+
+[rust-dependencies.foo_old]
+package = "foo"
+path = "../vendor/foo-v1"
+"#,
+    )?;
+    fs::write(
+        leaf.join("src/lib.incn"),
+        "from std.json import JsonValue\nfrom rust::json_alias import Value\nfrom rust::old_flags import bitflags\nfrom rust::foo_old import value\n\n\npub def leaf_value() -> int:\n  return 2\n",
+    )?;
+
+    let sibling = root.path().join("sibling");
+    fs::create_dir_all(sibling.join("src"))?;
+    fs::write(
+        sibling.join("incan.toml"),
+        r#"[project]
+name = "sibling"
+version = "0.3.0"
+
+[project.scripts]
+library = "src/lib.incn"
+
+[rust-dependencies.new_flags]
+package = "bitflags"
+version = "=2.11.0"
+
+[rust-dependencies.foo_new]
+package = "foo"
+path = "../vendor/foo-v2"
+"#,
+    )?;
+    fs::write(
+        sibling.join("src/lib.incn"),
+        "from std.regex import Regex as StdRegex\nfrom rust::new_flags import bitflags\nfrom rust::foo_new import value\n\n\npub def sibling_value() -> int:\n  return 3\n",
+    )?;
+
+    let lock_output = run_incan(root.path(), &["lock"])?;
+    assert_success(
+        &lock_output,
+        "canonical lock for an unreferenced workspace library member",
+    );
+    let canonical = incan::lockfile::IncanLock::load(&root.path().join("incan.lock"))?;
+    let canonical_cargo: toml::Value = toml::from_str(&canonical.cargo_lock_payload)?;
+    let canonical_packages = canonical_cargo["package"]
+        .as_array()
+        .ok_or("canonical aggregate Cargo lock had no package array")?;
+    assert!(
+        canonical_cargo["package"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .all(|package| package["name"].as_str() != Some("leaf") || package.get("source").is_some()),
+        "the regression requires an unreferenced member absent from the aggregate Cargo lock roots"
+    );
+    let mut canonical_bitflags_versions = canonical_packages
+        .iter()
+        .filter(|package| package["name"].as_str() == Some("bitflags"))
+        .filter_map(|package| package["version"].as_str())
+        .collect::<Vec<_>>();
+    canonical_bitflags_versions.sort_unstable();
+    assert_eq!(
+        canonical_bitflags_versions,
+        vec!["1.3.2", "2.11.0"],
+        "the aggregate lock must contain both aliased sibling resolutions for this regression"
+    );
+    let canonical_foo_versions = canonical_packages
+        .iter()
+        .filter(|package| package["name"].as_str() == Some("foo"))
+        .filter_map(|package| package["version"].as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        canonical_foo_versions,
+        vec!["1.0.0", "2.0.0"],
+        "the aggregate lock must contain both same-name path package identities for this regression"
+    );
+
+    let _ = fs::remove_dir_all(root.path().join("target"));
+    let _ = fs::remove_dir_all(leaf.join("target"));
+    let locked_build = run_incan(root.path(), &["build", "--lib", "--member", "leaf", "--locked"])?;
+    assert_success(
+        &locked_build,
+        "target-free locked build of an unreferenced selected workspace member",
+    );
+
+    let generated_lock = fs::read_to_string(leaf.join("target/lib/Cargo.lock"))?;
+    let generated: toml::Value = toml::from_str(&generated_lock)?;
+    let packages = generated["package"]
+        .as_array()
+        .ok_or("generated selected-member Cargo.lock had no package array")?;
+    let selected_root = packages
+        .iter()
+        .find(|package| {
+            package["name"].as_str() == Some("leaf")
+                && package["version"].as_str() == Some("0.2.0")
+                && package.get("source").is_none()
+        })
+        .ok_or("generated selected-member Cargo.lock had no selected root package")?;
+    let selected_root_dependencies = selected_root["dependencies"]
+        .as_array()
+        .ok_or("generated selected-member root had no dependency array")?
+        .iter()
+        .filter_map(toml::Value::as_str)
+        .collect::<Vec<_>>();
+    assert!(selected_root_dependencies.contains(&"bitflags 1.3.2"));
+    assert!(
+        !selected_root_dependencies.contains(&"bitflags 2.11.0"),
+        "the sibling's direct aliased bitflags edge leaked into the selected root package"
+    );
+    assert!(
+        packages
+            .iter()
+            .any(|package| package["name"].as_str() == Some("serde_json"))
+    );
+    assert!(packages.iter().any(|package| {
+        package["name"].as_str() == Some("bitflags") && package["version"].as_str() == Some("1.3.2")
+    }));
+    let selected_foo_versions = packages
+        .iter()
+        .filter(|package| package["name"].as_str() == Some("foo"))
+        .filter_map(|package| package["version"].as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        selected_foo_versions,
+        vec!["1.0.0"],
+        "the sibling's different same-name path package leaked into the selected member Cargo lock"
+    );
+    let generated_manifest: toml::Value = toml::from_str(&fs::read_to_string(leaf.join("target/lib/Cargo.toml"))?)?;
+    assert!(
+        generated_manifest["dependencies"].get("new_flags").is_none(),
+        "the sibling's aliased direct requirement leaked into the selected member Cargo manifest"
+    );
+    let stdlib_features = generated_manifest["dependencies"]["incan_stdlib"]["features"]
+        .as_array()
+        .ok_or("generated selected-member Cargo.toml had no incan_stdlib features")?
+        .iter()
+        .filter_map(toml::Value::as_str)
+        .collect::<Vec<_>>();
+    assert!(stdlib_features.contains(&"json"));
+    assert!(
+        !stdlib_features.contains(&"regex"),
+        "the sibling entrypoint's provider feature leaked into the selected member Cargo manifest"
+    );
+    Ok(())
+}
+
+#[test]
+fn stale_workspace_lock_cannot_authorize_selected_library_projection() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::write(
+        root.path().join("incan.toml"),
+        "[workspace]\nmembers = [\"leaf\"]\ndefault-members = [\"leaf\"]\n",
+    )?;
+    let leaf = root.path().join("leaf");
+    fs::create_dir_all(leaf.join("src"))?;
+    fs::write(
+        leaf.join("incan.toml"),
+        r#"[project]
+name = "leaf"
+version = "0.1.0"
+
+[project.scripts]
+library = "src/lib.incn"
+
+[rust-dependencies]
+bitflags = "=1.3.2"
+"#,
+    )?;
+    fs::write(
+        leaf.join("src/lib.incn"),
+        "from rust::bitflags import bitflags\n\n\npub def value() -> int:\n  return 1\n",
+    )?;
+
+    let lock_output = run_incan(root.path(), &["lock"])?;
+    assert_success(&lock_output, "fresh canonical workspace lock");
+    let lock_path = root.path().join("incan.lock");
+    let fresh = fs::read_to_string(&lock_path)?;
+
+    let initial_strict = run_incan(root.path(), &["build", "--lib", "--member", "leaf", "--locked"])?;
+    assert_success(
+        &initial_strict,
+        "initial strict selected library build must materialize a valid projection",
+    );
+    let generated_lock_path = leaf.join("target/lib/Cargo.lock");
+    let initially_projected = fs::read_to_string(&generated_lock_path)?;
+    assert!(initially_projected.contains("version = \"1.3.2\""));
+    fs::write(
+        &generated_lock_path,
+        format!("{initially_projected}\n# stale-generated-projection\n"),
+    )?;
+
+    let stale = fresh
+        .replace("deps-fingerprint = \"sha256:", "deps-fingerprint = \"sha256:stale")
+        .replace("bitflags 1.3.2", "bitflags 9.9.9")
+        .replace("version = \"1.3.2\"", "version = \"9.9.9\"");
+    assert_ne!(
+        fresh, stale,
+        "the regression must corrupt canonical projection authority"
+    );
+    fs::write(&lock_path, &stale)?;
+
+    let non_strict = run_incan(root.path(), &["build", "--lib", "--member", "leaf"])?;
+    assert_success(
+        &non_strict,
+        "non-strict selected library build with stale canonical lock",
+    );
+    assert!(
+        String::from_utf8_lossy(&non_strict.stderr)
+            .contains("continuing without using it as Cargo lock authority or rewriting it"),
+        "non-strict stale build must report the authority downgrade:\n{}",
+        String::from_utf8_lossy(&non_strict.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(&lock_path)?,
+        stale,
+        "a tolerated stale canonical lock must never be rewritten by a selected member build"
+    );
+    let generated = fs::read_to_string(&generated_lock_path)?;
+    assert!(generated.contains("version = \"1.3.2\""));
+    assert!(!generated.contains("version = \"9.9.9\""));
+    assert!(
+        !generated.contains("stale-generated-projection"),
+        "the previous generated projection must be cleared before an unlocked stale-authority build"
+    );
+
+    let strict = run_incan(root.path(), &["build", "--lib", "--member", "leaf", "--locked"])?;
+    assert_failure(&strict, "strict selected library build with stale canonical lock");
+    assert!(
+        String::from_utf8_lossy(&strict.stderr).contains("workspace incan.lock is out of date"),
+        "strict stale rejection must occur before projection:\n{}",
+        String::from_utf8_lossy(&strict.stderr)
+    );
     Ok(())
 }
 
@@ -4151,6 +4496,61 @@ fn lock_generates_lockfile_for_manifest_project() -> Result<(), Box<dyn std::err
 }
 
 #[test]
+fn canonical_lock_records_exact_registry_resolution_changes() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(
+        tmp.path(),
+        "registry_resolution_lock",
+        r#"
+[rust-dependencies]
+bitflags = "=1.3.2"
+"#,
+    )?;
+    fs::write(
+        &main_path,
+        "rust.module(\"bitflags\")\n\n\ndef main() -> None:\n  pass\n",
+    )?;
+
+    let first_output = run_incan_with_env(tmp.path(), &["lock"], &[("INCAN_LOCK_PREHEAT", "0")])?;
+    assert_success(&first_output, "canonical lock with bitflags 1.3.2");
+    let first_bytes = fs::read(tmp.path().join("incan.lock"))?;
+    let first = incan::lockfile::IncanLock::load(&tmp.path().join("incan.lock"))?;
+    let first_cargo: toml::Value = toml::from_str(&first.cargo_lock_payload)?;
+    assert!(first_cargo["package"].as_array().into_iter().flatten().any(|package| {
+        package["name"].as_str() == Some("bitflags")
+            && package["version"].as_str() == Some("1.3.2")
+            && package["source"]
+                .as_str()
+                .is_some_and(|source| source.starts_with("registry+"))
+    }));
+
+    let manifest_path = tmp.path().join("incan.toml");
+    let first_manifest = fs::read_to_string(&manifest_path)?;
+    fs::write(&manifest_path, first_manifest.replace("=1.3.2", "=2.11.0"))?;
+    let second_output = run_incan_with_env(tmp.path(), &["lock"], &[("INCAN_LOCK_PREHEAT", "0")])?;
+    assert_success(&second_output, "canonical lock with bitflags 2.11.0");
+    let second_bytes = fs::read(tmp.path().join("incan.lock"))?;
+    let second = incan::lockfile::IncanLock::load(&tmp.path().join("incan.lock"))?;
+    let second_cargo: toml::Value = toml::from_str(&second.cargo_lock_payload)?;
+    assert!(second_cargo["package"].as_array().into_iter().flatten().any(|package| {
+        package["name"].as_str() == Some("bitflags")
+            && package["version"].as_str() == Some("2.11.0")
+            && package["source"]
+                .as_str()
+                .is_some_and(|source| source.starts_with("registry+"))
+    }));
+    assert_ne!(
+        first.cargo_lock_payload, second.cargo_lock_payload,
+        "the embedded canonical Cargo payload must change with the registry resolution"
+    );
+    assert_ne!(
+        first_bytes, second_bytes,
+        "the published canonical lock must change byte-for-byte"
+    );
+    Ok(())
+}
+
+#[test]
 fn lock_preheats_dependency_graph_for_path_dependencies() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let helper_dir = tmp.path().join("preheat_helper");
@@ -4337,7 +4737,9 @@ fn build_reuses_stale_lockfile_without_rewriting_by_default() -> Result<(), Box<
     assert_success(&build_output, "incan build with stale lockfile by default");
     let stderr = String::from_utf8_lossy(&build_output.stderr);
     assert!(
-        stderr.contains("warning: incan.lock is out of date; using the existing lock payload without rewriting it"),
+        stderr.contains(
+            "warning: incan.lock is out of date; continuing without using it as Cargo lock authority or rewriting it"
+        ),
         "default build should warn instead of silently refreshing the stale lockfile, got:\n{stderr}"
     );
     assert_eq!(
@@ -4982,7 +5384,9 @@ def test_smoke() -> None:
     assert_success(&test_output, "incan test with stale lockfile by default");
     let stderr = String::from_utf8_lossy(&test_output.stderr);
     assert!(
-        stderr.contains("warning: incan.lock is out of date; using the existing lock payload without rewriting it"),
+        stderr.contains(
+            "warning: incan.lock is out of date; continuing without using it as Cargo lock authority or rewriting it"
+        ),
         "default test should warn instead of silently refreshing the stale lockfile, got:\n{stderr}"
     );
     assert_eq!(

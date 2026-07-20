@@ -17,8 +17,8 @@ use serde::Serialize;
 
 use crate::manifest::{DependencySource, DependencySpec, GitReference};
 
-use super::INCAN_STDLIB_CRATE_NAME;
 use super::generator::{ProjectGenerator, is_sdk_provider_build};
+use super::{INCAN_DERIVE_CRATE_NAME, INCAN_STDLIB_CRATE_NAME};
 
 /// Incan compiler version stamped into generated `Cargo.toml` files and used as the package-version fallback.
 pub(crate) const INCAN_VERSION: &str = crate::version::INCAN_VERSION;
@@ -184,34 +184,9 @@ fn path_dependency(path: &Path, features: &[String], output_dir: &Path, relocata
     toml::Value::Table(table)
 }
 
-/// Return the path to a bundled support crate from explicit release staging or an installed toolchain layout.
-///
-/// Release packaging uses a host compiler outside the target archive, so it provides the staged `crates/` root
-/// explicitly. Ordinary installed compilers discover the same layout beside their executable.
-fn installed_toolchain_crate_path(crate_name: &str) -> Option<PathBuf> {
-    if let Some(crates_dir) = std::env::var_os("INCAN_TOOLCHAIN_CRATES_DIR").filter(|path| !path.is_empty()) {
-        let candidate = PathBuf::from(crates_dir).join(crate_name);
-        if candidate.join("Cargo.toml").is_file() {
-            return Some(candidate);
-        }
-    }
-    for base in crate::toolchain_layout::current_executable_search_bases() {
-        let candidate = base.join("crates").join(crate_name);
-        if candidate.join("Cargo.toml").exists() {
-            return Some(candidate);
-        }
-    }
-
-    None
-}
-
 /// Resolve a toolchain-owned support crate for generated Cargo manifests.
-fn toolchain_crate_path(crate_name: &str) -> PathBuf {
-    installed_toolchain_crate_path(crate_name).unwrap_or_else(|| {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("crates")
-            .join(crate_name)
-    })
+pub(super) fn toolchain_crate_path(crate_name: &str) -> PathBuf {
+    crate::toolchain_layout::resolve_toolchain_crate_path(crate_name)
 }
 
 // ============================================================================
@@ -230,7 +205,7 @@ impl ProjectGenerator {
 
         // ---- Resolve toolchain-owned support crates for generated Rust projects ----
         let stdlib_path = toolchain_crate_path(INCAN_STDLIB_CRATE_NAME);
-        let derive_path = toolchain_crate_path("incan_derive");
+        let derive_path = toolchain_crate_path(INCAN_DERIVE_CRATE_NAME);
         let relocatable_toolchain_paths = is_sdk_provider_build();
 
         // ---- Build dependencies table ----
@@ -262,10 +237,10 @@ impl ProjectGenerator {
 
         // Always add incan_derive for derive macros
         deps.insert(
-            "incan_derive".into(),
+            INCAN_DERIVE_CRATE_NAME.into(),
             path_dependency(&derive_path, &Vec::new(), &self.output_dir, relocatable_toolchain_paths),
         );
-        added_crates.insert("incan_derive".into());
+        added_crates.insert(INCAN_DERIVE_CRATE_NAME.into());
 
         // Add resolved user dependencies
         let mut optional_features = Vec::new();
@@ -508,6 +483,38 @@ mod tests {
             PathBuf::from(support_path).is_absolute(),
             "ordinary generated projects should keep stable absolute toolchain paths"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn cargo_rendering_and_semantic_identity_share_toolchain_support_paths() -> Result<(), Box<dyn std::error::Error>> {
+        let generator = ProjectGenerator::new("/tmp/test_toolchain_path_identity", "toolchain_path_identity", true);
+        let manifest = parsed_manifest(&generator.generate_cargo_toml()?)?;
+        let rendered = manifest
+            .get("dependencies")
+            .and_then(toml::Value::as_table)
+            .ok_or("generated Cargo.toml missing dependencies")?;
+        let semantic = crate::cli::commands::common::semantic_sdk_path_dependencies(
+            &crate::cli::commands::common::ProjectRequirements::default(),
+        );
+
+        for crate_name in ["incan_stdlib", "incan_derive"] {
+            let rendered_path = rendered
+                .get(crate_name)
+                .and_then(toml::Value::as_table)
+                .and_then(|dependency| dependency.get("path"))
+                .and_then(toml::Value::as_str)
+                .ok_or("generated support dependency missing path")?;
+            let semantic_path = semantic
+                .iter()
+                .find(|dependency| dependency.crate_name == crate_name)
+                .and_then(|dependency| match &dependency.source {
+                    DependencySource::Path { path } => Some(path),
+                    _ => None,
+                })
+                .ok_or("semantic support dependency missing path")?;
+            assert_eq!(Path::new(rendered_path), semantic_path);
+        }
         Ok(())
     }
 

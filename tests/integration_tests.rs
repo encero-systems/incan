@@ -7116,6 +7116,8 @@ async def main() -> None:
             "raw.find_iter(&(text).to_string())",
             "raw.captures(&(text).to_string())",
             "raw.captures_iter(&(text).to_string())",
+            "found.as_str().to_string()",
+            "raw_name.to_string()",
         ] {
             assert!(
                 !generated_core.contains(unexpected),
@@ -7134,6 +7136,16 @@ async def main() -> None:
                 "std.regex should preserve compiler-managed Rust borrow boundaries; missing `{expected}`:\n{generated_core}"
             );
         }
+        assert_eq!(
+            generated_core.matches("RustString::from(found.as_str())").count(),
+            6,
+            "every borrowed regex match view should be copied into owned public match text:\n{generated_core}"
+        );
+        assert_eq!(
+            generated_core.matches("RustString::from(raw_name)").count(),
+            2,
+            "every borrowed regex capture name should be copied into an owned dictionary key:\n{generated_core}"
+        );
         Ok(())
     }
 

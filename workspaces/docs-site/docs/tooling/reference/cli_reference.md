@@ -183,7 +183,7 @@ Dependency flags:
 - `--workspace`: Build every selected workspace member.
 - `--member <NAME_OR_PATH>`: Build one or more selected workspace members.
 
-Without `--locked` or `--frozen`, `incan build` creates `incan.lock` when it is missing. If an existing lockfile is stale, the command warns and reuses the embedded `Cargo.lock` payload without rewriting `incan.lock`; run `incan lock` to refresh the committed lockfile intentionally.
+Without `--locked` or `--frozen`, `incan build` creates `incan.lock` when it is missing. If an existing lockfile is stale, the command warns and leaves it untouched, but does not use its embedded `Cargo.lock` as build authority; run `incan lock` to refresh the committed lockfile intentionally. `--locked` and `--frozen` continue to reject stale locks.
 
 For `incan build --lib`, dependency preheat uses the generated lock workspace and the same release-profile Cargo target directory as the real generated library build. If the dependency graph is unchanged, the preheat stamp is reused; if it has to run, the command prints the target/profile domain before invoking Cargo and streams Cargo's progress while the preheat compiles. Vocab companion metadata and packaged desugarer artifacts are cached by companion input fingerprint; with `--generated-cargo-target-dir`, that cache lives alongside the shared generated Cargo target so repeated clean checkouts can reuse unchanged companion extraction and desugarer artifacts.
 
@@ -410,7 +410,7 @@ Dependency flags (same as `build`):
 
 - `--features`, `--no-default-features`, `--all-features`, `--sdk-profile`, `--offline`, `--locked`, `--frozen`, `--no-offline`, `--no-locked`, `--no-frozen`, `--cargo-args`, `--cargo-features`, `--cargo-no-default-features`, `--cargo-all-features`
 
-Without `--locked` or `--frozen`, `incan test` creates `incan.lock` when it is missing. If an existing lockfile is stale, the command warns and reuses the embedded `Cargo.lock` payload without rewriting `incan.lock`; run `incan lock` to refresh the committed lockfile intentionally.
+Without `--locked` or `--frozen`, `incan test` creates `incan.lock` when it is missing. If an existing lockfile is stale, the command warns and leaves it untouched, but does not use its embedded `Cargo.lock` as test authority; run `incan lock` to refresh the committed lockfile intentionally. `--locked` and `--frozen` continue to reject stale locks.
 
 Timeouts apply to generated test batches. `--timeout` sets the default batch timeout and `@timeout("duration")` from `std.testing` can override the batch containing one test. Fixtures, including async fixtures, do not have separate per-fixture timeout configuration. The runner awaits async fixture teardown after ordinary assertion failures and panics while the worker remains alive. If timeout enforcement terminates a worker process, remaining teardown is best-effort.
 

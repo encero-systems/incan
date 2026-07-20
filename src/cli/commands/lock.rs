@@ -23,8 +23,8 @@ use crate::frontend::ast::{Declaration, ImportKind};
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::{diagnostics, lexer, parser};
 use crate::lockfile::{
-    CargoFeatureSelection, IncanLock, PublicationLock, SemanticLockState, compute_resolved_fingerprint,
-    semantic_lock_state, workspace_semantic_lock_state,
+    CargoFeatureSelection, IncanLock, PublicationLock, SemanticLockState, WORKSPACE_LOCK_CARGO_PACKAGE_NAME,
+    compute_resolved_fingerprint_with_sdk_paths, semantic_lock_state, workspace_semantic_lock_state,
 };
 use crate::manifest::{DependencySpec, ProjectManifest};
 use crate::provider::{
@@ -37,8 +37,9 @@ use super::common::{
     CargoPolicy, INTERNAL_CARGO_LOCK_PAYLOAD_PATH_ENV, ProjectRequirements, build_source_map, cargo_command_flags,
     cargo_lockfile_flags, collect_modules_detailed_with_selections, collect_project_requirements,
     collect_rust_dependency_uses, enforce_project_toolchain_constraint, extend_requirements_with_provider_plan,
-    format_dependency_error, merge_project_requirement_dependencies, prepare_or_discover_sdk_inventory,
-    provider_used_module_paths, resolve_sdk_component_selection,
+    format_dependency_error, merge_project_requirement_dependencies, prepare_library_dependency_artifacts,
+    prepare_or_discover_sdk_inventory, provider_used_module_paths, resolve_sdk_component_selection,
+    semantic_sdk_path_dependencies,
 };
 #[cfg(feature = "rust_inspect")]
 use super::common::{
@@ -51,7 +52,6 @@ const LOCK_DEPENDENCY_PREHEAT_LOCK_FILE: &str = ".incan_dependency_preheat.lock"
 const LOCK_DEPENDENCY_PREHEAT_STALE_LOCK_SECS: u64 = 30 * 60;
 const LIBRARY_DEPENDENCY_PREHEAT_FINGERPRINT_FILE: &str = ".incan_library_dependency_preheat_fingerprint";
 const LIBRARY_DEPENDENCY_PREHEAT_LOCK_FILE: &str = ".incan_library_dependency_preheat.lock";
-const WORKSPACE_LOCK_CARGO_PACKAGE_NAME: &str = "incan_workspace";
 
 /// Inputs needed to preheat generated-library dependencies into the real generated-library Cargo target domain.
 pub(crate) struct GeneratedLibraryDependencyPreheatRequest<'a> {
@@ -75,6 +75,17 @@ pub(crate) struct GeneratedLibraryDependencyPreheatRequest<'a> {
     pub target_dir: &'a Path,
     /// Embedded Cargo.lock payload from `incan.lock`.
     pub cargo_lock_payload: &'a str,
+    /// Exact canonical root authorizing Cargo-owned projection for the generated dependency workspace.
+    pub cargo_lock_projection_root: Option<&'a str>,
+}
+
+/// Dependency graph and Cargo policy shared by generated lock-workspace preheat consumers.
+struct DependencyPreheatContext<'a> {
+    project_name: &'a str,
+    rust_edition: Option<&'a str>,
+    resolved: &'a ResolvedDependencies,
+    project_requirements: &'a ProjectRequirements,
+    cargo_policy_flags: &'a [String],
 }
 
 /// Generate or update incan.lock for a project.
@@ -197,9 +208,10 @@ fn lock_workspace(
 
 /// Resolve the canonical dependency context and lock payload for a project build.
 ///
-/// Manifest-less standalone builds retain their caller-local dependency context and have no lock payload. A
-/// manifest-backed build receives the same project- or workspace-wide dependency context that owns the lock payload,
-/// so generated Cargo manifests cannot diverge from the embedded Cargo.lock.
+/// Manifest-less standalone builds retain their caller-local dependency context and have no lock payload.
+/// Manifest-backed builds keep caller-local resolved dependencies and requirements for generated Cargo manifests,
+/// while project- or workspace-wide aggregation owns canonical lock generation. A fresh canonical payload authorizes
+/// Cargo-owned projection onto the caller manifest only after package coordinates, checksums, and edges validate.
 pub(crate) struct LockResolutionRequest<'a> {
     pub project_root: &'a Path,
     pub project_name: &'a str,
@@ -221,10 +233,57 @@ pub(crate) struct LockResolutionRequest<'a> {
 
 /// Cargo inputs that must be consumed together by generated projects.
 pub(crate) struct LockResolution {
-    pub cargo_lock_payload: Option<String>,
+    pub cargo_lock_authority: CargoLockAuthority,
     pub cargo_package_name: String,
     pub resolved: ResolvedDependencies,
     pub project_requirements: ProjectRequirements,
+}
+
+/// Closed authority state for generated Cargo locks.
+pub(crate) enum CargoLockAuthority {
+    /// No trusted Cargo lock payload is available and no stale projection cleanup is required.
+    None,
+    /// A tolerated stale canonical lock must not authorize or leave behind any older generated projection.
+    Stale,
+    /// An internal artifact build consumes an exact payload directly without caller projection.
+    Exact { payload: String },
+    /// A fresh canonical payload authorizes Cargo-owned projection from one exact source-less root.
+    CanonicalProjection { payload: String, root: String },
+}
+
+/// Final generator-facing inputs derived from one closed lock authority state.
+pub(crate) struct CargoLockGeneratorInputs {
+    pub payload: Option<String>,
+    pub projection_root: Option<String>,
+    pub clear_existing: bool,
+}
+
+impl CargoLockAuthority {
+    /// Split the closed authority state into generator inputs at the final rendering boundary.
+    pub(crate) fn into_generator_inputs(self) -> CargoLockGeneratorInputs {
+        match self {
+            Self::None => CargoLockGeneratorInputs {
+                payload: None,
+                projection_root: None,
+                clear_existing: false,
+            },
+            Self::Stale => CargoLockGeneratorInputs {
+                payload: None,
+                projection_root: None,
+                clear_existing: true,
+            },
+            Self::Exact { payload } => CargoLockGeneratorInputs {
+                payload: Some(payload),
+                projection_root: None,
+                clear_existing: false,
+            },
+            Self::CanonicalProjection { payload, root } => CargoLockGeneratorInputs {
+                payload: Some(payload),
+                projection_root: Some(root),
+                clear_existing: false,
+            },
+        }
+    }
 }
 
 /// Read the compiler-owned Cargo.lock payload override used while building an internal artifact.
@@ -262,6 +321,9 @@ pub(crate) struct RustInspectWorkspaceRequest<'a> {
     pub resolved: &'a ResolvedDependencies,
     pub project_requirements: &'a ProjectRequirements,
     pub lock_payload: Option<String>,
+    pub cargo_lock_projection_root: Option<&'a str>,
+    pub clear_cargo_lock: bool,
+    pub cargo_policy_flags: Vec<String>,
     pub rust_inspect_query_paths: &'a [String],
     pub prepare_when_empty: bool,
 }
@@ -277,6 +339,9 @@ pub(crate) fn prepare_rust_inspect_workspace(request: RustInspectWorkspaceReques
         resolved,
         project_requirements,
         lock_payload,
+        cargo_lock_projection_root,
+        clear_cargo_lock,
+        cargo_policy_flags,
         rust_inspect_query_paths,
         prepare_when_empty,
     } = request;
@@ -292,6 +357,9 @@ pub(crate) fn prepare_rust_inspect_workspace(request: RustInspectWorkspaceReques
         resolved,
         project_requirements,
         lock_payload,
+        cargo_lock_projection_root,
+        clear_cargo_lock,
+        &cargo_policy_flags,
     )?;
     prewarm_rust_inspect_workspace(&rust_inspect_manifest_dir, rust_inspect_query_paths)?;
     Ok(Some(rust_inspect_manifest_dir))
@@ -348,6 +416,8 @@ pub(crate) fn prepare_rust_inspect_typecheck_workspace(
         sdk_profile_override: None,
         rust_inspect_query_paths: &metadata_query_paths,
     })?;
+    let cargo_lock_inputs = lock_resolution.cargo_lock_authority.into_generator_inputs();
+    let rust_inspect_cargo_flags = cargo_command_flags(cargo_policy, cargo_features);
     prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {
         project_root,
         project_name,
@@ -355,7 +425,10 @@ pub(crate) fn prepare_rust_inspect_typecheck_workspace(
         rust_edition,
         resolved: &lock_resolution.resolved,
         project_requirements: &lock_resolution.project_requirements,
-        lock_payload: lock_resolution.cargo_lock_payload,
+        lock_payload: cargo_lock_inputs.payload,
+        cargo_lock_projection_root: cargo_lock_inputs.projection_root.as_deref(),
+        clear_cargo_lock: cargo_lock_inputs.clear_existing,
+        cargo_policy_flags: rust_inspect_cargo_flags,
         rust_inspect_query_paths: &metadata_query_paths,
         prepare_when_empty: false,
     })
@@ -364,8 +437,8 @@ pub(crate) fn prepare_rust_inspect_typecheck_workspace(
 /// Resolve the canonical Cargo context that generated projects must consume as one unit.
 ///
 /// Manifest-less single-file builds retain their caller context and have no payload. Project builds generate
-/// `incan.lock` only when it is missing in default mode; stale existing lockfiles are reused with a warning unless
-/// `--locked` or `--frozen` requires a hard failure.
+/// `incan.lock` only when it is missing in default mode. A stale existing lock remains untouched and produces a
+/// warning, but supplies no Cargo lock authority; `--locked` or `--frozen` rejects it before projection.
 pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliResult<LockResolution> {
     let LockResolutionRequest {
         project_root,
@@ -383,11 +456,14 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
         rust_inspect_query_paths,
     } = request;
 
+    let mut caller_resolved = resolved.clone();
+    merge_project_requirement_dependencies(&mut caller_resolved, project_requirements)?;
+
     if manifest.is_none() {
         return Ok(LockResolution {
-            cargo_lock_payload: None,
+            cargo_lock_authority: CargoLockAuthority::None,
             cargo_package_name: project_name.to_string(),
-            resolved: resolved.clone(),
+            resolved: caller_resolved,
             project_requirements: project_requirements.clone(),
         });
     }
@@ -400,9 +476,9 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
         )?
     {
         return Ok(LockResolution {
-            cargo_lock_payload: Some(payload),
+            cargo_lock_authority: CargoLockAuthority::Exact { payload },
             cargo_package_name: project_name.to_string(),
-            resolved: resolved.clone(),
+            resolved: caller_resolved,
             project_requirements: project_requirements.clone(),
         });
     }
@@ -414,6 +490,9 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
     {
         return resolve_workspace_lock_payload(WorkspaceLockResolutionRequest {
             workspace: &workspace,
+            caller_project_name: project_name,
+            caller_resolved: &caller_resolved,
+            caller_project_requirements: project_requirements,
             caller_entry_file: entry_file,
             cargo_features,
             cargo_policy,
@@ -435,10 +514,10 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
     } else {
         None
     };
-    let (resolved, project_requirements) = if let Some(context) = project_context.as_ref() {
+    let (canonical_resolved, canonical_project_requirements) = if let Some(context) = project_context.as_ref() {
         (context.resolved.clone(), context.project_requirements.clone())
     } else {
-        (resolved.clone(), project_requirements.clone())
+        (caller_resolved.clone(), project_requirements.clone())
     };
     #[cfg(feature = "rust_inspect")]
     let rust_inspect_query_paths = project_context
@@ -448,8 +527,11 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
 
     let lock_path = project_root.join("incan.lock");
     let rust_edition = manifest.and_then(|m| m.build.as_ref().and_then(|b| b.rust_edition.clone()));
-    let mut resolved_with_requirements = resolved.clone();
-    merge_project_requirement_dependencies(&mut resolved_with_requirements, &project_requirements)?;
+    let mut canonical_resolved_with_requirements = canonical_resolved;
+    merge_project_requirement_dependencies(
+        &mut canonical_resolved_with_requirements,
+        &canonical_project_requirements,
+    )?;
     // A manifest-backed lock is project-wide, so its canonical context must win over an entrypoint-local semantic
     // snapshot. The supplied snapshot remains authoritative for manifest-less callers, where no project closure can
     // be rebuilt.
@@ -458,16 +540,18 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
         .map(|context| context.semantic.clone())
         .or_else(|| semantic.cloned())
         .unwrap_or_default();
-    let fingerprint = compute_resolved_fingerprint(
-        &resolved_with_requirements.dependencies,
-        &resolved_with_requirements.dev_dependencies,
+    let semantic_sdk_paths = semantic_sdk_path_dependencies(&canonical_project_requirements);
+    let fingerprint = compute_resolved_fingerprint_with_sdk_paths(
+        &canonical_resolved_with_requirements.dependencies,
+        &canonical_resolved_with_requirements.dev_dependencies,
         cargo_features,
         Some(project_root),
         &semantic,
+        &semantic_sdk_paths,
     );
 
     let strict = cargo_policy.locked || cargo_policy.frozen;
-    if strict && let Some(message) = strict_git_source_error(&resolved_with_requirements) {
+    if strict && let Some(message) = strict_git_source_error(&canonical_resolved_with_requirements) {
         return Err(CliError::failure(message));
     }
     if lock_path.exists() {
@@ -492,21 +576,24 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
                 )));
             }
             eprintln!(
-                "warning: incan.lock is out of date; using the existing lock payload without rewriting it. \
-                 Run `incan lock` to refresh it."
+                "warning: incan.lock is out of date; continuing without using it as Cargo lock authority or \
+                 rewriting it. Run `incan lock` to refresh it."
             );
             return Ok(LockResolution {
-                cargo_lock_payload: Some(lock.cargo_lock_payload),
+                cargo_lock_authority: CargoLockAuthority::Stale,
                 cargo_package_name: project_name.to_string(),
-                resolved,
-                project_requirements,
+                resolved: caller_resolved,
+                project_requirements: project_requirements.clone(),
             });
         }
         return Ok(LockResolution {
-            cargo_lock_payload: Some(lock.cargo_lock_payload),
+            cargo_lock_authority: CargoLockAuthority::CanonicalProjection {
+                payload: lock.cargo_lock_payload,
+                root: project_name.to_string(),
+            },
             cargo_package_name: project_name.to_string(),
-            resolved,
-            project_requirements,
+            resolved: caller_resolved,
+            project_requirements: project_requirements.clone(),
         });
     }
 
@@ -518,8 +605,8 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
         project_root,
         project_name,
         rust_edition,
-        &resolved_with_requirements,
-        &project_requirements,
+        &canonical_resolved_with_requirements,
+        &canonical_project_requirements,
         cargo_features,
         cargo_policy,
         &semantic,
@@ -528,10 +615,13 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
         rust_inspect_query_paths,
     )?;
     Ok(LockResolution {
-        cargo_lock_payload: Some(lock.cargo_lock_payload),
+        cargo_lock_authority: CargoLockAuthority::CanonicalProjection {
+            payload: lock.cargo_lock_payload,
+            root: project_name.to_string(),
+        },
         cargo_package_name: project_name.to_string(),
-        resolved,
-        project_requirements,
+        resolved: caller_resolved,
+        project_requirements: project_requirements.clone(),
     })
 }
 
@@ -541,6 +631,9 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
 /// from every member context and lives only at the workspace root.
 struct WorkspaceLockResolutionRequest<'a> {
     workspace: &'a WorkspaceGraph,
+    caller_project_name: &'a str,
+    caller_resolved: &'a ResolvedDependencies,
+    caller_project_requirements: &'a ProjectRequirements,
     caller_entry_file: Option<&'a Path>,
     cargo_features: &'a CargoFeatureSelection,
     cargo_policy: &'a CargoPolicy,
@@ -554,6 +647,9 @@ struct WorkspaceLockResolutionRequest<'a> {
 fn resolve_workspace_lock_payload(request: WorkspaceLockResolutionRequest<'_>) -> CliResult<LockResolution> {
     let WorkspaceLockResolutionRequest {
         workspace,
+        caller_project_name,
+        caller_resolved,
+        caller_project_requirements,
         caller_entry_file,
         cargo_features,
         cargo_policy,
@@ -572,17 +668,21 @@ fn resolve_workspace_lock_payload(request: WorkspaceLockResolutionRequest<'_>) -
     let mut resolved = context.resolved;
     let requirements = context.project_requirements;
     merge_project_requirement_dependencies(&mut resolved, &requirements)?;
-    let fingerprint = compute_resolved_fingerprint(
+    let semantic_sdk_paths = semantic_sdk_path_dependencies(&requirements);
+    let fingerprint = compute_resolved_fingerprint_with_sdk_paths(
         &resolved.dependencies,
         &resolved.dev_dependencies,
         cargo_features,
         Some(workspace.root()),
         &context.semantic,
+        &semantic_sdk_paths,
     );
     let strict = cargo_policy.locked || cargo_policy.frozen;
     if strict && let Some(message) = strict_git_source_error(&resolved) {
         return Err(CliError::failure(message));
     }
+
+    let caller_resolved = caller_resolved.clone();
 
     let lock_path = workspace.root().join("incan.lock");
     if lock_path.exists() {
@@ -598,21 +698,24 @@ fn resolve_workspace_lock_payload(request: WorkspaceLockResolutionRequest<'_>) -
                 )));
             }
             eprintln!(
-                "warning: workspace incan.lock is out of date; using the existing root lock payload without rewriting \
-                 it. Run `incan lock` to refresh it."
+                "warning: workspace incan.lock is out of date; continuing without using it as Cargo lock authority \
+                 or rewriting it. Run `incan lock` to refresh it."
             );
             return Ok(LockResolution {
-                cargo_lock_payload: Some(lock.cargo_lock_payload),
-                cargo_package_name: WORKSPACE_LOCK_CARGO_PACKAGE_NAME.to_string(),
-                resolved,
-                project_requirements: requirements,
+                cargo_lock_authority: CargoLockAuthority::Stale,
+                cargo_package_name: caller_project_name.to_string(),
+                resolved: caller_resolved,
+                project_requirements: caller_project_requirements.clone(),
             });
         }
         return Ok(LockResolution {
-            cargo_lock_payload: Some(lock.cargo_lock_payload),
-            cargo_package_name: WORKSPACE_LOCK_CARGO_PACKAGE_NAME.to_string(),
-            resolved,
-            project_requirements: requirements,
+            cargo_lock_authority: CargoLockAuthority::CanonicalProjection {
+                payload: lock.cargo_lock_payload,
+                root: WORKSPACE_LOCK_CARGO_PACKAGE_NAME.to_string(),
+            },
+            cargo_package_name: caller_project_name.to_string(),
+            resolved: caller_resolved,
+            project_requirements: caller_project_requirements.clone(),
         });
     }
 
@@ -652,10 +755,13 @@ fn resolve_workspace_lock_payload(request: WorkspaceLockResolutionRequest<'_>) -
         &rust_inspect_query_paths,
     )?;
     Ok(LockResolution {
-        cargo_lock_payload: Some(lock.cargo_lock_payload),
-        cargo_package_name: WORKSPACE_LOCK_CARGO_PACKAGE_NAME.to_string(),
-        resolved,
-        project_requirements: requirements,
+        cargo_lock_authority: CargoLockAuthority::CanonicalProjection {
+            payload: lock.cargo_lock_payload,
+            root: WORKSPACE_LOCK_CARGO_PACKAGE_NAME.to_string(),
+        },
+        cargo_package_name: caller_project_name.to_string(),
+        resolved: caller_resolved,
+        project_requirements: caller_project_requirements.clone(),
     })
 }
 
@@ -994,6 +1100,7 @@ fn collect_project_lock_context(
         .root_package()
         .map(|package| package.active_dependencies.clone())
         .unwrap_or_default();
+    prepare_library_dependency_artifacts(manifest, Some(&package_feature_plan), &active_dependencies)?;
     let library_manifest_index = LibraryManifestIndex::from_project_manifest_dependencies(
         manifest,
         active_dependencies.iter().map(String::as_str),
@@ -1062,12 +1169,14 @@ fn collect_project_lock_context(
         .map_err(|error| CliError::failure(error.to_string()))?;
         extend_requirements_with_provider_plan(&mut project_requirements, &entry_provider_plan)?;
     }
+    let semantic_sdk_paths = semantic_sdk_path_dependencies(&project_requirements);
     let semantic = semantic_lock_state(
         manifest.project_root(),
         sdk_inventory.as_deref(),
         sdk_components.as_ref(),
         Some(&package_feature_plan),
         &provider_plan,
+        &semantic_sdk_paths,
     )
     .map_err(CliError::failure)?;
 
@@ -1425,22 +1534,28 @@ pub(crate) fn run_generated_library_dependency_preheat(
         cargo_policy,
         target_dir,
         cargo_lock_payload,
+        cargo_lock_projection_root,
     } = request;
     if !lock_dependency_preheat_enabled() {
         eprintln!("generated library dependency preheat: disabled by INCAN_LOCK_PREHEAT");
         return Ok(());
     }
 
-    materialize_dependency_preheat_workspace(
-        lock_dir,
+    let cargo_flags = cargo_command_flags(cargo_policy, cargo_features);
+    let preheat_context = DependencyPreheatContext {
         project_name,
-        rust_edition,
+        rust_edition: rust_edition.as_deref(),
         resolved,
         project_requirements,
+        cargo_policy_flags: &cargo_flags,
+    };
+    materialize_dependency_preheat_workspace(
+        lock_dir,
+        &preheat_context,
         cargo_lock_payload,
+        cargo_lock_projection_root,
     )?;
 
-    let cargo_flags = cargo_command_flags(cargo_policy, cargo_features);
     let fingerprint =
         compute_library_dependency_preheat_fingerprint(lock_dir, &cargo_flags, target_dir).map_err(|err| {
             CliError::failure(format!(
@@ -1539,25 +1654,30 @@ pub(crate) fn run_generated_library_dependency_preheat(
 /// payload.
 fn materialize_dependency_preheat_workspace(
     lock_dir: &Path,
-    project_name: &str,
-    rust_edition: Option<String>,
-    resolved: &ResolvedDependencies,
-    project_requirements: &ProjectRequirements,
+    context: &DependencyPreheatContext<'_>,
     cargo_lock_payload: &str,
+    cargo_lock_projection_root: Option<&str>,
 ) -> CliResult<()> {
-    let mut generator = ProjectGenerator::new(lock_dir, project_name, false);
-    generator.set_dependencies(resolved.dependencies.clone());
-    generator.set_dev_dependencies(resolved.dev_dependencies.clone());
+    let mut generator = ProjectGenerator::new(lock_dir, context.project_name, false);
+    generator.set_dependencies(context.resolved.dependencies.clone());
+    generator.set_dev_dependencies(context.resolved.dev_dependencies.clone());
     generator.set_include_dev_dependencies(true);
-    generator.set_rust_edition(rust_edition);
-    generator.set_stdlib_features(project_requirements.stdlib_features.clone());
-    generator.set_sdk_dependency_rebindings(project_requirements.sdk_dependency_rebindings.clone());
-    generator.set_sdk_path_dependencies(project_requirements.sdk_path_dependencies.clone());
-    generator.set_sdk_artifact_projections(project_requirements.sdk_artifact_projections.clone());
+    generator.set_rust_edition(context.rust_edition.map(ToOwned::to_owned));
+    generator.set_stdlib_features(context.project_requirements.stdlib_features.clone());
+    generator.set_sdk_dependency_rebindings(context.project_requirements.sdk_dependency_rebindings.clone());
+    generator.set_sdk_path_dependencies(context.project_requirements.sdk_path_dependencies.clone());
+    generator.set_sdk_artifact_projections(context.project_requirements.sdk_artifact_projections.clone());
     generator.set_cargo_lock_payload(Some(cargo_lock_payload.to_string()));
+    generator.set_cargo_lock_projection_root(cargo_lock_projection_root.map(ToOwned::to_owned));
+    generator.set_cargo_policy_flags(context.cargo_policy_flags.to_vec());
     generator
         .generate("pub fn __incan_dependency_preheat() {}")
         .map_err(|err| CliError::failure(format!("Failed to generate dependency preheat project: {err}")))?;
+    generator.materialize_cargo_lock_projection().map_err(|error| {
+        CliError::failure(format!(
+            "Failed to project generated dependency preheat Cargo.lock: {error}"
+        ))
+    })?;
     Ok(())
 }
 
@@ -1565,10 +1685,7 @@ fn materialize_dependency_preheat_workspace(
 #[cfg(feature = "rust_inspect")]
 fn run_lock_rust_inspect_prewarm(
     project_root: &Path,
-    project_name: &str,
-    rust_edition: Option<String>,
-    resolved: &ResolvedDependencies,
-    project_requirements: &ProjectRequirements,
+    context: &DependencyPreheatContext<'_>,
     lock: &IncanLock,
     query_paths: &[String],
 ) -> CliResult<()> {
@@ -1578,11 +1695,12 @@ fn run_lock_rust_inspect_prewarm(
 
     let rust_inspect_manifest_dir = ensure_rust_inspect_workspace(
         project_root,
-        project_name,
-        rust_edition,
-        resolved,
-        project_requirements,
+        context.project_name,
+        context.rust_edition.map(ToOwned::to_owned),
+        context.resolved,
+        context.project_requirements,
         Some(lock.cargo_lock_payload.clone()),
+        context.cargo_policy_flags,
     )?;
     prewarm_rust_inspect_workspace(&rust_inspect_manifest_dir, query_paths)
 }
@@ -1613,12 +1731,10 @@ pub(crate) fn generate_lockfile(
     let publication_lock = publication_lock.or(owned_publication_lock.as_ref());
     let lock_dir = crate::lockfile::compiler_lock_state_dir(project_root);
     let mut generator = ProjectGenerator::new(&lock_dir, project_name, true);
-    #[cfg(feature = "rust_inspect")]
-    let rust_edition_for_prewarm = rust_edition.clone();
     generator.set_dependencies(resolved.dependencies.clone());
     generator.set_dev_dependencies(resolved.dev_dependencies.clone());
     generator.set_include_dev_dependencies(true);
-    generator.set_rust_edition(rust_edition);
+    generator.set_rust_edition(rust_edition.clone());
     generator.set_stdlib_features(project_requirements.stdlib_features.clone());
     generator.set_sdk_dependency_rebindings(project_requirements.sdk_dependency_rebindings.clone());
     generator.set_sdk_path_dependencies(project_requirements.sdk_path_dependencies.clone());
@@ -1650,12 +1766,14 @@ pub(crate) fn generate_lockfile(
 
     let cargo_lock = fs::read_to_string(lock_dir.join("Cargo.lock"))
         .map_err(|e| CliError::failure(format!("Failed to read Cargo.lock: {}", e)))?;
-    let fingerprint = compute_resolved_fingerprint(
+    let semantic_sdk_paths = semantic_sdk_path_dependencies(project_requirements);
+    let fingerprint = compute_resolved_fingerprint_with_sdk_paths(
         &resolved.dependencies,
         &resolved.dev_dependencies,
         cargo_features,
         Some(project_root),
         semantic,
+        &semantic_sdk_paths,
     );
     let lock = IncanLock::new_with_semantic(fingerprint, cargo_features.clone(), semantic.clone(), cargo_lock);
 
@@ -1663,15 +1781,17 @@ pub(crate) fn generate_lockfile(
         run_lock_dependency_preheat(project_root, &lock_dir, cargo_features, cargo_policy)?;
     }
     #[cfg(feature = "rust_inspect")]
-    run_lock_rust_inspect_prewarm(
-        project_root,
+    let rust_inspect_cargo_flags = cargo_command_flags(cargo_policy, cargo_features);
+    #[cfg(feature = "rust_inspect")]
+    let preheat_context = DependencyPreheatContext {
         project_name,
-        rust_edition_for_prewarm,
+        rust_edition: rust_edition.as_deref(),
         resolved,
         project_requirements,
-        &lock,
-        rust_inspect_query_paths,
-    )?;
+        cargo_policy_flags: &rust_inspect_cargo_flags,
+    };
+    #[cfg(feature = "rust_inspect")]
+    run_lock_rust_inspect_prewarm(project_root, &preheat_context, &lock, rust_inspect_query_paths)?;
 
     let publication_lock = publication_lock
         .ok_or_else(|| CliError::failure("internal error: lock generation lost its publication guard"))?;
@@ -1824,6 +1944,36 @@ mod tests {
     }
 
     #[test]
+    fn cargo_lock_authority_exposes_only_closed_generator_input_pairs() {
+        let none = CargoLockAuthority::None.into_generator_inputs();
+        assert_eq!(none.payload, None);
+        assert_eq!(none.projection_root, None);
+        assert!(!none.clear_existing);
+
+        let stale = CargoLockAuthority::Stale.into_generator_inputs();
+        assert_eq!(stale.payload, None);
+        assert_eq!(stale.projection_root, None);
+        assert!(stale.clear_existing);
+
+        let exact = CargoLockAuthority::Exact {
+            payload: "exact".to_string(),
+        }
+        .into_generator_inputs();
+        assert_eq!(exact.payload, Some("exact".to_string()));
+        assert_eq!(exact.projection_root, None);
+        assert!(!exact.clear_existing);
+
+        let canonical = CargoLockAuthority::CanonicalProjection {
+            payload: "canonical".to_string(),
+            root: "incan_workspace".to_string(),
+        }
+        .into_generator_inputs();
+        assert_eq!(canonical.payload, Some("canonical".to_string()));
+        assert_eq!(canonical.projection_root, Some("incan_workspace".to_string()));
+        assert!(!canonical.clear_existing);
+    }
+
+    #[test]
     fn workspace_lock_merge_unifies_cargo_features_without_permitting_identity_drift()
     -> Result<(), Box<dyn std::error::Error>> {
         let mut first = registry_dependency("serde");
@@ -1903,6 +2053,38 @@ mod tests {
         let mut requirements = empty_project_requirements();
         requirements.stdlib_features.push("json".to_string());
         assert!(should_preheat_lockfile_dependencies(&empty_resolved(), &requirements));
+    }
+
+    #[test]
+    fn generated_library_preheat_projection_receives_offline_cargo_policy() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let lock_dir = tmp.path().join("preheat");
+        let canonical = format!(
+            "version = 4\n\n[[package]]\nname = \"incan_workspace\"\nversion = \"{}\"\n",
+            crate::version::INCAN_VERSION
+        );
+        let flags = vec!["--offline".to_string()];
+        let resolved = empty_resolved();
+        let project_requirements = empty_project_requirements();
+        let context = DependencyPreheatContext {
+            project_name: "caller",
+            rust_edition: None,
+            resolved: &resolved,
+            project_requirements: &project_requirements,
+            cargo_policy_flags: &flags,
+        };
+
+        let result = materialize_dependency_preheat_workspace(&lock_dir, &context, &canonical, Some("incan_workspace"));
+        assert!(
+            result.is_err(),
+            "the deliberately incomplete canonical fixture must fail closed"
+        );
+        assert_eq!(
+            crate::backend::project::runner::test_projection_cargo_policy(&lock_dir),
+            Some(flags),
+            "generated-library preheat must set offline policy before attempting Cargo lock projection"
+        );
+        Ok(())
     }
 
     #[test]

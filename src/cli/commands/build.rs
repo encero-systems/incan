@@ -54,7 +54,7 @@ use super::common::{
     collect_project_requirements, collect_rust_dependency_uses, discover_effective_project_manifest,
     enforce_project_toolchain_constraint, extend_requirements_with_provider_plan, format_dependency_error,
     imported_module_deps_for_with_index, merge_project_requirement_dependencies, module_key_index,
-    resolve_project_root, resolve_source_root, validate_output_dir,
+    resolve_project_root, resolve_source_root, semantic_sdk_path_dependencies, validate_output_dir,
 };
 use super::lock::{
     GeneratedLibraryDependencyPreheatRequest, LockResolution, LockResolutionRequest, resolve_lock_context,
@@ -65,7 +65,7 @@ use super::lock::{RustInspectWorkspaceRequest, prepare_rust_inspect_workspace};
 use super::vocab_extraction::{PendingDesugarerArtifact, collect_library_vocab_metadata};
 use crate::cli::prelude::ParsedModule;
 #[cfg(feature = "rust_inspect")]
-use crate::rust_inspect::{InspectError, Inspector, InspectorConfig};
+use crate::rust_inspect::{Inspector, InspectorConfig, RustMetadataError};
 use sha2::{Digest as _, Sha256};
 
 // ============================================================================
@@ -136,6 +136,7 @@ struct PreparedLibraryProject {
     generator: ProjectGenerator,
     project_root: PathBuf,
     lock_cargo_package_name: String,
+    cargo_lock_projection_root: Option<String>,
     rust_edition: Option<String>,
     out_dir: PathBuf,
     manifest_path: PathBuf,
@@ -359,7 +360,10 @@ fn collect_library_rust_abi_query_paths(
 }
 
 #[cfg(feature = "rust_inspect")]
-/// Read prewarmed Rust metadata from the generated inspect workspace and package it as manifest ABI.
+/// Extract complete Rust metadata from the generated inspect workspace and package it as manifest ABI.
+///
+/// Prewarm deliberately permits a fast syntax-only fallback. A library artifact is a durable semantic boundary, so
+/// publishing whatever happens to be in that shared cache would make its ABI depend on earlier compiler queries.
 fn collect_library_rust_abi(
     rust_inspect_manifest_dir: &Path,
     query_paths: &[String],
@@ -371,12 +375,22 @@ fn collect_library_rust_abi(
     let inspector = Inspector::new(InspectorConfig::new(rust_inspect_manifest_dir.to_path_buf()));
     let mut items = Vec::new();
     for path in query_paths {
-        match inspector.get(path) {
-            Ok(result) => items.push((*result.metadata).clone()),
-            Err(InspectError::MetadataMiss { .. }) => {}
+        let Some(lookup_path) = Inspector::normalize_lookup_path(path) else {
+            continue;
+        };
+        match inspector
+            .cache()
+            .get_or_extract_complete(rust_inspect_manifest_dir, lookup_path, &|_| ())
+        {
+            Ok(metadata) => items.push((*metadata).clone()),
+            Err(
+                RustMetadataError::CrateNotFound(_)
+                | RustMetadataError::PathNotResolved(_)
+                | RustMetadataError::UnsupportedMacro(_),
+            ) => {}
             Err(err) => {
                 return Err(CliError::failure(format!(
-                    "failed to read Rust ABI metadata for `{path}` from {}: {err}",
+                    "failed to extract complete Rust ABI metadata for `{path}` from {}: {err}",
                     rust_inspect_manifest_dir.display()
                 )));
             }
@@ -811,12 +825,14 @@ fn prepare_project_with_options(
     let provider_plan = compilation_session.provider_plan_for_modules(&modules)?;
     let compiled_sdk_modules = CompiledSdkModules::from_provider_plan(&provider_plan);
     extend_requirements_with_provider_plan(&mut project_requirements, &provider_plan)?;
+    let semantic_sdk_paths = semantic_sdk_path_dependencies(&project_requirements);
     let semantic = semantic_lock_state(
         &project_root,
         compilation_session.sdk_inventory.as_deref(),
         compilation_session.sdk_components.as_ref(),
         package_feature_plan.as_ref(),
         &provider_plan,
+        &semantic_sdk_paths,
     )
     .map_err(CliError::failure)?;
     // Artifact-owned stdlib modules resolve from checked metadata and are supplied by its linked Rust crate. Keep
@@ -934,9 +950,13 @@ fn prepare_project_with_options(
         #[cfg(feature = "rust_inspect")]
         rust_inspect_query_paths: &metadata_query_paths,
     })?;
+    let cargo_lock_inputs = lock_resolution.cargo_lock_authority.into_generator_inputs();
+    let lock_payload = cargo_lock_inputs.payload;
+    let cargo_lock_projection_root = cargo_lock_inputs.projection_root;
+    let clear_cargo_lock = cargo_lock_inputs.clear_existing;
+    let cargo_flags = cargo_command_flags(cargo_policy, &cargo_features);
     resolved = lock_resolution.resolved;
     project_requirements = lock_resolution.project_requirements;
-    let lock_payload = lock_resolution.cargo_lock_payload;
     let cargo_package_name = lock_resolution.cargo_package_name;
     generator.set_package_name(Some(cargo_package_name.clone()));
     generator.set_stdlib_features(project_requirements.stdlib_features.clone());
@@ -953,6 +973,9 @@ fn prepare_project_with_options(
             resolved: &resolved,
             project_requirements: &project_requirements,
             lock_payload: lock_payload.clone(),
+            cargo_lock_projection_root: cargo_lock_projection_root.as_deref(),
+            clear_cargo_lock,
+            cargo_policy_flags: cargo_flags.clone(),
             rust_inspect_query_paths: &metadata_query_paths,
             prepare_when_empty: true,
         })?
@@ -993,8 +1016,9 @@ fn prepare_project_with_options(
     codegen.set_stdlib_cache(compilation_analysis.stdlib_cache().clone());
     codegen.set_prechecked_type_info(main_type_info, dependency_type_info);
     generator.set_cargo_lock_payload(lock_payload);
+    generator.set_cargo_lock_projection_root(cargo_lock_projection_root);
+    generator.set_clear_cargo_lock(clear_cargo_lock);
 
-    let cargo_flags = cargo_command_flags(cargo_policy, &cargo_features);
     generator.set_cargo_policy_flags(cargo_flags);
 
     let rust_dependencies = resolved.dependencies.clone();
@@ -1248,12 +1272,14 @@ fn prepare_library_project(
     let provider_plan = compilation_session.provider_plan_for_modules(&modules)?;
     let compiled_sdk_modules = CompiledSdkModules::from_provider_plan(&provider_plan);
     extend_requirements_with_provider_plan(&mut project_requirements, &provider_plan)?;
+    let semantic_sdk_paths = semantic_sdk_path_dependencies(&project_requirements);
     let semantic = semantic_lock_state(
         &project_root,
         compilation_session.sdk_inventory.as_deref(),
         compilation_session.sdk_components.as_ref(),
         Some(&package_feature_plan),
         &provider_plan,
+        &semantic_sdk_paths,
     )
     .map_err(CliError::failure)?;
     let contract_model_bundles = read_project_model_bundles(&project_root, &manifest.contract_model_bundle_paths())
@@ -1323,7 +1349,7 @@ fn prepare_library_project(
         // the parent command remains the sole owner of canonical lock generation and publication. SDK provider
         // artifact builds are excluded because their parent supplies an exact Cargo.lock payload override.
         LockResolution {
-            cargo_lock_payload: None,
+            cargo_lock_authority: super::lock::CargoLockAuthority::None,
             cargo_package_name: project_name.clone(),
             resolved,
             project_requirements,
@@ -1345,9 +1371,13 @@ fn prepare_library_project(
             rust_inspect_query_paths: &metadata_query_paths,
         })?
     };
+    let cargo_lock_inputs = lock_resolution.cargo_lock_authority.into_generator_inputs();
+    let lock_payload_for_typecheck = cargo_lock_inputs.payload;
+    let cargo_lock_projection_root = cargo_lock_inputs.projection_root;
+    let clear_cargo_lock = cargo_lock_inputs.clear_existing;
+    let cargo_flags = cargo_command_flags(&cargo_policy, &cargo_features);
     resolved = lock_resolution.resolved;
     project_requirements = lock_resolution.project_requirements;
-    let lock_payload_for_typecheck = lock_resolution.cargo_lock_payload;
     let lock_cargo_package_name = lock_resolution.cargo_package_name;
     record_timing(&mut timings_ms, "library_resolve_lock_payload", lock_start);
     let should_preheat_library_dependencies = lock_payload_for_typecheck.is_some()
@@ -1364,6 +1394,9 @@ fn prepare_library_project(
             resolved: &resolved,
             project_requirements: &project_requirements,
             lock_payload: lock_payload_for_typecheck.clone(),
+            cargo_lock_projection_root: cargo_lock_projection_root.as_deref(),
+            clear_cargo_lock,
+            cargo_policy_flags: cargo_flags.clone(),
             rust_inspect_query_paths: &metadata_query_paths,
             prepare_when_empty: true,
         })?
@@ -1605,7 +1638,9 @@ fn prepare_library_project(
     #[cfg(feature = "rust_inspect")]
     codegen.set_rust_inspect_manifest_dir(rust_inspect_manifest_dir.clone());
     generator.set_cargo_lock_payload(lock_payload_for_typecheck);
-    generator.set_cargo_policy_flags(cargo_command_flags(&cargo_policy, &cargo_features));
+    generator.set_cargo_lock_projection_root(cargo_lock_projection_root.clone());
+    generator.set_clear_cargo_lock(clear_cargo_lock);
+    generator.set_cargo_policy_flags(cargo_flags);
     let resolved_dependencies_for_preheat = resolved.clone();
     let project_requirements_for_preheat = project_requirements.clone();
     remove_generated_library_self_dependencies(&mut resolved, &project_root);
@@ -1688,6 +1723,7 @@ fn prepare_library_project(
         generator,
         project_root,
         lock_cargo_package_name,
+        cargo_lock_projection_root,
         rust_edition,
         out_dir,
         manifest_path,
@@ -2478,6 +2514,7 @@ pub(crate) fn build_library_report(
             cargo_policy: &prepared.cargo_policy,
             target_dir: &prepared.generator.cargo_target_dir(),
             cargo_lock_payload: lock_payload,
+            cargo_lock_projection_root: prepared.cargo_lock_projection_root.as_deref(),
         })?;
     }
     prepared
@@ -3001,6 +3038,66 @@ mod tests {
             paths.iter().any(|path| path == "incan_stdlib::num::gcd_i64"),
             "expected rust.extern backing item in ABI query paths, got: {paths:?}"
         );
+        Ok(())
+    }
+
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn library_rust_abi_is_independent_of_partial_prewarm_cache_issue922() -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = tempfile::tempdir()?;
+        let root = workspace.path().join("root");
+        let dependency = workspace.path().join("source-dep");
+        fs::create_dir_all(root.join("src"))?;
+        fs::create_dir_all(dependency.join("src"))?;
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"root\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nsource-dep = { path = \"../source-dep\" }\n",
+        )?;
+        fs::write(root.join("src/lib.rs"), "pub fn keep() {}\n")?;
+        fs::write(
+            dependency.join("Cargo.toml"),
+            "[package]\nname = \"source-dep\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\nname = \"source_dep\"\n",
+        )?;
+        fs::write(
+            dependency.join("src/lib.rs"),
+            r#"
+pub struct ChildId(String);
+
+impl ChildId {
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+}
+"#,
+        )?;
+
+        let query_path = "source_dep::ChildId".to_string();
+        let inspector = Inspector::new(InspectorConfig::new(root.clone()));
+        inspector.prewarm([query_path.clone()], &|_| ())?;
+        let prewarmed = inspector.get(&query_path)?;
+        let incan_core::interop::RustItemKind::Type(prewarmed_type) = &prewarmed.metadata.kind else {
+            return Err("expected prewarmed ChildId type metadata".into());
+        };
+        assert!(
+            !prewarmed_type.metadata_completeness.has_methods(),
+            "the regression requires the fast prewarm route to persist partial source metadata"
+        );
+
+        let query_paths = vec![query_path.clone()];
+        let cold = collect_library_rust_abi(&root, &query_paths)?.ok_or("expected cold library Rust ABI")?;
+        inspector.cache().get_or_extract_complete(&root, &query_path, &|_| ())?;
+        let warm = collect_library_rust_abi(&root, &query_paths)?.ok_or("expected warm library Rust ABI")?;
+
+        assert_eq!(
+            cold, warm,
+            "library ABI publication must not depend on whether a previous compiler query upgraded the shared cache"
+        );
+        let child_id = warm.get(&query_path).ok_or("expected ChildId ABI item")?;
+        let incan_core::interop::RustItemKind::Type(child_id_type) = &child_id.kind else {
+            return Err("expected ChildId ABI type metadata".into());
+        };
+        assert!(child_id_type.metadata_completeness.has_methods());
+        assert!(child_id_type.methods.iter().any(|method| method.name == "as_str"));
         Ok(())
     }
 

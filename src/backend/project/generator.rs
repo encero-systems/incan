@@ -7,7 +7,6 @@
 //! - [`super::cargo_toml`] — `Cargo.toml` rendering (`generate_cargo_toml`, `format_dependency_spec`)
 //! - [`super::runner`] — `build()`, `run()`, `run_with_cwd()` and result types
 
-use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io;
@@ -194,6 +193,10 @@ pub struct ProjectGenerator {
     pub(super) include_dev_dependencies: bool,
     /// Optional Cargo.lock payload to materialize.
     pub(super) cargo_lock_payload: Option<String>,
+    /// Canonical source-less Cargo root that authorizes a caller-local lock projection.
+    pub(super) cargo_lock_projection_root: Option<String>,
+    /// Whether generation must remove any prior Cargo.lock before Cargo resolves without canonical authority.
+    pub(super) clear_cargo_lock: bool,
     /// Extra cargo policy flags (e.g. --locked, --frozen).
     pub(super) cargo_policy_flags: Vec<String>,
     /// Optional shared Cargo target directory for generated Rust projects.
@@ -238,6 +241,8 @@ impl ProjectGenerator {
             dev_dependencies: Vec::new(),
             include_dev_dependencies: false,
             cargo_lock_payload: None,
+            cargo_lock_projection_root: None,
+            clear_cargo_lock: false,
             cargo_policy_flags: Vec::new(),
             cargo_target_dir_override: None,
             rust_edition: None,
@@ -301,6 +306,27 @@ impl ProjectGenerator {
     /// Provide a Cargo.lock payload to write alongside Cargo.toml.
     pub fn set_cargo_lock_payload(&mut self, payload: Option<String>) {
         self.cargo_lock_payload = payload;
+    }
+
+    /// Select the exact canonical root whose lock payload Cargo may project onto this generated manifest.
+    pub fn set_cargo_lock_projection_root(&mut self, root: Option<String>) {
+        self.cargo_lock_projection_root = root;
+    }
+
+    /// Require the next generated Cargo invocation to start without a previously projected Cargo.lock.
+    pub fn set_clear_cargo_lock(&mut self, clear: bool) {
+        self.clear_cargo_lock = clear;
+    }
+
+    /// Build the validated pure projection descriptor for the configured canonical seed.
+    pub(super) fn cargo_lock_projection(&self) -> io::Result<Option<super::lock_projection::CargoLockProjection>> {
+        let Some(root) = &self.cargo_lock_projection_root else {
+            return Ok(None);
+        };
+        let payload = self.cargo_lock_payload.clone().ok_or_else(|| {
+            io::Error::other("generated Cargo lock projection root was configured without a canonical payload")
+        })?;
+        super::lock_projection::CargoLockProjection::new(payload, root.clone()).map(Some)
     }
 
     /// Set additional cargo policy flags (e.g. --locked, --frozen).
@@ -1412,49 +1438,38 @@ impl ProjectGenerator {
         Ok(changed)
     }
 
-    /// Write a Cargo.lock file if a lock payload was provided.
+    /// Apply the closed Cargo-lock authority state at the generated-project boundary.
+    ///
+    /// Explicit stale authority removes a previous generated lock. No authority leaves the generated lock untouched.
+    /// Exact authority writes its payload directly. Projection authority preserves a valid caller-local projection or
+    /// writes the canonical seed when projection is due. Only that final seed is subsequently aligned by the runner,
+    /// which asks Cargo to select the caller root without inferring or rewriting dependency edges itself.
     fn write_cargo_lock_if_needed(&self) -> io::Result<bool> {
+        let lock_path = self.output_dir.join("Cargo.lock");
+        if self.clear_cargo_lock {
+            return match fs::remove_file(&lock_path) {
+                Ok(()) => Ok(true),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+                Err(error) => Err(error),
+            };
+        }
         let Some(payload) = &self.cargo_lock_payload else {
             return Ok(false);
         };
-        let payload = self.cargo_lock_payload_for_package(payload)?;
-        Self::write_file_if_changed(&self.output_dir.join("Cargo.lock"), payload.as_ref())
-    }
-
-    /// Align the source-less Cargo.lock root entry with this generated package's version.
-    ///
-    /// Canonical Incan locks resolve dependencies through an internal package identity. Generated application and
-    /// library manifests can carry an authored project version, and Cargo treats a root-version difference as a lock
-    /// mutation under `--locked` or `--frozen`. Rewriting only the matching source-less root entry preserves the
-    /// resolved dependency closure while making the materialized lock agree with its generated manifest.
-    fn cargo_lock_payload_for_package<'a>(&self, payload: &'a str) -> io::Result<Cow<'a, str>> {
-        let mut document = payload
-            .parse::<DocumentMut>()
-            .map_err(|error| io::Error::other(format!("failed to parse generated Cargo.lock payload: {error}")))?;
-        let package_name = self.cargo_package_name();
-        let package_version = self.cargo_package_version();
-        let mut changed = false;
-
-        if let Some(packages) = document.get_mut("package").and_then(Item::as_array_of_tables_mut) {
-            for package in packages.iter_mut() {
-                let matches_root =
-                    package.get("name").and_then(Item::as_str) == Some(package_name) && package.get("source").is_none();
-                if !matches_root {
-                    continue;
-                }
-                if package.get("version").and_then(Item::as_str) != Some(package_version) {
-                    package["version"] = value(package_version);
-                    changed = true;
-                }
-                break;
+        if self.cargo_lock_projection_root.is_some() {
+            let projection = self
+                .cargo_lock_projection()?
+                .ok_or_else(|| io::Error::other("generated Cargo lock projection descriptor disappeared"))?;
+            if fs::read_to_string(&lock_path).is_ok_and(|existing| {
+                projection
+                    .validate_projected(&existing, self.cargo_package_name(), self.cargo_package_version())
+                    .is_ok()
+            }) {
+                return Ok(false);
             }
+            return Self::write_file_if_changed(&lock_path, projection.seed_payload());
         }
-
-        if changed {
-            Ok(Cow::Owned(document.to_string()))
-        } else {
-            Ok(Cow::Borrowed(payload))
-        }
+        Self::write_file_if_changed(&lock_path, payload)
     }
 }
 
@@ -2472,47 +2487,6 @@ mod tests {
             !stale_module.exists(),
             "artifact-owned modules discovered from the manifest must be removed from reused consumer projects"
         );
-        Ok(())
-    }
-
-    #[test]
-    fn cargo_lock_payload_uses_generated_package_version() -> Result<(), Box<dyn std::error::Error>> {
-        let mut generator = ProjectGenerator::new("/tmp/generated_lock_metadata", "generated_target", true);
-        generator.set_package_name(Some("locked_root".to_string()));
-        generator.set_package_metadata(Some("1.2.3".to_string()), None);
-        let payload = r#"version = 4
-
-[[package]]
-name = "locked_root"
-version = "0.5.0-dev.8"
-
-[[package]]
-name = "locked_root"
-version = "9.9.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-"#;
-
-        let rewritten = generator.cargo_lock_payload_for_package(payload)?;
-        let lock: toml::Value = toml::from_str(rewritten.as_ref())?;
-        let packages = lock
-            .get("package")
-            .and_then(toml::Value::as_array)
-            .ok_or("rewritten Cargo.lock had no package array")?;
-        let root_version = packages
-            .iter()
-            .find(|package| package.get("source").is_none())
-            .and_then(|package| package.get("version"))
-            .and_then(toml::Value::as_str)
-            .ok_or("rewritten Cargo.lock had no source-less root version")?;
-        let registry_version = packages
-            .iter()
-            .find(|package| package.get("source").is_some())
-            .and_then(|package| package.get("version"))
-            .and_then(toml::Value::as_str)
-            .ok_or("rewritten Cargo.lock had no registry package version")?;
-
-        assert_eq!(root_version, "1.2.3");
-        assert_eq!(registry_version, "9.9.9");
         Ok(())
     }
 
