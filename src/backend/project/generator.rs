@@ -1438,7 +1438,7 @@ impl ProjectGenerator {
         Ok(changed)
     }
 
-    /// Write an exact canonical Cargo.lock seed when one was provided.
+    /// Preserve a valid caller-local projection or write the exact canonical Cargo.lock seed when projection is due.
     ///
     /// The runner subsequently asks Cargo to align an existing selected root or synthesize an absent selected root
     /// from the caller-local manifest; this generator does not infer or rewrite dependency edges itself.

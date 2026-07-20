@@ -5,7 +5,7 @@ use std::io;
 
 use toml::Value;
 
-/// Canonical Cargo lock seed used to resolve one generated caller-local manifest offline.
+/// Canonical Cargo lock seed resolved onto one generated caller-local manifest under the caller's network policy.
 #[derive(Debug, Clone)]
 pub(crate) struct CargoLockProjection {
     canonical_payload: String,

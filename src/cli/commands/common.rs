@@ -2856,6 +2856,7 @@ pub(crate) fn ensure_rust_inspect_workspace(
     resolved: &ResolvedDependencies,
     project_requirements: &ProjectRequirements,
     cargo_lock_payload: Option<String>,
+    cargo_policy_flags: &[String],
 ) -> CliResult<PathBuf> {
     ensure_rust_inspect_workspace_with_cargo_package_name(
         project_root,
@@ -2867,6 +2868,7 @@ pub(crate) fn ensure_rust_inspect_workspace(
         cargo_lock_payload,
         None,
         false,
+        cargo_policy_flags,
     )
 }
 
@@ -2883,6 +2885,7 @@ pub(crate) fn ensure_rust_inspect_workspace_with_cargo_package_name(
     cargo_lock_payload: Option<String>,
     cargo_lock_projection_root: Option<&str>,
     clear_cargo_lock: bool,
+    cargo_policy_flags: &[String],
 ) -> CliResult<PathBuf> {
     let fingerprint = rust_inspect_workspace_fingerprint(
         project_name,
@@ -2928,6 +2931,7 @@ pub(crate) fn ensure_rust_inspect_workspace_with_cargo_package_name(
     generator.set_cargo_lock_payload(cargo_lock_payload);
     generator.set_cargo_lock_projection_root(cargo_lock_projection_root.map(ToOwned::to_owned));
     generator.set_clear_cargo_lock(clear_cargo_lock);
+    generator.set_cargo_policy_flags(cargo_policy_flags.to_vec());
     let mut referenced_crates = std::collections::BTreeSet::new();
     for dep in resolved.dependencies.iter().chain(resolved.dev_dependencies.iter()) {
         referenced_crates.insert(dep.crate_name.replace('-', "_"));
@@ -5671,6 +5675,59 @@ pub def main() -> int:
 
     #[cfg(feature = "rust_inspect")]
     #[test]
+    fn rust_inspect_projection_receives_frozen_cargo_policy() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let requirements = ProjectRequirements::default();
+        let resolved = ResolvedDependencies {
+            dependencies: Vec::new(),
+            dev_dependencies: Vec::new(),
+        };
+        let canonical = format!(
+            "version = 4\n\n[[package]]\nname = \"incan_workspace\"\nversion = \"{}\"\n",
+            crate::version::INCAN_VERSION
+        );
+        let fingerprint = super::rust_inspect_workspace_fingerprint(
+            "policy_probe",
+            "caller",
+            None,
+            &resolved,
+            &requirements.stdlib_features,
+            &requirements.sdk_dependency_rebindings,
+            &requirements.sdk_path_dependencies,
+            &requirements.sdk_artifact_projections,
+            Some(&canonical),
+            Some("incan_workspace"),
+            false,
+        );
+        let output_dir = super::rust_inspect_workspace_dir(tmp.path(), "policy_probe", &fingerprint);
+        let flags = vec!["--frozen".to_string()];
+
+        let result = ensure_rust_inspect_workspace_with_cargo_package_name(
+            tmp.path(),
+            "policy_probe",
+            "caller",
+            None,
+            &resolved,
+            &requirements,
+            Some(canonical),
+            Some("incan_workspace"),
+            false,
+            &flags,
+        );
+        assert!(
+            result.is_err(),
+            "the deliberately incomplete canonical fixture must fail closed"
+        );
+        assert_eq!(
+            crate::backend::project::runner::test_projection_cargo_policy(&output_dir),
+            Some(flags),
+            "rust-inspect must set frozen policy before attempting Cargo lock projection"
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "rust_inspect")]
+    #[test]
     fn rust_inspect_fingerprint_tracks_same_path_projection_rebuild_issue911() -> Result<(), Box<dyn std::error::Error>>
     {
         let workspace = tempfile::tempdir()?;
@@ -5871,6 +5928,7 @@ pub def main() -> int:
             None,
             None,
             false,
+            &[],
         )?;
 
         let cargo_manifest = fs::read_to_string(generated.join("Cargo.toml"))?;
@@ -5912,6 +5970,7 @@ pub def main() -> int:
             None,
             None,
             false,
+            &[],
         )?;
         assert_eq!(generated, regenerated);
         assert!(fs::read_to_string(shadow_root.join("src/lib.rs"))?.contains("value"));
@@ -6007,6 +6066,7 @@ pub def main() -> int:
             &resolved,
             &requirements,
             Some("[[package]]\nname = \"metadata_probe\"\n".to_string()),
+            &[],
         )?;
         assert_eq!(
             super::test_rust_inspect_workspace_generations(&out_dir),
@@ -6063,6 +6123,7 @@ pub def main() -> int:
             &resolved,
             &requirements,
             lock.clone(),
+            &[],
         )?;
         assert_eq!(
             super::test_rust_inspect_workspace_generations(&out_dir),
@@ -6077,6 +6138,7 @@ pub def main() -> int:
             &resolved,
             &requirements,
             lock,
+            &[],
         )?;
         assert_eq!(
             super::test_rust_inspect_workspace_generations(&out_dir),

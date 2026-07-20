@@ -954,6 +954,7 @@ fn prepare_project_with_options(
     let lock_payload = cargo_lock_inputs.payload;
     let cargo_lock_projection_root = cargo_lock_inputs.projection_root;
     let clear_cargo_lock = cargo_lock_inputs.clear_existing;
+    let cargo_flags = cargo_command_flags(cargo_policy, &cargo_features);
     resolved = lock_resolution.resolved;
     project_requirements = lock_resolution.project_requirements;
     let cargo_package_name = lock_resolution.cargo_package_name;
@@ -974,6 +975,7 @@ fn prepare_project_with_options(
             lock_payload: lock_payload.clone(),
             cargo_lock_projection_root: cargo_lock_projection_root.as_deref(),
             clear_cargo_lock,
+            cargo_policy_flags: cargo_flags.clone(),
             rust_inspect_query_paths: &metadata_query_paths,
             prepare_when_empty: true,
         })?
@@ -1017,7 +1019,6 @@ fn prepare_project_with_options(
     generator.set_cargo_lock_projection_root(cargo_lock_projection_root);
     generator.set_clear_cargo_lock(clear_cargo_lock);
 
-    let cargo_flags = cargo_command_flags(cargo_policy, &cargo_features);
     generator.set_cargo_policy_flags(cargo_flags);
 
     let rust_dependencies = resolved.dependencies.clone();
@@ -1374,6 +1375,7 @@ fn prepare_library_project(
     let lock_payload_for_typecheck = cargo_lock_inputs.payload;
     let cargo_lock_projection_root = cargo_lock_inputs.projection_root;
     let clear_cargo_lock = cargo_lock_inputs.clear_existing;
+    let cargo_flags = cargo_command_flags(&cargo_policy, &cargo_features);
     resolved = lock_resolution.resolved;
     project_requirements = lock_resolution.project_requirements;
     let lock_cargo_package_name = lock_resolution.cargo_package_name;
@@ -1394,6 +1396,7 @@ fn prepare_library_project(
             lock_payload: lock_payload_for_typecheck.clone(),
             cargo_lock_projection_root: cargo_lock_projection_root.as_deref(),
             clear_cargo_lock,
+            cargo_policy_flags: cargo_flags.clone(),
             rust_inspect_query_paths: &metadata_query_paths,
             prepare_when_empty: true,
         })?
@@ -1637,7 +1640,7 @@ fn prepare_library_project(
     generator.set_cargo_lock_payload(lock_payload_for_typecheck);
     generator.set_cargo_lock_projection_root(cargo_lock_projection_root.clone());
     generator.set_clear_cargo_lock(clear_cargo_lock);
-    generator.set_cargo_policy_flags(cargo_command_flags(&cargo_policy, &cargo_features));
+    generator.set_cargo_policy_flags(cargo_flags);
     let resolved_dependencies_for_preheat = resolved.clone();
     let project_requirements_for_preheat = project_requirements.clone();
     remove_generated_library_self_dependencies(&mut resolved, &project_root);

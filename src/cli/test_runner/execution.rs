@@ -3325,6 +3325,7 @@ pub(super) fn run_file_tests_batch(
         let lock_payload = cargo_lock_inputs.payload;
         let cargo_lock_projection_root = cargo_lock_inputs.projection_root;
         let clear_cargo_lock = cargo_lock_inputs.clear_existing;
+        let rust_inspect_cargo_flags = common::cargo_command_flags(cargo_policy, &cargo_feature_selection);
 
         #[cfg(feature = "rust_inspect")]
         let rust_inspect_manifest_dir = {
@@ -3348,6 +3349,7 @@ pub(super) fn run_file_tests_batch(
                 lock_payload.clone(),
                 cargo_lock_projection_root.as_deref(),
                 clear_cargo_lock,
+                &rust_inspect_cargo_flags,
             ) {
                 Ok(dir) => dir,
                 Err(err) => {

@@ -9,8 +9,19 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+#[cfg(test)]
+use std::sync::{LazyLock, Mutex};
 
 use super::generator::{ProjectGenerator, RunProfile};
+
+#[cfg(test)]
+static TEST_PROJECTION_CARGO_POLICIES: LazyLock<Mutex<std::collections::BTreeMap<PathBuf, Vec<String>>>> =
+    LazyLock::new(|| Mutex::new(std::collections::BTreeMap::new()));
+
+#[cfg(test)]
+pub(crate) fn test_projection_cargo_policy(output_dir: &Path) -> Option<Vec<String>> {
+    TEST_PROJECTION_CARGO_POLICIES.lock().ok()?.get(output_dir).cloned()
+}
 
 /// Network policy for Cargo-owned lock projection. `--locked` constrains mutation but does not imply offline mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,6 +66,10 @@ impl ProjectGenerator {
         let Some(projection) = self.cargo_lock_projection()? else {
             return Ok(false);
         };
+        #[cfg(test)]
+        if let Ok(mut policies) = TEST_PROJECTION_CARGO_POLICIES.lock() {
+            policies.insert(self.output_dir.clone(), self.cargo_policy_flags.clone());
+        }
         let lock_path = self.output_dir.join("Cargo.lock");
         let seed = fs::read_to_string(&lock_path)?;
         run_cargo_lock_projection(
