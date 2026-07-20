@@ -995,6 +995,9 @@ pub struct NewtypeExport {
     /// Direct trait adoptions, preserving type arguments for generic traits.
     #[serde(default)]
     pub trait_adoptions: Vec<TypeBoundExport>,
+    /// Source-level `@derive(...)` names declared by this newtype.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub derives: Vec<String>,
     /// Whether this newtype is a zero-cost Rust type alias (`type X = rusttype RustX`).
     #[serde(default)]
     pub is_rusttype: bool,
@@ -1735,6 +1738,7 @@ fn newtype_export_from_checked(export: &CheckedNewtypeExport) -> NewtypeExport {
         type_params: export.type_params.iter().map(type_param_from_checked).collect(),
         traits: export.traits.clone(),
         trait_adoptions: export.trait_adoptions.iter().map(type_bound_from_checked).collect(),
+        derives: export.derives.clone(),
         is_rusttype: export.is_rusttype,
         underlying: type_ref_from_resolved(&export.underlying),
         checked_constructor: export.checked_constructor.clone(),

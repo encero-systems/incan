@@ -705,6 +705,58 @@ def main() -> None:
     Ok(())
 }
 
+/// Issue #914: derived traits on a nested newtype must survive frontend bound checking and generated-Rust compilation.
+#[test]
+fn derived_nested_newtype_generic_bounds_build_and_run_issue914() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    let source_path = temp.path().join("nested_newtype_generic_bounds.incn");
+    let output_dir = temp.path().join("generated");
+    fs::write(
+        &source_path,
+        r#"@derive(Clone, Eq)
+type BaseId = newtype str
+
+@derive(Clone, Eq)
+type ChildId = newtype BaseId
+
+def has_duplicates[T with (Clone, Eq)](values: list[T]) -> bool:
+    for left in range(len(values)):
+        for right in range(len(values)):
+            if right > left and values[left] == values[right]:
+                return true
+    return false
+
+def main() -> None:
+    identifiers = [ChildId(BaseId("one")), ChildId(BaseId("one"))]
+    println(has_duplicates(identifiers))
+"#,
+    )?;
+
+    let build = incan_command()
+        .args([
+            "build",
+            source_path.to_string_lossy().as_ref(),
+            output_dir.to_string_lossy().as_ref(),
+        ])
+        .output()?;
+    assert!(
+        build.status.success(),
+        "nested newtype generic-bound build failed.\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let run = incan_command().arg("run").arg(&source_path).output()?;
+    assert!(
+        run.status.success(),
+        "nested newtype generic-bound run failed.\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(String::from_utf8(run.stdout)?, "true\n");
+    Ok(())
+}
+
 #[test]
 fn rfc028_user_defined_operators_run_end_to_end() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;

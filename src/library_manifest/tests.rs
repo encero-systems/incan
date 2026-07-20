@@ -550,6 +550,7 @@ fn checked_newtype_rewrite_uses_source_identity_for_same_leaf_names() -> Result<
         type_params: Vec::new(),
         traits: Vec::new(),
         trait_adoptions: Vec::new(),
+        derives: Vec::new(),
         is_rusttype: false,
         underlying,
         checked_constructor: None,

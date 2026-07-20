@@ -1160,7 +1160,9 @@ impl TypeChecker {
                     .map(|target| (rebinding.node.name.clone(), target))
             })
             .collect();
-        let trait_adoptions = self.collect_trait_adoption_infos(&nt.traits, Some(&nt.name), &nt.type_params);
+        let derives = self.extract_derive_names(&nt.decorators);
+        let mut trait_adoptions = self.collect_trait_adoption_infos(&nt.traits, Some(&nt.name), &nt.type_params);
+        trait_adoptions.extend(self.collect_derive_trait_adoption_infos(&derives));
 
         // Define a placeholder symbol FIRST so methods can reference the newtype name
         self.symbols.define(Symbol {
@@ -1175,6 +1177,7 @@ impl TypeChecker {
                 method_rebindings,
                 traits: nt.traits.iter().map(|trait_ref| trait_ref.node.name.clone()).collect(),
                 trait_adoptions,
+                derives,
                 method_aliases: HashMap::new(),
                 methods: HashMap::new(), // Empty for now
                 method_overloads: HashMap::new(),

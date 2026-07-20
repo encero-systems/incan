@@ -193,6 +193,9 @@ pub struct ApiNewtype {
     pub traits: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub trait_adoptions: Vec<TypeBoundExport>,
+    /// Source-level `@derive(...)` names declared by this newtype.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub derives: Vec<String>,
     pub is_rusttype: bool,
     pub underlying: TypeRef,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -439,6 +442,7 @@ pub(crate) fn newtype_export_from_api(newtype: &ApiNewtype) -> NewtypeExport {
         type_params: newtype.type_params.clone(),
         traits: newtype.traits.clone(),
         trait_adoptions: newtype.trait_adoptions.clone(),
+        derives: newtype.derives.clone(),
         is_rusttype: newtype.is_rusttype,
         underlying: newtype.underlying.clone(),
         checked_constructor: newtype.checked_constructor.clone(),
@@ -1135,6 +1139,7 @@ fn api_newtype(
         type_params: type_params(&export.type_params),
         traits: export.traits.clone(),
         trait_adoptions: export.trait_adoptions.iter().map(type_bound).collect(),
+        derives: export.derives.clone(),
         is_rusttype: export.is_rusttype,
         underlying: type_ref_from_resolved(&export.underlying),
         checked_constructor: export.checked_constructor.clone(),
