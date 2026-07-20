@@ -6566,6 +6566,7 @@
 </ul>
 <h2 id="bugfixes">Bugfixes<a class="headerlink" href="#bugfixes" title="Permanent link">&para;</a></h2>
 <ul>
+<li><strong>Compiler</strong>: Published Rust ABI metadata now excludes traits introduced only by unrelated downstream crates in the loaded inspection graph, keeping SDK provider identities and workspace dependency fingerprints stable across cache state and host platforms (#924).</li>
 <li><strong>Tooling</strong>: Canonical lock publication now keeps its persistent cross-process guard under ignored compiler target state instead of leaving <code>.incan.lock.incan.lock</code> in the project root (#912).</li>
 <li><strong>SDK providers</strong>: Official stdlib component packages now preserve their source-owned Apache-2.0 license in generated Cargo metadata, so downstream dependency audits no longer classify synthesized provider crates as unlicensed (#920).</li>
 <li><strong>Stdlib</strong>: Cold SDK preparation now copies borrowed regex matches and capture names into owned <code>std.regex</code> values instead of calling an unavailable <code>&amp;str.to_string()</code> method (#918).</li>
