@@ -636,6 +636,32 @@ fn concurrent_sdk_provider_publication_reuses_one_complete_identity() -> Result<
         inventory.components.values().all(|component| component.available),
         "the reused full-profile provider identity must contain every component"
     );
+    for component_id in inventory.components.keys() {
+        let manifest_path = artifact_roots
+            .first()
+            .ok_or("concurrent provider publication did not produce an artifact root")?
+            .join("components")
+            .join(component_id)
+            .join("Cargo.toml");
+        let manifest: toml::Value = toml::from_str(&fs::read_to_string(&manifest_path)?)?;
+        let package = manifest.get("package").and_then(toml::Value::as_table).ok_or_else(|| {
+            format!(
+                "SDK provider manifest {} has no [package] table",
+                manifest_path.display()
+            )
+        })?;
+        assert_eq!(
+            package.get("license").and_then(toml::Value::as_str),
+            Some("Apache-2.0"),
+            "official SDK provider `{component_id}` must preserve its source-owned SPDX license: {}",
+            manifest_path.display()
+        );
+        assert!(
+            package.get("license-file").is_none(),
+            "SPDX-licensed SDK provider `{component_id}` must not invent a Cargo license-file: {}",
+            manifest_path.display()
+        );
+    }
     Ok(())
 }
 

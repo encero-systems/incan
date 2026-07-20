@@ -1,6 +1,7 @@
 [project]
 name = "incan_stdlib_compression"
 version = "0.5.0"
+license = "Apache-2.0"
 private = true
 
 [build]
