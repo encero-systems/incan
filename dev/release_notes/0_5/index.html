@@ -6473,6 +6473,7 @@
 </ul>
 <h2 id="bugfixes">Bugfixes<a class="headerlink" href="#bugfixes" title="Permanent link">&para;</a></h2>
 <ul>
+<li><strong>Tooling</strong>: Canonical lock publication now keeps its persistent cross-process guard under ignored compiler target state instead of leaving <code>.incan.lock.incan.lock</code> in the project root (#912).</li>
 <li><strong>SDK providers</strong>: Compiled library artifacts now rebind SDK path dependencies to the active content-addressed provider cache, including copied support crates, so semantically identical components cannot enter one Cargo graph through conflicting cache roots (#911).</li>
 <li><strong>Toolchain</strong>: Prelude parsing, stdlib type metadata, testing markers, and compiled SDK-provider publication now resolve one canonical stdlib source tree. <code>INCAN_STDLIB</code> and <code>INCAN_STDLIB_DIR</code> are true overrides, preventing a compiler in a shared Cargo target from mixing its source checkout with an older executable-adjacent stdlib.</li>
 <li><strong>Workspaces</strong>: Rooted workspace library artifacts now retain the selected project's identity across Cargo package, Cargo library, and <code>.incnlib</code> metadata, while removing self-dependencies even with explicit output overrides so external consumers can compile the published package (#909).</li>
