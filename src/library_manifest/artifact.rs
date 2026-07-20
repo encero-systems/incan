@@ -792,6 +792,13 @@ fn hash_directory_with_normalization(
                 path: path.clone(),
                 root: root.to_path_buf(),
             })?;
+        // The generated provider-root Cargo.lock is a projection of the canonical Incan lock, not an independent
+        // provider input. Including it here creates a two-pass identity cycle: artifact-only preparation has no
+        // Cargo.lock, while the first locked build materializes one from incan.lock and would otherwise change the
+        // provider's semantic identity. Nested Cargo.lock files remain part of the artifact content projection.
+        if normalization.is_some() && relative == Path::new("Cargo.lock") {
+            continue;
+        }
         let is_root_target = relative
             .components()
             .next()
@@ -858,6 +865,51 @@ mod tests {
         fs::create_dir_all(artifact.path().join("target/debug"))?;
         fs::write(artifact.path().join("target/debug/cache"), "mutable")?;
         assert_eq!(source_changed, digest_provider_artifact(artifact.path())?);
+        Ok(())
+    }
+
+    #[test]
+    fn semantic_digest_excludes_only_generated_provider_root_cargo_lock() -> TestResult {
+        let artifact = tempfile::tempdir()?;
+        fs::create_dir_all(artifact.path().join("src"))?;
+        fs::create_dir_all(artifact.path().join("nested_dependency"))?;
+        fs::write(
+            artifact.path().join("Cargo.toml"),
+            "[package]\nname = \"root_lib\"\nversion = \"0.1.0\"\n",
+        )?;
+        fs::write(artifact.path().join("src/lib.rs"), "pub fn value() -> i32 { 1 }\n")?;
+        fs::write(
+            artifact.path().join("nested_dependency/Cargo.lock"),
+            "version = 4\n# nested-v1\n",
+        )?;
+        let manifest = LibraryManifest::new("root_lib", "0.1.0");
+        let manifest_path = artifact.path().join("root_lib.incnlib");
+        manifest.write_to_path(&manifest_path)?;
+        let semantic_digest = || {
+            digest_provider_semantic_artifact(
+                artifact.path(),
+                &manifest_path,
+                &artifact.path().join("Cargo.toml"),
+                &manifest,
+            )
+        };
+
+        let initial_physical = digest_provider_artifact(artifact.path())?;
+        let initial_semantic = semantic_digest()?;
+        fs::write(artifact.path().join("Cargo.lock"), "version = 4\n# root-v1\n")?;
+        let root_lock_physical = digest_provider_artifact(artifact.path())?;
+        assert_ne!(initial_physical, root_lock_physical);
+        assert_eq!(initial_semantic, semantic_digest()?);
+
+        fs::write(artifact.path().join("Cargo.lock"), "version = 4\n# root-v2\n")?;
+        assert_ne!(root_lock_physical, digest_provider_artifact(artifact.path())?);
+        assert_eq!(initial_semantic, semantic_digest()?);
+
+        fs::write(
+            artifact.path().join("nested_dependency/Cargo.lock"),
+            "version = 4\n# nested-v2\n",
+        )?;
+        assert_ne!(initial_semantic, semantic_digest()?);
         Ok(())
     }
 

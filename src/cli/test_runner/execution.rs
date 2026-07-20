@@ -3308,6 +3308,7 @@ pub(super) fn run_file_tests_batch(
             semantic: Some(&semantic),
             package_features: Some(package_features),
             sdk_profile_override,
+            workspace_projection: commands::WorkspaceLockProjection::Aggregate,
             #[cfg(feature = "rust_inspect")]
             rust_inspect_query_paths: &metadata_query_paths,
         }) {

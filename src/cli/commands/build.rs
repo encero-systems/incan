@@ -57,8 +57,8 @@ use super::common::{
     resolve_project_root, resolve_source_root, semantic_sdk_path_dependencies, validate_output_dir,
 };
 use super::lock::{
-    GeneratedLibraryDependencyPreheatRequest, LockResolution, LockResolutionRequest, resolve_lock_context,
-    run_generated_library_dependency_preheat,
+    GeneratedLibraryDependencyPreheatRequest, LockResolution, LockResolutionRequest, WorkspaceLockProjection,
+    resolve_lock_context, run_generated_library_dependency_preheat,
 };
 #[cfg(feature = "rust_inspect")]
 use super::lock::{RustInspectWorkspaceRequest, prepare_rust_inspect_workspace};
@@ -933,6 +933,7 @@ fn prepare_project_with_options(
         semantic: Some(&semantic),
         package_features: Some(package_features),
         sdk_profile_override: options.sdk_profile_override,
+        workspace_projection: WorkspaceLockProjection::Aggregate,
         #[cfg(feature = "rust_inspect")]
         rust_inspect_query_paths: &metadata_query_paths,
     })?;
@@ -1345,6 +1346,7 @@ fn prepare_library_project(
             semantic: Some(&semantic),
             package_features: Some(package_features),
             sdk_profile_override,
+            workspace_projection: WorkspaceLockProjection::Member,
             #[cfg(feature = "rust_inspect")]
             rust_inspect_query_paths: &metadata_query_paths,
         })?

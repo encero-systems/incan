@@ -1424,12 +1424,12 @@ library = "src/lib.incn"
     )?;
     fs::write(
         root.path().join("src/lib.incn"),
-        "pub def answer() -> int:\n  return 42\n",
+        "from std.json import JsonValue\n\n\npub def answer() -> int:\n  return 42\n",
     )?;
 
     let warmup = run_incan(root.path(), &["build", "--lib"])?;
     assert_success(&warmup, "standalone SDK and library artifact warmup");
-    fs::remove_dir_all(root.path().join("target/lib"))?;
+    fs::remove_dir_all(root.path().join("target"))?;
     fs::remove_file(root.path().join("incan.lock"))?;
 
     fs::write(
@@ -1462,11 +1462,14 @@ main = "src/main.incn"
 
 [dependencies]
 root_lib = { workspace = true }
+
+[rust-dependencies]
+regex = "1"
 "#,
     )?;
     fs::write(
         consumer.join("src/main.incn"),
-        "from pub::root_lib import answer\n\n\ndef main() -> None:\n  println(answer())\n",
+        "from pub::root_lib import answer\nfrom rust::regex import Regex\n\n\ndef main() -> None:\n  println(answer())\n",
     )?;
 
     let (lock_output, timed_out) = run_incan_with_timeout(root.path(), &["lock"], std::time::Duration::from_secs(60))?;
@@ -1491,7 +1494,27 @@ root_lib = { workspace = true }
     );
 
     let library_output = run_incan(root.path(), &["build", "--lib", "--member", "root_lib", "--locked"])?;
-    assert_success(&library_output, "selected rooted library build");
+    assert_success(
+        &library_output,
+        "target-free selected rooted library build from the first canonical lock",
+    );
+
+    let lock_after_library_build = run_incan(root.path(), &["lock"])?;
+    assert_success(
+        &lock_after_library_build,
+        "rooted workspace lock convergence check after selected library build",
+    );
+    assert_eq!(
+        first_lock,
+        fs::read(root.path().join("incan.lock"))?,
+        "the selected root library build must preserve the first canonical lock byte-for-byte"
+    );
+
+    let second_library_output = run_incan(root.path(), &["build", "--lib", "--member", "root_lib", "--locked"])?;
+    assert_success(
+        &second_library_output,
+        "second selected rooted library build from the unchanged canonical lock",
+    );
 
     let cargo_toml: toml::Value = toml::from_str(&fs::read_to_string(root.path().join("target/lib/Cargo.toml"))?)?;
     assert_eq!(cargo_toml["package"]["name"].as_str(), Some("root_lib"));
@@ -1502,11 +1525,6 @@ root_lib = { workspace = true }
     );
     assert!(root.path().join("target/lib/root_lib.incnlib").is_file());
 
-    let consumer_lock_refresh = run_incan(root.path(), &["lock"])?;
-    assert_success(
-        &consumer_lock_refresh,
-        "rooted workspace lock refresh after selected library rebuild",
-    );
     let consumer_output = run_incan(&consumer, &["run", "src/main.incn", "--locked"])?;
     assert_success(&consumer_output, "consumer of the freshly rebuilt root library");
     Ok(())

@@ -216,8 +216,19 @@ pub(crate) struct LockResolutionRequest<'a> {
     pub package_features: Option<&'a FeatureSelection>,
     /// Command-local SDK profile used when rebuilding the canonical project-wide lock context.
     pub sdk_profile_override: Option<&'a str>,
+    /// Whether a workspace caller generates the aggregate synthetic package or one published member artifact.
+    pub workspace_projection: WorkspaceLockProjection,
     #[cfg(feature = "rust_inspect")]
     pub rust_inspect_query_paths: &'a [String],
+}
+
+/// Dependency projection consumed by a generated package backed by the canonical workspace lock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WorkspaceLockProjection {
+    /// Generate the synthetic package that owns the aggregate workspace Cargo graph.
+    Aggregate,
+    /// Generate one member package without unrelated dependencies from sibling members.
+    Member,
 }
 
 /// Cargo inputs that must be consumed together by generated projects.
@@ -347,6 +358,7 @@ pub(crate) fn prepare_rust_inspect_typecheck_workspace(
         semantic: None,
         package_features: None,
         sdk_profile_override: None,
+        workspace_projection: WorkspaceLockProjection::Aggregate,
         rust_inspect_query_paths: &metadata_query_paths,
     })?;
     prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {
@@ -380,6 +392,7 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
         semantic,
         package_features,
         sdk_profile_override,
+        workspace_projection,
         #[cfg(feature = "rust_inspect")]
         rust_inspect_query_paths,
     } = request;
@@ -415,6 +428,10 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
     {
         return resolve_workspace_lock_payload(WorkspaceLockResolutionRequest {
             workspace: &workspace,
+            caller_project_name: project_name,
+            caller_resolved: resolved,
+            caller_project_requirements: project_requirements,
+            projection: workspace_projection,
             caller_entry_file: entry_file,
             cargo_features,
             cargo_policy,
@@ -544,6 +561,10 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
 /// from every member context and lives only at the workspace root.
 struct WorkspaceLockResolutionRequest<'a> {
     workspace: &'a WorkspaceGraph,
+    caller_project_name: &'a str,
+    caller_resolved: &'a ResolvedDependencies,
+    caller_project_requirements: &'a ProjectRequirements,
+    projection: WorkspaceLockProjection,
     caller_entry_file: Option<&'a Path>,
     cargo_features: &'a CargoFeatureSelection,
     cargo_policy: &'a CargoPolicy,
@@ -557,6 +578,10 @@ struct WorkspaceLockResolutionRequest<'a> {
 fn resolve_workspace_lock_payload(request: WorkspaceLockResolutionRequest<'_>) -> CliResult<LockResolution> {
     let WorkspaceLockResolutionRequest {
         workspace,
+        caller_project_name,
+        caller_resolved,
+        caller_project_requirements,
+        projection,
         caller_entry_file,
         cargo_features,
         cargo_policy,
@@ -608,16 +633,34 @@ fn resolve_workspace_lock_payload(request: WorkspaceLockResolutionRequest<'_>) -
             );
             return Ok(LockResolution {
                 cargo_lock_payload: Some(lock.cargo_lock_payload),
-                cargo_package_name: WORKSPACE_LOCK_CARGO_PACKAGE_NAME.to_string(),
-                resolved,
-                project_requirements: requirements,
+                cargo_package_name: match projection {
+                    WorkspaceLockProjection::Aggregate => WORKSPACE_LOCK_CARGO_PACKAGE_NAME.to_string(),
+                    WorkspaceLockProjection::Member => caller_project_name.to_string(),
+                },
+                resolved: match projection {
+                    WorkspaceLockProjection::Aggregate => resolved,
+                    WorkspaceLockProjection::Member => caller_resolved.clone(),
+                },
+                project_requirements: match projection {
+                    WorkspaceLockProjection::Aggregate => requirements,
+                    WorkspaceLockProjection::Member => caller_project_requirements.clone(),
+                },
             });
         }
         return Ok(LockResolution {
             cargo_lock_payload: Some(lock.cargo_lock_payload),
-            cargo_package_name: WORKSPACE_LOCK_CARGO_PACKAGE_NAME.to_string(),
-            resolved,
-            project_requirements: requirements,
+            cargo_package_name: match projection {
+                WorkspaceLockProjection::Aggregate => WORKSPACE_LOCK_CARGO_PACKAGE_NAME.to_string(),
+                WorkspaceLockProjection::Member => caller_project_name.to_string(),
+            },
+            resolved: match projection {
+                WorkspaceLockProjection::Aggregate => resolved,
+                WorkspaceLockProjection::Member => caller_resolved.clone(),
+            },
+            project_requirements: match projection {
+                WorkspaceLockProjection::Aggregate => requirements,
+                WorkspaceLockProjection::Member => caller_project_requirements.clone(),
+            },
         });
     }
 
@@ -658,9 +701,18 @@ fn resolve_workspace_lock_payload(request: WorkspaceLockResolutionRequest<'_>) -
     )?;
     Ok(LockResolution {
         cargo_lock_payload: Some(lock.cargo_lock_payload),
-        cargo_package_name: WORKSPACE_LOCK_CARGO_PACKAGE_NAME.to_string(),
-        resolved,
-        project_requirements: requirements,
+        cargo_package_name: match projection {
+            WorkspaceLockProjection::Aggregate => WORKSPACE_LOCK_CARGO_PACKAGE_NAME.to_string(),
+            WorkspaceLockProjection::Member => caller_project_name.to_string(),
+        },
+        resolved: match projection {
+            WorkspaceLockProjection::Aggregate => resolved,
+            WorkspaceLockProjection::Member => caller_resolved.clone(),
+        },
+        project_requirements: match projection {
+            WorkspaceLockProjection::Aggregate => requirements,
+            WorkspaceLockProjection::Member => caller_project_requirements.clone(),
+        },
     })
 }
 

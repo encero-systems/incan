@@ -1425,33 +1425,101 @@ impl ProjectGenerator {
     ///
     /// Canonical Incan locks resolve dependencies through an internal package identity. Generated application and
     /// library manifests can carry an authored project version, and Cargo treats a root-version difference as a lock
-    /// mutation under `--locked` or `--frozen`. Rewriting only the matching source-less root entry preserves the
-    /// resolved dependency closure while making the materialized lock agree with its generated manifest.
+    /// mutation under `--locked` or `--frozen`. A workspace lock also contains sibling-member packages that are not
+    /// reachable from one selected library. Project the canonical payload to the matching source-less root's reachable
+    /// package graph so Cargo does not need to prune unrelated workspace packages under a strict policy.
     fn cargo_lock_payload_for_package<'a>(&self, payload: &'a str) -> io::Result<Cow<'a, str>> {
-        let mut document = payload
-            .parse::<DocumentMut>()
+        #[derive(Clone)]
+        struct LockedPackage {
+            name: String,
+            version: String,
+            source: Option<String>,
+            dependencies: Vec<String>,
+        }
+
+        let mut document = toml::from_str::<toml::Value>(payload)
             .map_err(|error| io::Error::other(format!("failed to parse generated Cargo.lock payload: {error}")))?;
         let package_name = self.cargo_package_name();
         let package_version = self.cargo_package_version();
-        let mut changed = false;
+        let Some(packages) = document.get("package").and_then(toml::Value::as_array) else {
+            return Ok(Cow::Borrowed(payload));
+        };
+        let locked_packages = packages
+            .iter()
+            .map(|package| LockedPackage {
+                name: package
+                    .get("name")
+                    .and_then(toml::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                version: package
+                    .get("version")
+                    .and_then(toml::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                source: package.get("source").and_then(toml::Value::as_str).map(str::to_string),
+                dependencies: package
+                    .get("dependencies")
+                    .and_then(toml::Value::as_array)
+                    .map(|dependencies| {
+                        dependencies
+                            .iter()
+                            .filter_map(toml::Value::as_str)
+                            .map(str::to_string)
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            })
+            .collect::<Vec<_>>();
+        let Some(root_index) = locked_packages
+            .iter()
+            .position(|package| package.name == package_name && package.source.is_none())
+        else {
+            return Ok(Cow::Borrowed(payload));
+        };
 
-        if let Some(packages) = document.get_mut("package").and_then(Item::as_array_of_tables_mut) {
-            for package in packages.iter_mut() {
-                let matches_root =
-                    package.get("name").and_then(Item::as_str) == Some(package_name) && package.get("source").is_none();
-                if !matches_root {
-                    continue;
+        let mut reachable = BTreeSet::from([root_index]);
+        let mut pending = vec![root_index];
+        while let Some(index) = pending.pop() {
+            for dependency in &locked_packages[index].dependencies {
+                let mut parts = dependency.splitn(3, ' ');
+                let dependency_name = parts.next().unwrap_or_default();
+                let dependency_version = parts.next();
+                let dependency_source = parts.next().map(|source| source.trim_matches(['(', ')']));
+                for (candidate_index, candidate) in locked_packages.iter().enumerate() {
+                    if candidate.name != dependency_name
+                        || dependency_version.is_some_and(|version| candidate.version != version)
+                        || dependency_source.is_some_and(|source| candidate.source.as_deref() != Some(source))
+                    {
+                        continue;
+                    }
+                    if reachable.insert(candidate_index) {
+                        pending.push(candidate_index);
+                    }
                 }
-                if package.get("version").and_then(Item::as_str) != Some(package_version) {
-                    package["version"] = value(package_version);
-                    changed = true;
-                }
-                break;
             }
         }
 
+        let mut changed = reachable.len() != locked_packages.len();
+        let packages = document
+            .get_mut("package")
+            .and_then(toml::Value::as_array_mut)
+            .ok_or_else(|| io::Error::other("generated Cargo.lock package array disappeared during projection"))?;
+        if packages[root_index].get("version").and_then(toml::Value::as_str) != Some(package_version) {
+            packages[root_index]["version"] = toml::Value::String(package_version.to_string());
+            changed = true;
+        }
+        let mut index = 0usize;
+        packages.retain(|_| {
+            let retain = reachable.contains(&index);
+            index += 1;
+            retain
+        });
+
         if changed {
-            Ok(Cow::Owned(document.to_string()))
+            toml::to_string(&document)
+                .map(Cow::Owned)
+                .map_err(|error| io::Error::other(format!("failed to serialize projected Cargo.lock: {error}")))
         } else {
             Ok(Cow::Borrowed(payload))
         }
@@ -2485,6 +2553,9 @@ mod tests {
 [[package]]
 name = "locked_root"
 version = "0.5.0-dev.8"
+dependencies = [
+ "locked_root 9.9.9 (registry+https://github.com/rust-lang/crates.io-index)",
+]
 
 [[package]]
 name = "locked_root"
@@ -2513,6 +2584,46 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 
         assert_eq!(root_version, "1.2.3");
         assert_eq!(registry_version, "9.9.9");
+        Ok(())
+    }
+
+    #[test]
+    fn cargo_lock_payload_projects_selected_workspace_member_closure() -> Result<(), Box<dyn std::error::Error>> {
+        let mut generator = ProjectGenerator::new("/tmp/generated_member_lock", "root_lib", false);
+        generator.set_package_metadata(Some("0.1.0".to_string()), None);
+        let payload = r#"version = 4
+
+[[package]]
+name = "incan_workspace"
+version = "0.5.0-dev.19"
+dependencies = ["regex", "root_lib"]
+
+[[package]]
+name = "path_helper"
+version = "0.1.0"
+
+[[package]]
+name = "regex"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "root_lib"
+version = "0.0.1"
+dependencies = ["path_helper"]
+"#;
+
+        let projected = generator.cargo_lock_payload_for_package(payload)?;
+        let lock: toml::Value = toml::from_str(projected.as_ref())?;
+        let packages = lock["package"]
+            .as_array()
+            .ok_or("projected lock had no package array")?;
+        let names = packages
+            .iter()
+            .filter_map(|package| package["name"].as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec!["path_helper", "root_lib"]);
+        assert_eq!(packages[1]["version"].as_str(), Some("0.1.0"));
         Ok(())
     }
 
