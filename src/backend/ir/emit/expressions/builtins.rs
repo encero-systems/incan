@@ -69,6 +69,11 @@ fn is_frozen_collection_named_generic(ty: &IrType) -> bool {
     .any(|id| is_named_generic(ty, collections::as_str(*id)))
 }
 
+/// Convert a Rust filesystem result into the legacy builtin's declared owned-string error contract.
+fn stringify_file_io_error(result: TokenStream) -> TokenStream {
+    quote! { (#result).map_err(|error| error.to_string()) }
+}
+
 /// Return whether `ty` lowers to a Rust string-like value with `.chars()`.
 fn is_string_iterable_type(ty: &IrType) -> bool {
     match ty {
@@ -331,18 +336,24 @@ impl<'a> IrEmitter<'a> {
             BuiltinFn::ReadFile => {
                 if let Some(arg) = args.first() {
                     let path = self.emit_expr(arg)?;
-                    Ok(quote! { std::fs::read_to_string(#path) })
+                    Ok(stringify_file_io_error(quote! { std::fs::read_to_string(#path) }))
                 } else {
-                    Ok(quote! { Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "no path")) })
+                    Ok(stringify_file_io_error(quote! {
+                        Err::<String, _>(std::io::Error::new(std::io::ErrorKind::InvalidInput, "no path"))
+                    }))
                 }
             }
             BuiltinFn::WriteFile => {
                 if args.len() >= 2 {
                     let path = self.emit_expr(&args[0])?;
                     let content = self.emit_expr(&args[1])?;
-                    Ok(quote! { std::fs::write(#path, #content).map(|_| ()) })
+                    Ok(stringify_file_io_error(
+                        quote! { std::fs::write(#path, #content).map(|_| ()) },
+                    ))
                 } else {
-                    Ok(quote! { Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing args")) })
+                    Ok(stringify_file_io_error(quote! {
+                        Err::<(), _>(std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing args"))
+                    }))
                 }
             }
             BuiltinFn::JsonStringify => {
@@ -572,18 +583,24 @@ impl<'a> IrEmitter<'a> {
             BuiltinFnId::ReadFile => {
                 if let Some(arg) = args.first() {
                     let path = self.emit_expr(arg)?;
-                    Ok(Some(quote! { std::fs::read_to_string(#path) }))
+                    Ok(Some(stringify_file_io_error(quote! { std::fs::read_to_string(#path) })))
                 } else {
-                    Ok(None)
+                    Ok(Some(stringify_file_io_error(quote! {
+                        Err::<String, _>(std::io::Error::new(std::io::ErrorKind::InvalidInput, "no path"))
+                    })))
                 }
             }
             BuiltinFnId::WriteFile => {
                 if args.len() >= 2 {
                     let path = self.emit_expr(&args[0])?;
                     let content = self.emit_expr(&args[1])?;
-                    Ok(Some(quote! { std::fs::write(#path, #content).map(|_| ()) }))
+                    Ok(Some(stringify_file_io_error(
+                        quote! { std::fs::write(#path, #content).map(|_| ()) },
+                    )))
                 } else {
-                    Ok(None)
+                    Ok(Some(stringify_file_io_error(quote! {
+                        Err::<(), _>(std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing args"))
+                    })))
                 }
             }
             BuiltinFnId::JsonStringify => {
@@ -652,6 +669,16 @@ impl<'a> IrEmitter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_file_result_stringifies_rust_io_errors_issue874() {
+        let emitted = stringify_file_io_error(quote! { std::fs::read_to_string(path) }).to_string();
+        assert!(emitted.contains("map_err"), "missing error conversion: {emitted}");
+        assert!(
+            emitted.contains("error . to_string"),
+            "missing owned string conversion: {emitted}"
+        );
+    }
 
     #[test]
     fn enumerate_copy_policy_keeps_generic_tuple_items_owned() {
