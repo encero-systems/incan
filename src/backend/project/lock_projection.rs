@@ -615,9 +615,10 @@ version = "1.0.0"
             crate::version::INCAN_VERSION
         );
 
-        let error = projection
-            .validate_projected(&projected, "caller", crate::version::INCAN_VERSION)
-            .expect_err("forged generated-root edge must be rejected");
+        let error = match projection.validate_projected(&projected, "caller", crate::version::INCAN_VERSION) {
+            Ok(()) => return Err("forged generated-root edge was accepted".into()),
+            Err(error) => error,
+        };
         assert!(error.to_string().contains("unauthorized dependency edge"));
         Ok(())
     }
@@ -664,9 +665,10 @@ dependencies = ["bar"]
             crate::version::INCAN_VERSION
         );
 
-        let error = projection
-            .validate_projected(&projected, "caller", crate::version::INCAN_VERSION)
-            .expect_err("forged transitive edge must be rejected");
+        let error = match projection.validate_projected(&projected, "caller", crate::version::INCAN_VERSION) {
+            Ok(()) => return Err("forged transitive edge was accepted".into()),
+            Err(error) => error,
+        };
         assert!(error.to_string().contains("unauthorized dependency edge"));
         Ok(())
     }

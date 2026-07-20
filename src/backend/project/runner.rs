@@ -588,8 +588,10 @@ mod tests {
         }];
         let mut seen = BTreeSet::new();
         record_reconciliation_target(&mut seen, &candidates)?;
-        let error = record_reconciliation_target(&mut seen, &candidates)
-            .expect_err("a repeated reconciliation state must be rejected");
+        let error = match record_reconciliation_target(&mut seen, &candidates) {
+            Ok(()) => return Err("a repeated reconciliation state was accepted".into()),
+            Err(error) => error,
+        };
         assert!(error.to_string().contains("no monotonic reconciliation progress"));
         Ok(())
     }
