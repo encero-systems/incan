@@ -1438,10 +1438,12 @@ impl ProjectGenerator {
         Ok(changed)
     }
 
-    /// Preserve a valid caller-local projection or write the exact canonical Cargo.lock seed when projection is due.
+    /// Apply the closed Cargo-lock authority state at the generated-project boundary.
     ///
-    /// The runner subsequently asks Cargo to align an existing selected root or synthesize an absent selected root
-    /// from the caller-local manifest; this generator does not infer or rewrite dependency edges itself.
+    /// Explicit stale authority removes a previous generated lock. No authority leaves the generated lock untouched.
+    /// Exact authority writes its payload directly. Projection authority preserves a valid caller-local projection or
+    /// writes the canonical seed when projection is due. Only that final seed is subsequently aligned by the runner,
+    /// which asks Cargo to select the caller root without inferring or rewriting dependency edges itself.
     fn write_cargo_lock_if_needed(&self) -> io::Result<bool> {
         let lock_path = self.output_dir.join("Cargo.lock");
         if self.clear_cargo_lock {
