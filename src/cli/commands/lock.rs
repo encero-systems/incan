@@ -23,8 +23,8 @@ use crate::frontend::ast::{Declaration, ImportKind};
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::{diagnostics, lexer, parser};
 use crate::lockfile::{
-    CargoFeatureSelection, IncanLock, PublicationLock, SemanticLockState, compute_resolved_fingerprint,
-    semantic_lock_state, workspace_semantic_lock_state,
+    CargoFeatureSelection, IncanLock, PublicationLock, SemanticLockState,
+    compute_resolved_fingerprint_with_sdk_paths, semantic_lock_state, workspace_semantic_lock_state,
 };
 use crate::manifest::{DependencySpec, ProjectManifest};
 use crate::provider::{
@@ -37,8 +37,9 @@ use super::common::{
     CargoPolicy, INTERNAL_CARGO_LOCK_PAYLOAD_PATH_ENV, ProjectRequirements, build_source_map, cargo_command_flags,
     cargo_lockfile_flags, collect_modules_detailed_with_selections, collect_project_requirements,
     collect_rust_dependency_uses, enforce_project_toolchain_constraint, extend_requirements_with_provider_plan,
-    format_dependency_error, merge_project_requirement_dependencies, prepare_or_discover_sdk_inventory,
-    provider_used_module_paths, resolve_sdk_component_selection,
+    format_dependency_error, merge_project_requirement_dependencies, prepare_library_dependency_artifacts,
+    prepare_or_discover_sdk_inventory, provider_used_module_paths, resolve_sdk_component_selection,
+    semantic_sdk_path_dependencies,
 };
 #[cfg(feature = "rust_inspect")]
 use super::common::{
@@ -458,12 +459,14 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
         .map(|context| context.semantic.clone())
         .or_else(|| semantic.cloned())
         .unwrap_or_default();
-    let fingerprint = compute_resolved_fingerprint(
+    let semantic_sdk_paths = semantic_sdk_path_dependencies(&project_requirements);
+    let fingerprint = compute_resolved_fingerprint_with_sdk_paths(
         &resolved_with_requirements.dependencies,
         &resolved_with_requirements.dev_dependencies,
         cargo_features,
         Some(project_root),
         &semantic,
+        &semantic_sdk_paths,
     );
 
     let strict = cargo_policy.locked || cargo_policy.frozen;
@@ -572,12 +575,14 @@ fn resolve_workspace_lock_payload(request: WorkspaceLockResolutionRequest<'_>) -
     let mut resolved = context.resolved;
     let requirements = context.project_requirements;
     merge_project_requirement_dependencies(&mut resolved, &requirements)?;
-    let fingerprint = compute_resolved_fingerprint(
+    let semantic_sdk_paths = semantic_sdk_path_dependencies(&requirements);
+    let fingerprint = compute_resolved_fingerprint_with_sdk_paths(
         &resolved.dependencies,
         &resolved.dev_dependencies,
         cargo_features,
         Some(workspace.root()),
         &context.semantic,
+        &semantic_sdk_paths,
     );
     let strict = cargo_policy.locked || cargo_policy.frozen;
     if strict && let Some(message) = strict_git_source_error(&resolved) {
@@ -994,6 +999,7 @@ fn collect_project_lock_context(
         .root_package()
         .map(|package| package.active_dependencies.clone())
         .unwrap_or_default();
+    prepare_library_dependency_artifacts(manifest, Some(&package_feature_plan), &active_dependencies)?;
     let library_manifest_index = LibraryManifestIndex::from_project_manifest_dependencies(
         manifest,
         active_dependencies.iter().map(String::as_str),
@@ -1062,12 +1068,14 @@ fn collect_project_lock_context(
         .map_err(|error| CliError::failure(error.to_string()))?;
         extend_requirements_with_provider_plan(&mut project_requirements, &entry_provider_plan)?;
     }
+    let semantic_sdk_paths = semantic_sdk_path_dependencies(&project_requirements);
     let semantic = semantic_lock_state(
         manifest.project_root(),
         sdk_inventory.as_deref(),
         sdk_components.as_ref(),
         Some(&package_feature_plan),
         &provider_plan,
+        &semantic_sdk_paths,
     )
     .map_err(CliError::failure)?;
 
@@ -1650,12 +1658,14 @@ pub(crate) fn generate_lockfile(
 
     let cargo_lock = fs::read_to_string(lock_dir.join("Cargo.lock"))
         .map_err(|e| CliError::failure(format!("Failed to read Cargo.lock: {}", e)))?;
-    let fingerprint = compute_resolved_fingerprint(
+    let semantic_sdk_paths = semantic_sdk_path_dependencies(project_requirements);
+    let fingerprint = compute_resolved_fingerprint_with_sdk_paths(
         &resolved.dependencies,
         &resolved.dev_dependencies,
         cargo_features,
         Some(project_root),
         semantic,
+        &semantic_sdk_paths,
     );
     let lock = IncanLock::new_with_semantic(fingerprint, cargo_features.clone(), semantic.clone(), cargo_lock);
 

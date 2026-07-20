@@ -17,8 +17,8 @@ use serde::Serialize;
 
 use crate::manifest::{DependencySource, DependencySpec, GitReference};
 
-use super::INCAN_STDLIB_CRATE_NAME;
 use super::generator::{ProjectGenerator, is_sdk_provider_build};
+use super::{INCAN_DERIVE_CRATE_NAME, INCAN_STDLIB_CRATE_NAME};
 
 /// Incan compiler version stamped into generated `Cargo.toml` files and used as the package-version fallback.
 pub(crate) const INCAN_VERSION: &str = crate::version::INCAN_VERSION;
@@ -230,7 +230,7 @@ impl ProjectGenerator {
 
         // ---- Resolve toolchain-owned support crates for generated Rust projects ----
         let stdlib_path = toolchain_crate_path(INCAN_STDLIB_CRATE_NAME);
-        let derive_path = toolchain_crate_path("incan_derive");
+        let derive_path = toolchain_crate_path(INCAN_DERIVE_CRATE_NAME);
         let relocatable_toolchain_paths = is_sdk_provider_build();
 
         // ---- Build dependencies table ----
@@ -262,10 +262,10 @@ impl ProjectGenerator {
 
         // Always add incan_derive for derive macros
         deps.insert(
-            "incan_derive".into(),
+            INCAN_DERIVE_CRATE_NAME.into(),
             path_dependency(&derive_path, &Vec::new(), &self.output_dir, relocatable_toolchain_paths),
         );
-        added_crates.insert("incan_derive".into());
+        added_crates.insert(INCAN_DERIVE_CRATE_NAME.into());
 
         // Add resolved user dependencies
         let mut optional_features = Vec::new();
