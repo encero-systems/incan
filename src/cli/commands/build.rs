@@ -3152,6 +3152,85 @@ impl ChildId {
         Ok(())
     }
 
+    /// Proves complete published ABI extraction is independent of unrelated downstream impl crates in the graph.
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn library_rust_abi_ignores_loaded_downstream_trait_impls_issue924() -> Result<(), Box<dyn std::error::Error>> {
+        // ---- Fixture: clean and downstream-loaded views of one Rust surface ----
+        let workspace = tempfile::tempdir()?;
+        let trait_api = workspace.path().join("trait-api");
+        let surface_api = workspace.path().join("surface-api");
+        let downstream_api = workspace.path().join("downstream-api");
+        let clean_probe = workspace.path().join("clean-probe");
+        let polluted_probe = workspace.path().join("polluted-probe");
+        for root in [&trait_api, &surface_api, &downstream_api, &clean_probe, &polluted_probe] {
+            fs::create_dir_all(root.join("src"))?;
+        }
+        fs::write(
+            trait_api.join("Cargo.toml"),
+            "[package]\nname = \"abi_trait_api\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        fs::write(trait_api.join("src/lib.rs"), "pub trait Intrinsic {}\n")?;
+        fs::write(
+            surface_api.join("Cargo.toml"),
+            "[package]\nname = \"abi_surface_api\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nabi_trait_api = { path = \"../trait-api\" }\n",
+        )?;
+        fs::write(
+            surface_api.join("src/lib.rs"),
+            "pub struct Thing;\n\nimpl abi_trait_api::Intrinsic for Thing {}\n",
+        )?;
+        fs::write(
+            downstream_api.join("Cargo.toml"),
+            "[package]\nname = \"abi_downstream_api\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nabi_surface_api = { path = \"../surface-api\" }\n",
+        )?;
+        fs::write(
+            downstream_api.join("src/lib.rs"),
+            "pub trait Ambient {}\n\nimpl Ambient for abi_surface_api::Thing {}\n",
+        )?;
+        fs::write(
+            clean_probe.join("Cargo.toml"),
+            "[package]\nname = \"abi_clean_probe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nabi_surface_api = { path = \"../surface-api\" }\n",
+        )?;
+        fs::write(clean_probe.join("src/lib.rs"), "pub fn load_surface() {}\n")?;
+        fs::write(
+            polluted_probe.join("Cargo.toml"),
+            "[package]\nname = \"abi_polluted_probe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nabi_surface_api = { path = \"../surface-api\" }\nabi_downstream_api = { path = \"../downstream-api\" }\n",
+        )?;
+        fs::write(polluted_probe.join("src/lib.rs"), "pub fn load_graph() {}\n")?;
+
+        // ---- Publication: complete ABI must converge across both loaded graphs ----
+        let query_paths = vec!["abi_surface_api::Thing".to_string()];
+        let clean = collect_library_rust_abi(&clean_probe, &query_paths)?.ok_or("expected clean library Rust ABI")?;
+        let polluted =
+            collect_library_rust_abi(&polluted_probe, &query_paths)?.ok_or("expected polluted library Rust ABI")?;
+
+        assert_eq!(
+            clean, polluted,
+            "published library ABI must not depend on unrelated downstream impl crates"
+        );
+
+        // ---- Contract: preserve intrinsic traits and exclude downstream-only traits ----
+        let thing = polluted
+            .get("abi_surface_api::Thing")
+            .ok_or("expected Thing ABI item")?;
+        let incan_core::interop::RustItemKind::Type(thing_type) = &thing.kind else {
+            return Err("expected Thing ABI type metadata".into());
+        };
+        assert!(
+            thing_type
+                .implemented_traits
+                .iter()
+                .any(|implemented| implemented.path == "abi_trait_api::Intrinsic")
+        );
+        assert!(
+            thing_type
+                .implemented_traits
+                .iter()
+                .all(|implemented| implemented.path != "abi_downstream_api::Ambient")
+        );
+        Ok(())
+    }
+
     #[test]
     fn library_entrypoint_precondition_fails_when_missing() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
