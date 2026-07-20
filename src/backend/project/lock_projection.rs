@@ -235,6 +235,7 @@ impl CargoLockProjection {
     }
 }
 
+/// Report a Cargo-selected coordinate that canonical lock authority cannot identify uniquely.
 fn noncanonical_coordinate_error(coordinate: &PackageCoordinate<'_>, matches: usize) -> io::Error {
     io::Error::other(format!(
         "Cargo selected non-canonical package coordinate `{}` (found {matches} canonical matches)",
@@ -242,6 +243,7 @@ fn noncanonical_coordinate_error(coordinate: &PackageCoordinate<'_>, matches: us
     ))
 }
 
+/// Return whether two Cargo sources can address the same package in an exact update request.
 fn sources_share_update_identity(left: &str, right: &str) -> bool {
     if left.starts_with("registry+") || left.starts_with("sparse+") {
         return left == right;
@@ -253,6 +255,7 @@ fn sources_share_update_identity(left: &str, right: &str) -> bool {
     false
 }
 
+/// Derive Cargo's `--precise` value for one registry or Git package source.
 fn precise_for_source(source: &str, version: &str) -> Option<String> {
     if source.starts_with("registry+") || source.starts_with("sparse+") {
         return Some(version.to_string());
@@ -263,6 +266,7 @@ fn precise_for_source(source: &str, version: &str) -> Option<String> {
         .flatten()
 }
 
+/// Render a source-qualified package specification for Cargo's update command.
 fn package_spec_for_coordinate(coordinate: &PackageCoordinate<'_>) -> String {
     let Some(source) = coordinate.source else {
         return format!("{}@{}", coordinate.name, coordinate.version);
@@ -275,6 +279,7 @@ fn package_spec_for_coordinate(coordinate: &PackageCoordinate<'_>) -> String {
     format!("{source}#{}@{}", coordinate.name, coordinate.version)
 }
 
+/// Sort and deduplicate update candidates so reconciliation attempts are deterministic.
 fn sort_update_candidates(mut candidates: Vec<CargoLockUpdate>) -> Vec<CargoLockUpdate> {
     candidates.sort_by(|left, right| {
         match (
@@ -289,11 +294,13 @@ fn sort_update_candidates(mut candidates: Vec<CargoLockUpdate>) -> Vec<CargoLock
     candidates
 }
 
+/// Parse a Cargo lock payload and retain its authority role in any diagnostic.
 fn parse_lock(payload: &str, role: &str) -> io::Result<Value> {
     toml::from_str(payload)
         .map_err(|error| io::Error::other(format!("failed to parse {role} Cargo.lock payload: {error}")))
 }
 
+/// Return every package table from a parsed Cargo lock document.
 fn package_tables(document: &Value) -> Vec<&toml::Table> {
     document
         .get("package")
@@ -304,14 +311,17 @@ fn package_tables(document: &Value) -> Vec<&toml::Table> {
         .collect()
 }
 
+/// Read a package table's name when it is a string.
 fn package_name(package: &toml::Table) -> Option<&str> {
     package.get("name").and_then(Value::as_str)
 }
 
+/// Read a package table's version when it is a string.
 fn package_version(package: &toml::Table) -> Option<&str> {
     package.get("version").and_then(Value::as_str)
 }
 
+/// Read a package table's checksum when it is a string.
 fn package_checksum(package: &toml::Table) -> Option<&str> {
     package.get("checksum").and_then(Value::as_str)
 }
@@ -341,6 +351,7 @@ impl From<PackageCoordinate<'_>> for OwnedPackageCoordinate {
 }
 
 impl PackageCoordinate<'_> {
+    /// Render this package coordinate for diagnostics.
     fn render(&self) -> String {
         match self.source {
             Some(source) => format!("{} {} ({source})", self.name, self.version),
@@ -349,6 +360,7 @@ impl PackageCoordinate<'_> {
     }
 }
 
+/// Decode the canonical coordinate fields required from a Cargo package table.
 fn package_coordinate(package: &toml::Table) -> io::Result<PackageCoordinate<'_>> {
     let name = package_name(package).ok_or_else(|| io::Error::other("Cargo.lock package has no name"))?;
     let version = package_version(package)
@@ -360,6 +372,7 @@ fn package_coordinate(package: &toml::Table) -> io::Result<PackageCoordinate<'_>
     })
 }
 
+/// Return whether a Cargo dependency reference resolves to the supplied package table.
 fn dependency_reference_matches_package(reference: &str, package: &toml::Table) -> bool {
     let Some(name) = package_name(package) else {
         return false;
@@ -379,6 +392,7 @@ fn dependency_reference_matches_package(reference: &str, package: &toml::Table) 
         .is_some_and(|source| reference == format!("{name} {version} ({source})"))
 }
 
+/// Require every dependency reference in one Cargo lock document to resolve exactly once.
 fn validate_dependency_references(document: &Value, role: &str) -> io::Result<()> {
     let packages = package_tables(document);
     for package in &packages {

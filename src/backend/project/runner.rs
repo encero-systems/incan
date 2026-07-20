@@ -21,6 +21,7 @@ static TEST_PROJECTION_CARGO_POLICIES: LazyLock<Mutex<std::collections::BTreeMap
     LazyLock::new(|| Mutex::new(std::collections::BTreeMap::new()));
 
 #[cfg(test)]
+/// Return the Cargo policy flags observed by projection for a generated test project.
 pub(crate) fn test_projection_cargo_policy(output_dir: &Path) -> Option<Vec<String>> {
     TEST_PROJECTION_CARGO_POLICIES.lock().ok()?.get(output_dir).cloned()
 }
@@ -33,6 +34,7 @@ enum CargoLockProjectionNetwork {
 }
 
 impl CargoLockProjectionNetwork {
+    /// Derive projection network access from the caller's Cargo policy flags.
     fn from_cargo_flags(flags: &[String]) -> Self {
         if flags.iter().any(|flag| flag == "--offline" || flag == "--frozen") {
             Self::Offline
@@ -41,6 +43,7 @@ impl CargoLockProjectionNetwork {
         }
     }
 
+    /// Apply an offline projection policy to a Cargo command when required.
     fn apply(self, command: &mut Command) {
         if self == Self::Offline {
             command.arg("--offline");
