@@ -239,6 +239,16 @@ license-files = ["LICENSE-MIT", "LICENSE-APACHE"]
     let manifest = LibraryManifest::read_from_path(&artifact_root.join("artifact_widgets_core.incnlib"))?;
     assert_eq!(manifest.name, "artifact_widgets_core");
     assert_eq!(manifest.version, "4.5.6");
+    let semantic_source_digest = manifest
+        .contract_metadata
+        .provider
+        .semantic_source_digest
+        .as_deref()
+        .ok_or("generated provider manifest omitted its authored semantic source digest")?;
+    assert!(
+        semantic_source_digest.starts_with("sha256:") && semantic_source_digest.len() == 71,
+        "generated provider manifest carried an invalid authored semantic source digest: {semantic_source_digest}"
+    );
     assert!(
         manifest.exports.models.iter().any(|model| model.name == "Widget"),
         "generated .incnlib should export Widget, got {:#?}",

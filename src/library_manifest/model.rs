@@ -189,6 +189,12 @@ pub struct CompiledProviderMetadata {
     /// Version of this provider metadata payload.
     #[serde(default = "default_compiled_provider_metadata_schema_version")]
     pub schema_version: u32,
+    /// Stable digest of the provider's authored manifest and Incan source inputs.
+    ///
+    /// Physical generated Rust and extracted host ABI metadata remain protected by the artifact digest, while this
+    /// source-owned identity lets canonical locks compare equivalent native provider builds across platforms.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic_source_digest: Option<String>,
     /// Provider-local module claims before the consumer's authorized namespace prefix is applied.
     #[serde(default)]
     pub namespace_claims: Vec<ProviderModuleClaim>,
@@ -216,6 +222,7 @@ impl Default for CompiledProviderMetadata {
     fn default() -> Self {
         Self {
             schema_version: COMPILED_PROVIDER_METADATA_SCHEMA_VERSION,
+            semantic_source_digest: None,
             namespace_claims: Vec::new(),
             public_features: BTreeMap::new(),
             active_features: BTreeSet::new(),
@@ -230,7 +237,8 @@ impl Default for CompiledProviderMetadata {
 impl CompiledProviderMetadata {
     /// Return whether the manifest has no provider facts beyond the default schema discriminator.
     pub fn is_empty(&self) -> bool {
-        self.namespace_claims.is_empty()
+        self.semantic_source_digest.is_none()
+            && self.namespace_claims.is_empty()
             && self.public_features.is_empty()
             && self.active_features.is_empty()
             && self.provider_dependencies.is_empty()

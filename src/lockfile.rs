@@ -1404,6 +1404,16 @@ mod tests {
     fn production_toolchain_semantic_fixture(
         checkout: &Path,
     ) -> Result<ProductionToolchainSemanticFixture, Box<dyn std::error::Error>> {
+        production_toolchain_semantic_fixture_with_native_output(checkout, "pub fn support() {}\n", false, 'a')
+    }
+
+    /// Build one SDK fixture whose physical provider output can vary independently of its authored semantic input.
+    fn production_toolchain_semantic_fixture_with_native_output(
+        checkout: &Path,
+        generated_source: &str,
+        host_abi: bool,
+        source_digest_digit: char,
+    ) -> Result<ProductionToolchainSemanticFixture, Box<dyn std::error::Error>> {
         let derive_root = checkout.join("crates/incan_derive");
         fs::create_dir_all(derive_root.join("src"))?;
         fs::write(
@@ -1421,9 +1431,17 @@ mod tests {
                 derive_root.display()
             ),
         )?;
-        fs::write(provider_root.join("src/lib.rs"), "pub fn support() {}\n")?;
+        fs::write(provider_root.join("src/lib.rs"), generated_source)?;
         let manifest_path = provider_root.join("support_provider.incnlib");
         let mut manifest = crate::library_manifest::LibraryManifest::new("support_provider", "0.5.0");
+        manifest.contract_metadata.provider.semantic_source_digest =
+            Some(format!("sha256:{}", source_digest_digit.to_string().repeat(64)));
+        if host_abi {
+            manifest.rust_abi = Some(crate::library_manifest::LibraryRustAbi {
+                schema_version: crate::library_manifest::RUST_ABI_SCHEMA_VERSION,
+                items: Vec::new(),
+            });
+        }
         manifest.contract_metadata.provider.implementation_facets.push(
             crate::library_manifest::ProviderImplementationFacet {
                 id: "derive-support".to_string(),
@@ -1743,6 +1761,107 @@ mod tests {
             &second_specs,
         );
         assert_ne!(second_fingerprint, changed_fingerprint);
+        Ok(())
+    }
+
+    #[test]
+    fn sdk_semantic_state_and_fingerprint_ignore_native_provider_outputs_issue931() -> TestResult {
+        let temp = tempfile::tempdir()?;
+        let first_checkout = temp.path().join("macos-source");
+        let second_checkout = temp.path().join("linux-source");
+        let first = production_toolchain_semantic_fixture_with_native_output(
+            &first_checkout,
+            "pub fn host_marker() -> &'static str { \"macos\" }\n",
+            false,
+            'a',
+        )?;
+        let second = production_toolchain_semantic_fixture_with_native_output(
+            &second_checkout,
+            "pub fn host_marker() -> &'static str { \"linux\" }\n",
+            true,
+            'a',
+        )?;
+        let first_physical = first
+            .inventory
+            .components
+            .get("support")
+            .and_then(|component| component.providers.first())
+            .ok_or("first fixture did not publish the support provider")?;
+        let second_physical = second
+            .inventory
+            .components
+            .get("support")
+            .and_then(|component| component.providers.first())
+            .ok_or("second fixture did not publish the support provider")?;
+        assert_ne!(
+            first_physical.digest, second_physical.digest,
+            "the regression requires distinct physical native artifacts"
+        );
+
+        let first_semantic = semantic_lock_state(
+            &first_checkout,
+            Some(&first.inventory),
+            Some(&first.components),
+            None,
+            &first.provider_plan,
+            &first.specs,
+        )?;
+        let second_semantic = semantic_lock_state(
+            &second_checkout,
+            Some(&second.inventory),
+            Some(&second.components),
+            None,
+            &second.provider_plan,
+            &second.specs,
+        )?;
+        assert_eq!(first_semantic, second_semantic);
+        assert_eq!(first_semantic.sdk, second_semantic.sdk);
+
+        let selection = CargoFeatureSelection::default();
+        let first_fingerprint = compute_resolved_fingerprint_with_sdk_paths(
+            &first.specs,
+            &[],
+            &selection,
+            Some(&first_checkout),
+            &first_semantic,
+            &first.specs,
+        );
+        let second_fingerprint = compute_resolved_fingerprint_with_sdk_paths(
+            &second.specs,
+            &[],
+            &selection,
+            Some(&second_checkout),
+            &second_semantic,
+            &second.specs,
+        );
+        assert_eq!(first_fingerprint, second_fingerprint);
+
+        let changed = production_toolchain_semantic_fixture_with_native_output(
+            &temp.path().join("changed-source"),
+            "pub fn host_marker() -> &'static str { \"linux\" }\n",
+            true,
+            'b',
+        )?;
+        let changed_semantic = semantic_lock_state(
+            &temp.path().join("changed-source"),
+            Some(&changed.inventory),
+            Some(&changed.components),
+            None,
+            &changed.provider_plan,
+            &changed.specs,
+        )?;
+        assert_ne!(second_semantic, changed_semantic);
+        assert_ne!(
+            second_fingerprint,
+            compute_resolved_fingerprint_with_sdk_paths(
+                &changed.specs,
+                &[],
+                &selection,
+                Some(&temp.path().join("changed-source")),
+                &changed_semantic,
+                &changed.specs,
+            )
+        );
         Ok(())
     }
 
