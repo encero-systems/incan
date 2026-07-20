@@ -344,6 +344,13 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         typechecker_only: false,
     },
     StdlibNamespace {
+        name: "registry",
+        feature: None,
+        extra_crate_deps: &[],
+        submodules: &[],
+        typechecker_only: false,
+    },
+    StdlibNamespace {
         name: "telemetry",
         feature: None,
         extra_crate_deps: &[],

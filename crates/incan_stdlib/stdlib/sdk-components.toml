@@ -32,7 +32,7 @@ full = [
 project = "components/stdlib-core"
 mandatory = true
 dependencies = []
-namespace-roots = ["prelude", "result", "reflection", "this", "derives", "traits"]
+namespace-roots = ["capabilities", "prelude", "registry", "result", "reflection", "this", "derives", "traits"]
 
 [components.stdlib-system]
 project = "components/stdlib-system"

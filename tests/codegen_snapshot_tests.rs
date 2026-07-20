@@ -34,6 +34,24 @@ fn generate_rust(source: &str) -> String {
     normalize_codegen_output(&code)
 }
 
+/// Generate Rust with the same source-module and package identity context that the CLI supplies for registry code.
+fn generate_registry_rust(source: &str, module_name: &str) -> String {
+    let Ok(tokens) = lexer::lex(source) else {
+        panic!("lexer failed");
+    };
+    let Ok(ast) = parser::parse(&tokens) else {
+        panic!("parser failed");
+    };
+    let mut codegen = IrCodegen::new();
+    codegen.set_root_source_module_name(Some(module_name.to_string()));
+    codegen.set_registry_package_identity(Some(module_name.to_string()));
+    let code = match codegen.try_generate(&ast) {
+        Ok(code) => code,
+        Err(error) => panic!("registry codegen snapshot inputs must typecheck: {error:?}"),
+    };
+    normalize_codegen_output(&code)
+}
+
 fn parse_incan_program(source: &str, context: &str) -> incan::frontend::ast::Program {
     let tokens = lexer::lex(source).unwrap_or_else(|errs| panic!("{context} lexer failed: {errs:?}"));
     parser::parse(&tokens).unwrap_or_else(|errs| panic!("{context} parser failed: {errs:?}"))
@@ -2929,6 +2947,38 @@ fn test_std_serde_json_import_codegen() {
         "generated JSON decode paths should no longer inline serde_json::from_str fallbacks; generated:\n{rust_code}"
     );
     insta::assert_snapshot!("std_serde_json_import", rust_code);
+}
+
+/// RFC 113: typed declaration registries remain source-authored while the compiler records `@describe` facts.
+#[test]
+fn test_std_registry_import_codegen() {
+    let source = load_test_file("std_registry_import");
+    let rust_code = generate_registry_rust(&source, "std_registry_import");
+    insta::assert_snapshot!("std_registry_import", rust_code);
+}
+
+/// RFC 113: method descriptions lower into source-owned registry runtime registration.
+#[test]
+fn test_std_registry_methods_codegen() {
+    let source = load_test_file("std_registry_methods");
+    let rust_code = generate_registry_rust(&source, "std_registry_methods");
+    insta::assert_snapshot!("std_registry_methods", rust_code);
+}
+
+/// RFC 113: explicit compilation-unit and package entries retain compiler-checked canonical subjects.
+#[test]
+fn test_std_registry_subjects_codegen() {
+    let source = load_test_file("std_registry_subjects");
+    let rust_code = generate_registry_rust(&source, "std_registry_subjects");
+    insta::assert_snapshot!("std_registry_subjects", rust_code);
+}
+
+/// RFC 113: a structural descriptor can retain a concrete Incan type token without changing registry lowering.
+#[test]
+fn test_std_registry_type_token_codegen() {
+    let source = load_test_file("std_registry_type_token");
+    let rust_code = generate_registry_rust(&source, "std_registry_type_token");
+    insta::assert_snapshot!("std_registry_type_token", rust_code);
 }
 
 /// RFC 047: compile `std.graph` declarations from `.incn` source.

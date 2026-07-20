@@ -5,9 +5,10 @@
 //! downstream tools decide how to index or visualize them.
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// Current codegraph JSONL schema version.
-pub const CODEGRAPH_SCHEMA_VERSION: u32 = 1;
+pub const CODEGRAPH_SCHEMA_VERSION: u32 = 2;
 
 /// Package identity attached to a codegraph export when an `incan.toml` manifest is available.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -522,6 +523,55 @@ fn unknown_diagnostic_origin() -> String {
     "unknown".to_string()
 }
 
+/// Compiler-checked typed registry entry.
+///
+/// Registry records describe declaration, compilation-unit, or package facts. They never claim that a process has
+/// loaded the corresponding runtime entry; `provenance: checked` distinguishes this complete compiler projection from
+/// future runtime observations.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodegraphRegistryRecord {
+    /// Stable id unique within the export.
+    pub id: String,
+    /// Source language for this graph fact.
+    pub language: CodegraphLanguage,
+    /// Module that owns the source registration.
+    pub module_id: String,
+    /// Canonical registry identity.
+    pub registry_identity: String,
+    /// Whether this registry is public to package consumers.
+    pub registry_public: bool,
+    /// Complete compiler-checked structural key value.
+    pub key: Value,
+    /// Complete compiler-checked structural descriptor value.
+    pub descriptor: Value,
+    /// Subject category: function, method, compilation_unit, or package.
+    pub subject_kind: String,
+    /// Canonical source-owned subject identity.
+    pub subject_identity: String,
+    /// Source span of the `@describe` or `RegistryEntry` registration.
+    pub registration_span: CodegraphSourceSpan,
+    /// Source span of the declaration or explicit subject expression.
+    pub subject_span: CodegraphSourceSpan,
+    /// Fact provenance.
+    pub provenance: CodegraphProvenance,
+    /// Public facade imports that resolve to this source-owned registry binding or subject.
+    ///
+    /// These are checked projections, not independently registered runtime entries.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reexport_paths: Vec<CodegraphRegistryReexportProjection>,
+    /// Registry records are emitted only for successful checked modules.
+    pub degraded: bool,
+}
+
+/// One public facade path attached to a source-owned checked registry fact.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodegraphRegistryReexportProjection {
+    /// Fully-qualified import path, split into source module and local alias segments.
+    pub path: Vec<String>,
+    /// Public import source span that created this projection.
+    pub span: CodegraphSourceSpan,
+}
+
 /// One newline-delimited codegraph record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "record", rename_all = "snake_case")]
@@ -546,6 +596,8 @@ pub enum CodegraphRecord {
     Containment(CodegraphContainmentRecord),
     /// Compiler diagnostic fact.
     Diagnostic(CodegraphDiagnosticRecord),
+    /// Compiler-checked typed registry entry.
+    Registry(CodegraphRegistryRecord),
 }
 
 /// Serialize records as newline-delimited JSON, preserving caller-provided deterministic ordering.
@@ -593,7 +645,7 @@ mod tests {
 
         assert_eq!(lines.len(), 2);
         assert!(lines[0].contains("\"record\":\"header\""));
-        assert!(lines[0].contains("\"schema_version\":1"));
+        assert!(lines[0].contains(&format!("\"schema_version\":{CODEGRAPH_SCHEMA_VERSION}")));
         assert!(lines[1].contains("\"record\":\"file\""));
         Ok(())
     }

@@ -22,6 +22,7 @@ Pages in this section are curated and checked into the repository.
 - [`std.logging`](logging.md) (curated; see also [how-to](../../how-to/logging.md))
 - [`std.telemetry`](telemetry.md) (curated)
 - [`std.regex`](regex.md) (curated; see also [how-to](../../how-to/regular_expressions.md))
+- [`std.registry`](registry.md) (curated; see also [tutorial](../../tutorials/typed_registries.md) and [how-to](../../how-to/typed_registries.md))
 - [`std.uuid`](uuid.md) (curated; see also [how-to](../../how-to/working_with_uuids.md))
 - [`std.tempfile`](tempfile.md) (curated; see also [file I/O how-to](../../how-to/file_io.md))
 - [`std.reflection`](reflection.md) (curated)

@@ -1,0 +1,120 @@
+"""
+Typed declaration registries.
+
+`std.registry` owns the runtime projection of compiler-checked declaration catalogues. `loaded_entries()` only reports
+descriptions from modules that have been loaded by the current process; use `incan inspect registry` when tooling needs
+the complete checked package projection without executing user code.
+"""
+
+
+pub enum SubjectKind:
+    """Kinds of source subject that a registry may accept."""
+
+    Function
+    Method
+    CompilationUnit
+    Package
+
+
+@derive(Clone)
+pub model RegistrySubject:
+    """A typed subject identity attached to one loaded registry entry."""
+
+    pub kind: SubjectKind
+    pub qualified_name: str
+
+    @staticmethod
+    def current_unit() -> Self:
+        """
+        Return the explicit compilation-unit subject placeholder.
+
+        The compiler replaces this placeholder with the defining compilation-unit identity in checked registry facts.
+        Runtime code keeps the marker so it never claims to have discovered a package-wide catalogue.
+        """
+        return RegistrySubject(kind=SubjectKind.CompilationUnit, qualified_name="<current-unit>")
+
+    @staticmethod
+    def package() -> Self:
+        """Return the explicit defining-package subject placeholder."""
+        return RegistrySubject(kind=SubjectKind.Package, qualified_name="<package>")
+
+    @staticmethod
+    def _checked_current_unit(qualified_name: str) -> Self:
+        """
+        Materialize the compiler-checked defining compilation-unit identity.
+
+        This remains an ordinary source-owned constructor. The compiler selects it only after validating a
+        declaration-context `current_unit()` entry.
+        """
+        return RegistrySubject(kind=SubjectKind.CompilationUnit, qualified_name=qualified_name)
+
+    @staticmethod
+    def _checked_package(qualified_name: str) -> Self:
+        """Materialize the compiler-checked defining package identity."""
+        return RegistrySubject(kind=SubjectKind.Package, qualified_name=qualified_name)
+
+
+@derive(Clone)
+pub model RegistryEntry[K, T]:
+    """One loaded typed registry entry."""
+
+    pub key: K
+    pub descriptor: T
+    pub subject: RegistrySubject
+
+
+@derive(Clone)
+pub class Registry[K, T]:
+    """A bounded runtime view over descriptions from participating loaded modules."""
+
+    pub subjects: list[SubjectKind]
+    entries: list[RegistryEntry[K, T]]
+
+    @staticmethod
+    def define(subjects: list[SubjectKind]) -> Self:
+        """Create a declarative registry with its permitted subject kinds."""
+        return Registry(subjects=subjects, entries=[])
+
+    def loaded_entries(self) -> list[RegistryEntry[K, T]]:
+        """Return entries made available by modules loaded in this process."""
+        return self.entries
+
+    def entry(mut self, key: K, subject: RegistrySubject, descriptor: T) -> RegistryEntry[K, T]:
+        """Construct an explicit compilation-unit or package entry for a checked static."""
+        entry = RegistryEntry(key=key, descriptor=descriptor, subject=subject)
+        self.entries.append(entry)
+        return entry
+
+    def _describe(mut self, key: K, descriptor: T, subject: RegistrySubject) -> None:
+        """Record one compiler-originated declaration description for this process."""
+        self.entries.append(RegistryEntry(key=key, descriptor=descriptor, subject=subject))
+
+    def _describe_function(mut self, key: K, descriptor: T, qualified_name: str) -> None:
+        """Record one compiler-originated function description for this process."""
+        self.entries.append(
+            RegistryEntry(
+                key=key,
+                descriptor=descriptor,
+                subject=RegistrySubject(kind=SubjectKind.Function, qualified_name=qualified_name),
+            ),
+        )
+
+    def _describe_method(mut self, key: K, descriptor: T, qualified_name: str) -> None:
+        """Record one compiler-originated method description for this process."""
+        self.entries.append(
+            RegistryEntry(
+                key=key,
+                descriptor=descriptor,
+                subject=RegistrySubject(kind=SubjectKind.Method, qualified_name=qualified_name),
+            ),
+        )
+
+
+pub def describe[K, T, F](registry: Registry[K, T], key: K, descriptor: T) -> (F) -> F:
+    """
+    Build the identity decorator used by a declaration-side `@describe` form.
+
+    The compiler independently checks and records the declaration fact. This function is a declaration marker.
+    The compiler records the checked fact and emits the loaded-module registration against the real static cell.
+    """
+    return (function) => function

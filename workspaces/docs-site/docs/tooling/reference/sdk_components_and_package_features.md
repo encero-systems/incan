@@ -32,7 +32,7 @@ The v0.5 SDK defines these standard-library components:
 
 | Component | Public capability group | Required components |
 | --- | --- | --- |
-| `stdlib-core` | Prelude, result, reflection, derives, traits, and compiler-required standard contracts. | None; mandatory. |
+| `stdlib-core` | Prelude, result, reflection, typed registries, derives, traits, and compiler-required standard contracts. | None; mandatory. |
 | `stdlib-system` | Environment, I/O, temporary files, and filesystem APIs. | `stdlib-core` |
 | `stdlib-codecs` | Checksums and encoding. | `stdlib-core`, `stdlib-system` |
 | `stdlib-compression` | Compression codecs and stream adapters. | `stdlib-core`, `stdlib-system` |

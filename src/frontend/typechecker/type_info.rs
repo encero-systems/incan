@@ -14,7 +14,8 @@ use incan_core::interop::{CoercionPolicy, RustFunctionSig};
 use incan_core::lang::types::collections::{self as collection_types, CollectionTypeId};
 use incan_semantics_core::{
     CompilerNodeId, IncanCallableParam, IncanCallableParamKind, IncanPrimitiveType, IncanType, SemanticFact,
-    SemanticFactKind, SemanticFactStore, SemanticFactValue, SemanticSourceTarget,
+    SemanticFactKind, SemanticFactStore, SemanticFactValue, SemanticRegistryEntry, SemanticRegistrySubjectKind,
+    SemanticRegistryValue, SemanticSourceTarget,
 };
 
 use super::{ConstValue, const_eval};
@@ -55,6 +56,8 @@ pub struct TypeCheckInfo {
     pub rust: RustInteropArtifacts,
     /// Declaration-level binding rewrites and visibility facts consumed by lowering.
     pub declarations: DeclarationArtifacts,
+    /// Checked typed declaration-registry definitions and descriptions.
+    pub registry: RegistryArtifacts,
     /// Call-site semantic decisions selected by the typechecker.
     pub calls: CallArtifacts,
     /// Test-runner and fixture metadata extracted during typechecking.
@@ -257,6 +260,64 @@ pub struct DeclarationArtifacts {
     pub decorated_function_bindings_by_span: HashMap<(usize, usize), DecoratedFunctionBindingInfo>,
     /// RFC 036: Method names whose declaration was rebound through a user-defined decorator chain.
     pub decorated_method_bindings: HashMap<(String, String), DecoratedMethodBindingInfo>,
+}
+
+/// Checked RFC 113 registry data that later stages consume without re-parsing decorator expressions.
+#[derive(Debug, Default, Clone)]
+pub struct RegistryArtifacts {
+    /// Registry definitions keyed by their module-static binding name.
+    pub definitions: HashMap<String, RegistryDefinitionInfo>,
+    /// Declaration descriptions in source order.
+    pub descriptions: Vec<RegistryDescriptionInfo>,
+    /// Explicit compilation-unit and package entries in source order.
+    pub explicit_entries: Vec<RegistryExplicitEntryInfo>,
+}
+
+/// Type and subject contract declared by one `Registry.define(...)` static.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RegistryDefinitionInfo {
+    pub key_type: ResolvedType,
+    pub descriptor_type: ResolvedType,
+    pub subjects: Vec<SemanticRegistrySubjectKind>,
+    /// Whether dependency consumers may inspect this registry through a published package artifact.
+    pub is_public: bool,
+}
+
+/// One checked `@describe` declaration attachment.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct RegistryDescriptionInfo {
+    pub registry_name: String,
+    pub key: SemanticRegistryValue,
+    pub descriptor: SemanticRegistryValue,
+    pub subject_kind: SemanticRegistrySubjectKind,
+    pub declaration_name: String,
+    pub declaration_span: (usize, usize),
+    /// Exact decorator attachment that produced this fact.
+    ///
+    /// Backend lowering uses this to require the frontend-approved artifact for the concrete syntax it materializes;
+    /// it must not treat a raw `@describe` expression as semantic authority.
+    pub decorator_span: (usize, usize),
+    /// Source range of the checked key materialization expression.
+    pub key_span: (usize, usize),
+    /// Source range of the checked descriptor materialization expression.
+    pub descriptor_span: (usize, usize),
+}
+
+/// One checked explicit compilation-unit or package registry entry.
+///
+/// The entry binding is a real source value. Its structural facts remain distinct from declaration decorators because
+/// its subject is the defining compilation unit or package rather than the binding declaration itself.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct RegistryExplicitEntryInfo {
+    pub registry_name: String,
+    pub key: SemanticRegistryValue,
+    pub descriptor: SemanticRegistryValue,
+    pub subject_kind: SemanticRegistrySubjectKind,
+    pub entry_name: String,
+    pub declaration_span: (usize, usize),
+    pub key_span: (usize, usize),
+    pub subject_span: (usize, usize),
+    pub descriptor_span: (usize, usize),
 }
 
 /// One compiler-checked newtype construction plan shared by lowering and generated bridges.
@@ -624,6 +685,20 @@ impl TypeCheckInfo {
     /// This is the first bridge into the v0.5 semantic fact store. It deliberately reuses facts that the typechecker
     /// has already proven, keyed by source spans, and avoids introducing a separate semantic authority.
     pub fn semantic_fact_store(&self, module_path: &[String]) -> SemanticFactStore {
+        self.semantic_fact_store_with_package(module_path, None)
+    }
+
+    /// Export a backend-neutral fact snapshot with an optional canonical package identity.
+    ///
+    /// Package names are a compilation-session concern, not something a typechecker can safely reconstruct from one
+    /// module path. Command boundaries that know the manifest package must call this form so package registry subjects
+    /// retain their real identity. The legacy no-package form remains for module-only consumers and deliberately uses
+    /// a visibly synthetic fallback rather than pretending the module name is the package name.
+    pub fn semantic_fact_store_with_package(
+        &self,
+        module_path: &[String],
+        package_identity: Option<&str>,
+    ) -> SemanticFactStore {
         let module_identity = semantic_module_identity(module_path);
         let mut facts = Vec::new();
 
@@ -648,6 +723,46 @@ impl TypeCheckInfo {
                 CompilerNodeId::declaration(&module_identity, name),
                 SemanticFactKind::Type,
                 SemanticFactValue::semantic_type(semantic_type_from_function_binding(binding)),
+            ));
+        }
+
+        for description in &self.registry.descriptions {
+            facts.push(SemanticFact::new(
+                CompilerNodeId::declaration(&module_identity, &description.declaration_name),
+                SemanticFactKind::Registry,
+                SemanticFactValue::registry_entry(SemanticRegistryEntry {
+                    registry: CompilerNodeId::declaration(&module_identity, &description.registry_name),
+                    key: description.key.clone(),
+                    descriptor: description.descriptor.clone(),
+                    subject_kind: description.subject_kind,
+                    subject_identity: format!("{module_identity}.{}", description.declaration_name),
+                }),
+            ));
+        }
+
+        for entry in &self.registry.explicit_entries {
+            let (subject, subject_identity) = match entry.subject_kind {
+                SemanticRegistrySubjectKind::CompilationUnit => {
+                    (CompilerNodeId::module(&module_identity), module_identity.clone())
+                }
+                SemanticRegistrySubjectKind::Package => {
+                    let package_identity = package_identity
+                        .map(str::to_string)
+                        .unwrap_or_else(|| format!("{module_identity}::package"));
+                    (CompilerNodeId::package(&package_identity), package_identity)
+                }
+                SemanticRegistrySubjectKind::Function | SemanticRegistrySubjectKind::Method => continue,
+            };
+            facts.push(SemanticFact::new(
+                subject,
+                SemanticFactKind::Registry,
+                SemanticFactValue::registry_entry(SemanticRegistryEntry {
+                    registry: CompilerNodeId::declaration(&module_identity, &entry.registry_name),
+                    key: entry.key.clone(),
+                    descriptor: entry.descriptor.clone(),
+                    subject_kind: entry.subject_kind,
+                    subject_identity,
+                }),
             ));
         }
 

@@ -697,15 +697,18 @@ impl AstLowering {
             ResolvedType::FrozenBytes => IrType::FrozenBytes,
             ResolvedType::FrozenList(elem) => IrType::NamedGeneric(
                 collections::as_str(CollectionTypeId::FrozenList).to_string(),
-                vec![self.lower_resolved_type(elem)],
+                vec![Self::freeze_const_ir_type(self.lower_resolved_type(elem))],
             ),
             ResolvedType::FrozenSet(elem) => IrType::NamedGeneric(
                 collections::as_str(CollectionTypeId::FrozenSet).to_string(),
-                vec![self.lower_resolved_type(elem)],
+                vec![Self::freeze_const_ir_type(self.lower_resolved_type(elem))],
             ),
             ResolvedType::FrozenDict(k, v) => IrType::NamedGeneric(
                 collections::as_str(CollectionTypeId::FrozenDict).to_string(),
-                vec![self.lower_resolved_type(k), self.lower_resolved_type(v)],
+                vec![
+                    Self::freeze_const_ir_type(self.lower_resolved_type(k)),
+                    Self::freeze_const_ir_type(self.lower_resolved_type(v)),
+                ],
             ),
             ResolvedType::Unit => IrType::Unit,
             ResolvedType::Named(name) => IrType::Struct(name.clone()),
@@ -755,11 +758,14 @@ impl AstLowering {
                     IrType::Tuple(args.iter().map(|t| self.lower_resolved_type(t)).collect())
                 }
                 GenericBaseKind::Collection(
-                    CollectionTypeId::FrozenList
-                    | CollectionTypeId::FrozenSet
-                    | CollectionTypeId::FrozenDict
-                    | CollectionTypeId::Generator,
-                ) => {
+                    id @ (CollectionTypeId::FrozenList | CollectionTypeId::FrozenSet | CollectionTypeId::FrozenDict),
+                ) => IrType::NamedGeneric(
+                    collections::as_str(id).to_string(),
+                    args.iter()
+                        .map(|ty| Self::freeze_const_ir_type(self.lower_resolved_type(ty)))
+                        .collect(),
+                ),
+                GenericBaseKind::Collection(CollectionTypeId::Generator) => {
                     // Normalize to canonical spelling from incan_core.
                     let Some(id) = collections::from_str(name.as_str()) else {
                         // Should not happen: `classify_generic_base()` told us this is a collection type.
@@ -800,6 +806,35 @@ impl AstLowering {
             ResolvedType::RustPath(path) => IrType::Struct(path.clone()),
             ResolvedType::CallSiteInfer => IrType::Unknown,
             ResolvedType::Unknown => IrType::Unknown,
+        }
+    }
+
+    /// Recursively map an Incan type into the representation that can live inside a deeply immutable const container.
+    ///
+    /// `FrozenList[str]` is one source type whether it appears on a const declaration or on a model field. Const
+    /// annotation lowering already represents its strings as `&'static str`; typechecker-owned lowering must preserve
+    /// the same representation so a checked const can flow into that field without a generated-Rust type mismatch.
+    fn freeze_const_ir_type(ty: IrType) -> IrType {
+        match ty {
+            IrType::String => IrType::StaticStr,
+            IrType::Bytes => IrType::StaticBytes,
+            IrType::List(inner) => IrType::List(Box::new(Self::freeze_const_ir_type(*inner))),
+            IrType::Dict(key, value) => IrType::Dict(
+                Box::new(Self::freeze_const_ir_type(*key)),
+                Box::new(Self::freeze_const_ir_type(*value)),
+            ),
+            IrType::Set(inner) => IrType::Set(Box::new(Self::freeze_const_ir_type(*inner))),
+            IrType::Tuple(items) => IrType::Tuple(items.into_iter().map(Self::freeze_const_ir_type).collect()),
+            IrType::Option(inner) => IrType::Option(Box::new(Self::freeze_const_ir_type(*inner))),
+            IrType::Result(ok, err) => IrType::Result(
+                Box::new(Self::freeze_const_ir_type(*ok)),
+                Box::new(Self::freeze_const_ir_type(*err)),
+            ),
+            IrType::NamedGeneric(name, args) => {
+                IrType::NamedGeneric(name, args.into_iter().map(Self::freeze_const_ir_type).collect())
+            }
+            IrType::TypeToken(inner) => IrType::TypeToken(Box::new(Self::freeze_const_ir_type(*inner))),
+            other => other,
         }
     }
 
@@ -888,16 +923,16 @@ impl AstLowering {
                     ),
                     GenericBaseKind::Collection(CollectionTypeId::Tuple) => IrType::Tuple(lowered_params),
                     GenericBaseKind::Collection(
-                        CollectionTypeId::FrozenList
-                        | CollectionTypeId::FrozenSet
-                        | CollectionTypeId::FrozenDict
-                        | CollectionTypeId::Generator,
-                    ) => {
-                        let Some(id) = collections::from_str(base.as_str()) else {
-                            return IrType::NamedGeneric(base.clone(), lowered_params);
-                        };
-                        IrType::NamedGeneric(collections::as_str(id).to_string(), lowered_params)
-                    }
+                        id
+                        @ (CollectionTypeId::FrozenList | CollectionTypeId::FrozenSet | CollectionTypeId::FrozenDict),
+                    ) => IrType::NamedGeneric(
+                        collections::as_str(id).to_string(),
+                        lowered_params.into_iter().map(Self::freeze_const_ir_type).collect(),
+                    ),
+                    GenericBaseKind::Collection(CollectionTypeId::Generator) => IrType::NamedGeneric(
+                        collections::as_str(CollectionTypeId::Generator).to_string(),
+                        lowered_params,
+                    ),
                     GenericBaseKind::Other if base == IR_UNION_TYPE_NAME => union_ir_type(lowered_params),
                     GenericBaseKind::Other => IrType::NamedGeneric(base.clone(), lowered_params),
                 }
@@ -1096,7 +1131,7 @@ impl AstLowering {
 
 #[cfg(test)]
 mod tests {
-    use super::AstLowering;
+    use super::{AstLowering, CollectionTypeId, collections};
     use crate::backend::ir::types::IrType;
     use crate::frontend::symbols::ResolvedType;
     use crate::frontend::typechecker::canonical_public_library_type_name;
@@ -1173,6 +1208,31 @@ mod tests {
         assert_eq!(
             lowered,
             IrType::NamedGeneric("Box".to_string(), vec![IrType::Struct("Node".to_string())])
+        );
+    }
+
+    /// RFC 008: deeply immutable containers use the same const-safe string representation in declaration and
+    /// typechecker-owned lowering paths.
+    #[test]
+    fn lower_resolved_frozen_collections_freeze_nested_strings() {
+        let lowering = AstLowering::new();
+        let lowered = lowering.lower_resolved_type(&ResolvedType::FrozenDict(
+            Box::new(ResolvedType::Str),
+            Box::new(ResolvedType::FrozenList(Box::new(ResolvedType::Bytes))),
+        ));
+
+        assert_eq!(
+            lowered,
+            IrType::NamedGeneric(
+                collections::as_str(CollectionTypeId::FrozenDict).to_string(),
+                vec![
+                    IrType::StaticStr,
+                    IrType::NamedGeneric(
+                        collections::as_str(CollectionTypeId::FrozenList).to_string(),
+                        vec![IrType::StaticBytes]
+                    )
+                ]
+            )
         );
     }
 

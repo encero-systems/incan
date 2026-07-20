@@ -3097,6 +3097,7 @@ mod tests {
                 .into_iter()
                 .map(|func| IrDecl::new(IrDeclKind::Function(func)))
                 .collect(),
+            module_init: Vec::new(),
             source_module_name: None,
             entry_point: None,
             function_registry: FunctionRegistry::new(),
@@ -3148,6 +3149,7 @@ mod tests {
                 associated_types: Vec::new(),
                 methods: vec![method],
             }))],
+            module_init: Vec::new(),
             source_module_name: None,
             entry_point: None,
             function_registry: FunctionRegistry::new(),

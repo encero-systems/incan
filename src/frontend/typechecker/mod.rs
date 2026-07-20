@@ -57,9 +57,10 @@ pub use const_eval::ConstValue;
 pub use type_info::{
     ComputedPropertyAccessInfo, DecoratedFunctionBindingInfo, DecoratedMethodBindingInfo, FixedUnpackPlan,
     FunctionBindingInfo, IdentKind, PartialProjectionInfo, PartialProjectionPreset, PartialProjectionTargetKind,
-    ProtocolIterationInfo, ResolvedMethodCall, ResolvedMethodDispatch, ResolvedOperatorCall, ResolvedOperatorKind,
-    RustArgCoercionInfo, RustArgCoercionKind, SourceTargetInfo, StaticBindingInfo, TestingFixtureInfo, TypeCheckInfo,
-    ValidatedNewtypeCoercionInfo, ValidatedNewtypeCoercionMode, ValidatedNewtypeCoercionStep,
+    ProtocolIterationInfo, RegistryArtifacts, RegistryExplicitEntryInfo, ResolvedMethodCall, ResolvedMethodDispatch,
+    ResolvedOperatorCall, ResolvedOperatorKind, RustArgCoercionInfo, RustArgCoercionKind, SourceTargetInfo,
+    StaticBindingInfo, TestingFixtureInfo, TypeCheckInfo, ValidatedNewtypeCoercionInfo, ValidatedNewtypeCoercionMode,
+    ValidatedNewtypeCoercionStep,
 };
 #[cfg(test)]
 mod tests;
@@ -257,6 +258,11 @@ pub struct TypeChecker {
     unknown_source_type_names_emitted: HashSet<(String, usize, usize)>,
     /// Declaration-order index for each local static binding.
     pub(crate) static_decl_positions: HashMap<String, usize>,
+    /// Whether the active expression is the initializer of a `RegistryEntry[K, T]` module static.
+    ///
+    /// RFC 113 admits `Registry.entry(...)` only in this declaration context. Keeping the context explicit prevents a
+    /// runtime call from masquerading as a complete compiler-checked catalogue entry.
+    pub(crate) checking_registry_entry_static_initializer: bool,
     /// Const evaluation state machine.
     pub(crate) const_eval_state: HashMap<String, const_eval::ConstEvalState>,
     /// Cached const evaluation results.
@@ -426,6 +432,7 @@ impl TypeChecker {
             validate_source_type_names: false,
             unknown_source_type_names_emitted: HashSet::new(),
             static_decl_positions: HashMap::new(),
+            checking_registry_entry_static_initializer: false,
             const_eval_state: HashMap::new(),
             const_eval_cache: HashMap::new(),
             type_info: TypeCheckInfo::default(),

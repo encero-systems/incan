@@ -2300,6 +2300,7 @@ fn library_index_with_identity_graph_alias_collision() -> LibraryManifestIndex {
                     declarations: vec![ApiDeclaration::Function(helper_cast)],
                 }],
             }),
+            registry: None,
             identity_graph: LibraryIdentityGraph {
                 schema_version: LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION,
                 exports: vec![ExportIdentity {
@@ -18019,6 +18020,534 @@ def add(x: int, y: int = 1) -> int:
         incan_semantics_core::IncanType::Primitive(incan_semantics_core::IncanPrimitiveType::Int)
     ));
     Ok(())
+}
+
+#[test]
+fn type_info_semantic_fact_store_exports_checked_registry_descriptions() -> Result<(), Box<dyn std::error::Error>> {
+    let module_path = vec!["facts".to_string(), "registry".to_string()];
+    let info = typecheck_info_for_module(
+        r#"
+from std.registry import Registry, SubjectKind, describe
+
+type FunctionId = newtype str
+
+@derive(Descriptor)
+model FunctionSpec:
+  summary: str
+
+pub static functions: Registry[FunctionId, FunctionSpec] = Registry.define(
+  subjects=[SubjectKind.Function],
+)
+
+@describe(functions, FunctionId("normalize"), FunctionSpec(summary="Normalize text"))
+def normalize(value: str) -> str:
+  return value
+"#,
+        module_path.clone(),
+        "registry fact export",
+    )?;
+
+    let facts = info.semantic_fact_store(&module_path);
+    let fact = facts
+        .iter()
+        .find(|fact| {
+            fact.subject.to_string() == "decl:facts::registry::normalize"
+                && fact.kind == incan_semantics_core::SemanticFactKind::Registry
+        })
+        .ok_or("missing checked registry description fact")?;
+    let incan_semantics_core::SemanticFactValue::RegistryEntry(entry) = &fact.value else {
+        return Err(format!("expected registry fact, got {fact:?}").into());
+    };
+    assert_eq!(entry.registry.to_string(), "decl:facts::registry::functions");
+    assert_eq!(
+        entry.subject_kind,
+        incan_semantics_core::SemanticRegistrySubjectKind::Function
+    );
+    assert_eq!(entry.subject_identity, "facts::registry.normalize");
+    assert!(matches!(
+        &entry.key,
+        incan_semantics_core::SemanticRegistryValue::Newtype { name, .. } if name == "FunctionId"
+    ));
+    assert!(matches!(
+        &entry.descriptor,
+        incan_semantics_core::SemanticRegistryValue::Model { name, fields }
+            if name == "FunctionSpec" && fields == &vec![("summary".to_string(), incan_semantics_core::SemanticRegistryValue::String("Normalize text".to_string()))]
+    ));
+    Ok(())
+}
+
+#[test]
+fn type_info_semantic_fact_store_exports_checked_registry_method_descriptions() -> Result<(), Box<dyn std::error::Error>>
+{
+    let module_path = vec!["facts".to_string(), "methods".to_string()];
+    let info = typecheck_info_for_module(
+        r#"
+from std.registry import Registry, SubjectKind, describe
+
+type MethodId = newtype str
+
+@derive(Descriptor)
+model MethodSpec:
+  summary: str
+
+pub static methods: Registry[MethodId, MethodSpec] = Registry.define(
+  subjects=[SubjectKind.Method],
+)
+
+model Normalizer:
+  @describe(methods, MethodId("normalize"), MethodSpec(summary="Normalize text"))
+  def normalize(self, value: str) -> str:
+    return value
+"#,
+        module_path.clone(),
+        "registry method fact export",
+    )?;
+
+    let facts = info.semantic_fact_store(&module_path);
+    let fact = facts
+        .iter()
+        .find(|fact| {
+            fact.subject.to_string() == "decl:facts::methods::Normalizer.normalize"
+                && fact.kind == incan_semantics_core::SemanticFactKind::Registry
+        })
+        .ok_or("missing checked registry method description fact")?;
+    let incan_semantics_core::SemanticFactValue::RegistryEntry(entry) = &fact.value else {
+        return Err(format!("expected registry fact, got {fact:?}").into());
+    };
+    assert_eq!(entry.registry.to_string(), "decl:facts::methods::methods");
+    assert_eq!(
+        entry.subject_kind,
+        incan_semantics_core::SemanticRegistrySubjectKind::Method
+    );
+    assert_eq!(entry.subject_identity, "facts::methods.Normalizer.normalize");
+    Ok(())
+}
+
+#[test]
+fn type_info_semantic_fact_store_exports_explicit_registry_subject_entries() -> Result<(), Box<dyn std::error::Error>> {
+    let module_path = vec!["facts".to_string(), "capabilities".to_string()];
+    let info = typecheck_info_for_module(
+        r#"
+from std.registry import Registry, RegistryEntry, RegistrySubject, SubjectKind
+
+type CapabilityId = newtype str
+
+@derive(Descriptor)
+model CapabilitySpec:
+  title: str
+
+pub static capabilities: Registry[CapabilityId, CapabilitySpec] = Registry.define(
+  subjects=[SubjectKind.CompilationUnit, SubjectKind.Package],
+)
+
+pub static unit_capability: RegistryEntry[CapabilityId, CapabilitySpec] = capabilities.entry(
+  key=CapabilityId("unit"),
+  subject=RegistrySubject.current_unit(),
+  descriptor=CapabilitySpec(title="Current unit"),
+)
+
+pub static package_capability: RegistryEntry[CapabilityId, CapabilitySpec] = capabilities.entry(
+  key=CapabilityId("package"),
+  subject=RegistrySubject.package(),
+  descriptor=CapabilitySpec(title="Current package"),
+)
+"#,
+        module_path.clone(),
+        "explicit registry entry fact export",
+    )?;
+
+    let facts = info.semantic_fact_store(&module_path);
+    let unit_entry = facts
+        .iter()
+        .find(|fact| {
+            fact.subject.to_string() == "module:facts::capabilities"
+                && fact.kind == incan_semantics_core::SemanticFactKind::Registry
+        })
+        .ok_or("missing checked compilation-unit registry entry")?;
+    let incan_semantics_core::SemanticFactValue::RegistryEntry(unit_entry) = &unit_entry.value else {
+        return Err(format!("expected registry fact, got {unit_entry:?}").into());
+    };
+    assert_eq!(
+        unit_entry.subject_kind,
+        incan_semantics_core::SemanticRegistrySubjectKind::CompilationUnit
+    );
+    assert_eq!(unit_entry.subject_identity, "facts::capabilities");
+
+    let package_entry = facts
+        .iter()
+        .find(|fact| {
+            fact.subject.to_string() == "package:facts::capabilities::package"
+                && fact.kind == incan_semantics_core::SemanticFactKind::Registry
+        })
+        .ok_or("missing checked package registry entry")?;
+    let incan_semantics_core::SemanticFactValue::RegistryEntry(package_entry) = &package_entry.value else {
+        return Err(format!("expected registry fact, got {package_entry:?}").into());
+    };
+    assert_eq!(
+        package_entry.subject_kind,
+        incan_semantics_core::SemanticRegistrySubjectKind::Package
+    );
+    assert_eq!(package_entry.subject_identity, "facts::capabilities::package");
+
+    let package_facts = info.semantic_fact_store_with_package(&module_path, Some("capability_catalog"));
+    let package_entry = package_facts
+        .iter()
+        .find(|fact| {
+            fact.subject.to_string() == "package:capability_catalog"
+                && fact.kind == incan_semantics_core::SemanticFactKind::Registry
+        })
+        .ok_or("missing package-identified checked registry entry")?;
+    let incan_semantics_core::SemanticFactValue::RegistryEntry(package_entry) = &package_entry.value else {
+        return Err(format!("expected registry fact, got {package_entry:?}").into());
+    };
+    assert_eq!(package_entry.subject_identity, "capability_catalog");
+    Ok(())
+}
+
+#[test]
+fn registry_entry_rejects_runtime_and_compiler_reserved_mutation_surfaces() {
+    let runtime_entry = check_str_err(
+        r#"
+from std.registry import Registry, RegistryEntry, RegistrySubject, SubjectKind
+
+@derive(Clone, Eq)
+type CapabilityId = newtype str
+
+@derive(Descriptor)
+model CapabilitySpec:
+    title: str
+
+static capabilities: Registry[CapabilityId, CapabilitySpec] = Registry.define(
+    subjects=[SubjectKind.CompilationUnit],
+)
+
+static parenthesized_entry: RegistryEntry[CapabilityId, CapabilitySpec] = (
+    capabilities.entry(
+        key=CapabilityId("parenthesized"),
+        subject=RegistrySubject.current_unit(),
+        descriptor=CapabilitySpec(title="parenthesized"),
+    )
+)
+
+def register_at_runtime() -> None:
+    capabilities.entries.append(
+        RegistryEntry(
+            key=CapabilityId("forged-field"),
+            descriptor=CapabilitySpec(title="forged field"),
+            subject=RegistrySubject.current_unit(),
+        ),
+    )
+    capabilities.entry(
+        key=CapabilityId("runtime"),
+        subject=RegistrySubject.current_unit(),
+        descriptor=CapabilitySpec(title="runtime"),
+    )
+    capabilities._describe(
+        CapabilityId("forged"),
+        CapabilitySpec(title="forged"),
+        RegistrySubject.current_unit(),
+    )
+"#,
+        "Registry.entry must not become a dynamic runtime registration API",
+    );
+    assert!(
+        runtime_entry
+            .iter()
+            .any(|error| error.message.contains("Registry.entry(...) is declaration-only")),
+        "expected declaration-only Registry.entry diagnostic, got: {runtime_entry:?}"
+    );
+    assert!(
+        runtime_entry
+            .iter()
+            .any(|error| error.message.contains("Field 'entries' on 'Registry' is private")),
+        "expected private runtime-entry storage diagnostic, got: {runtime_entry:?}"
+    );
+    assert!(
+        runtime_entry
+            .iter()
+            .any(|error| error.message.contains("Registry._describe(...) is compiler-reserved")),
+        "expected compiler-reserved Registry._describe diagnostic, got: {runtime_entry:?}"
+    );
+
+    let compiler_helper = check_str_err(
+        r#"
+from std.registry import RegistrySubject
+
+def forge_package_subject() -> RegistrySubject:
+    return RegistrySubject._checked_package("forged")
+"#,
+        "compiler-only RegistrySubject constructor must not be callable from source",
+    );
+    assert!(
+        compiler_helper.iter().any(|error| error
+            .message
+            .contains("RegistrySubject._checked_package(...) is compiler-reserved")),
+        "expected compiler-reserved RegistrySubject diagnostic, got: {compiler_helper:?}"
+    );
+}
+
+#[test]
+fn registry_descriptions_reject_dynamic_metadata_expressions() {
+    let errors = check_str_err(
+        r#"
+from std.registry import Registry, SubjectKind, describe
+
+type FunctionId = newtype str
+
+@derive(Descriptor)
+model FunctionSpec:
+  summary: str
+
+pub static functions: Registry[FunctionId, FunctionSpec] = Registry.define(
+  subjects=[SubjectKind.Function],
+)
+
+def dynamic_key() -> FunctionId:
+  return FunctionId("dynamic")
+
+@describe(functions, dynamic_key(), FunctionSpec(summary="Normalize text"))
+def normalize(value: str) -> str:
+  return value
+"#,
+        "expected registry structural-value rejection",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("structural calls must construct")),
+        "expected structural registry metadata diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn registry_descriptions_reject_trait_method_targets_until_traits_have_canonical_subjects() {
+    let errors = check_str_err(
+        r#"
+from std.registry import Registry, SubjectKind, describe
+
+type FunctionId = newtype str
+
+@derive(Descriptor)
+model FunctionSpec:
+  summary: str
+
+static functions: Registry[FunctionId, FunctionSpec] = Registry.define(
+  subjects=[SubjectKind.Method],
+)
+
+trait Normalizer:
+  @describe(functions, FunctionId("normalize"), FunctionSpec(summary="Normalize text"))
+  def normalize(self, value: str) -> str:
+    return value
+"#,
+        "expected unsupported trait registry description to fail",
+    );
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("@describe is currently supported only on concrete functions and methods, not a trait method")),
+        "expected a source-target diagnostic for trait @describe, got {errors:?}"
+    );
+}
+
+#[test]
+fn registry_descriptions_expand_structural_const_values() -> Result<(), Box<dyn std::error::Error>> {
+    let module_path = vec!["facts".to_string(), "const_registry".to_string()];
+    let info = typecheck_info_for_module(
+        r#"
+from std.registry import Registry, SubjectKind, describe
+
+type FunctionId = newtype str
+
+@derive(Descriptor)
+model FunctionSpec:
+  forms: FrozenList[str]
+
+const FORMS: FrozenList[str] = ["normalize(value)", "normalize_all(values)"]
+
+pub static functions: Registry[FunctionId, FunctionSpec] = Registry.define(
+  subjects=[SubjectKind.Function],
+)
+
+@describe(functions, FunctionId("normalize"), FunctionSpec(forms=FORMS))
+def normalize(value: str) -> str:
+  return value
+"#,
+        module_path,
+        "registry const descriptor expansion",
+    )?;
+
+    let description = info
+        .registry
+        .descriptions
+        .first()
+        .ok_or("missing checked registry description")?;
+    assert!(matches!(
+        &description.descriptor,
+        incan_semantics_core::SemanticRegistryValue::Model { fields, .. }
+            if fields == &vec![(
+                "forms".to_string(),
+                incan_semantics_core::SemanticRegistryValue::List(vec![
+                    incan_semantics_core::SemanticRegistryValue::String("normalize(value)".to_string()),
+                    incan_semantics_core::SemanticRegistryValue::String("normalize_all(values)".to_string()),
+                ]),
+            )]
+    ));
+    Ok(())
+}
+
+#[test]
+fn registry_descriptions_encode_some_as_a_structural_option() -> Result<(), Box<dyn std::error::Error>> {
+    let info = typecheck_info_for_module(
+        r#"
+from std.registry import Registry, SubjectKind, describe
+
+type FunctionId = newtype str
+
+@derive(Descriptor)
+model FunctionSpec:
+  replacement: Option[str]
+
+pub static functions: Registry[FunctionId, FunctionSpec] = Registry.define(
+  subjects=[SubjectKind.Function],
+)
+
+@describe(functions, FunctionId("normalize"), FunctionSpec(replacement=Some("normalized")))
+def normalize(value: str) -> str:
+  return value
+"#,
+        vec!["facts".to_string(), "option_registry".to_string()],
+        "registry option descriptor snapshot",
+    )?;
+
+    let description = info
+        .registry
+        .descriptions
+        .first()
+        .ok_or("missing checked registry description")?;
+    assert!(matches!(
+        &description.descriptor,
+        incan_semantics_core::SemanticRegistryValue::Model { fields, .. }
+            if fields == &vec![(
+                "replacement".to_string(),
+                incan_semantics_core::SemanticRegistryValue::Option(Box::new(
+                    incan_semantics_core::SemanticRegistryValue::String("normalized".to_string())
+                )),
+            )]
+    ));
+    Ok(())
+}
+
+#[test]
+fn registry_descriptions_encode_concrete_type_tokens() -> Result<(), Box<dyn std::error::Error>> {
+    let info = typecheck_info_for_module(
+        r#"
+from std.registry import Registry, SubjectKind, describe
+
+type FunctionId = newtype str
+
+@derive(Descriptor)
+model FunctionSpec:
+  target: Type[int]
+
+pub static functions: Registry[FunctionId, FunctionSpec] = Registry.define(
+  subjects=[SubjectKind.Function],
+)
+
+@describe(functions, FunctionId("normalize"), FunctionSpec(target=int))
+def normalize(value: str) -> str:
+  return value
+"#,
+        vec!["facts".to_string(), "type_token_registry".to_string()],
+        "registry type-token descriptor snapshot",
+    )?;
+
+    let description = info
+        .registry
+        .descriptions
+        .first()
+        .ok_or("missing checked registry description")?;
+    assert!(matches!(
+        &description.descriptor,
+        incan_semantics_core::SemanticRegistryValue::Model { fields, .. }
+            if fields == &vec![(
+                "target".to_string(),
+                incan_semantics_core::SemanticRegistryValue::Type("int".to_string()),
+            )]
+    ));
+    Ok(())
+}
+
+#[test]
+fn descriptor_derive_rejects_mutable_and_non_descriptor_field_shapes() {
+    let errors = check_str_err(
+        r#"
+@derive(Descriptor)
+model BadDescriptor:
+  labels: list[str]
+  callback: (str) -> str
+"#,
+        "expected descriptor shape diagnostics",
+    );
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("mutable collections are not descriptor snapshots")),
+        "expected mutable collection diagnostic, got {errors:?}"
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("functions require runtime execution")),
+        "expected function field diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn descriptor_derive_accepts_frozen_and_nested_structural_fields() {
+    assert_check_ok(
+        r#"
+type DescriptorId = newtype str
+
+enum Level:
+  Info
+  Error
+
+@derive(Descriptor)
+model Nested:
+  label: str
+
+@derive(Descriptor)
+model Descriptor:
+  id: DescriptorId
+  level: Level
+  nested: Nested
+  tags: FrozenList[str]
+  labels: FrozenDict[str, str]
+  optional_label: Option[str]
+"#,
+    );
+}
+
+#[test]
+fn descriptor_derive_rejects_nested_models_without_descriptor_contract() {
+    let errors = check_str_err(
+        r#"
+model RuntimeState:
+  label: str
+
+@derive(Descriptor)
+model BadDescriptor:
+  state: RuntimeState
+"#,
+        "expected nested descriptor contract diagnostic",
+    );
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("nested models must also use @derive(Descriptor)")),
+        "expected nested descriptor contract diagnostic, got {errors:?}"
+    );
 }
 
 #[test]

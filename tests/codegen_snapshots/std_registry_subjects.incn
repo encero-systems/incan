@@ -1,0 +1,32 @@
+from std.registry import Registry, RegistryEntry, RegistrySubject, SubjectKind
+
+@derive(Clone, Eq)
+type CapabilityId = newtype str
+
+@derive(Descriptor)
+model CapabilitySpec:
+    title: str
+
+pub static capabilities: Registry[CapabilityId, CapabilitySpec] = Registry.define(
+    subjects=[SubjectKind.CompilationUnit, SubjectKind.Package],
+)
+
+pub static logging_capability: RegistryEntry[CapabilityId, CapabilitySpec] = capabilities.entry(
+    key=CapabilityId("std.logging"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=CapabilitySpec(title="Structured logging"),
+)
+
+pub static package_capability: RegistryEntry[CapabilityId, CapabilitySpec] = capabilities.entry(
+    key=CapabilityId("std.registry"),
+    subject=RegistrySubject.package(),
+    descriptor=CapabilitySpec(title="Typed declaration registries"),
+)
+
+def main() -> None:
+    entries = capabilities.loaded_entries()
+    assert len(entries) == 2
+    assert logging_capability.subject.kind == SubjectKind.CompilationUnit
+    assert logging_capability.subject.qualified_name == "std_registry_subjects"
+    assert package_capability.subject.kind == SubjectKind.Package
+    assert package_capability.subject.qualified_name == "std_registry_subjects"

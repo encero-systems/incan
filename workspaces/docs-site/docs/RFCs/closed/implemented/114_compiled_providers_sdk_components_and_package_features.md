@@ -406,7 +406,7 @@ The v0.5 standard-library source graph is grouped into nine component artifacts.
 
 | Component | Public module ownership | Direct component dependencies | Profile membership in v0.5 |
 | --- | --- | --- | --- |
-| `stdlib-core` | `std.prelude`, `std.result`, `std.traits.*`, `std.derives.*`, `std.this`, `std.reflection` | — | mandatory, `minimal`, `default`, `full` |
+| `stdlib-core` | `std.prelude`, `std.result`, `std.traits.*`, `std.derives.*`, `std.this`, `std.reflection`, `std.registry`, and the source-owned capability catalogue | — | mandatory, `minimal`, `default`, `full` |
 | `stdlib-system` | `std.environ`, `std.io`, `std.fs.*`, `std.tempfile` | `stdlib-core` | `default`, `full` |
 | `stdlib-codecs` | `std.encoding.*`, `std.checksum` | `stdlib-core`, `stdlib-system` | `default`, `full` |
 | `stdlib-compression` | `std.compression.*` | `stdlib-core`, `stdlib-system` | `default`, `full` |

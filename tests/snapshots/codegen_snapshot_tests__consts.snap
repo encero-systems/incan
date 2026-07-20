@@ -7,10 +7,36 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+#[inline(always)]
+pub(crate) fn __incan_init_module_statics() {
+    static __INCAN_STATIC_INIT_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(
+        false,
+    );
+    if __INCAN_STATIC_INIT_RUNNING.load(std::sync::atomic::Ordering::Acquire) {
+        return;
+    }
+    static __INCAN_STATIC_INIT_ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    __INCAN_STATIC_INIT_ONCE
+        .get_or_init(|| {
+            struct __IncanStaticInitGuard<'a>(&'a std::sync::atomic::AtomicBool);
+            impl Drop for __IncanStaticInitGuard<'_> {
+                fn drop(&mut self) {
+                    self.0.store(false, std::sync::atomic::Ordering::Release);
+                }
+            }
+            __INCAN_STATIC_INIT_RUNNING
+                .store(true, std::sync::atomic::Ordering::Release);
+            let _guard = __IncanStaticInitGuard(&__INCAN_STATIC_INIT_RUNNING);
+            std::sync::LazyLock::force(&METADATA);
+        });
+}
 const A: i64 = 1 + 2 * 3;
 const S: incan_stdlib::frozen::FrozenStr = incan_stdlib::frozen::FrozenStr::new("hello");
 const L: incan_stdlib::frozen::FrozenList<i64> = incan_stdlib::frozen::FrozenList::new(
     &[1, 2, 3],
+);
+const TEXTS: incan_stdlib::frozen::FrozenList<&'static str> = incan_stdlib::frozen::FrozenList::new(
+    &["alpha", "beta"],
 );
 const D: incan_stdlib::frozen::FrozenDict<incan_stdlib::frozen::FrozenStr, i64> = incan_stdlib::frozen::FrozenDict::new(
     &[
@@ -22,7 +48,49 @@ const T: (incan_stdlib::frozen::FrozenStr, i64) = (
     incan_stdlib::frozen::FrozenStr::new("x"),
     42,
 );
+#[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
+struct Metadata {
+    pub canonical_forms: incan_stdlib::frozen::FrozenList<&'static str>,
+}
+impl incan_stdlib::reflection::HasClassName for Metadata {
+    fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeClassName for Metadata {
+    fn __class_name__() -> &'static str {
+        "Metadata"
+    }
+}
+impl incan_stdlib::reflection::HasFieldMetadata for Metadata {
+    fn __fields__(
+        &self,
+    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeFieldMetadata for Metadata {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
+        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("canonical_forms"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("canonical_forms"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("FrozenList[str]"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+        ];
+        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
+}
+static METADATA: std::sync::LazyLock<incan_stdlib::storage::StaticCell<Metadata>> = std::sync::LazyLock::new(||
+incan_stdlib::storage::StaticCell::new(Metadata { canonical_forms: TEXTS }));
 fn main() {
+    __incan_init_module_statics();
     std::panic::set_hook(
         std::boxed::Box::new(|panic_info| {
             if let Some(message) = panic_info.payload().downcast_ref::<&str>() {
@@ -37,6 +105,10 @@ fn main() {
     let _ = println!("{}", A);
     let _ = println!("{}", S);
     let _ = println!("{}", L.len());
+    let _ = println!(
+        "{}", { { __incan_init_module_statics(); METADATA.with_mut(| __incan_static_value
+        | { __incan_static_value.canonical_forms.len() }) } }
+    );
     let _ = println!("{}", D.len());
     let _ = println!("{}", T);
 }

@@ -208,6 +208,9 @@ pub const RFC_088: RfcId = "RFC 088";
 /// RFC 089 — std.environ runtime environment access.
 pub const RFC_089: RfcId = "RFC 089";
 
+/// RFC 113 — `std.registry` and declaration descriptors.
+pub const RFC_113: RfcId = "RFC 113";
+
 /// RFC 102 — semantic layer inspection surface.
 pub const RFC_102: RfcId = "RFC 102";
 
@@ -352,6 +355,8 @@ impl RFC {
     pub const _088: RfcId = RFC_088;
     /// RFC 089 — std.environ runtime environment access.
     pub const _089: RfcId = RFC_089;
+    /// RFC 113 — `std.registry` and declaration descriptors.
+    pub const _113: RfcId = RFC_113;
     /// RFC 102 — semantic layer inspection surface.
     pub const _102: RfcId = RFC_102;
     /// RFC 106 — compiler-backed agent context graph.

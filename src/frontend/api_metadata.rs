@@ -672,14 +672,6 @@ pub fn collect_checked_api_metadata(
                     }));
                 }
             }
-            Declaration::Alias(alias) if public(alias.visibility) => {
-                declarations.push(ApiDeclaration::Alias(ApiAlias {
-                    name: alias.name.clone(),
-                    anchor: anchor(&module_path, &alias.name, decl.span),
-                    target_path: alias.target.segments.clone(),
-                    projected_function: None,
-                }));
-            }
             Declaration::Partial(partial) if public(partial.visibility) => {
                 if let Some(CheckedExportKind::Partial(export)) = checked_kind(&checked_by_name, &partial.name) {
                     declarations.push(ApiDeclaration::Partial(api_partial(export, decl.span, &module_path)));
@@ -688,19 +680,37 @@ pub fn collect_checked_api_metadata(
             // Module-level `from ... import ...` bindings are part of a module's public surface, including facade
             // modules such as `std.web` whose `prelude.incn` consists entirely of re-exports. Rust imports remain an
             // implementation detail unless explicitly declared `pub`.
-            Declaration::Import(import)
-                if matches!(import.kind, ImportKind::From { .. }) || public(import.visibility) =>
-            {
-                declarations.extend(
-                    api_aliases(import, decl.span, &module_path)
-                        .into_iter()
-                        .map(ApiDeclaration::Alias),
-                );
-            }
+            Declaration::Alias(_) | Declaration::Import(_) => declarations.extend(
+                checked_api_aliases_for_declaration(&decl.node, decl.span, &module_path)
+                    .into_iter()
+                    .map(ApiDeclaration::Alias),
+            ),
             _ => {}
         }
     }
 
+    CheckedApiMetadata {
+        schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+        module_path,
+        declarations,
+    }
+}
+
+/// Collect only the checked public alias projection for one parsed module.
+///
+/// Callers use this after the owning compilation session has successfully checked the module. Keeping this projection
+/// separate lets registry inspection attach facade paths without constructing a second typechecker merely to recover
+/// import spellings that are already present in the checked source program.
+pub fn collect_checked_api_alias_metadata(program: &Program, module_path: Vec<String>) -> CheckedApiMetadata {
+    let declarations = program
+        .declarations
+        .iter()
+        .flat_map(|declaration| {
+            checked_api_aliases_for_declaration(&declaration.node, declaration.span, &module_path)
+                .into_iter()
+                .map(ApiDeclaration::Alias)
+        })
+        .collect();
     CheckedApiMetadata {
         schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
         module_path,
@@ -1215,6 +1225,25 @@ fn api_aliases(import: &ImportDecl, span: Span, module_path: &[String]) -> Vec<A
         ImportKind::PubFrom { library, items } => {
             let base_path = vec!["pub".to_string(), library.clone()];
             aliases_from_items(items, base_path, span, module_path)
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Convert one checked declaration into the public aliases it contributes.
+fn checked_api_aliases_for_declaration(declaration: &Declaration, span: Span, module_path: &[String]) -> Vec<ApiAlias> {
+    match declaration {
+        Declaration::Alias(alias) if public(alias.visibility) => vec![ApiAlias {
+            name: alias.name.clone(),
+            anchor: anchor(module_path, &alias.name, span),
+            target_path: alias.target.segments.clone(),
+            projected_function: None,
+        }],
+        // Module-level `from ... import ...` bindings are part of a module's public surface, including facade modules
+        // such as `std.web` whose `prelude.incn` consists entirely of reexports. Rust imports remain implementation
+        // details unless explicitly declared public.
+        Declaration::Import(import) if matches!(import.kind, ImportKind::From { .. }) || public(import.visibility) => {
+            api_aliases(import, span, module_path)
         }
         _ => Vec::new(),
     }

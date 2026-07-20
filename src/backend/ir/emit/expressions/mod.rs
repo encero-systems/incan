@@ -951,7 +951,12 @@ impl<'a> IrEmitter<'a> {
         match Self::expr_storage_root(expr) {
             Some(StorageRoot::Static(name)) => {
                 let ident = Self::rust_static_ident(&name);
-                let init_call = self.emit_static_init_call_for_static(&name);
+                let init_call = if *self.in_static_initializer.borrow() && !self.static_needs_imported_init_call(&name)
+                {
+                    quote! {}
+                } else {
+                    self.emit_static_init_call_for_static(&name)
+                };
                 Ok(quote! {{
                     #init_call
                     #ident.with_ref(|#local_name| { #body })
@@ -971,7 +976,12 @@ impl<'a> IrEmitter<'a> {
         match Self::expr_storage_root(expr) {
             Some(StorageRoot::Static(name)) => {
                 let ident = Self::rust_static_ident(&name);
-                let init_call = self.emit_static_init_call_for_static(&name);
+                let init_call = if *self.in_static_initializer.borrow() && !self.static_needs_imported_init_call(&name)
+                {
+                    quote! {}
+                } else {
+                    self.emit_static_init_call_for_static(&name)
+                };
                 Ok(quote! {{
                     #init_call
                     #ident.with_mut(|#local_name| { #body })

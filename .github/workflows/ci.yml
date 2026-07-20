@@ -570,10 +570,12 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: ./.github/actions/setup-rust-sccache
-      - name: Regenerate language reference
+      - name: Regenerate checked language references
         run: cargo run -p incan_core --bin generate_lang_reference
+      - name: Regenerate checked capability inventory
+        run: cargo run --features cli --bin generate_feature_inventory
       - name: Show sccache stats
         if: always()
         run: ${SCCACHE_PATH:-sccache} --show-stats || true
-      - name: Verify no diff
-        run: git diff --exit-code workspaces/docs-site/docs/language/reference/language.md
+      - name: Verify no generated-reference diff
+        run: git diff --exit-code workspaces/docs-site/docs/language/reference/language.md workspaces/docs-site/docs/language/reference/feature_inventory.md

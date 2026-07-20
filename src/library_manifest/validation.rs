@@ -18,6 +18,7 @@ use super::{
 };
 use crate::frontend::api_metadata::{ApiDeclaration, CHECKED_API_METADATA_SCHEMA_VERSION};
 use crate::frontend::contract_metadata::CONTRACT_METADATA_SCHEMA_VERSION;
+use crate::frontend::registry_metadata::CHECKED_REGISTRY_METADATA_SCHEMA_VERSION;
 
 /// Validate one raw manifest payload before it is written or decoded into the semantic model.
 pub(super) fn validate_raw_manifest(raw: &RawLibraryManifest) -> Result<(), LibraryManifestError> {
@@ -129,6 +130,14 @@ fn validate_contract_metadata(raw: &RawLibraryManifest) -> Result<(), LibraryMan
         }
     }
     validate_compiled_provider_metadata(&raw.contract_metadata.provider)?;
+    if let Some(registry) = &raw.contract_metadata.registry
+        && registry.schema_version != CHECKED_REGISTRY_METADATA_SCHEMA_VERSION
+    {
+        return Err(LibraryManifestError::Invalid(format!(
+            "contract_metadata.registry.schema_version {} is unsupported (expected {})",
+            registry.schema_version, CHECKED_REGISTRY_METADATA_SCHEMA_VERSION
+        )));
+    }
     Ok(())
 }
 

@@ -154,6 +154,12 @@ struct IrGenerationOptions<'a> {
     callable_name_resolutions: Option<&'a mut HashMap<String, CallableNameResolution>>,
     /// Callable signature keys that require `__IncanCallableName` support.
     callable_name_used_signature_keys: Option<&'a mut HashSet<String>>,
+    /// Collect callable signatures from this program when an imported module uses the generic callable-name trait.
+    ///
+    /// An imported generic helper can receive a function declared by the root program.  The helper's module owns the
+    /// trait declaration, so it must receive the root program's concrete function-pointer signature even when the
+    /// root program does not itself read `F.__name__`.
+    collect_function_arg_signatures_for_imported_generic_callable_name_trait: bool,
     /// Dependency support items required by generated paths observed in lowered IR.
     direct_generated_path_support_items: Option<&'a mut HashMap<Vec<String>, HashSet<String>>>,
 }
@@ -169,6 +175,7 @@ impl IrGenerationOptions<'_> {
             qualify_union_types_from_crate: false,
             callable_name_resolutions: None,
             callable_name_used_signature_keys: None,
+            collect_function_arg_signatures_for_imported_generic_callable_name_trait: false,
             direct_generated_path_support_items: None,
         }
     }
@@ -222,6 +229,10 @@ pub struct IrCodegen<'a> {
     preserve_dependency_public_items: bool,
     /// Dependency module paths that should typecheck with source-visible public import rules.
     public_typecheck_module_paths: HashSet<Vec<String>>,
+    /// Canonical defining package identity supplied by the command that owns the generated artifact.
+    registry_package_identity: Option<String>,
+    /// Canonical source-module path for the root program when its parsed AST lacks a source path.
+    root_source_module_name: Option<String>,
     /// Shared stdlib source metadata cache reused across the repeated internal typecheck/lowering passes that codegen
     /// performs for multi-module builds.
     stdlib_cache: StdlibAstCache,
@@ -257,6 +268,8 @@ impl<'a> IrCodegen<'a> {
             public_ordinal_type_identities: HashMap::new(),
             preserve_dependency_public_items: true,
             public_typecheck_module_paths: HashSet::new(),
+            registry_package_identity: None,
+            root_source_module_name: None,
             stdlib_cache: StdlibAstCache::new(),
             prechecked_main_type_info: None,
             prechecked_dependency_type_info: HashMap::new(),
@@ -534,6 +547,16 @@ impl<'a> IrCodegen<'a> {
         self.preserve_dependency_public_items = enabled;
     }
 
+    /// Set the package identity used when materializing explicit package-level registry subjects.
+    pub fn set_registry_package_identity(&mut self, identity: Option<String>) {
+        self.registry_package_identity = identity;
+    }
+
+    /// Set the root compilation-unit identity when parsing did not retain a source path.
+    pub fn set_root_source_module_name(&mut self, name: Option<String>) {
+        self.root_source_module_name = name;
+    }
+
     /// Set dependency module paths that should typecheck with public source import rules.
     ///
     /// CLI test batches can emit individual test files as generated dependency modules so each file keeps its own Rust
@@ -670,6 +693,7 @@ impl<'a> IrCodegen<'a> {
     fn configure_lowering(&self, lowering: &mut AstLowering) {
         lowering.set_stdlib_cache(self.stdlib_cache.clone());
         lowering.set_provider_plan(self.provider_plan.clone());
+        lowering.set_registry_package_identity(self.registry_package_identity.clone());
     }
 
     /// Add a dependency module (for multi-file compilation)
@@ -977,12 +1001,12 @@ impl<'a> IrCodegen<'a> {
         // Lower AST to IR using typechecker output when available
         let mut lowering = AstLowering::new_with_type_info(type_info_opt);
         self.configure_lowering(&mut lowering);
-        lowering.set_current_source_module_name(
+        lowering.set_current_source_module_name(self.root_source_module_name.clone().or_else(|| {
             program
                 .source_path
                 .as_deref()
-                .and_then(crate::frontend::module::logical_module_name_from_source_path),
-        );
+                .and_then(crate::frontend::module::logical_module_name_from_source_path)
+        }));
         lowering.seed_dependency_trait_decls(&dependency_modules);
         lowering.seed_struct_field_aliases(global_aliases.clone());
         let mut ir_program = lowering.lower_program(program)?;
@@ -997,9 +1021,11 @@ impl<'a> IrCodegen<'a> {
         }
         let callable_name_use_facts =
             IrEmitter::callable_name_use_facts_for_program(&ir_program, &self.externally_reachable_items, true);
+        let needs_function_arg_signatures = callable_name_use_facts.generic_trait_used
+            || options.collect_function_arg_signatures_for_imported_generic_callable_name_trait;
         if let Some(used_keys) = options.callable_name_used_signature_keys.as_deref_mut() {
             used_keys.extend(callable_name_use_facts.signature_keys.iter().cloned());
-            if callable_name_use_facts.generic_trait_used {
+            if needs_function_arg_signatures {
                 used_keys.extend(callable_name_use_facts.function_arg_signature_keys.iter().cloned());
             }
         }
@@ -1016,7 +1042,7 @@ impl<'a> IrCodegen<'a> {
             .as_ref()
             .map(|used_keys| (**used_keys).clone())
             .unwrap_or_default();
-        if callable_name_use_facts.generic_trait_used {
+        if needs_function_arg_signatures {
             callable_name_used_signature_keys_for_emit.extend(callable_name_use_facts.function_arg_signature_keys);
         }
 
@@ -1440,6 +1466,8 @@ impl<'a> IrCodegen<'a> {
                 qualify_union_types_from_crate: true,
                 callable_name_resolutions: Some(&mut callable_name_resolutions),
                 callable_name_used_signature_keys: Some(&mut callable_name_used_signature_keys),
+                collect_function_arg_signatures_for_imported_generic_callable_name_trait:
+                    generic_callable_name_trait_used,
                 direct_generated_path_support_items: Some(&mut dependency_reachable_items),
             },
         )?;
@@ -1698,6 +1726,8 @@ impl<'a> IrCodegen<'a> {
                 qualify_union_types_from_crate: true,
                 callable_name_resolutions: Some(&mut callable_name_resolutions),
                 callable_name_used_signature_keys: Some(&mut callable_name_used_signature_keys),
+                collect_function_arg_signatures_for_imported_generic_callable_name_trait:
+                    generic_callable_name_trait_used,
                 direct_generated_path_support_items: Some(&mut dependency_reachable_items),
             },
         )?;

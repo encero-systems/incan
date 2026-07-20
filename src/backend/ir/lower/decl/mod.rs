@@ -17,12 +17,13 @@ mod traits;
 
 pub(in crate::backend::ir::lower) use functions::callable_docstring;
 
-use super::super::IrSpan;
 use super::super::decl::{
     IrDecl, IrDeclKind, IrImportOrigin, IrImportQualifier, IrInteropAdapterKind, IrInteropDirection, IrInteropEdge,
     Visibility,
 };
+use super::super::expr::{IrCallArg, IrCallArgKind, IrExprKind};
 use super::super::types::IrType;
+use super::super::{IrSpan, TypedExpr};
 use super::AstLowering;
 use super::errors::LoweringError;
 use crate::frontend::ast;
@@ -119,7 +120,8 @@ impl AstLowering {
                 }
             }
             ast::Declaration::Static(s) => {
-                let value = self.lower_expr_spanned(&s.value)?;
+                let mut value = self.lower_expr_spanned(&s.value)?;
+                self.rewrite_checked_registry_entry_subject(&s.name, &mut value)?;
                 let visibility = match s.visibility {
                     ast::Visibility::Public => Visibility::Public,
                     ast::Visibility::Private => Visibility::Private,
@@ -213,6 +215,95 @@ impl AstLowering {
             }
         };
         Ok(IrDecl::new(kind))
+    }
+
+    /// Materialize the canonical source identity for a frontend-approved explicit registry entry.
+    ///
+    /// `RegistrySubject.current_unit()` and `.package()` are ordinary typed source constructors. The placeholders in
+    /// their source implementations must not escape into loaded runtime entries, however: the frontend has already
+    /// fixed their subject kind and this lowering step supplies the compilation boundary's canonical identity. No
+    /// runtime discovery or Rust-side registry implementation is involved.
+    fn rewrite_checked_registry_entry_subject(
+        &self,
+        entry_name: &str,
+        value: &mut TypedExpr,
+    ) -> Result<(), LoweringError> {
+        let Some(entry) = self.type_info.as_ref().and_then(|info| {
+            info.registry
+                .explicit_entries
+                .iter()
+                .find(|entry| entry.entry_name == entry_name)
+        }) else {
+            return Ok(());
+        };
+
+        let (expected_source_constructor, checked_constructor, identity) = match entry.subject_kind {
+            incan_semantics_core::SemanticRegistrySubjectKind::CompilationUnit => (
+                "current_unit",
+                "_checked_current_unit",
+                self.current_source_module_name
+                    .clone()
+                    .unwrap_or_else(|| "<unknown-compilation-unit>".to_string()),
+            ),
+            incan_semantics_core::SemanticRegistrySubjectKind::Package => (
+                "package",
+                "_checked_package",
+                self.registry_package_identity
+                    .clone()
+                    .unwrap_or_else(|| "<unpackaged>".to_string()),
+            ),
+            incan_semantics_core::SemanticRegistrySubjectKind::Function
+            | incan_semantics_core::SemanticRegistrySubjectKind::Method => {
+                return Err(LoweringError {
+                    message: "checked explicit registry entries only support compilation-unit and package subjects"
+                        .to_string(),
+                    span: IrSpan::default(),
+                });
+            }
+        };
+
+        let IrExprKind::MethodCall { method, args, .. } = &mut value.kind else {
+            return Err(LoweringError {
+                message: "checked registry entry lowering expected registry.entry(...)".to_string(),
+                span: IrSpan::default(),
+            });
+        };
+        if method != "entry" {
+            return Err(LoweringError {
+                message: "checked registry entry lowering expected registry.entry(...)".to_string(),
+                span: IrSpan::default(),
+            });
+        }
+        let Some(subject) = args.iter_mut().find(|arg| arg.name.as_deref() == Some("subject")) else {
+            return Err(LoweringError {
+                message: "checked registry entry lowering expected a named subject argument".to_string(),
+                span: IrSpan::default(),
+            });
+        };
+        let IrExprKind::MethodCall {
+            method: subject_method,
+            args: subject_args,
+            ..
+        } = &mut subject.expr.kind
+        else {
+            return Err(LoweringError {
+                message: "checked registry entry lowering expected a RegistrySubject constructor".to_string(),
+                span: IrSpan::default(),
+            });
+        };
+        if subject_method != expected_source_constructor {
+            return Err(LoweringError {
+                message: "checked registry entry subject no longer matches its frontend-approved artifact".to_string(),
+                span: IrSpan::default(),
+            });
+        }
+        *subject_method = checked_constructor.to_string();
+        *subject_args = vec![IrCallArg {
+            name: None,
+            kind: IrCallArgKind::Positional,
+            expr: TypedExpr::new(IrExprKind::String(identity), IrType::String),
+        }];
+        Ok(())
     }
 
     /// Resolve the path that should be used when emitting a module-level alias declaration.

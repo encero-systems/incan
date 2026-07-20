@@ -22,6 +22,7 @@ pub mod library_exports;
 pub mod library_manifest_index;
 pub mod module;
 pub(crate) mod partial_projection;
+pub mod registry_metadata;
 pub(crate) mod resolved_type_subst;
 pub mod surface_semantics;
 pub mod symbols;

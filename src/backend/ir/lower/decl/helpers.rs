@@ -25,6 +25,11 @@ impl AstLowering {
     /// Return whether this decorator should lower through RFC 036 user-defined decorator semantics.
     pub(in crate::backend::ir::lower) fn is_user_defined_decorator_candidate(&self, dec: &ast::Decorator) -> bool {
         let resolved = decorator_resolution::resolve_decorator_path(dec, &self.import_aliases);
+        if decorators::from_segments(&resolved) == Some(DecoratorId::Describe) {
+            // RFC 113 owns `@describe` as a compiler-recognised declaration form. Its runtime registration is emitted
+            // through the defining registry static during module initialisation, not through RFC 036 callable wrapping.
+            return false;
+        }
         if decorators::from_segments(&resolved).is_some() {
             return false;
         }
@@ -252,6 +257,12 @@ impl AstLowering {
                         if let ast::DecoratorArg::Positional(expr) = arg {
                             // Handle simple identifier expressions
                             if let ast::Expr::Ident(name) = &expr.node {
+                                if derives::from_str(name) == Some(DeriveId::Descriptor) {
+                                    // `Descriptor` is a compiler-checked structural-snapshot opt-in, not a Rust
+                                    // derive macro. The checked registry fact retains it; generated Rust must not
+                                    // attempt `#[derive(Descriptor)]`.
+                                    continue;
+                                }
                                 if derives::from_str(name).is_some() {
                                     Self::push_unique(&mut derives, name.clone());
                                     continue;

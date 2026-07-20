@@ -87,6 +87,8 @@ pub struct DocumentState {
     rusttype_info: HashMap<String, String>,
     /// Checked public API metadata snippets that can be shown through hover after a successful typecheck.
     api_metadata_previews: Vec<ApiMetadataPreview>,
+    /// Compiler-owned registry memberships used for hover and navigation without reinterpreting decorators.
+    registry_previews: Vec<RegistryPreview>,
     /// Imported DSL surfaces from loaded `pub::` library manifests, used for scoped symbol LSP affordances.
     library_imported_dsl_surfaces: parser::ImportedLibraryDslSurfaces,
     /// Project-aware provider state used to explain enabled, disabled, and unavailable SDK modules.
@@ -110,6 +112,14 @@ struct ClassmethodContext {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ApiMetadataPreview {
     span: Span,
+    markdown: String,
+}
+
+/// One checked RFC 113 registry membership projected into LSP affordances.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RegistryPreview {
+    registration_span: Span,
+    subject_span: Span,
     markdown: String,
 }
 
@@ -348,6 +358,11 @@ impl IncanLanguageServer {
         } else {
             Vec::new()
         };
+        let registry_previews = if check_result.is_ok() {
+            registry_previews(&checker.type_info().registry)
+        } else {
+            Vec::new()
+        };
         let rust_origin_symbols = collect_rust_origin_symbols(&checker);
 
         if let Err(errors) = check_result {
@@ -439,6 +454,7 @@ impl IncanLanguageServer {
                     rust_origin_symbols,
                     rusttype_info,
                     api_metadata_previews,
+                    registry_previews,
                     library_imported_dsl_surfaces: library_manifest_index.library_imported_dsl_surfaces(),
                     provider_plan: document_provider_plan,
                     active_features: compilation_session
@@ -1126,6 +1142,51 @@ class Box[T with Clone]:
         let aliases = HashMap::new();
 
         assert!(classmethod_context_at_offset(&ast, offset, &aliases).is_none());
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod registry_lsp_tests {
+    use super::{registry_preview_at_offset, registry_previews};
+    use crate::frontend::{lexer, parser, typechecker};
+
+    #[test]
+    fn registry_hover_preview_consumes_checked_type_info() -> Result<(), String> {
+        let source = r#"
+from std.registry import Registry, SubjectKind, describe
+
+type FunctionId = newtype str
+
+@derive(Descriptor)
+model FunctionSpec:
+  summary: str
+
+pub static functions: Registry[FunctionId, FunctionSpec] = Registry.define(
+  subjects=[SubjectKind.Function],
+)
+
+@describe(functions, FunctionId("normalize"), FunctionSpec(summary="Normalize text"))
+def normalize(value: str) -> str:
+  return value
+"#;
+        let tokens = lexer::lex(source).map_err(|errors| format!("lexer failed: {errors:?}"))?;
+        let ast = parser::parse(&tokens).map_err(|errors| format!("parser failed: {errors:?}"))?;
+        let mut checker = typechecker::TypeChecker::new();
+        checker
+            .check_program(&ast)
+            .map_err(|errors| format!("typecheck failed: {errors:?}"))?;
+
+        let previews = registry_previews(&checker.type_info().registry);
+        assert_eq!(previews.len(), 1);
+        let offset = source
+            .find("@describe")
+            .ok_or_else(|| "expected registry decorator".to_string())?;
+        let preview = registry_preview_at_offset(&previews, offset)
+            .ok_or_else(|| "expected checked registry preview".to_string())?;
+        assert!(preview.markdown.contains("*checked registry membership*"));
+        assert!(preview.markdown.contains("Registry: `functions`"));
+        assert!(preview.markdown.contains("FunctionId(\"normalize\")"));
         Ok(())
     }
 }
@@ -2356,6 +2417,42 @@ fn api_metadata_preview_at_offset(previews: &[ApiMetadataPreview], offset: usize
         .iter()
         .filter(|preview| preview.span.start <= offset && offset < preview.span.end)
         .min_by_key(|preview| preview.span.end.saturating_sub(preview.span.start))
+}
+
+/// Build registry-membership hover data from the successful typecheck artifact. The LSP deliberately consumes this
+/// shared checked graph projection rather than resolving `@describe` syntax a second time.
+fn registry_previews(artifacts: &typechecker::RegistryArtifacts) -> Vec<RegistryPreview> {
+    artifacts
+        .descriptions
+        .iter()
+        .map(|description| RegistryPreview {
+            registration_span: Span::new(description.decorator_span.0, description.decorator_span.1),
+            subject_span: Span::new(description.declaration_span.0, description.declaration_span.1),
+            markdown: format!(
+                "```incan\n@describe({}, {}, {})\n```\n\n*checked registry membership*\n\n- Registry: `{}`\n- Subject: `{}`\n- Key: `{}`\n- Descriptor: `{}`",
+                description.registry_name,
+                description.key,
+                description.descriptor,
+                description.registry_name,
+                description.subject_kind,
+                description.key,
+                description.descriptor,
+            ),
+        })
+        .collect()
+}
+
+/// Return the most specific registry membership attached at an editor offset.
+fn registry_preview_at_offset(previews: &[RegistryPreview], offset: usize) -> Option<&RegistryPreview> {
+    previews
+        .iter()
+        .filter(|preview| preview.registration_span.start <= offset && offset < preview.registration_span.end)
+        .min_by_key(|preview| {
+            preview
+                .registration_span
+                .end
+                .saturating_sub(preview.registration_span.start)
+        })
 }
 
 /// Convert a metadata anchor to an LSP preview entry.
@@ -5529,6 +5626,20 @@ impl LanguageServer for IncanLanguageServer {
         if let Some(offset) = position_to_offset(&doc.source, position) {
             let aliases = collect_import_aliases(ast);
 
+            if let Some(preview) = registry_preview_at_offset(&doc.registry_previews, offset) {
+                return Ok(Some(Hover {
+                    contents: HoverContents::Markup(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: preview.markdown.clone(),
+                    }),
+                    range: Some(span_to_range(
+                        &doc.source,
+                        preview.registration_span.start,
+                        preview.registration_span.end,
+                    )),
+                }));
+            }
+
             // Decorator hover: show decorator name + description from registry
             if let Some((id, resolved)) = find_decorator_at_position(ast, offset, &aliases) {
                 let info = decorators::info_for(id);
@@ -5827,6 +5938,12 @@ impl LanguageServer for IncanLanguageServer {
         let Some(offset) = position_to_offset(&doc.source, position) else {
             return Ok(None);
         };
+        if let Some(preview) = registry_preview_at_offset(&doc.registry_previews, offset) {
+            return Ok(Some(GotoDefinitionResponse::Scalar(Location {
+                uri: uri.clone(),
+                range: span_to_range(&doc.source, preview.subject_span.start, preview.subject_span.end),
+            })));
+        }
         if let Some(path) = find_stdlib_import_path(ast, offset)
             && let Some(location) = stdlib_location_for_path(&path, doc.provider_plan.as_deref())
         {

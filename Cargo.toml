@@ -23,7 +23,7 @@ resolver = "2"
 ra_ap_proc_macro_api = { path = "crates/third_party/ra_ap_proc_macro_api" }
 
 [workspace.package]
-version = "0.5.0-dev.19"
+version = "0.5.0-dev.20"
 description = "The Incan programming language compiler"
 edition = "2024"
 rust-version = "1.93"
@@ -151,6 +151,11 @@ required-features = ["cli"]
 name = "incan-lsp"
 path = "src/bin/lsp.rs"
 required-features = ["lsp"]
+
+[[bin]]
+name = "generate_feature_inventory"
+path = "src/bin/generate_feature_inventory.rs"
+required-features = ["cli"]
 
 [lib]
 name = "incan"

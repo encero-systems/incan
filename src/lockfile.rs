@@ -1393,10 +1393,17 @@ mod tests {
         }
     }
 
+    /// Inputs that define one source-checkout-independent SDK semantic state.
+    struct ProductionToolchainSemanticFixture {
+        specs: Vec<DependencySpec>,
+        provider_plan: ProviderPlan,
+        inventory: SdkInventory,
+        components: ResolvedSdkComponents,
+    }
+
     fn production_toolchain_semantic_fixture(
         checkout: &Path,
-    ) -> Result<(Vec<DependencySpec>, ProviderPlan, SdkInventory, ResolvedSdkComponents), Box<dyn std::error::Error>>
-    {
+    ) -> Result<ProductionToolchainSemanticFixture, Box<dyn std::error::Error>> {
         let derive_root = checkout.join("crates/incan_derive");
         fs::create_dir_all(derive_root.join("src"))?;
         fs::write(
@@ -1505,12 +1512,12 @@ mod tests {
                 },
             )]),
         };
-        Ok((
-            vec![sdk_path_spec("incan_derive", &derive_root)],
+        Ok(ProductionToolchainSemanticFixture {
+            specs: vec![sdk_path_spec("incan_derive", &derive_root)],
             provider_plan,
             inventory,
             components,
-        ))
+        })
     }
 
     #[test]
@@ -1666,10 +1673,18 @@ mod tests {
         let temp = tempfile::tempdir()?;
         let first_checkout = temp.path().join("source-checkout-a");
         let second_checkout = temp.path().join("source-checkout-b");
-        let (first_specs, first_plan, first_inventory, first_components) =
-            production_toolchain_semantic_fixture(&first_checkout)?;
-        let (second_specs, second_plan, second_inventory, second_components) =
-            production_toolchain_semantic_fixture(&second_checkout)?;
+        let ProductionToolchainSemanticFixture {
+            specs: first_specs,
+            provider_plan: first_plan,
+            inventory: first_inventory,
+            components: first_components,
+        } = production_toolchain_semantic_fixture(&first_checkout)?;
+        let ProductionToolchainSemanticFixture {
+            specs: second_specs,
+            provider_plan: second_plan,
+            inventory: second_inventory,
+            components: second_components,
+        } = production_toolchain_semantic_fixture(&second_checkout)?;
         let first_semantic = semantic_lock_state(
             &first_checkout,
             Some(&first_inventory),
