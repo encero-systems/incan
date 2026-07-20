@@ -3426,6 +3426,21 @@ fn test_resolved_type_from_builtin_borrowed_displays_stays_stable() {
 }
 
 #[test]
+fn test_resolved_type_from_structured_rust_string_shapes_is_str() {
+    let checker = TypeChecker::new();
+    for path in ["String", "std::string::String", "alloc::string::String"] {
+        assert_eq!(
+            checker.resolved_type_from_rust_shape(&RustTypeShape::RustPath {
+                path: path.to_string(),
+                args: vec![],
+            }),
+            ResolvedType::Str,
+            "structured Rust metadata path {path} must retain Incan string semantics"
+        );
+    }
+}
+
+#[test]
 fn test_resolved_param_type_from_builtin_borrowed_displays_preserves_ref_payload() {
     let checker = TypeChecker::new();
     assert_eq!(

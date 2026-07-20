@@ -4949,6 +4949,10 @@ pub def append_range(text: str, start: int, end: int) -> str:
   mut out = ""
   out += str_slice_byte_range(text, start, end)
   return out
+
+
+pub def join_ranges(text: str, start: int, middle: int, end: int) -> str:
+  return str_slice_byte_range(text, start, middle) + str_slice_byte_range(text, middle, end)
 "#,
     )?;
 
@@ -4972,6 +4976,10 @@ pub def append_range(text: str, start: int, end: int) -> str:
     assert!(
         !compact_generated.contains("out=out+str_slice_byte_range"),
         "a direct Rust String result must not reach generated Rust's owned `String + String` path:\n{generated}"
+    );
+    assert!(
+        compact_generated.contains("incan_stdlib::strings::str_concat(&str_slice_byte_range(&text,start,middle),&str_slice_byte_range(&text,middle,end),)"),
+        "binary concatenation of direct Rust String results must use the string helper:\n{generated}"
     );
     Ok(())
 }

@@ -631,9 +631,9 @@ pub(super) fn is_owned_string_type(ty: &IrType) -> bool {
 
 /// Return whether an IR value participates in Incan string operators.
 ///
-/// Rust inspection can preserve an owned `String` result as a Rust-path shape instead of canonicalizing it to
-/// [`IrType::String`]. Operator planning must recognize both representations so generated code does not depend on the
-/// inspection cache or host platform.
+/// Structured Rust metadata is normalized to [`IrType::String`] at the frontend boundary. Exact displays retained for
+/// Rust callback parameters still need the canonical owned-string fallback until closure metadata carries a semantic
+/// string shape.
 fn is_string_like_type(ty: &IrType) -> bool {
     is_owned_string_type(ty)
         || is_borrowed_string_like_type(ty)
@@ -1065,8 +1065,7 @@ mod tests {
     use crate::backend::ir::types::Mutability;
 
     #[test]
-    fn string_addition_recognizes_inspected_owned_rust_string_shapes_issue896() -> Result<(), Box<dyn std::error::Error>>
-    {
+    fn string_addition_recognizes_canonical_rust_string_metadata_issue896() -> Result<(), Box<dyn std::error::Error>> {
         let left = IrExpr::new(
             IrExprKind::Var {
                 name: "out".to_string(),
@@ -1077,6 +1076,7 @@ mod tests {
         );
 
         for right_ty in [
+            IrType::String,
             IrType::Struct("String".to_string()),
             IrType::Struct("std::string::String".to_string()),
             IrType::Struct("alloc::string::String".to_string()),
@@ -1086,6 +1086,7 @@ mod tests {
             IrType::RustDisplay("String".to_string()),
             IrType::RustDisplay("std::string::String".to_string()),
             IrType::RustDisplay("alloc::string::String".to_string()),
+            IrType::Ref(Box::new(IrType::String)),
         ] {
             let right = IrExpr::new(
                 IrExprKind::Call {
@@ -1108,7 +1109,7 @@ mod tests {
             let plan = determine_binop_plan(&BinOp::Add, &left, &right);
             let BinOpEmitKind::StdlibCall { path, borrow_args } = plan.emit else {
                 return Err(format!(
-                    "String + inspected Rust String must use string-aware lowering, right={right_ty:?}"
+                    "canonical Rust string operands must use string-aware lowering, right={right_ty:?}"
                 )
                 .into());
             };
@@ -1116,6 +1117,22 @@ mod tests {
             assert!(borrow_args);
             assert_eq!(plan.result_ty, IrType::String);
         }
+
+        // Rust callback parameters retain an exact display instead of flowing through structured return metadata.
+        // Both sides of `x + x` therefore arrive as `RustDisplay(String)` in the lowering IR.
+        let callback_param = IrExpr::new(
+            IrExprKind::Var {
+                name: "x".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::RustDisplay("String".to_string()),
+        );
+        let callback_plan = determine_binop_plan(&BinOp::Add, &callback_param, &callback_param);
+        assert!(
+            matches!(callback_plan.emit, BinOpEmitKind::StdlibCall { borrow_args: true, .. }),
+            "a Rust Fn(String) closure body must lower x + x through str_concat"
+        );
         Ok(())
     }
 

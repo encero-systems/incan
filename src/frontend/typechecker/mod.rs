@@ -1398,7 +1398,8 @@ impl TypeChecker {
     /// Map structured rust-inspect [`RustTypeShape`] into a [`ResolvedType`] for field access and pattern typing.
     ///
     /// `Option`/`Result` become [`ResolvedType::Generic`] with constructor names `Option` and `Result`. Concrete paths
-    /// use [`Self::render_rust_shape_path`] so generic arguments stay attached to [`ResolvedType::RustPath`].
+    /// are rendered through the ordinary Rust-display resolver so a structured metadata path receives the same
+    /// primitive classification as its textual fallback (notably owned Rust strings).
     pub(crate) fn resolved_type_from_rust_shape(&self, shape: &RustTypeShape) -> ResolvedType {
         match shape {
             RustTypeShape::Never => ResolvedType::Never,
@@ -1425,7 +1426,9 @@ impl TypeChecker {
                     .collect(),
             ),
             RustTypeShape::Ref(inner) => ResolvedType::Ref(Box::new(self.resolved_type_from_rust_shape(inner))),
-            RustTypeShape::RustPath { path, args } => ResolvedType::RustPath(Self::render_rust_shape_path(path, args)),
+            RustTypeShape::RustPath { path, args } => {
+                self.resolved_type_from_rust_display(Self::render_rust_shape_path(path, args).as_str())
+            }
             RustTypeShape::TypeParam(name) => ResolvedType::TypeVar(name.clone()),
             RustTypeShape::Unknown => ResolvedType::Unknown,
         }
