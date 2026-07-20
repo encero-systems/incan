@@ -1430,7 +1430,10 @@ impl ProjectGenerator {
         Ok(changed)
     }
 
-    /// Write a Cargo.lock file if a lock payload was provided.
+    /// Write an exact canonical Cargo.lock seed when one was provided.
+    ///
+    /// The runner subsequently asks Cargo to align an existing selected root or synthesize an absent selected root
+    /// from the caller-local manifest; this generator does not infer or rewrite dependency edges itself.
     fn write_cargo_lock_if_needed(&self) -> io::Result<bool> {
         let Some(payload) = &self.cargo_lock_payload else {
             return Ok(false);

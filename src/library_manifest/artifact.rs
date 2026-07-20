@@ -119,7 +119,7 @@ fn digest_toolchain_package_inner(
         })?;
         hash_named_bytes(&mut hasher, "workspace-inherited.toml", context.as_bytes());
     }
-    hash_rust_source_inputs(root, &root.join("src"), &mut hasher)?;
+    hash_compiled_source_inputs(root, &root.join("src"), &mut hasher)?;
     let build_script = manifest
         .get("package")
         .and_then(toml::Value::as_table)
@@ -130,6 +130,7 @@ fn digest_toolchain_package_inner(
     if build_script.is_file() {
         hash_compiled_file(root, &build_script, &mut hasher)?;
     }
+    hash_declared_semantic_inputs(root, &manifest, &mut hasher)?;
     visiting.remove(&normalized_root);
     let digest = format!("sha256:{}", hex::encode(hasher.finalize()));
     resolved_packages.insert(normalized_root, digest.clone());
@@ -204,7 +205,7 @@ fn inherited_workspace_context(
     visiting: &mut BTreeSet<PathBuf>,
     resolved_packages: &mut BTreeMap<PathBuf, String>,
 ) -> Result<Option<toml::Value>, ProviderArtifactDigestError> {
-    let Some((workspace_root, workspace_manifest)) = find_workspace_manifest(package_root)? else {
+    let Some((workspace_root, workspace_manifest)) = find_workspace_manifest(package_root, package_manifest)? else {
         return Ok(None);
     };
     let mut context = toml::map::Map::new();
@@ -259,37 +260,72 @@ fn collect_inherited_workspace_dependencies(
     };
     for section in ["dependencies", "build-dependencies"] {
         if let Some(dependencies) = root.get(section).and_then(toml::Value::as_table) {
-            for (key, value) in dependencies {
-                if value
-                    .as_table()
-                    .and_then(|table| table.get("workspace"))
-                    .and_then(toml::Value::as_bool)
-                    == Some(true)
-                    && let Some(value) = workspace_dependencies.get(key)
-                {
-                    inherited.insert(key.clone(), value.clone());
+            collect_inherited_workspace_dependency_table(dependencies, workspace_dependencies, inherited);
+        }
+    }
+    if let Some(targets) = root.get("target").and_then(toml::Value::as_table) {
+        for target in targets.values().filter_map(toml::Value::as_table) {
+            for section in ["dependencies", "build-dependencies"] {
+                if let Some(dependencies) = target.get(section).and_then(toml::Value::as_table) {
+                    collect_inherited_workspace_dependency_table(dependencies, workspace_dependencies, inherited);
                 }
             }
         }
     }
 }
 
-/// Locate and parse the nearest containing Cargo workspace manifest.
-fn find_workspace_manifest(root: &Path) -> Result<Option<(PathBuf, toml::Value)>, ProviderArtifactDigestError> {
+/// Copy selected workspace values from one normal, build, or target-specific dependency table.
+fn collect_inherited_workspace_dependency_table(
+    dependencies: &toml::map::Map<String, toml::Value>,
+    workspace_dependencies: &toml::map::Map<String, toml::Value>,
+    inherited: &mut toml::map::Map<String, toml::Value>,
+) {
+    for (key, value) in dependencies {
+        if value
+            .as_table()
+            .and_then(|table| table.get("workspace"))
+            .and_then(toml::Value::as_bool)
+            == Some(true)
+            && let Some(value) = workspace_dependencies.get(key)
+        {
+            inherited.insert(key.clone(), value.clone());
+        }
+    }
+}
+
+/// Locate the explicitly declared Cargo workspace, otherwise the nearest containing workspace manifest.
+fn find_workspace_manifest(
+    root: &Path,
+    package_manifest: &toml::Value,
+) -> Result<Option<(PathBuf, toml::Value)>, ProviderArtifactDigestError> {
+    if let Some(workspace) = package_manifest
+        .get("package")
+        .and_then(toml::Value::as_table)
+        .and_then(|package| package.get("workspace"))
+    {
+        let workspace = workspace
+            .as_str()
+            .ok_or_else(|| ProviderArtifactDigestError::Normalization {
+                path: root.join("Cargo.toml"),
+                message: "package.workspace must be a path string".to_string(),
+            })?;
+        let workspace_root = root.join(workspace);
+        let path = workspace_root.join("Cargo.toml");
+        let value = read_workspace_manifest(&path)?;
+        if value.get("workspace").is_none() {
+            return Err(ProviderArtifactDigestError::Normalization {
+                path,
+                message: "explicit package.workspace manifest has no [workspace] table".to_string(),
+            });
+        }
+        return Ok(Some((workspace_root, value)));
+    }
     for ancestor in root.ancestors().skip(1) {
         let path = ancestor.join("Cargo.toml");
         if !path.is_file() {
             continue;
         }
-        let bytes = fs::read(&path).map_err(|source| ProviderArtifactDigestError::Io {
-            path: path.clone(),
-            source,
-        })?;
-        let value =
-            toml::from_slice::<toml::Value>(&bytes).map_err(|error| ProviderArtifactDigestError::Normalization {
-                path: path.clone(),
-                message: error.to_string(),
-            })?;
+        let value = read_workspace_manifest(&path)?;
         if value.get("workspace").is_some() {
             return Ok(Some((ancestor.to_path_buf(), value)));
         }
@@ -297,8 +333,20 @@ fn find_workspace_manifest(root: &Path) -> Result<Option<(PathBuf, toml::Value)>
     Ok(None)
 }
 
-/// Hash Rust source files below `directory` while ignoring non-compiled repository noise.
-fn hash_rust_source_inputs(
+/// Parse one candidate workspace manifest with a path-rich failure.
+fn read_workspace_manifest(path: &Path) -> Result<toml::Value, ProviderArtifactDigestError> {
+    let bytes = fs::read(path).map_err(|source| ProviderArtifactDigestError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    toml::from_slice::<toml::Value>(&bytes).map_err(|error| ProviderArtifactDigestError::Normalization {
+        path: path.to_path_buf(),
+        message: error.to_string(),
+    })
+}
+
+/// Hash every source-tree input below `directory`, including non-Rust files consumed by `include_*` macros.
+fn hash_compiled_source_inputs(
     package_root: &Path,
     directory: &Path,
     hasher: &mut Sha256,
@@ -324,14 +372,113 @@ fn hash_rust_source_inputs(
             source,
         })?;
         if file_type.is_dir() {
-            hash_rust_source_inputs(package_root, &path, hasher)?;
-        } else if file_type.is_file() && path.extension().is_some_and(|extension| extension == "rs") {
+            hash_compiled_source_inputs(package_root, &path, hasher)?;
+        } else if file_type.is_file() {
             hash_compiled_file(package_root, &path, hasher)?;
-        } else if file_type.is_symlink() && path.extension().is_some_and(|extension| extension == "rs") {
+        } else {
             return Err(ProviderArtifactDigestError::UnsupportedEntry { path });
         }
     }
     Ok(())
+}
+
+/// Hash package-relative files explicitly declared as out-of-tree compiled inputs.
+fn hash_declared_semantic_inputs(
+    package_root: &Path,
+    manifest: &toml::Value,
+    hasher: &mut Sha256,
+) -> Result<(), ProviderArtifactDigestError> {
+    let manifest_path = package_root.join("Cargo.toml");
+    let Some(package) = manifest.get("package").and_then(toml::Value::as_table) else {
+        return Ok(());
+    };
+    let Some(metadata_value) = package.get("metadata") else {
+        return Ok(());
+    };
+    let metadata = metadata_value
+        .as_table()
+        .ok_or_else(|| ProviderArtifactDigestError::Normalization {
+            path: manifest_path.clone(),
+            message: "package.metadata must be a table".to_string(),
+        })?;
+    let Some(incan_value) = metadata.get("incan") else {
+        return Ok(());
+    };
+    let incan_metadata = incan_value
+        .as_table()
+        .ok_or_else(|| ProviderArtifactDigestError::Normalization {
+            path: manifest_path.clone(),
+            message: "package.metadata.incan must be a table".to_string(),
+        })?;
+    let Some(inputs_value) = incan_metadata.get("semantic-inputs") else {
+        return Ok(());
+    };
+    let inputs = inputs_value
+        .as_array()
+        .ok_or_else(|| ProviderArtifactDigestError::Normalization {
+            path: manifest_path.clone(),
+            message: "package.metadata.incan.semantic-inputs must be an array of paths".to_string(),
+        })?;
+    let mut inputs = inputs
+        .iter()
+        .map(|input| {
+            input
+                .as_str()
+                .map(ToOwned::to_owned)
+                .ok_or_else(|| ProviderArtifactDigestError::Normalization {
+                    path: manifest_path.clone(),
+                    message: "package.metadata.incan.semantic-inputs entries must be strings".to_string(),
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    inputs.sort();
+    inputs.dedup();
+    for input in inputs {
+        let relative = Path::new(&input);
+        if relative.as_os_str().is_empty()
+            || relative.is_absolute()
+            || relative.components().any(|component| {
+                matches!(
+                    component,
+                    std::path::Component::ParentDir | std::path::Component::CurDir
+                )
+            })
+        {
+            return Err(ProviderArtifactDigestError::Normalization {
+                path: manifest_path.clone(),
+                message: format!("semantic input `{input}` must be a non-empty relative path within the package"),
+            });
+        }
+        let path = semantic_input_path(package_root, relative)?;
+        let metadata = fs::symlink_metadata(&path).map_err(|source| ProviderArtifactDigestError::Io {
+            path: path.clone(),
+            source,
+        })?;
+        if metadata.is_file() {
+            hash_compiled_file(package_root, &path, hasher)?;
+        } else if metadata.is_dir() {
+            hash_compiled_source_inputs(package_root, &path, hasher)?;
+        } else {
+            return Err(ProviderArtifactDigestError::UnsupportedEntry { path });
+        }
+    }
+    Ok(())
+}
+
+/// Resolve a declared input while rejecting symlinks in every path component.
+fn semantic_input_path(package_root: &Path, relative: &Path) -> Result<PathBuf, ProviderArtifactDigestError> {
+    let mut path = package_root.to_path_buf();
+    for component in relative.components() {
+        path.push(component.as_os_str());
+        let metadata = fs::symlink_metadata(&path).map_err(|source| ProviderArtifactDigestError::Io {
+            path: path.clone(),
+            source,
+        })?;
+        if metadata.file_type().is_symlink() {
+            return Err(ProviderArtifactDigestError::UnsupportedEntry { path });
+        }
+    }
+    Ok(path)
 }
 
 /// Hash one compiled input using its package-relative path and exact bytes.
@@ -920,6 +1067,7 @@ mod tests {
         let second = temp.path().join("source-b/crates/incan_stdlib");
         for root in [&first, &second] {
             fs::create_dir_all(root.join("src"))?;
+            fs::create_dir_all(root.join("semantic-inputs"))?;
             fs::create_dir_all(root.join("tests"))?;
             fs::create_dir_all(root.join("stdlib/components/data/target/debug"))?;
             fs::create_dir_all(
@@ -929,9 +1077,11 @@ mod tests {
             )?;
             fs::write(
                 root.join("Cargo.toml"),
-                "[package]\nname = \"incan_stdlib\"\nversion = \"0.5.0\"\n\n[dependencies]\nincan_core = { path = \"../incan_core\" }\n",
+                "[package]\nname = \"incan_stdlib\"\nversion = \"0.5.0\"\n\n[package.metadata.incan]\nsemantic-inputs = [\"semantic-inputs/schema.json\"]\n\n[dependencies]\nincan_core = { path = \"../incan_core\" }\n",
             )?;
             fs::write(root.join("src/lib.rs"), "pub fn support() {}\n")?;
+            fs::write(root.join("src/embedded.txt"), "compiled include input\n")?;
+            fs::write(root.join("semantic-inputs/schema.json"), "{\"version\": 1}\n")?;
             fs::write(root.join("build.rs"), "fn main() {}\n")?;
             fs::write(root.join("README.md"), "checkout-specific documentation\n")?;
             fs::write(root.join("tests/not_compiled.rs"), "checkout-specific test\n")?;
@@ -959,18 +1109,26 @@ mod tests {
         fs::write(second.join(".DS_Store"), "changed editor state\n")?;
         assert_eq!(stable, digest_toolchain_source_tree(&second)?);
 
+        fs::write(second.join("src/embedded.txt"), "changed compiled include input\n")?;
+        assert_ne!(stable, digest_toolchain_source_tree(&second)?);
+        fs::write(second.join("src/embedded.txt"), "compiled include input\n")?;
+
+        fs::write(second.join("semantic-inputs/schema.json"), "{\"version\": 2}\n")?;
+        assert_ne!(stable, digest_toolchain_source_tree(&second)?);
+        fs::write(second.join("semantic-inputs/schema.json"), "{\"version\": 1}\n")?;
+
         fs::write(second.join("src/lib.rs"), "pub fn support() { changed(); }\n")?;
         assert_ne!(stable, digest_toolchain_source_tree(&second)?);
         fs::write(second.join("src/lib.rs"), "pub fn support() {}\n")?;
 
         fs::write(
             second.join("Cargo.toml"),
-            "[package]\nname = \"incan_stdlib\"\nversion = \"0.5.1\"\n\n[dependencies]\nincan_core = { path = \"../incan_core\" }\n",
+            "[package]\nname = \"incan_stdlib\"\nversion = \"0.5.1\"\n\n[package.metadata.incan]\nsemantic-inputs = [\"semantic-inputs/schema.json\"]\n\n[dependencies]\nincan_core = { path = \"../incan_core\" }\n",
         )?;
         assert_ne!(stable, digest_toolchain_source_tree(&second)?);
         fs::write(
             second.join("Cargo.toml"),
-            "[package]\nname = \"incan_stdlib\"\nversion = \"0.5.0\"\n\n[dependencies]\nincan_core = { path = \"../incan_core\" }\n",
+            "[package]\nname = \"incan_stdlib\"\nversion = \"0.5.0\"\n\n[package.metadata.incan]\nsemantic-inputs = [\"semantic-inputs/schema.json\"]\n\n[dependencies]\nincan_core = { path = \"../incan_core\" }\n",
         )?;
 
         fs::write(
@@ -981,6 +1139,136 @@ mod tests {
             "pub fn core() { changed(); }\n",
         )?;
         assert_ne!(stable, digest_toolchain_source_tree(&second)?);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn toolchain_semantic_inputs_fail_closed_for_invalid_entries_issue921() -> TestResult {
+        let temp = tempfile::tempdir()?;
+        let package = temp.path().join("support");
+        fs::create_dir_all(package.join("src"))?;
+        fs::write(package.join("src/lib.rs"), "pub fn support() {}\n")?;
+        fs::write(package.join("present.txt"), "present\n")?;
+        fs::write(temp.path().join("outside.txt"), "outside\n")?;
+        std::os::unix::fs::symlink(temp.path().join("outside.txt"), package.join("linked.txt"))?;
+        let special = package.join("special-entry");
+        let status = std::process::Command::new("mkfifo").arg(&special).status()?;
+        if !status.success() {
+            return Err("mkfifo failed while preparing special-entry regression".into());
+        }
+
+        let invalid_values = [
+            "\"present.txt\"",
+            "[1]",
+            "[\"\"]",
+            "[\"/tmp/outside.txt\"]",
+            "[\"../outside.txt\"]",
+            "[\"missing.txt\"]",
+            "[\"linked.txt\"]",
+            "[\"special-entry\"]",
+        ];
+        for manifest in [
+            "[package]\nname = \"support\"\nversion = \"0.5.0\"\nmetadata = \"invalid\"\n",
+            "[package]\nname = \"support\"\nversion = \"0.5.0\"\n\n[package.metadata]\nincan = \"invalid\"\n",
+        ] {
+            fs::write(package.join("Cargo.toml"), manifest)?;
+            assert!(
+                digest_toolchain_source_tree(&package).is_err(),
+                "wrong package metadata value type must fail closed"
+            );
+        }
+        for value in invalid_values {
+            fs::write(
+                package.join("Cargo.toml"),
+                format!(
+                    "[package]\nname = \"support\"\nversion = \"0.5.0\"\n\n[package.metadata.incan]\nsemantic-inputs = {value}\n"
+                ),
+            )?;
+            assert!(
+                digest_toolchain_source_tree(&package).is_err(),
+                "semantic-inputs value `{value}` must fail closed"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn toolchain_source_digest_tracks_target_specific_workspace_dependencies_issue921() -> TestResult {
+        let temp = tempfile::tempdir()?;
+        let first_workspace = temp.path().join("source-a");
+        let second_workspace = temp.path().join("source-b");
+        for workspace in [&first_workspace, &second_workspace] {
+            let support = workspace.join("crates/support");
+            let helper = workspace.join("crates/target_helper");
+            fs::create_dir_all(support.join("src"))?;
+            fs::create_dir_all(helper.join("src"))?;
+            fs::write(
+                workspace.join("Cargo.toml"),
+                "[workspace]\nmembers = [\"crates/support\", \"crates/target_helper\"]\n\n[workspace.dependencies]\ntarget_helper = { path = \"crates/target_helper\", version = \"0.1.0\" }\n",
+            )?;
+            fs::write(
+                support.join("Cargo.toml"),
+                "[package]\nname = \"support\"\nversion = \"0.5.0\"\n\n[target.'cfg(unix)'.dependencies]\ntarget_helper = { workspace = true }\n",
+            )?;
+            fs::write(support.join("src/lib.rs"), "pub fn support() {}\n")?;
+            fs::write(
+                helper.join("Cargo.toml"),
+                "[package]\nname = \"target_helper\"\nversion = \"0.1.0\"\n",
+            )?;
+            fs::write(helper.join("src/lib.rs"), "pub fn helper() {}\n")?;
+        }
+
+        let first = first_workspace.join("crates/support");
+        let second = second_workspace.join("crates/support");
+        let stable = digest_toolchain_source_tree(&first)?;
+        assert_eq!(stable, digest_toolchain_source_tree(&second)?);
+
+        fs::write(
+            second_workspace.join("crates/target_helper/src/lib.rs"),
+            "pub fn helper() { changed(); }\n",
+        )?;
+        assert_ne!(stable, digest_toolchain_source_tree(&second)?);
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_package_workspace_precedes_nearest_ancestor_issue921() -> TestResult {
+        let temp = tempfile::tempdir()?;
+        let root = temp.path();
+        let package = root.join("packages/support");
+        let explicit = root.join("selected-workspace");
+        let selected_helper = explicit.join("helper");
+        let ancestor_helper = root.join("ancestor-helper");
+        for path in [&package, &selected_helper, &ancestor_helper] {
+            fs::create_dir_all(path.join("src"))?;
+        }
+        fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = []\n\n[workspace.dependencies]\ntarget_helper = { path = \"ancestor-helper\", version = \"9.0.0\" }\n",
+        )?;
+        fs::write(
+            explicit.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"helper\"]\n\n[workspace.dependencies]\ntarget_helper = { path = \"helper\", version = \"1.0.0\" }\n",
+        )?;
+        fs::write(
+            package.join("Cargo.toml"),
+            "[package]\nname = \"support\"\nversion = \"0.5.0\"\nworkspace = \"../../selected-workspace\"\n\n[target.'cfg(unix)'.dependencies]\ntarget_helper = { workspace = true }\n",
+        )?;
+        fs::write(package.join("src/lib.rs"), "pub fn support() {}\n")?;
+        for (helper, version) in [(&selected_helper, "1.0.0"), (&ancestor_helper, "9.0.0")] {
+            fs::write(
+                helper.join("Cargo.toml"),
+                format!("[package]\nname = \"target_helper\"\nversion = \"{version}\"\n"),
+            )?;
+            fs::write(helper.join("src/lib.rs"), "pub fn helper() {}\n")?;
+        }
+
+        let stable = digest_toolchain_source_tree(&package)?;
+        fs::write(ancestor_helper.join("src/lib.rs"), "pub fn helper() { ignored(); }\n")?;
+        assert_eq!(stable, digest_toolchain_source_tree(&package)?);
+        fs::write(selected_helper.join("src/lib.rs"), "pub fn helper() { changed(); }\n")?;
+        assert_ne!(stable, digest_toolchain_source_tree(&package)?);
         Ok(())
     }
 

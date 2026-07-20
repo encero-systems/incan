@@ -17,6 +17,13 @@ struct StdlibSearchPaths {
     installed_roots: Vec<PathBuf>,
 }
 
+/// Inputs that select compiler-owned support crates for generated Cargo projects and semantic lock identity.
+struct ToolchainPathSearchPaths {
+    crates_override: Option<PathBuf>,
+    development_root: PathBuf,
+    executable_bases: Vec<PathBuf>,
+}
+
 /// Return candidate base directories around the current executable.
 ///
 /// The list includes the executable directory, its parent, and its grandparent for both the raw executable path and its
@@ -27,6 +34,58 @@ pub(crate) fn current_executable_search_bases() -> Vec<PathBuf> {
         return Vec::new();
     };
     executable_search_bases_for(&exe_path)
+}
+
+/// Resolve one compiler-owned support crate through release staging, an installed SDK, or the development checkout.
+pub(crate) fn resolve_toolchain_crate_path(crate_name: &str) -> PathBuf {
+    resolve_toolchain_relative_path(&Path::new("crates").join(crate_name))
+}
+
+/// Resolve one toolchain-relative path through the same layout policy used by generated Cargo and lock semantics.
+pub(crate) fn resolve_toolchain_relative_path(relative_path: &Path) -> PathBuf {
+    resolve_toolchain_relative_path_in(
+        relative_path,
+        &ToolchainPathSearchPaths {
+            crates_override: env::var_os("INCAN_TOOLCHAIN_CRATES_DIR")
+                .filter(|path| !path.is_empty())
+                .map(PathBuf::from),
+            development_root: PathBuf::from(env!("CARGO_MANIFEST_DIR")),
+            executable_bases: current_executable_search_bases(),
+        },
+    )
+}
+
+/// Apply the canonical support-path search order to injected, testable layout inputs.
+fn resolve_toolchain_relative_path_in(relative_path: &Path, paths: &ToolchainPathSearchPaths) -> PathBuf {
+    let crate_relative = relative_path.strip_prefix("crates").ok();
+    if let (Some(crates_dir), Some(crate_relative)) = (paths.crates_override.as_deref(), crate_relative) {
+        let candidate = crates_dir.join(crate_relative);
+        if toolchain_relative_path_exists(&candidate, crate_relative) {
+            return candidate;
+        }
+    }
+    for base in &paths.executable_bases {
+        let candidate = base.join(relative_path);
+        if toolchain_relative_path_exists(&candidate, crate_relative.unwrap_or(relative_path)) {
+            return candidate;
+        }
+    }
+    paths.development_root.join(relative_path)
+}
+
+/// Require the owning crate manifest while allowing the requested path to point below that crate root.
+fn toolchain_relative_path_exists(candidate: &Path, crate_relative: &Path) -> bool {
+    if crate_relative.components().next().is_none() {
+        return false;
+    }
+    let tail_len = crate_relative.components().count().saturating_sub(1);
+    let mut crate_root = candidate.to_path_buf();
+    for _ in 0..tail_len {
+        if !crate_root.pop() {
+            return false;
+        }
+    }
+    crate_root.join("Cargo.toml").is_file()
 }
 
 /// Return candidate base directories around `exe_path`.
@@ -167,9 +226,11 @@ fn push_unique(paths: &mut Vec<PathBuf>, path: PathBuf) {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::path::Path;
 
     use super::{
-        StdlibSearchPaths, executable_search_bases_for, find_stdlib_source_dir_in, stdlib_source_file_from_dir,
+        StdlibSearchPaths, ToolchainPathSearchPaths, executable_search_bases_for, find_stdlib_source_dir_in,
+        resolve_toolchain_relative_path_in, stdlib_source_file_from_dir,
     };
 
     #[test]
@@ -246,6 +307,35 @@ mod tests {
         .ok_or("expected the current built-in stdlib source root")?;
 
         assert_eq!(found, current_stdlib);
+        Ok(())
+    }
+
+    #[test]
+    fn installed_support_crates_resolve_independently_without_web_macros() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let installed_root = tmp.path().join("toolchain");
+        for crate_name in ["incan_stdlib", "incan_derive"] {
+            let crate_root = installed_root.join("crates").join(crate_name);
+            fs::create_dir_all(&crate_root)?;
+            fs::write(
+                crate_root.join("Cargo.toml"),
+                format!("[package]\nname = \"{crate_name}\"\nversion = \"0.5.0\"\n"),
+            )?;
+        }
+        let search_paths = ToolchainPathSearchPaths {
+            crates_override: None,
+            development_root: tmp.path().join("absent-checkout"),
+            executable_bases: vec![installed_root.clone()],
+        };
+
+        assert_eq!(
+            resolve_toolchain_relative_path_in(Path::new("crates/incan_stdlib"), &search_paths),
+            installed_root.join("crates/incan_stdlib")
+        );
+        assert_eq!(
+            resolve_toolchain_relative_path_in(Path::new("crates/incan_derive"), &search_paths),
+            installed_root.join("crates/incan_derive")
+        );
         Ok(())
     }
 

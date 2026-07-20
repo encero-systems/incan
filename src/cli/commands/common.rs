@@ -1288,7 +1288,7 @@ fn provider_cargo_dependency_spec(dependency: &ProviderCargoDependency) -> Depen
     let source = match &dependency.source {
         ProviderCargoDependencySource::Registry => DependencySource::Registry,
         ProviderCargoDependencySource::Toolchain { relative_path } => DependencySource::Path {
-            path: stdlib_extra_crate_workspace_root().join(relative_path),
+            path: crate::toolchain_layout::resolve_toolchain_relative_path(Path::new(relative_path)),
         },
     };
     DependencySpec {
@@ -2125,13 +2125,12 @@ pub(crate) fn collect_project_requirements(
         sdk_path_dependencies: Vec::new(),
         sdk_artifact_projections: Vec::new(),
     };
-    let workspace_root = stdlib_extra_crate_workspace_root();
     for namespace_name in &stdlib_namespaces {
         let Some(namespace) = stdlib::find_namespace(namespace_name) else {
             continue;
         };
         for dep in namespace.extra_crate_deps {
-            let spec = dependency_spec_from_stdlib_dep(dep, &workspace_root);
+            let spec = dependency_spec_from_stdlib_dep(dep);
             if matches!(spec.source, DependencySource::Path { .. }) {
                 merge_requirement_dependency(
                     &mut requirements.sdk_path_dependencies,
@@ -2211,7 +2210,7 @@ fn compiler_support_dependency_spec(crate_name: &str) -> DependencySpec {
         features: Vec::new(),
         default_features: true,
         source: DependencySource::Path {
-            path: stdlib_extra_crate_workspace_root().join("crates").join(crate_name),
+            path: crate::toolchain_layout::resolve_toolchain_crate_path(crate_name),
         },
         optional: false,
         package: None,
@@ -2225,32 +2224,11 @@ fn dependency_spec_from_stdlib_extra_crate(crate_name: &str) -> CliResult<Depend
             "stdlib dependency metadata for `{crate_name}` is missing from the registry"
         ))
     })?;
-    let workspace_root = stdlib_extra_crate_workspace_root();
-    Ok(dependency_spec_from_stdlib_dep(dep, &workspace_root))
-}
-
-/// Resolve the workspace root that owns bundled stdlib support crates.
-///
-/// A release host compiler can generate an artifact inside a staged target archive, and an installed compiler runs
-/// beside that archive's `crates/` directory. Both must resolve path-backed stdlib requirements against the target
-/// toolchain rather than the checkout that originally compiled the host executable.
-fn stdlib_extra_crate_workspace_root() -> PathBuf {
-    if let Some(crates_dir) = env::var_os("INCAN_TOOLCHAIN_CRATES_DIR").filter(|path| !path.is_empty()) {
-        let crates_dir = PathBuf::from(crates_dir);
-        if let Some(root) = crates_dir.parent() {
-            return root.to_path_buf();
-        }
-    }
-    for base in crate::toolchain_layout::current_executable_search_bases() {
-        if base.join("crates/incan_web_macros/Cargo.toml").is_file() {
-            return base;
-        }
-    }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    Ok(dependency_spec_from_stdlib_dep(dep))
 }
 
 /// Build a dependency specification from a stdlib dependency requirement.
-fn dependency_spec_from_stdlib_dep(dep: &StdlibExtraCrateDep, workspace_root: &Path) -> DependencySpec {
+fn dependency_spec_from_stdlib_dep(dep: &StdlibExtraCrateDep) -> DependencySpec {
     match dep.source {
         StdlibExtraCrateSource::Version(version) => DependencySpec {
             crate_name: dep.crate_name.to_string(),
@@ -2267,7 +2245,7 @@ fn dependency_spec_from_stdlib_dep(dep: &StdlibExtraCrateDep, workspace_root: &P
             features: dep.features.iter().map(|feature| (*feature).to_string()).collect(),
             default_features: true,
             source: DependencySource::Path {
-                path: workspace_root.join(relative_path),
+                path: crate::toolchain_layout::resolve_toolchain_relative_path(Path::new(relative_path)),
             },
             optional: false,
             package: None,

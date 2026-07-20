@@ -1579,22 +1579,34 @@ mod tests {
             .iter()
             .map(|name| sdk_path_spec(name, &second_home.join(name)))
             .collect::<Vec<_>>();
-        let semantic = SemanticLockState {
-            sdk: Some(LockedSdkState {
-                identity: "incan@0.5.0".to_string(),
-                inventory_digest: "sha256:stable-inventory".to_string(),
-                profile: "default".to_string(),
-                components: Vec::new(),
-            }),
-            ..SemanticLockState::default()
+        let semantic = |specs: &[DependencySpec]| -> Result<SemanticLockState, String> {
+            Ok(SemanticLockState {
+                providers: semantic_toolchain_dependencies(specs)?
+                    .into_iter()
+                    .map(|dependency| LockedProvider {
+                        identity: format!(
+                            "toolchain:{}@0.5.0#{}[]",
+                            dependency.package_name, dependency.content_digest
+                        ),
+                        participation: "compiler-support".to_string(),
+                        namespace_claims: BTreeSet::new(),
+                        used_modules: BTreeSet::new(),
+                        implementation_facets: Vec::new(),
+                        backend_requirements: BTreeSet::new(),
+                    })
+                    .collect(),
+                ..SemanticLockState::default()
+            })
         };
+        let first_semantic = semantic(&first_specs)?;
+        let second_semantic = semantic(&second_specs)?;
         let selection = CargoFeatureSelection::default();
         let first_fingerprint = compute_resolved_fingerprint_with_sdk_paths(
             &first_specs,
             &[],
             &selection,
             Some(temp.path()),
-            &semantic,
+            &first_semantic,
             &first_specs,
         );
         let second_fingerprint = compute_resolved_fingerprint_with_sdk_paths(
@@ -1602,7 +1614,7 @@ mod tests {
             &[],
             &selection,
             Some(temp.path()),
-            &semantic,
+            &second_semantic,
             &second_specs,
         );
         assert_eq!(first_fingerprint, second_fingerprint);
@@ -1611,9 +1623,7 @@ mod tests {
             second_home.join("incan_derive/src/lib.rs"),
             "pub fn incan_derive_marker() { changed(); }\n",
         )?;
-        let mut changed_semantic = semantic.clone();
-        changed_semantic.sdk.as_mut().expect("test SDK state").inventory_digest =
-            "sha256:changed-semantic-toolchain-content".to_string();
+        let changed_semantic = semantic(&second_specs)?;
         let changed_fingerprint = compute_resolved_fingerprint_with_sdk_paths(
             &second_specs,
             &[],
