@@ -20,6 +20,8 @@ pub(crate) mod compiled_sdk;
 pub mod dependency_resolver;
 pub mod format;
 pub mod frontend;
+#[cfg(feature = "cli")]
+pub(crate) mod generated_cache;
 pub mod library_manifest;
 pub mod lockfile;
 #[cfg(feature = "lsp")]

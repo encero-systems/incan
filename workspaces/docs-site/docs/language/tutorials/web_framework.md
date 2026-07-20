@@ -32,7 +32,7 @@ Build and run:
 
 ```bash
 incan build examples/web/hello_web.incn
-./target/incan/.cargo-target/release/hello_web
+./target/incan/hello_web/target/release/hello_web
 ```
 
 Note: the first build may download Rust crates via Cargo (can take minutes) and requires internet access.

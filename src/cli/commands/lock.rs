@@ -22,6 +22,7 @@ use crate::dependency_resolver::{InlineRustImport, ResolvedDependencies, resolve
 use crate::frontend::ast::{Declaration, ImportKind};
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::{diagnostics, lexer, parser};
+use crate::generated_cache::resolve_generated_cargo_target;
 use crate::lockfile::{
     CargoFeatureSelection, IncanLock, PublicationLock, SemanticLockState, WORKSPACE_LOCK_CARGO_PACKAGE_NAME,
     compute_resolved_fingerprint_with_sdk_paths, semantic_lock_state, workspace_semantic_lock_state,
@@ -1284,8 +1285,8 @@ fn lock_dependency_preheat_target_dir_with_overrides(
     }
 }
 
-/// Return the target directory that lock dependency preheat should populate for generated tests.
-fn lock_dependency_preheat_target_dir(project_root: &Path) -> PathBuf {
+/// Return an explicit target override for lock dependency preheat, leaving the default to the managed cache.
+fn lock_dependency_preheat_target_override(project_root: &Path) -> Option<PathBuf> {
     let shared_test_target = std::env::var_os("INCAN_TEST_SHARED_TARGET_DIR")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from);
@@ -1294,12 +1295,16 @@ fn lock_dependency_preheat_target_dir(project_root: &Path) -> PathBuf {
         .map(PathBuf::from);
     let use_isolated_test_target =
         parse_isolated_test_target_env(std::env::var("INCAN_TEST_ISOLATED_TARGET_DIR").ok().as_deref());
-    lock_dependency_preheat_target_dir_with_overrides(
-        project_root,
-        shared_test_target.as_deref(),
-        generated_target.as_deref(),
-        use_isolated_test_target,
-    )
+    if shared_test_target.is_some() || generated_target.is_some() || use_isolated_test_target {
+        Some(lock_dependency_preheat_target_dir_with_overrides(
+            project_root,
+            shared_test_target.as_deref(),
+            generated_target.as_deref(),
+            use_isolated_test_target,
+        ))
+    } else {
+        None
+    }
 }
 
 /// Return the age after which an abandoned dependency-preheat lock may be reclaimed.
@@ -1437,6 +1442,8 @@ fn compute_library_dependency_preheat_fingerprint(
 fn run_lock_dependency_preheat(
     project_root: &Path,
     lock_dir: &Path,
+    generated_package_name: &str,
+    lock_payload: &str,
     cargo_features: &CargoFeatureSelection,
     cargo_policy: &CargoPolicy,
 ) -> CliResult<()> {
@@ -1445,7 +1452,18 @@ fn run_lock_dependency_preheat(
     }
 
     let cargo_flags = cargo_command_flags(cargo_policy, cargo_features);
-    let target_dir = lock_dependency_preheat_target_dir(project_root);
+    let explicit_target = lock_dependency_preheat_target_override(project_root);
+    let managed_target = resolve_generated_cargo_target(
+        explicit_target.as_deref(),
+        project_root,
+        generated_package_name,
+        "test",
+        Some(lock_payload),
+        cargo_features,
+        &cargo_flags,
+    )
+    .map_err(|error| CliError::failure(format!("Failed to prepare generated Cargo cache: {error}")))?;
+    let (target_dir, _managed_target_lease, _managed_target_identity) = managed_target.into_parts();
     let fingerprint = compute_lock_dependency_preheat_fingerprint(lock_dir, &cargo_flags, &target_dir)
         .map_err(|err| CliError::failure(format!("Failed to fingerprint lock dependency preheat: {err}")))?;
     let stamp_path = lock_dir.join(LOCK_DEPENDENCY_PREHEAT_FINGERPRINT_FILE);
@@ -1778,7 +1796,14 @@ pub(crate) fn generate_lockfile(
     let lock = IncanLock::new_with_semantic(fingerprint, cargo_features.clone(), semantic.clone(), cargo_lock);
 
     if should_preheat_lockfile_dependencies(resolved, project_requirements) {
-        run_lock_dependency_preheat(project_root, &lock_dir, cargo_features, cargo_policy)?;
+        run_lock_dependency_preheat(
+            project_root,
+            &lock_dir,
+            project_name,
+            &lock.cargo_lock_payload,
+            cargo_features,
+            cargo_policy,
+        )?;
     }
     #[cfg(feature = "rust_inspect")]
     let rust_inspect_cargo_flags = cargo_command_flags(cargo_policy, cargo_features);

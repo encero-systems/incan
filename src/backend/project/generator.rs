@@ -7,6 +7,7 @@
 //! - [`super::cargo_toml`] — `Cargo.toml` rendering (`generate_cargo_toml`, `format_dependency_spec`)
 //! - [`super::runner`] — `build()`, `run()`, `run_with_cwd()` and result types
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io;
@@ -14,6 +15,8 @@ use std::path::{Path, PathBuf};
 
 use crate::compiled_sdk::CompiledSdkModules;
 use crate::frontend::library_manifest_index::LibraryArtifactMetadata;
+#[cfg(feature = "cli")]
+use crate::generated_cache::GeneratedCacheLease;
 use crate::library_manifest::{LibraryManifest, ProviderDependencyKind, digest_provider_artifact};
 use crate::manifest::{DependencySource, DependencySpec};
 use crate::provider::{ProviderPlan, SDK_PROVIDER_BUILD_ENV, SdkArtifactProjection, SdkDependencyRebinding};
@@ -23,6 +26,47 @@ use toml_edit::{DocumentMut, Item, value};
 
 const MOD_INSERT_MARKER: &str = "// __INCAN_INSERT_MODS__";
 pub(crate) const GENERATED_CARGO_TARGET_DIR_ENV: &str = "INCAN_GENERATED_CARGO_TARGET_DIR";
+
+/// Hash Cargo configuration files visible from one project without making their absolute roots part of the identity.
+pub(crate) fn cargo_config_identity(start: &Path) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"incan-cargo-config-v2\0");
+    let mut seen = BTreeSet::new();
+    for ancestor in start.ancestors() {
+        for file_name in ["config.toml", "config"] {
+            let path = ancestor.join(".cargo").join(file_name);
+            if !seen.insert(path.clone()) {
+                continue;
+            }
+            if let Ok(payload) = fs::read(&path) {
+                hasher.update(file_name.as_bytes());
+                hasher.update(b"\0");
+                hasher.update(payload);
+                hasher.update(b"\0");
+            }
+        }
+    }
+    let cargo_home = std::env::var_os("CARGO_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cargo")));
+    if let Some(cargo_home) = cargo_home {
+        for file_name in ["config.toml", "config"] {
+            let path = cargo_home.join(file_name);
+            if !seen.insert(path.clone()) {
+                continue;
+            }
+            if let Ok(payload) = fs::read(path) {
+                hasher.update(b"cargo-home\0");
+                hasher.update(file_name.as_bytes());
+                hasher.update(b"\0");
+                hasher.update(payload);
+                hasher.update(b"\0");
+            }
+        }
+    }
+    hex::encode(hasher.finalize())
+}
 
 /// One checked dependency edge and its effective projected artifact root.
 struct ProjectedArtifactEdge {
@@ -201,6 +245,14 @@ pub struct ProjectGenerator {
     pub(super) cargo_policy_flags: Vec<String>,
     /// Optional shared Cargo target directory for generated Rust projects.
     pub(super) cargo_target_dir_override: Option<PathBuf>,
+    /// Stable digest of the generated root crate source used to bound shared-target root artifacts.
+    pub(super) generated_source_identity: RefCell<Option<String>>,
+    /// Active-use lease retained while Cargo may read or write one managed target domain.
+    #[cfg(feature = "cli")]
+    pub(super) generated_cache_lease: Option<GeneratedCacheLease>,
+    /// Compatibility-domain identity used to validate project-local run publications.
+    #[cfg(feature = "cli")]
+    pub(super) generated_cache_identity: Option<String>,
     /// Optional Rust edition override.
     pub(super) rust_edition: Option<String>,
     /// Profile used when building the generated crate for `incan run`.
@@ -245,6 +297,11 @@ impl ProjectGenerator {
             clear_cargo_lock: false,
             cargo_policy_flags: Vec::new(),
             cargo_target_dir_override: None,
+            generated_source_identity: RefCell::new(None),
+            #[cfg(feature = "cli")]
+            generated_cache_lease: None,
+            #[cfg(feature = "cli")]
+            generated_cache_identity: None,
             rust_edition: None,
             run_profile: RunProfile::Debug,
             compiled_sdk_modules: CompiledSdkModules::default(),
@@ -337,6 +394,25 @@ impl ProjectGenerator {
     /// Set the Cargo target directory used by generated Rust projects.
     pub fn set_cargo_target_dir_override(&mut self, target_dir: Option<PathBuf>) {
         self.cargo_target_dir_override = target_dir;
+    }
+
+    /// Retain the managed-cache lease for as long as this generator can invoke Cargo.
+    #[cfg(feature = "cli")]
+    pub(crate) fn set_generated_cache_context(&mut self, lease: Option<GeneratedCacheLease>, identity: Option<String>) {
+        self.generated_cache_lease = lease;
+        self.generated_cache_identity = identity;
+    }
+
+    /// Return the managed compatibility identity, when the CLI selected one.
+    pub(super) fn generated_cache_identity(&self) -> Option<&str> {
+        #[cfg(feature = "cli")]
+        {
+            self.generated_cache_identity.as_deref()
+        }
+        #[cfg(not(feature = "cli"))]
+        {
+            None
+        }
     }
 
     /// Override the Rust edition used in Cargo.toml.
@@ -927,14 +1003,19 @@ impl ProjectGenerator {
     /// crate names from generated library artifacts.
     pub(super) fn cargo_target_name(&self) -> String {
         if self.is_binary && self.cargo_target_dir_override().is_some() {
-            Self::shared_target_safe_name(&self.name, &self.output_dir)
+            let root_identity = self
+                .generated_source_identity
+                .borrow()
+                .clone()
+                .unwrap_or_else(|| self.output_dir.to_string_lossy().into_owned());
+            Self::shared_target_safe_name(&self.name, &root_identity)
         } else {
             self.name.clone()
         }
     }
 
     /// Return a filesystem-safe name for a shared cargo target directory.
-    pub(super) fn shared_target_safe_name(name: &str, output_dir: &Path) -> String {
+    pub(super) fn shared_target_safe_name(name: &str, root_identity: &str) -> String {
         let mut normalized = name
             .chars()
             .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
@@ -950,22 +1031,61 @@ impl ProjectGenerator {
             normalized.insert(0, '_');
         }
 
-        let absolute_output_dir = if output_dir.is_absolute() {
-            output_dir.to_path_buf()
-        } else if let Ok(cwd) = std::env::current_dir() {
-            cwd.join(output_dir)
-        } else {
-            output_dir.to_path_buf()
-        };
-
         let mut hasher = Sha256::new();
         hasher.update(name.as_bytes());
         hasher.update(b"\0");
-        hasher.update(absolute_output_dir.to_string_lossy().as_bytes());
+        hasher.update(root_identity.as_bytes());
         let digest_bytes = hasher.finalize();
         let digest = hex::encode(&digest_bytes[..8]);
 
         format!("{normalized}_{digest}")
+    }
+
+    /// Remember a path-independent identity for the generated root crate before rendering its Cargo target name.
+    fn remember_generated_source_identity(&self, mut sources: Vec<(String, &str)>) {
+        sources.sort_by(|left, right| left.0.cmp(&right.0));
+        let mut hasher = Sha256::new();
+        hasher.update(b"incan-generated-root-source-v1\0");
+        hasher.update(crate::version::INCAN_VERSION.as_bytes());
+        hasher.update(b"\0name\0");
+        hasher.update(self.name.as_bytes());
+        hasher.update(b"\0package\0");
+        hasher.update(self.package_name.as_deref().unwrap_or(&self.name).as_bytes());
+        hasher.update(b"\0version\0");
+        hasher.update(self.package_version.as_deref().unwrap_or_default().as_bytes());
+        hasher.update(b"\0edition\0");
+        hasher.update(self.rust_edition.as_deref().unwrap_or_default().as_bytes());
+        hasher.update(b"\0dependencies\0");
+        hasher.update(format!("{:?}", self.dependencies).as_bytes());
+        hasher.update(b"\0dev-dependencies\0");
+        hasher.update(format!("{:?}", self.dev_dependencies).as_bytes());
+        hasher.update(b"\0stdlib-features\0");
+        hasher.update(format!("{:?}", self.stdlib_features).as_bytes());
+        hasher.update(b"\0compiled-providers\0");
+        hasher.update(format!("{:?}", self.compiled_provider_modules).as_bytes());
+        hasher.update(b"\0sdk-rebindings\0");
+        hasher.update(format!("{:?}", self.sdk_dependency_rebindings).as_bytes());
+        hasher.update(b"\0sdk-path-dependencies\0");
+        hasher.update(format!("{:?}", self.sdk_path_dependencies).as_bytes());
+        hasher.update(b"\0sdk-artifact-projections\0");
+        hasher.update(format!("{:?}", self.sdk_artifact_projections).as_bytes());
+        hasher.update(b"\0lock-projection-root\0");
+        hasher.update(
+            self.cargo_lock_projection_root
+                .as_deref()
+                .unwrap_or_default()
+                .as_bytes(),
+        );
+        hasher.update([u8::from(self.clear_cargo_lock), u8::from(self.include_dev_dependencies)]);
+        hasher.update(b"\0lock\0");
+        hasher.update(self.cargo_lock_payload.as_deref().unwrap_or_default().as_bytes());
+        for (path, source) in sources {
+            hasher.update(path.as_bytes());
+            hasher.update(b"\0");
+            hasher.update(source.as_bytes());
+            hasher.update(b"\0");
+        }
+        *self.generated_source_identity.borrow_mut() = Some(hex::encode(hasher.finalize()));
     }
 
     /// Ensure the generated `src/` directory exists.
@@ -1092,6 +1212,7 @@ impl ProjectGenerator {
     pub fn generate(&self, rust_code: &str) -> io::Result<bool> {
         let src_dir = self.ensure_generated_src_dir()?;
         let mut changed = false;
+        self.remember_generated_source_identity(vec![("main.rs".to_string(), rust_code)]);
 
         // Write Cargo.toml
         let cargo_toml = self.generate_cargo_toml()?;
@@ -1141,6 +1262,13 @@ impl ProjectGenerator {
     pub fn generate_multi(&self, main_code: &str, modules: &HashMap<String, String>) -> io::Result<bool> {
         let src_dir = self.ensure_generated_src_dir()?;
         let mut changed = false;
+        let mut identity_sources = vec![("main.rs".to_string(), main_code)];
+        identity_sources.extend(
+            modules
+                .iter()
+                .map(|(name, source)| (format!("{name}.rs"), source.as_str())),
+        );
+        self.remember_generated_source_identity(identity_sources);
 
         for module_name in modules.keys() {
             changed |= Self::remove_conflicting_module_artifact(&src_dir.join(module_name))?;
@@ -1225,6 +1353,13 @@ impl ProjectGenerator {
     pub fn generate_nested(&self, main_code: &str, modules: &HashMap<Vec<String>, String>) -> io::Result<bool> {
         let src_dir = self.ensure_generated_src_dir()?;
         let mut changed = false;
+        let mut identity_sources = vec![("main.rs".to_string(), main_code)];
+        identity_sources.extend(
+            modules
+                .iter()
+                .map(|(path, source)| (format!("{}.rs", path.join("/")), source.as_str())),
+        );
+        self.remember_generated_source_identity(identity_sources);
 
         // Write Cargo.toml
         let cargo_toml = self.generate_cargo_toml()?;

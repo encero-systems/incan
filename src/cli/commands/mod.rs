@@ -17,6 +17,7 @@
 
 pub mod build;
 pub mod build_report;
+pub mod cache;
 pub mod codegraph;
 pub mod common;
 pub mod debug;
@@ -33,6 +34,7 @@ pub mod workspace;
 
 // Re-export public API so callers can use `commands::build_file()` etc.
 pub use build::{build_file, build_library, inspect_rust, run_file, run_inline_source};
+pub use cache::{inspect_generated_cache, prune_generated_cache};
 pub use codegraph::{CodegraphInspectionFormat, inspect_codegraph};
 pub use common::{collect_modules, read_source};
 pub use debug::{check_file, emit_rust, lex_file, parse_file};

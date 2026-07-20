@@ -97,6 +97,25 @@ jobs:
       - uses: taiki-e/install-action@nextest
       - name: Compile test suite
         run: cargo nextest run --all --profile ci --no-run
+      - name: Prewarm compiled SDK providers
+        # The test executables share this immutable provider store. Populate it before the provider artifact is
+        # uploaded so shard workers download a completed identity instead of competing under a store-wide lock.
+        run: >-
+          CARGO_NET_OFFLINE=true
+          INCAN_STDLIB="$GITHUB_WORKSPACE/crates/incan_stdlib/stdlib"
+          INCAN_STDLIB_DIR="$GITHUB_WORKSPACE/crates/incan_stdlib/stdlib"
+          INCAN_GENERATED_CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target/incan_generated_shared_target"
+          INCAN_INTERNAL_SDK_PROVIDER_STORE="$GITHUB_WORKSPACE/target/incan_test_sdk_provider_store"
+          ./target/debug/incan check tests/fixtures/test_assert_canary.incn
+      - name: Upload compiled SDK provider store
+        # rust-cache cleans non-Cargo directories under target before saving, so transfer this immutable store
+        # explicitly to the dependent shard jobs.
+        uses: actions/upload-artifact@v6
+        with:
+          name: test-linux-sdk-provider-store
+          path: target/incan_test_sdk_provider_store
+          if-no-files-found: error
+          retention-days: 1
       - name: Show sccache stats
         if: always()
         run: ${SCCACHE_PATH:-sccache} --show-stats || true
@@ -124,8 +143,17 @@ jobs:
           save-if: false
       - uses: ./.github/actions/setup-rust-sccache
       - uses: taiki-e/install-action@nextest
+      - name: Download compiled SDK provider store
+        uses: actions/download-artifact@v6
+        with:
+          name: test-linux-sdk-provider-store
+          path: target/incan_test_sdk_provider_store
       - name: Run test shard
-        run: cargo nextest run --all --profile ci --partition slice:${{ matrix.partition }}/${{ matrix.total }}
+        run: >-
+          CARGO_BUILD_JOBS=2
+          INCAN_GENERATED_CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target/incan_generated_shared_target"
+          INCAN_INTERNAL_SDK_PROVIDER_STORE="$GITHUB_WORKSPACE/target/incan_test_sdk_provider_store"
+          cargo nextest run --all --profile ci --partition slice:${{ matrix.partition }}/${{ matrix.total }}
       - name: Show sccache stats
         if: always()
         run: ${SCCACHE_PATH:-sccache} --show-stats || true
@@ -171,6 +199,25 @@ jobs:
       - uses: taiki-e/install-action@nextest
       - name: Compile test suite
         run: cargo nextest run --all --profile ci --no-run
+      - name: Prewarm compiled SDK providers
+        # The test executables share this immutable provider store. Populate it before the provider artifact is
+        # uploaded so shard workers download a completed identity instead of competing under a store-wide lock.
+        run: >-
+          CARGO_NET_OFFLINE=true
+          INCAN_STDLIB="$GITHUB_WORKSPACE/crates/incan_stdlib/stdlib"
+          INCAN_STDLIB_DIR="$GITHUB_WORKSPACE/crates/incan_stdlib/stdlib"
+          INCAN_GENERATED_CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target/incan_generated_shared_target"
+          INCAN_INTERNAL_SDK_PROVIDER_STORE="$GITHUB_WORKSPACE/target/incan_test_sdk_provider_store"
+          ./target/debug/incan check tests/fixtures/test_assert_canary.incn
+      - name: Upload compiled SDK provider store
+        # rust-cache cleans non-Cargo directories under target before saving, so transfer this immutable store
+        # explicitly to the dependent shard jobs.
+        uses: actions/upload-artifact@v6
+        with:
+          name: test-macos-sdk-provider-store
+          path: target/incan_test_sdk_provider_store
+          if-no-files-found: error
+          retention-days: 1
       - name: Show sccache stats
         if: always()
         run: ${SCCACHE_PATH:-sccache} --show-stats || true
@@ -198,8 +245,17 @@ jobs:
           save-if: false
       - uses: ./.github/actions/setup-rust-sccache
       - uses: taiki-e/install-action@nextest
+      - name: Download compiled SDK provider store
+        uses: actions/download-artifact@v6
+        with:
+          name: test-macos-sdk-provider-store
+          path: target/incan_test_sdk_provider_store
       - name: Run test shard
-        run: cargo nextest run --all --profile ci --partition slice:${{ matrix.partition }}/${{ matrix.total }}
+        run: >-
+          CARGO_BUILD_JOBS=2
+          INCAN_GENERATED_CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target/incan_generated_shared_target"
+          INCAN_INTERNAL_SDK_PROVIDER_STORE="$GITHUB_WORKSPACE/target/incan_test_sdk_provider_store"
+          cargo nextest run --all --profile ci --partition slice:${{ matrix.partition }}/${{ matrix.total }}
       - name: Show sccache stats
         if: always()
         run: ${SCCACHE_PATH:-sccache} --show-stats || true
@@ -269,6 +325,25 @@ jobs:
       - uses: taiki-e/install-action@nextest
       - name: Compile test suite (locked)
         run: cargo nextest run --locked --profile ci --no-run
+      - name: Prewarm compiled SDK providers
+        # The test executables share this immutable provider store. Populate it before the provider artifact is
+        # uploaded so shard workers download a completed identity instead of competing under a store-wide lock.
+        run: >-
+          CARGO_NET_OFFLINE=true
+          INCAN_STDLIB="$GITHUB_WORKSPACE/crates/incan_stdlib/stdlib"
+          INCAN_STDLIB_DIR="$GITHUB_WORKSPACE/crates/incan_stdlib/stdlib"
+          INCAN_GENERATED_CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target/incan_generated_shared_target"
+          INCAN_INTERNAL_SDK_PROVIDER_STORE="$GITHUB_WORKSPACE/target/incan_test_sdk_provider_store"
+          ./target/debug/incan check tests/fixtures/test_assert_canary.incn
+      - name: Upload compiled SDK provider store
+        # rust-cache cleans non-Cargo directories under target before saving, so transfer this immutable store
+        # explicitly to the dependent shard jobs.
+        uses: actions/upload-artifact@v6
+        with:
+          name: msrv-test-sdk-provider-store
+          path: target/incan_test_sdk_provider_store
+          if-no-files-found: error
+          retention-days: 1
       - name: Show sccache stats
         if: always()
         run: ${SCCACHE_PATH:-sccache} --show-stats || true
@@ -298,8 +373,17 @@ jobs:
           save-if: false
       - uses: ./.github/actions/setup-rust-sccache
       - uses: taiki-e/install-action@nextest
+      - name: Download compiled SDK provider store
+        uses: actions/download-artifact@v6
+        with:
+          name: msrv-test-sdk-provider-store
+          path: target/incan_test_sdk_provider_store
       - name: Cargo test shard (locked)
-        run: cargo nextest run --locked --profile ci --partition slice:${{ matrix.partition }}/${{ matrix.total }}
+        run: >-
+          CARGO_BUILD_JOBS=2
+          INCAN_GENERATED_CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target/incan_generated_shared_target"
+          INCAN_INTERNAL_SDK_PROVIDER_STORE="$GITHUB_WORKSPACE/target/incan_test_sdk_provider_store"
+          cargo nextest run --locked --profile ci --partition slice:${{ matrix.partition }}/${{ matrix.total }}
       - name: Show sccache stats
         if: always()
         run: ${SCCACHE_PATH:-sccache} --show-stats || true

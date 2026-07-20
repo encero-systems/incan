@@ -27,7 +27,7 @@ Note: the first build may download Rust crates via Cargo (can take minutes) and 
 Run the compiled binary:
 
 ```bash
-./target/incan/.cargo-target/release/hello_web
+./target/incan/hello_web/target/release/hello_web
 ```
 
 ## Step 2: Hit the endpoints
