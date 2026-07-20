@@ -39,7 +39,8 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
 use super::decl::{
-    FunctionParam, IrDeclKind, IrEnumValue, IrEnumValueType, IrImportOrigin, IrStruct, VariantFields, Visibility,
+    FunctionParam, IrDeclKind, IrEnumValue, IrEnumValueType, IrImportOrigin, IrImportQualifier, IrStruct, IrStructKind,
+    VariantFields, Visibility,
 };
 use super::expr::{
     IrCallArg, IrCallArgKind, IrDictEntry, IrExprKind, IrListEntry, Literal as IrLiteral, TypedExpr, VarAccess,
@@ -52,6 +53,7 @@ use crate::frontend::api_metadata::{
     newtype_export_from_api,
 };
 use crate::frontend::library_manifest_index::{LibraryManifestIndex, LibraryManifestIndexEntry};
+use crate::frontend::module::logical_source_path_candidates;
 use crate::frontend::symbols::ResolvedType;
 use crate::library_manifest::{
     FieldExport, FieldVisibilityExport, LibraryManifest, MethodExport, NewtypeExport, ParamDefaultCallSignatureExport,
@@ -178,9 +180,27 @@ impl GeneratedUseAnalysis {
     }
 }
 
+/// Exact provider identity used to keep same-named constructor contracts distinct during emission.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ConstructorProviderIdentity {
+    /// An ordinary source module identified by its canonical logical path.
+    SourceModule(Vec<String>),
+    /// A compiled public dependency identified by its dependency key.
+    PublicDependency(String),
+}
+
+/// One public source import that projects a constructor under a facade-owned export name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SourceConstructorReexport {
+    exporting_module: Vec<String>,
+    target_module_candidates: Vec<Vec<String>>,
+    target_name: String,
+    exported_name: String,
+}
+
 #[derive(Clone)]
 pub(super) struct StructConstructorMetadata {
-    dependency: Option<String>,
+    provider_identity: Option<ConstructorProviderIdentity>,
     fields: Vec<String>,
     field_types: HashMap<String, IrType>,
     field_defaults: HashMap<String, super::IrExpr>,
@@ -193,7 +213,7 @@ impl StructConstructorMetadata {
     /// Build constructor-emission metadata from one lowered source-defined struct.
     fn from_struct(s: &IrStruct) -> Self {
         Self {
-            dependency: None,
+            provider_identity: None,
             fields: s.fields.iter().map(|field| field.name.clone()).collect(),
             field_types: s
                 .fields
@@ -231,13 +251,28 @@ impl StructConstructorMetadata {
         }
     }
 
+    /// Build exact constructor metadata for a checked ordinary source dependency.
+    ///
+    /// A public source class with private fields exposes a provider-local constructor function because Rust consumers
+    /// cannot initialize those fields with a struct literal. The canonical module identity prevents a same-named class
+    /// from another source module from supplying the bridge ABI by short-name or field-shape coincidence.
+    fn from_source_dependency(module_path: &[String], s: &IrStruct) -> Self {
+        let mut metadata = Self::from_struct(s);
+        metadata.provider_identity = Some(ConstructorProviderIdentity::SourceModule(module_path.to_vec()));
+        metadata.requires_constructor_function = matches!(s.kind, IrStructKind::Class)
+            && s.fields
+                .iter()
+                .any(|field| matches!(field.visibility, Visibility::Private));
+        metadata
+    }
+
     /// Build constructor-emission metadata from one compiled-library export.
     fn from_manifest_fields(library: &str, fields: &[FieldExport]) -> Self {
         let requires_constructor_function = fields
             .iter()
             .any(|field| matches!(field.visibility, FieldVisibilityExport::Private));
         Self {
-            dependency: Some(library.to_string()),
+            provider_identity: Some(ConstructorProviderIdentity::PublicDependency(library.to_string())),
             fields: fields.iter().map(|field| field.name.clone()).collect(),
             field_types: fields
                 .iter()
@@ -371,6 +406,10 @@ pub struct IrEmitter<'a> {
     struct_field_defaults: std::collections::HashMap<(String, String), super::IrExpr>,
     /// Constructor metadata variants for source-defined structs that share a simple name across modules.
     struct_constructor_metadata: HashMap<String, Vec<StructConstructorMetadata>>,
+    /// Constructor metadata keyed by canonical ordinary source-module identity and provider declaration name.
+    source_dependency_constructor_metadata: HashMap<(Vec<String>, String), StructConstructorMetadata>,
+    /// Public source-import projections waiting to inherit their exact provider constructor metadata.
+    source_dependency_constructor_reexports: Vec<SourceConstructorReexport>,
     /// Constructor metadata keyed by the exact public dependency and public export spelling.
     pub_dependency_constructor_metadata: HashMap<(String, String), StructConstructorMetadata>,
     /// Transparent local type aliases keyed by alias name.
@@ -409,6 +448,14 @@ pub struct IrEmitter<'a> {
     ///
     /// Used to disambiguate crate-internal module imports vs external crate imports when emitting `use` paths.
     internal_module_roots: HashSet<String>,
+    /// Canonical paths of ordinary source modules available in this generated crate.
+    ///
+    /// Source resolution accepts an unqualified import beside the current module before falling back to the source
+    /// root. Emission needs the same path so it can produce `crate::parent::sibling`, rather than a nonexistent Cargo
+    /// crate named after the sibling leaf.
+    source_module_paths: HashSet<Vec<String>>,
+    /// Canonical path of the source module currently being emitted.
+    current_source_module_path: Option<Vec<String>>,
     /// RFC 023: The `rust.module("path::to::module")` Rust backing path, if declared.
     ///
     /// When set, `@rust.extern` functions emit delegation calls to `<rust_module_path>::<fn_name>()` instead of
@@ -506,6 +553,8 @@ impl<'a> IrEmitter<'a> {
             struct_field_descriptions: std::collections::HashMap::new(),
             struct_field_defaults: std::collections::HashMap::new(),
             struct_constructor_metadata: HashMap::new(),
+            source_dependency_constructor_metadata: HashMap::new(),
+            source_dependency_constructor_reexports: Vec::new(),
             pub_dependency_constructor_metadata: HashMap::new(),
             type_aliases: HashMap::new(),
             rusttype_alias_names: HashSet::new(),
@@ -521,6 +570,8 @@ impl<'a> IrEmitter<'a> {
             ambiguous_value_names: HashSet::new(),
             dependency_enum_types: HashSet::new(),
             internal_module_roots: HashSet::new(),
+            source_module_paths: HashSet::new(),
+            current_source_module_path: None,
             rust_module_path: None,
             rust_import_paths: RefCell::new(std::collections::HashMap::new()),
             newtype_construction: HashMap::new(),
@@ -945,6 +996,16 @@ impl<'a> IrEmitter<'a> {
         self.internal_module_roots = roots;
     }
 
+    /// Set the canonical ordinary source modules available to this compilation unit.
+    pub fn set_source_module_paths(&mut self, paths: HashSet<Vec<String>>) {
+        self.source_module_paths = paths;
+    }
+
+    /// Set the canonical source path of the module currently being emitted.
+    pub fn set_current_source_module_path(&mut self, path: Option<Vec<String>>) {
+        self.current_source_module_path = path;
+    }
+
     /// Configure whether anonymous union wrappers are addressed through the crate root.
     pub fn set_qualify_union_types_from_crate(&mut self, enabled: bool) {
         self.qualify_union_types_from_crate = enabled;
@@ -1133,10 +1194,10 @@ impl<'a> IrEmitter<'a> {
     /// True when the generated free constructor function for a struct should be retained.
     pub(super) fn should_emit_struct_constructor(&self, s: &IrStruct) -> bool {
         let analysis = self.generated_use_analysis.borrow();
-        let has_private_fields = s
-            .fields
-            .iter()
-            .any(|field| matches!(field.visibility, Visibility::Private));
+        let has_private_fields = matches!(s.kind, IrStructKind::Class)
+            && s.fields
+                .iter()
+                .any(|field| matches!(field.visibility, Visibility::Private));
         analysis.used_constructors.contains(&s.name)
             || (has_private_fields && matches!(s.visibility, Visibility::Public))
     }
@@ -1245,6 +1306,8 @@ impl<'a> IrEmitter<'a> {
     /// ambiguous imported types can make one module validate a constructor against another module's fields.
     pub(crate) fn seed_dependency_nominal_metadata_from_program(&mut self, program: &IrProgram) {
         self.seed_nominal_metadata_from_program_inner(program, true);
+        self.register_source_dependency_constructor_reexports(program);
+        self.propagate_source_dependency_constructor_reexports();
     }
 
     /// Seed public dependency nominal metadata from `.incnlib` manifests.
@@ -1368,6 +1431,161 @@ impl<'a> IrEmitter<'a> {
             ApiDeclaration::Class(class) => class.name == *name,
             _ => false,
         })
+    }
+
+    /// Return canonical provider candidates for one ordinary source import in source-resolution order.
+    ///
+    /// Unqualified imports first search beside the current source module and then at the source root. Absolute and
+    /// explicit-parent imports have one candidate. Matching candidates against the checked dependency registry keeps
+    /// emission aligned with the module that source resolution actually loaded without selecting by declaration shape.
+    fn source_import_module_candidates(
+        program: &IrProgram,
+        path: &[String],
+        qualifier: IrImportQualifier,
+    ) -> Vec<Vec<String>> {
+        let current_module = program
+            .source_module_name
+            .as_deref()
+            .map(|name| name.split('.').map(str::to_string).collect::<Vec<_>>())
+            .unwrap_or_default();
+        let (is_absolute, parent_levels) = match qualifier {
+            IrImportQualifier::None => return Vec::new(),
+            IrImportQualifier::Auto => (false, 0),
+            IrImportQualifier::Crate => (true, 0),
+            IrImportQualifier::Super(levels) => (false, levels),
+        };
+        logical_source_path_candidates(&current_module, path, is_absolute, parent_levels)
+    }
+
+    /// Record public source-import projections so facade exports retain their declaring provider's constructor ABI.
+    fn register_source_dependency_constructor_reexports(&mut self, program: &IrProgram) {
+        let Some(exporting_module) = program
+            .source_module_name
+            .as_deref()
+            .map(|name| name.split('.').map(str::to_string).collect::<Vec<_>>())
+        else {
+            return;
+        };
+        for decl in &program.declarations {
+            let IrDeclKind::Import {
+                visibility: Visibility::Public,
+                origin: IrImportOrigin::Standard,
+                qualifier,
+                path,
+                items,
+                ..
+            } = &decl.kind
+            else {
+                continue;
+            };
+            if path
+                .first()
+                .is_some_and(|root| root == stdlib::STDLIB_ROOT || root == stdlib::INCAN_STD_NAMESPACE)
+            {
+                continue;
+            }
+            let target_module_candidates = Self::source_import_module_candidates(program, path, *qualifier);
+            for item in items {
+                let projection = SourceConstructorReexport {
+                    exporting_module: exporting_module.clone(),
+                    target_module_candidates: target_module_candidates.clone(),
+                    target_name: item.name.clone(),
+                    exported_name: item.alias.clone().unwrap_or_else(|| item.name.clone()),
+                };
+                if !self.source_dependency_constructor_reexports.contains(&projection) {
+                    self.source_dependency_constructor_reexports.push(projection);
+                }
+            }
+        }
+    }
+
+    /// Resolve every known source facade projection to its exact declaring constructor metadata.
+    ///
+    /// Repeating until no projection changes makes this independent of dependency registration order and preserves
+    /// provider identity through multi-hop aliases without falling back to short names or constructor shape.
+    fn propagate_source_dependency_constructor_reexports(&mut self) {
+        loop {
+            let additions = self
+                .source_dependency_constructor_reexports
+                .iter()
+                .filter_map(|projection| {
+                    let export_key = (projection.exporting_module.clone(), projection.exported_name.clone());
+                    if self.source_dependency_constructor_metadata.contains_key(&export_key) {
+                        return None;
+                    }
+                    projection
+                        .target_module_candidates
+                        .iter()
+                        .find_map(|module_path| {
+                            self.source_dependency_constructor_metadata
+                                .get(&(module_path.clone(), projection.target_name.clone()))
+                        })
+                        .cloned()
+                        .map(|metadata| (export_key, metadata))
+                })
+                .collect::<Vec<_>>();
+            if additions.is_empty() {
+                return;
+            }
+            for (key, metadata) in additions {
+                self.source_dependency_constructor_metadata.insert(key, metadata);
+            }
+        }
+    }
+
+    /// Bind checked ordinary source dependency constructors to the exact local import names used by this program.
+    ///
+    /// The exact module/declaration key is resolved before the local alias is installed. This deliberately replaces
+    /// short-name variants so sibling modules exporting the same class name cannot exchange constructor bridge ABIs.
+    fn bind_source_dependency_constructor_metadata(&mut self, program: &IrProgram) {
+        let bindings = program
+            .declarations
+            .iter()
+            .filter_map(|decl| {
+                let IrDeclKind::Import {
+                    origin: IrImportOrigin::Standard,
+                    qualifier,
+                    path,
+                    items,
+                    ..
+                } = &decl.kind
+                else {
+                    return None;
+                };
+                if path
+                    .first()
+                    .is_some_and(|root| root == stdlib::STDLIB_ROOT || root == stdlib::INCAN_STD_NAMESPACE)
+                {
+                    return None;
+                }
+                let module_candidates = Self::source_import_module_candidates(program, path, *qualifier);
+                let metadata_by_identity = &self.source_dependency_constructor_metadata;
+                Some(items.iter().filter_map(move |item| {
+                    let exact = module_candidates.iter().find_map(|module_path| {
+                        metadata_by_identity
+                            .get(&(module_path.clone(), item.name.clone()))
+                            .cloned()
+                    });
+                    let metadata = exact.or_else(|| {
+                        let mut providers = metadata_by_identity
+                            .iter()
+                            .filter_map(|((module_path, declared_name), metadata)| {
+                                (declared_name == &item.name && module_path.ends_with(path))
+                                    .then_some((module_path.clone(), metadata.clone()))
+                            })
+                            .collect::<Vec<_>>();
+                        providers.sort_by(|(left, _), (right, _)| left.cmp(right));
+                        providers.dedup_by(|(left, _), (right, _)| left == right);
+                        (providers.len() == 1).then(|| providers.remove(0).1)
+                    });
+                    metadata.map(|metadata| (item.alias.clone().unwrap_or_else(|| item.name.clone()), metadata))
+                }))
+            })
+            .flatten()
+            .collect::<Vec<_>>();
+        for (binding, metadata) in bindings {
+            self.struct_constructor_metadata.insert(binding, vec![metadata]);
+        }
     }
 
     /// Bind exact public dependency constructor metadata to the local names introduced by this program's imports.
@@ -1602,9 +1820,23 @@ impl<'a> IrEmitter<'a> {
 
     /// Seed nominal metadata, optionally skipping ambiguous dependency names.
     fn seed_nominal_metadata_from_program_inner(&mut self, program: &IrProgram, skip_ambiguous: bool) {
+        let source_dependency_module_path = if skip_ambiguous {
+            program
+                .source_module_name
+                .as_deref()
+                .map(|name| name.split('.').map(str::to_string).collect::<Vec<_>>())
+        } else {
+            None
+        };
         for decl in &program.declarations {
             match &decl.kind {
                 IrDeclKind::Struct(s) => {
+                    if let Some(module_path) = source_dependency_module_path.as_ref() {
+                        self.source_dependency_constructor_metadata.insert(
+                            (module_path.clone(), s.name.clone()),
+                            StructConstructorMetadata::from_source_dependency(module_path, s),
+                        );
+                    }
                     if skip_ambiguous && self.ambiguous_type_names.contains(&s.name) {
                         continue;
                     }
@@ -1687,7 +1919,7 @@ impl<'a> IrEmitter<'a> {
     fn register_constructor_metadata_variant(&mut self, name: &str, metadata: StructConstructorMetadata) {
         let variants = self.struct_constructor_metadata.entry(name.to_string()).or_default();
         if !variants.iter().any(|existing| {
-            existing.dependency == metadata.dependency
+            existing.provider_identity == metadata.provider_identity
                 && existing.fields == metadata.fields
                 && existing.field_types == metadata.field_types
                 && existing.default_fields == metadata.default_fields
@@ -2341,7 +2573,75 @@ impl<'a> IrEmitter<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::IrEmitter;
+    use super::{ConstructorProviderIdentity, IrEmitter};
+    use crate::backend::ir::decl::{
+        IrDecl, IrDeclKind, IrImportItem, IrImportOrigin, IrImportQualifier, IrStruct, IrStructKind, StructField,
+        Visibility,
+    };
+    use crate::backend::ir::expr::{IrExprKind, TypedExpr};
+    use crate::backend::ir::{FunctionRegistry, IrProgram, IrType};
+
+    fn checked_source_class(
+        private_ty: IrType,
+        private_default: TypedExpr,
+        public_ty: IrType,
+        trailing_ty: IrType,
+        trailing_default: TypedExpr,
+    ) -> IrStruct {
+        IrStruct {
+            kind: IrStructKind::Class,
+            name: "Vault".to_string(),
+            docstring: None,
+            fields: vec![
+                StructField {
+                    name: "secret".to_string(),
+                    ty: private_ty,
+                    visibility: Visibility::Private,
+                    default: Some(private_default),
+                    alias: None,
+                    description: None,
+                },
+                StructField {
+                    name: "label".to_string(),
+                    ty: public_ty,
+                    visibility: Visibility::Public,
+                    default: None,
+                    alias: None,
+                    description: None,
+                },
+                StructField {
+                    name: "revision".to_string(),
+                    ty: trailing_ty,
+                    visibility: Visibility::Private,
+                    default: Some(trailing_default),
+                    alias: None,
+                    description: None,
+                },
+            ],
+            derives: Vec::new(),
+            visibility: Visibility::Public,
+            type_params: Vec::new(),
+            derive_rust_modules: Default::default(),
+            lint_allows: Vec::new(),
+        }
+    }
+
+    fn source_import(path: &[&str], item_name: &str, alias: Option<&str>, visibility: Visibility) -> IrDecl {
+        IrDecl::new(IrDeclKind::Import {
+            visibility,
+            origin: IrImportOrigin::Standard,
+            qualifier: IrImportQualifier::Auto,
+            path: path.iter().map(|segment| (*segment).to_string()).collect(),
+            alias: None,
+            items: vec![IrImportItem {
+                name: item_name.to_string(),
+                alias: alias.map(str::to_string),
+                is_static: false,
+                force_reexport: false,
+                rust_trait_import: None,
+            }],
+        })
+    }
 
     #[test]
     fn rust_ident_uses_raw_idents_for_keywords() {
@@ -2355,5 +2655,132 @@ mod tests {
         let ident = IrEmitter::rust_static_ident("_active_sessions");
         let rendered = quote::quote! { #ident }.to_string();
         assert_eq!(rendered, "_ACTIVE_SESSIONS");
+    }
+
+    #[test]
+    fn ordinary_source_imports_bind_private_constructor_bridges_by_exact_module_identity_issue886()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let registry = FunctionRegistry::new();
+        let mut emitter = IrEmitter::new(&registry);
+
+        let mut text_provider = IrProgram::new();
+        text_provider.source_module_name = Some("pkg.text_vaults".to_string());
+        text_provider
+            .declarations
+            .push(IrDecl::new(IrDeclKind::Struct(checked_source_class(
+                IrType::String,
+                TypedExpr::new(IrExprKind::String("provider-default".to_string()), IrType::String),
+                IrType::String,
+                IrType::Int,
+                TypedExpr::new(IrExprKind::Int(7), IrType::Int),
+            ))));
+        let mut number_provider = IrProgram::new();
+        number_provider.source_module_name = Some("pkg.number_vaults".to_string());
+        number_provider
+            .declarations
+            .push(IrDecl::new(IrDeclKind::Struct(checked_source_class(
+                IrType::Int,
+                TypedExpr::new(IrExprKind::Int(7), IrType::Int),
+                IrType::Int,
+                IrType::String,
+                TypedExpr::new(IrExprKind::String("provider-default".to_string()), IrType::String),
+            ))));
+        let mut facade = IrProgram::new();
+        facade.source_module_name = Some("pkg.vault_facade".to_string());
+        facade.declarations = vec![source_import(
+            &["text_vaults"],
+            "Vault",
+            Some("FacadeVault"),
+            Visibility::Public,
+        )];
+        let mut public_api = IrProgram::new();
+        public_api.source_module_name = Some("pkg.public_api".to_string());
+        public_api.declarations = vec![source_import(
+            &["vault_facade"],
+            "FacadeVault",
+            Some("ExportedVault"),
+            Visibility::Public,
+        )];
+        // Seed the two-hop public facade before its declaring provider to prove fixed-point propagation does not
+        // depend on the order in which checked source dependencies reach the emitter.
+        emitter.seed_dependency_nominal_metadata_from_program(&public_api);
+        emitter.seed_dependency_nominal_metadata_from_program(&facade);
+        emitter.seed_dependency_nominal_metadata_from_program(&number_provider);
+        emitter.seed_dependency_nominal_metadata_from_program(&text_provider);
+
+        let mut consumer = IrProgram::new();
+        // Root-program emission has no logical source module name. It must still bind a bare source import to the
+        // sole canonical provider, while rejecting duplicate provider suffixes elsewhere.
+        consumer.declarations = vec![
+            source_import(&["text_vaults"], "Vault", None, Visibility::Private),
+            source_import(
+                &["pkg", "number_vaults"],
+                "Vault",
+                Some("NumberVault"),
+                Visibility::Private,
+            ),
+            source_import(
+                &["public_api"],
+                "ExportedVault",
+                Some("ConsumerVault"),
+                Visibility::Private,
+            ),
+        ];
+        emitter.bind_source_dependency_constructor_metadata(&consumer);
+
+        let Some(text) = emitter
+            .struct_constructor_metadata
+            .get("Vault")
+            .and_then(|variants| variants.first())
+        else {
+            return Err(std::io::Error::other("direct import did not bind exact text provider metadata").into());
+        };
+        let Some(number) = emitter
+            .struct_constructor_metadata
+            .get("NumberVault")
+            .and_then(|variants| variants.first())
+        else {
+            return Err(std::io::Error::other("aliased import did not bind exact number provider metadata").into());
+        };
+        let Some(facade) = emitter
+            .struct_constructor_metadata
+            .get("ConsumerVault")
+            .and_then(|variants| variants.first())
+        else {
+            return Err(std::io::Error::other("multi-hop facade import did not bind provider metadata").into());
+        };
+        assert_eq!(
+            text.provider_identity.as_ref(),
+            Some(&ConstructorProviderIdentity::SourceModule(vec![
+                "pkg".to_string(),
+                "text_vaults".to_string()
+            ]))
+        );
+        assert_eq!(
+            number.provider_identity.as_ref(),
+            Some(&ConstructorProviderIdentity::SourceModule(vec![
+                "pkg".to_string(),
+                "number_vaults".to_string()
+            ]))
+        );
+        assert_eq!(facade.provider_identity, text.provider_identity);
+        assert_eq!(facade.fields, text.fields);
+        assert_eq!(facade.default_fields, text.default_fields);
+        assert!(facade.requires_constructor_function);
+        assert_eq!(text.fields, ["secret", "label", "revision"]);
+        assert_eq!(number.fields, ["secret", "label", "revision"]);
+        assert_eq!(text.field_types.get("label"), Some(&IrType::String));
+        assert_eq!(number.field_types.get("label"), Some(&IrType::Int));
+        assert_eq!(
+            text.default_fields,
+            std::collections::HashSet::from(["secret".to_string(), "revision".to_string()])
+        );
+        assert_eq!(
+            number.default_fields,
+            std::collections::HashSet::from(["secret".to_string(), "revision".to_string()])
+        );
+        assert!(text.requires_constructor_function);
+        assert!(number.requires_constructor_function);
+        Ok(())
     }
 }

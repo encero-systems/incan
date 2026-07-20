@@ -2931,6 +2931,7 @@ impl<'a> IrEmitter<'a> {
         if self.rust_module_path.is_none() {
             self.rust_module_path = program.rust_module_path.clone();
         }
+        self.bind_source_dependency_constructor_metadata(program);
         self.bind_public_dependency_constructor_metadata(program);
         self.seed_nominal_metadata_from_program(program);
         self.newtype_construction = program.newtype_construction.clone();

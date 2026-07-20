@@ -198,6 +198,8 @@ pub struct IrCodegen<'a> {
     /// provider, codegen must retain those contracts' canonical symbol paths without treating the module as a
     /// consumer-local Rust source module.
     dependency_symbol_modules: Vec<(&'a str, &'a Program, Option<Vec<String>>)>,
+    /// Canonical nested paths learned while lowering emitted source dependencies for root metadata emission.
+    source_dependency_module_paths: Vec<(&'a Program, Vec<String>)>,
     /// Whether serde is needed for emitted Rust derives or helpers.
     // Serde still affects emitted Rust imports and derive augmentation in IR emission, so this remains an
     // emission-internal signal even after project-level requirement collection moved to provider manifests.
@@ -255,6 +257,7 @@ impl<'a> IrCodegen<'a> {
             current_program: None,
             dependency_modules: Vec::new(),
             dependency_symbol_modules: Vec::new(),
+            source_dependency_module_paths: Vec::new(),
             needs_serde: false,
             external_rust_functions: HashSet::new(),
             fixtures: HashMap::new(),
@@ -480,6 +483,18 @@ impl<'a> IrCodegen<'a> {
                 }
             }
         }
+    }
+
+    /// Configure source-import emission with the checked module graph for this generated crate.
+    fn configure_source_import_paths(
+        emitter: &mut IrEmitter<'_>,
+        current_module: Option<&str>,
+        source_module_paths: &HashSet<Vec<String>>,
+    ) {
+        emitter.set_source_module_paths(source_module_paths.clone());
+        emitter.set_current_source_module_path(
+            current_module.map(|module| module.split('.').map(str::to_string).collect()),
+        );
     }
 
     /// Enable strict generated Rust lint validation for `--emit-rust --strict`.
@@ -1048,7 +1063,14 @@ impl<'a> IrCodegen<'a> {
 
         let mut dependency_ir_programs = Vec::new();
         for (dep_name, dep_ast, dep_path_segments) in dependency_modules.clone() {
-            let dep_path = dep_path_segments.clone().unwrap_or_else(|| vec![dep_name.to_string()]);
+            let canonical_dep_path_segments = self
+                .source_dependency_module_paths
+                .iter()
+                .find_map(|(source, path)| std::ptr::eq(*source, dep_ast).then_some(path.clone()))
+                .or(dep_path_segments.clone());
+            let dep_path = canonical_dep_path_segments
+                .clone()
+                .unwrap_or_else(|| vec![dep_name.to_string()]);
             let dep_type_info = if let Some(type_info) = self.prechecked_dependency_type_info(&dep_path) {
                 type_info
             } else {
@@ -1068,7 +1090,7 @@ impl<'a> IrCodegen<'a> {
             let mut dep_lowering = AstLowering::new_with_type_info(dep_type_info);
             self.configure_lowering(&mut dep_lowering);
             dep_lowering.set_current_source_module_name(
-                dep_path_segments
+                canonical_dep_path_segments
                     .clone()
                     .map(|segments| segments.join("."))
                     .or_else(|| {
@@ -1082,7 +1104,7 @@ impl<'a> IrCodegen<'a> {
             dep_lowering.seed_struct_field_aliases(global_aliases.clone());
             let mut dep_ir = dep_lowering.lower_program(dep_ast)?;
             super::trait_bound_inference::infer_trait_bounds(&mut dep_ir);
-            let module_path = dep_path_segments.clone().unwrap_or_else(|| vec![dep_name.to_string()]);
+            let module_path = canonical_dep_path_segments.unwrap_or_else(|| vec![dep_name.to_string()]);
             dependency_ir_programs.push((module_path, dep_ir));
         }
         let dependency_programs = dependency_ir_programs
@@ -1090,6 +1112,10 @@ impl<'a> IrCodegen<'a> {
             .map(|(_, dep_ir)| dep_ir)
             .collect::<Vec<_>>();
         super::trait_bound_inference::propagate_trait_bounds_from_programs(&mut ir_program, &dependency_programs);
+        let source_module_paths = dependency_ir_programs
+            .iter()
+            .map(|(module_path, _)| module_path.clone())
+            .collect::<HashSet<_>>();
         let canonical_registry = Self::canonical_registry_for_programs(
             dependency_ir_programs
                 .iter()
@@ -1108,6 +1134,7 @@ impl<'a> IrCodegen<'a> {
             // Configure inner emitter
             let inner = svc.inner_mut();
             inner.set_internal_module_roots(internal_module_roots.clone());
+            Self::configure_source_import_paths(inner, ir_program.source_module_name.as_deref(), &source_module_paths);
             if self.emit_zen_in_main {
                 inner.set_emit_zen(true);
             }
@@ -1134,6 +1161,11 @@ impl<'a> IrCodegen<'a> {
         } else {
             let mut emitter = IrEmitter::new(&ir_program.function_registry);
             emitter.set_internal_module_roots(internal_module_roots.clone());
+            Self::configure_source_import_paths(
+                &mut emitter,
+                ir_program.source_module_name.as_deref(),
+                &source_module_paths,
+            );
             if self.emit_zen_in_main {
                 emitter.set_emit_zen(true);
             }
@@ -1337,6 +1369,7 @@ impl<'a> IrCodegen<'a> {
         module_names: &[&str],
     ) -> Result<(String, HashMap<String, String>), GenerationError> {
         self.current_program = Some(program);
+        self.source_dependency_module_paths.clear();
 
         // Scan all modules for emission-relevant features
         self.update_serde_requirement(program);
@@ -1399,6 +1432,7 @@ impl<'a> IrCodegen<'a> {
             super::trait_bound_inference::infer_trait_bounds(&mut ir);
             record_direct_generated_path_support_items_from_ir(&mut dependency_reachable_items, &ir);
             let module_path = path_segments.clone().unwrap_or_else(|| vec![name.to_string()]);
+            self.source_dependency_module_paths.push((ast, module_path.clone()));
             lowered_modules.push((name.to_string(), module_path, ir));
         }
         for idx in 0..lowered_modules.len() {
@@ -1472,6 +1506,10 @@ impl<'a> IrCodegen<'a> {
             },
         )?;
 
+        let source_module_paths = lowered_modules
+            .iter()
+            .map(|(_, module_path, _)| module_path.clone())
+            .collect::<HashSet<_>>();
         let mut modules = HashMap::new();
         for (name, module_path, ir) in &lowered_modules {
             let mut reachable_items = dependency_reachable_items.get(module_path).cloned().unwrap_or_default();
@@ -1485,6 +1523,7 @@ impl<'a> IrCodegen<'a> {
                 let mut svc = EmitService::new_from_program(ir);
                 let inner = svc.inner_mut();
                 inner.set_internal_module_roots(internal_roots.clone());
+                Self::configure_source_import_paths(inner, ir.source_module_name.as_deref(), &source_module_paths);
                 inner.set_preserve_public_items(preserve_public_items);
                 inner.set_externally_reachable_items(reachable_items.clone());
                 Self::apply_dependency_symbol_metadata(
@@ -1510,6 +1549,11 @@ impl<'a> IrCodegen<'a> {
             } else {
                 let mut emitter = IrEmitter::new(&ir.function_registry);
                 emitter.set_internal_module_roots(internal_roots.clone());
+                Self::configure_source_import_paths(
+                    &mut emitter,
+                    ir.source_module_name.as_deref(),
+                    &source_module_paths,
+                );
                 emitter.set_preserve_public_items(preserve_public_items);
                 emitter.set_externally_reachable_items(reachable_items);
                 Self::apply_dependency_symbol_metadata(
@@ -1578,6 +1622,7 @@ impl<'a> IrCodegen<'a> {
         module_paths: &[Vec<String>],
     ) -> Result<(String, HashMap<Vec<String>, String>), GenerationError> {
         self.current_program = Some(program);
+        self.source_dependency_module_paths.clear();
 
         // Backfill nested module path segments for dependency modules when they were registered
         // via the legacy `add_module()` API (flat names only).
@@ -1665,6 +1710,7 @@ impl<'a> IrCodegen<'a> {
                 // newtypes (e.g., stdlib wrapper types like std.web.request.Query/Path).
                 super::trait_bound_inference::infer_trait_bounds(&mut ir);
                 record_direct_generated_path_support_items_from_ir(&mut dependency_reachable_items, &ir);
+                self.source_dependency_module_paths.push((ast, path.clone()));
                 lowered_modules.push((path.clone(), ir));
             }
         }
@@ -1732,6 +1778,10 @@ impl<'a> IrCodegen<'a> {
             },
         )?;
 
+        let source_module_paths = lowered_modules
+            .iter()
+            .map(|(module_path, _)| module_path.clone())
+            .collect::<HashSet<_>>();
         let mut modules = HashMap::new();
         for (path, ir) in &lowered_modules {
             let mut reachable_items = dependency_reachable_items.get(path).cloned().unwrap_or_default();
@@ -1745,6 +1795,7 @@ impl<'a> IrCodegen<'a> {
                 let mut svc = EmitService::new_from_program(ir);
                 let inner = svc.inner_mut();
                 inner.set_internal_module_roots(internal_roots.clone());
+                Self::configure_source_import_paths(inner, ir.source_module_name.as_deref(), &source_module_paths);
                 inner.set_preserve_public_items(preserve_public_items);
                 inner.set_externally_reachable_items(reachable_items.clone());
                 Self::apply_dependency_symbol_metadata(
@@ -1770,6 +1821,11 @@ impl<'a> IrCodegen<'a> {
             } else {
                 let mut emitter = IrEmitter::new(&ir.function_registry);
                 emitter.set_internal_module_roots(internal_roots.clone());
+                Self::configure_source_import_paths(
+                    &mut emitter,
+                    ir.source_module_name.as_deref(),
+                    &source_module_paths,
+                );
                 emitter.set_preserve_public_items(preserve_public_items);
                 emitter.set_externally_reachable_items(reachable_items);
                 Self::apply_dependency_symbol_metadata(
@@ -2369,7 +2425,7 @@ def main() -> None:
     fn generated_use_analysis_keeps_only_selected_same_name_rust_extension_trait_import() {
         use crate::backend::ir::decl::{
             FunctionParam, IrFunction, IrImportItem, IrImportOrigin, IrImportQualifier, IrRustTraitImport, IrStruct,
-            Visibility,
+            IrStructKind, Visibility,
         };
         use crate::backend::ir::expr::{IrExprKind, IrMethodDispatch, MethodCallArgPolicy, VarAccess, VarRefKind};
         use crate::backend::ir::{IrDecl, IrDeclKind, IrProgram, IrStmt, IrStmtKind, IrType, Mutability, TypedExpr};
@@ -2407,6 +2463,7 @@ def main() -> None:
             ],
         }));
         program.declarations.push(IrDecl::new(IrDeclKind::Struct(IrStruct {
+            kind: IrStructKind::Model,
             name: String::from("Widget"),
             docstring: None,
             fields: Vec::new(),

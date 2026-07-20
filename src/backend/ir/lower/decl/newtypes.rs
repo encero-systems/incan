@@ -1,6 +1,6 @@
 //! Newtype declaration lowering.
 
-use super::super::super::decl::{IrStruct, StructField, Visibility};
+use super::super::super::decl::{IrStruct, IrStructKind, StructField, Visibility};
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
 use crate::frontend::ast;
@@ -49,6 +49,7 @@ impl AstLowering {
         // Note: serde derives for newtypes are added post-lowering by `add_serde_to_newtypes` in codegen.rs, which
         // selectively adds only the derives that are actually needed.
         Ok(IrStruct {
+            kind: IrStructKind::Newtype,
             name: n.name.clone(),
             docstring: n.docstring.clone(),
             fields,

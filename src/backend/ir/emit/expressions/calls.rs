@@ -733,19 +733,22 @@ impl<'a> IrEmitter<'a> {
             quote! { ::<#(#emitted),*> }
         };
 
-        if matches!(
+        let is_nominal_type_call = matches!(
             &func.kind,
             IrExprKind::Var {
                 ref_kind: VarRefKind::TypeName,
                 ..
             }
-        ) && function_sig.is_none()
-            && !args.is_empty()
-            && args.iter().all(|arg| arg.name.is_some())
-            && let Some(target_name) = result_target_ty.and_then(|ty| match ty {
-                IrType::Ref(inner) | IrType::RefMut(inner) => inner.nominal_type_name(),
-                _ => ty.nominal_type_name(),
-            })
+        );
+        if args.iter().all(|arg| arg.name.is_some())
+            && (function_sig.is_none() || is_nominal_type_call)
+            && let Some(target_name) = result_target_ty
+                .and_then(|ty| match ty {
+                    IrType::Ref(inner) | IrType::RefMut(inner) => inner.nominal_type_name(),
+                    _ => ty.nominal_type_name(),
+                })
+                .or(local_name)
+                .or(canonical_name)
         {
             let fields = args
                 .iter()
@@ -754,6 +757,10 @@ impl<'a> IrEmitter<'a> {
             if let Some(metadata) = canonical_path
                 .and_then(|path| self.public_dependency_constructor_metadata_for_path(path, &fields))
                 .or_else(|| self.struct_constructor_metadata_for_fields(target_name, &fields))
+                .filter(|metadata| {
+                    metadata.requires_constructor_function
+                        || (is_nominal_type_call && function_sig.is_none() && !args.is_empty())
+                })
             {
                 let mut provided: std::collections::HashMap<&str, &TypedExpr> = std::collections::HashMap::new();
                 for (name, expr) in &fields {

@@ -252,6 +252,58 @@ pub(crate) fn canonicalize_source_module_segments(segments: &[String]) -> Vec<St
     }
 }
 
+/// Return logical module identities for one source import in source-resolution order.
+///
+/// Bare imports first resolve beside the importing module and then from the source root. Absolute imports resolve from
+/// the root, while relative imports walk upward from the importing module's directory. Keeping this identity-only
+/// projection beside the on-disk resolver lets typechecking and later compiler stages consume the same module graph
+/// without reopening the filesystem.
+pub(crate) fn logical_source_import_candidates(current_module_path: &[String], path: &ImportPath) -> Vec<Vec<String>> {
+    logical_source_path_candidates(
+        current_module_path,
+        &path.segments,
+        path.is_absolute,
+        path.parent_levels,
+    )
+}
+
+/// Return logical source identities from qualifier components shared by AST and lowered IR imports.
+pub(crate) fn logical_source_path_candidates(
+    current_module_path: &[String],
+    path_segments: &[String],
+    is_absolute: bool,
+    parent_levels: usize,
+) -> Vec<Vec<String>> {
+    let segments = canonicalize_source_module_segments(path_segments);
+    if segments.is_empty() {
+        return Vec::new();
+    }
+    if is_absolute {
+        return vec![segments];
+    }
+    if current_module_path.is_empty() {
+        return if parent_levels == 0 { vec![segments] } else { Vec::new() };
+    }
+
+    let Some(levels_from_module) = parent_levels.checked_add(1) else {
+        return Vec::new();
+    };
+    let Some(mut relative) = current_module_path
+        .len()
+        .checked_sub(levels_from_module)
+        .map(|keep| current_module_path[..keep].to_vec())
+    else {
+        return Vec::new();
+    };
+    relative.extend(segments.iter().cloned());
+
+    if parent_levels == 0 && relative != segments {
+        vec![relative, segments]
+    } else {
+        vec![relative]
+    }
+}
+
 /// Derive the logical module path segments for an on-disk source module relative to `base`.
 ///
 /// Examples:
@@ -719,6 +771,40 @@ source-root = "library"
         assert_eq!(root_prelude, vec!["prelude".to_string()]);
 
         Ok(())
+    }
+
+    #[test]
+    fn logical_source_import_candidates_follow_sibling_then_root_precedence() {
+        let path = ImportPath::simple(vec!["vaults".to_string()]);
+        assert_eq!(
+            logical_source_import_candidates(&["pkg".to_string(), "consumer".to_string()], &path),
+            vec![
+                vec!["pkg".to_string(), "vaults".to_string()],
+                vec!["vaults".to_string()]
+            ]
+        );
+        assert_eq!(
+            logical_source_import_candidates(&[], &path),
+            vec![vec!["vaults".to_string()]]
+        );
+    }
+
+    #[test]
+    fn logical_source_import_candidates_preserve_absolute_and_parent_paths() {
+        assert_eq!(
+            logical_source_import_candidates(
+                &["pkg".to_string(), "nested".to_string(), "consumer".to_string()],
+                &ImportPath::absolute(vec!["shared".to_string()]),
+            ),
+            vec![vec!["shared".to_string()]]
+        );
+        assert_eq!(
+            logical_source_import_candidates(
+                &["pkg".to_string(), "nested".to_string(), "consumer".to_string()],
+                &ImportPath::relative(1, vec!["shared".to_string()]),
+            ),
+            vec![vec!["pkg".to_string(), "shared".to_string()]]
+        );
     }
 
     fn relative_module_import(segments: &[&str]) -> ImportDecl {
