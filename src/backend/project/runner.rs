@@ -14,6 +14,8 @@ use std::sync::{LazyLock, Mutex};
 
 use super::generator::{ProjectGenerator, RunProfile};
 
+const CARGO_MANIFEST_FILENAME: &str = "Cargo.toml";
+
 #[cfg(test)]
 static TEST_PROJECTION_CARGO_POLICIES: LazyLock<Mutex<std::collections::BTreeMap<PathBuf, Vec<String>>>> =
     LazyLock::new(|| Mutex::new(std::collections::BTreeMap::new()));
@@ -294,7 +296,7 @@ fn run_cargo_lock_projection(
     network.apply(&mut command);
     let output = command
         .arg("--manifest-path")
-        .arg(output_dir.join("Cargo.toml"))
+        .arg(CARGO_MANIFEST_FILENAME)
         .env_remove("CARGO_MANIFEST_DIR")
         .env_remove("CARGO_MANIFEST_PATH")
         .current_dir(output_dir)
@@ -330,7 +332,7 @@ fn run_cargo_lock_projection(
             network.apply(&mut command);
             let output = command
                 .arg("--manifest-path")
-                .arg(output_dir.join("Cargo.toml"))
+                .arg(CARGO_MANIFEST_FILENAME)
                 .arg("--package")
                 .arg(&candidate.package_spec)
                 .arg("--precise")
@@ -408,6 +410,28 @@ mod tests {
             String::from_utf8_lossy(&output.stderr)
         )
         .into())
+    }
+
+    fn initialize_git_fixture(repository: &Path) -> Result<(), Box<dyn std::error::Error>> {
+        let mut init = Command::new("git");
+        init.args(["init", "-q"]).current_dir(repository);
+        successful_command(init, "git init")?;
+        for (key, value) in [("user.email", "incan@example.invalid"), ("user.name", "Incan Test")] {
+            let mut config = Command::new("git");
+            config.args(["config", key, value]).current_dir(repository);
+            successful_command(config, "git config")?;
+        }
+        Ok(())
+    }
+
+    fn commit_git_fixture(repository: &Path, message: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let mut add = Command::new("git");
+        add.args(["add", "."]).current_dir(repository);
+        successful_command(add, "git add")?;
+        let mut commit = Command::new("git");
+        commit.args(["commit", "-q", "-m", message]).current_dir(repository);
+        successful_command(commit, "git commit")?;
+        Ok(())
     }
 
     #[test]
@@ -603,6 +627,50 @@ mod tests {
     }
 
     #[test]
+    fn relative_output_dir_projects_without_duplicating_manifest_path_issue921()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let fixture_parent = Path::new("target").join("issue921-relative-projection");
+        fs::create_dir_all(&fixture_parent)?;
+        let tmp = tempfile::Builder::new()
+            .prefix("generated-")
+            .tempdir_in(&fixture_parent)?;
+        let cwd = env::current_dir()?;
+        let output_dir = tmp.path().strip_prefix(&cwd)?.to_path_buf();
+        assert!(
+            !output_dir.is_absolute(),
+            "fixture must exercise a relative generated output directory"
+        );
+
+        let mut generator = ProjectGenerator::new(&output_dir, "issue921_relative_caller", true);
+        generator.generate_multi("fn main() {}", &HashMap::new())?;
+
+        let cargo = env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+        let mut seed_command = Command::new(cargo);
+        seed_command
+            .arg("generate-lockfile")
+            .arg("--offline")
+            .arg("--manifest-path")
+            .arg(output_dir.join(CARGO_MANIFEST_FILENAME));
+        successful_command(seed_command, "relative caller lock generation")?;
+        let caller_lock = fs::read_to_string(output_dir.join("Cargo.lock"))?;
+        let canonical_lock =
+            caller_lock.replacen("name = \"issue921_relative_caller\"", "name = \"incan_workspace\"", 1);
+        assert_ne!(caller_lock, canonical_lock, "fixture must rename the canonical root");
+
+        fs::remove_file(output_dir.join("Cargo.lock"))?;
+        generator.set_cargo_lock_payload(Some(canonical_lock));
+        generator.set_cargo_lock_projection_root(Some("incan_workspace".to_string()));
+        generator.set_cargo_policy_flags(vec!["--offline".to_string()]);
+        assert!(generator.generate_multi("fn main() {}", &HashMap::new())?);
+        assert!(generator.materialize_cargo_lock_projection()?);
+
+        let projected = fs::read_to_string(output_dir.join("Cargo.lock"))?;
+        assert!(projected.contains("name = \"issue921_relative_caller\""));
+        assert!(!projected.contains("name = \"incan_workspace\""));
+        Ok(())
+    }
+
+    #[test]
     fn online_locked_projection_can_populate_a_fresh_cargo_home_issue923() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let dependency = tmp.path().join("dependency");
@@ -612,20 +680,8 @@ mod tests {
             "[package]\nname = \"issue923_local_dep\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
         )?;
         fs::write(dependency.join("src/lib.rs"), "pub fn value() -> u8 { 1 }\n")?;
-        let mut git_init = Command::new("git");
-        git_init.args(["init", "-q"]).current_dir(&dependency);
-        successful_command(git_init, "git init")?;
-        for (key, value) in [("user.email", "incan@example.invalid"), ("user.name", "Incan Test")] {
-            let mut config = Command::new("git");
-            config.args(["config", key, value]).current_dir(&dependency);
-            successful_command(config, "git config")?;
-        }
-        let mut add = Command::new("git");
-        add.args(["add", "."]).current_dir(&dependency);
-        successful_command(add, "git add")?;
-        let mut commit = Command::new("git");
-        commit.args(["commit", "-q", "-m", "fixture"]).current_dir(&dependency);
-        successful_command(commit, "git commit")?;
+        initialize_git_fixture(&dependency)?;
+        commit_git_fixture(&dependency, "fixture")?;
 
         let dependency_url = format!("file://{}", dependency.display());
         let manifest = |name: &str| {
