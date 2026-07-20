@@ -1146,7 +1146,11 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn toolchain_semantic_inputs_fail_closed_for_invalid_entries_issue921() -> TestResult {
-        let temp = tempfile::tempdir()?;
+        let temp = tempfile::Builder::new()
+            // Keep the Unix-domain socket fixture beneath macOS's short sockaddr_un path limit. `/tmp` is also
+            // present on Linux CI; spelling `/private/tmp` here consumes most of the portable path budget.
+            .prefix("incan-si-")
+            .tempdir_in("/tmp")?;
         let package = temp.path().join("support");
         fs::create_dir_all(package.join("src"))?;
         fs::write(package.join("src/lib.rs"), "pub fn support() {}\n")?;
@@ -1154,41 +1158,49 @@ mod tests {
         fs::write(temp.path().join("outside.txt"), "outside\n")?;
         std::os::unix::fs::symlink(temp.path().join("outside.txt"), package.join("linked.txt"))?;
         let special = package.join("special-entry");
-        let status = std::process::Command::new("mkfifo").arg(&special).status()?;
-        if !status.success() {
-            return Err("mkfifo failed while preparing special-entry regression".into());
-        }
+        let _special_listener = std::os::unix::net::UnixListener::bind(&special)?;
 
         let invalid_values = [
-            "\"present.txt\"",
-            "[1]",
-            "[\"\"]",
-            "[\"/tmp/outside.txt\"]",
-            "[\"../outside.txt\"]",
-            "[\"missing.txt\"]",
-            "[\"linked.txt\"]",
-            "[\"special-entry\"]",
+            ("\"present.txt\"", "must be an array of paths"),
+            ("[1]", "entries must be strings"),
+            ("[\"\"]", "must be a non-empty relative path"),
+            ("[\"/tmp/outside.txt\"]", "must be a non-empty relative path"),
+            ("[\"../outside.txt\"]", "must be a non-empty relative path"),
+            ("[\"missing.txt\"]", "failed to inspect provider artifact path"),
+            ("[\"linked.txt\"]", "is not a regular file or directory"),
+            ("[\"special-entry\"]", "is not a regular file or directory"),
         ];
-        for manifest in [
-            "[package]\nname = \"support\"\nversion = \"0.5.0\"\nmetadata = \"invalid\"\n",
-            "[package]\nname = \"support\"\nversion = \"0.5.0\"\n\n[package.metadata]\nincan = \"invalid\"\n",
+        for (manifest, expected) in [
+            (
+                "[package]\nname = \"support\"\nversion = \"0.5.0\"\nmetadata = \"invalid\"\n",
+                "package.metadata must be a table",
+            ),
+            (
+                "[package]\nname = \"support\"\nversion = \"0.5.0\"\n\n[package.metadata]\nincan = \"invalid\"\n",
+                "package.metadata.incan must be a table",
+            ),
         ] {
             fs::write(package.join("Cargo.toml"), manifest)?;
+            let error =
+                digest_toolchain_source_tree(&package).expect_err("wrong package metadata value type must fail closed");
             assert!(
-                digest_toolchain_source_tree(&package).is_err(),
-                "wrong package metadata value type must fail closed"
+                matches!(&error, ProviderArtifactDigestError::Normalization { .. }),
+                "wrong metadata type should be a normalization error: {error}"
             );
+            assert!(error.to_string().contains(expected), "unexpected error: {error}");
         }
-        for value in invalid_values {
+        for (value, expected) in invalid_values {
             fs::write(
                 package.join("Cargo.toml"),
                 format!(
                     "[package]\nname = \"support\"\nversion = \"0.5.0\"\n\n[package.metadata.incan]\nsemantic-inputs = {value}\n"
                 ),
             )?;
+            let error =
+                digest_toolchain_source_tree(&package).expect_err("invalid semantic-inputs entry must fail closed");
             assert!(
-                digest_toolchain_source_tree(&package).is_err(),
-                "semantic-inputs value `{value}` must fail closed"
+                error.to_string().contains(expected),
+                "semantic-inputs value `{value}` produced unexpected error: {error}"
             );
         }
         Ok(())

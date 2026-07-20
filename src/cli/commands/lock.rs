@@ -232,21 +232,47 @@ pub(crate) struct LockResolution {
 
 /// Closed authority state for generated Cargo locks.
 pub(crate) enum CargoLockAuthority {
-    /// No trusted Cargo lock payload is available, including tolerated stale locks.
+    /// No trusted Cargo lock payload is available and no stale projection cleanup is required.
     None,
+    /// A tolerated stale canonical lock must not authorize or leave behind any older generated projection.
+    Stale,
     /// An internal artifact build consumes an exact payload directly without caller projection.
     Exact { payload: String },
     /// A fresh canonical payload authorizes Cargo-owned projection from one exact source-less root.
     CanonicalProjection { payload: String, root: String },
 }
 
+/// Final generator-facing inputs derived from one closed lock authority state.
+pub(crate) struct CargoLockGeneratorInputs {
+    pub payload: Option<String>,
+    pub projection_root: Option<String>,
+    pub clear_existing: bool,
+}
+
 impl CargoLockAuthority {
     /// Split the closed authority state into generator inputs at the final rendering boundary.
-    pub(crate) fn into_generator_inputs(self) -> (Option<String>, Option<String>) {
+    pub(crate) fn into_generator_inputs(self) -> CargoLockGeneratorInputs {
         match self {
-            Self::None => (None, None),
-            Self::Exact { payload } => (Some(payload), None),
-            Self::CanonicalProjection { payload, root } => (Some(payload), Some(root)),
+            Self::None => CargoLockGeneratorInputs {
+                payload: None,
+                projection_root: None,
+                clear_existing: false,
+            },
+            Self::Stale => CargoLockGeneratorInputs {
+                payload: None,
+                projection_root: None,
+                clear_existing: true,
+            },
+            Self::Exact { payload } => CargoLockGeneratorInputs {
+                payload: Some(payload),
+                projection_root: None,
+                clear_existing: false,
+            },
+            Self::CanonicalProjection { payload, root } => CargoLockGeneratorInputs {
+                payload: Some(payload),
+                projection_root: Some(root),
+                clear_existing: false,
+            },
         }
     }
 }
@@ -287,6 +313,7 @@ pub(crate) struct RustInspectWorkspaceRequest<'a> {
     pub project_requirements: &'a ProjectRequirements,
     pub lock_payload: Option<String>,
     pub cargo_lock_projection_root: Option<&'a str>,
+    pub clear_cargo_lock: bool,
     pub rust_inspect_query_paths: &'a [String],
     pub prepare_when_empty: bool,
 }
@@ -303,6 +330,7 @@ pub(crate) fn prepare_rust_inspect_workspace(request: RustInspectWorkspaceReques
         project_requirements,
         lock_payload,
         cargo_lock_projection_root,
+        clear_cargo_lock,
         rust_inspect_query_paths,
         prepare_when_empty,
     } = request;
@@ -319,6 +347,7 @@ pub(crate) fn prepare_rust_inspect_workspace(request: RustInspectWorkspaceReques
         project_requirements,
         lock_payload,
         cargo_lock_projection_root,
+        clear_cargo_lock,
     )?;
     prewarm_rust_inspect_workspace(&rust_inspect_manifest_dir, rust_inspect_query_paths)?;
     Ok(Some(rust_inspect_manifest_dir))
@@ -375,7 +404,7 @@ pub(crate) fn prepare_rust_inspect_typecheck_workspace(
         sdk_profile_override: None,
         rust_inspect_query_paths: &metadata_query_paths,
     })?;
-    let (cargo_lock_payload, cargo_lock_projection_root) = lock_resolution.cargo_lock_authority.into_generator_inputs();
+    let cargo_lock_inputs = lock_resolution.cargo_lock_authority.into_generator_inputs();
     prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {
         project_root,
         project_name,
@@ -383,8 +412,9 @@ pub(crate) fn prepare_rust_inspect_typecheck_workspace(
         rust_edition,
         resolved: &lock_resolution.resolved,
         project_requirements: &lock_resolution.project_requirements,
-        lock_payload: cargo_lock_payload,
-        cargo_lock_projection_root: cargo_lock_projection_root.as_deref(),
+        lock_payload: cargo_lock_inputs.payload,
+        cargo_lock_projection_root: cargo_lock_inputs.projection_root.as_deref(),
+        clear_cargo_lock: cargo_lock_inputs.clear_existing,
         rust_inspect_query_paths: &metadata_query_paths,
         prepare_when_empty: false,
     })
@@ -536,7 +566,7 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
                  rewriting it. Run `incan lock` to refresh it."
             );
             return Ok(LockResolution {
-                cargo_lock_authority: CargoLockAuthority::None,
+                cargo_lock_authority: CargoLockAuthority::Stale,
                 cargo_package_name: project_name.to_string(),
                 resolved: caller_resolved,
                 project_requirements: project_requirements.clone(),
@@ -658,7 +688,7 @@ fn resolve_workspace_lock_payload(request: WorkspaceLockResolutionRequest<'_>) -
                  or rewriting it. Run `incan lock` to refresh it."
             );
             return Ok(LockResolution {
-                cargo_lock_authority: CargoLockAuthority::None,
+                cargo_lock_authority: CargoLockAuthority::Stale,
                 cargo_package_name: caller_project_name.to_string(),
                 resolved: caller_resolved,
                 project_requirements: caller_project_requirements.clone(),
@@ -1901,22 +1931,32 @@ mod tests {
 
     #[test]
     fn cargo_lock_authority_exposes_only_closed_generator_input_pairs() {
-        assert_eq!(CargoLockAuthority::None.into_generator_inputs(), (None, None));
-        assert_eq!(
-            CargoLockAuthority::Exact {
-                payload: "exact".to_string(),
-            }
-            .into_generator_inputs(),
-            (Some("exact".to_string()), None)
-        );
-        assert_eq!(
-            CargoLockAuthority::CanonicalProjection {
-                payload: "canonical".to_string(),
-                root: "incan_workspace".to_string(),
-            }
-            .into_generator_inputs(),
-            (Some("canonical".to_string()), Some("incan_workspace".to_string()))
-        );
+        let none = CargoLockAuthority::None.into_generator_inputs();
+        assert_eq!(none.payload, None);
+        assert_eq!(none.projection_root, None);
+        assert!(!none.clear_existing);
+
+        let stale = CargoLockAuthority::Stale.into_generator_inputs();
+        assert_eq!(stale.payload, None);
+        assert_eq!(stale.projection_root, None);
+        assert!(stale.clear_existing);
+
+        let exact = CargoLockAuthority::Exact {
+            payload: "exact".to_string(),
+        }
+        .into_generator_inputs();
+        assert_eq!(exact.payload, Some("exact".to_string()));
+        assert_eq!(exact.projection_root, None);
+        assert!(!exact.clear_existing);
+
+        let canonical = CargoLockAuthority::CanonicalProjection {
+            payload: "canonical".to_string(),
+            root: "incan_workspace".to_string(),
+        }
+        .into_generator_inputs();
+        assert_eq!(canonical.payload, Some("canonical".to_string()));
+        assert_eq!(canonical.projection_root, Some("incan_workspace".to_string()));
+        assert!(!canonical.clear_existing);
     }
 
     #[test]

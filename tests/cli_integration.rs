@@ -1769,6 +1769,20 @@ bitflags = "=1.3.2"
     assert_success(&lock_output, "fresh canonical workspace lock");
     let lock_path = root.path().join("incan.lock");
     let fresh = fs::read_to_string(&lock_path)?;
+
+    let initial_strict = run_incan(root.path(), &["build", "--lib", "--member", "leaf", "--locked"])?;
+    assert_success(
+        &initial_strict,
+        "initial strict selected library build must materialize a valid projection",
+    );
+    let generated_lock_path = leaf.join("target/lib/Cargo.lock");
+    let initially_projected = fs::read_to_string(&generated_lock_path)?;
+    assert!(initially_projected.contains("version = \"1.3.2\""));
+    fs::write(
+        &generated_lock_path,
+        format!("{initially_projected}\n# stale-generated-projection\n"),
+    )?;
+
     let stale = fresh
         .replace("deps-fingerprint = \"sha256:", "deps-fingerprint = \"sha256:stale")
         .replace("bitflags 1.3.2", "bitflags 9.9.9")
@@ -1778,22 +1792,30 @@ bitflags = "=1.3.2"
         "the regression must corrupt canonical projection authority"
     );
     fs::write(&lock_path, &stale)?;
-    let _ = fs::remove_dir_all(root.path().join("target"));
-    let _ = fs::remove_dir_all(leaf.join("target"));
 
     let non_strict = run_incan(root.path(), &["build", "--lib", "--member", "leaf"])?;
     assert_success(
         &non_strict,
         "non-strict selected library build with stale canonical lock",
     );
+    assert!(
+        String::from_utf8_lossy(&non_strict.stderr)
+            .contains("continuing without using it as Cargo lock authority or rewriting it"),
+        "non-strict stale build must report the authority downgrade:\n{}",
+        String::from_utf8_lossy(&non_strict.stderr)
+    );
     assert_eq!(
         fs::read_to_string(&lock_path)?,
         stale,
         "a tolerated stale canonical lock must never be rewritten by a selected member build"
     );
-    let generated = fs::read_to_string(leaf.join("target/lib/Cargo.lock"))?;
+    let generated = fs::read_to_string(&generated_lock_path)?;
     assert!(generated.contains("version = \"1.3.2\""));
     assert!(!generated.contains("version = \"9.9.9\""));
+    assert!(
+        !generated.contains("stale-generated-projection"),
+        "the previous generated projection must be cleared before an unlocked stale-authority build"
+    );
 
     let strict = run_incan(root.path(), &["build", "--lib", "--member", "leaf", "--locked"])?;
     assert_failure(&strict, "strict selected library build with stale canonical lock");

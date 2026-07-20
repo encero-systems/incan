@@ -193,8 +193,10 @@ pub struct ProjectGenerator {
     pub(super) include_dev_dependencies: bool,
     /// Optional Cargo.lock payload to materialize.
     pub(super) cargo_lock_payload: Option<String>,
-    /// Canonical source-less Cargo root that authorizes an offline caller-local lock projection.
+    /// Canonical source-less Cargo root that authorizes a caller-local lock projection.
     pub(super) cargo_lock_projection_root: Option<String>,
+    /// Whether generation must remove any prior Cargo.lock before Cargo resolves without canonical authority.
+    pub(super) clear_cargo_lock: bool,
     /// Extra cargo policy flags (e.g. --locked, --frozen).
     pub(super) cargo_policy_flags: Vec<String>,
     /// Optional shared Cargo target directory for generated Rust projects.
@@ -240,6 +242,7 @@ impl ProjectGenerator {
             include_dev_dependencies: false,
             cargo_lock_payload: None,
             cargo_lock_projection_root: None,
+            clear_cargo_lock: false,
             cargo_policy_flags: Vec::new(),
             cargo_target_dir_override: None,
             rust_edition: None,
@@ -308,6 +311,11 @@ impl ProjectGenerator {
     /// Select the exact canonical root whose lock payload Cargo may project onto this generated manifest.
     pub fn set_cargo_lock_projection_root(&mut self, root: Option<String>) {
         self.cargo_lock_projection_root = root;
+    }
+
+    /// Require the next generated Cargo invocation to start without a previously projected Cargo.lock.
+    pub fn set_clear_cargo_lock(&mut self, clear: bool) {
+        self.clear_cargo_lock = clear;
     }
 
     /// Build the validated pure projection descriptor for the configured canonical seed.
@@ -1435,6 +1443,14 @@ impl ProjectGenerator {
     /// The runner subsequently asks Cargo to align an existing selected root or synthesize an absent selected root
     /// from the caller-local manifest; this generator does not infer or rewrite dependency edges itself.
     fn write_cargo_lock_if_needed(&self) -> io::Result<bool> {
+        let lock_path = self.output_dir.join("Cargo.lock");
+        if self.clear_cargo_lock {
+            return match fs::remove_file(&lock_path) {
+                Ok(()) => Ok(true),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+                Err(error) => Err(error),
+            };
+        }
         let Some(payload) = &self.cargo_lock_payload else {
             return Ok(false);
         };
@@ -1442,9 +1458,16 @@ impl ProjectGenerator {
             let projection = self
                 .cargo_lock_projection()?
                 .ok_or_else(|| io::Error::other("generated Cargo lock projection descriptor disappeared"))?;
-            return Self::write_file_if_changed(&self.output_dir.join("Cargo.lock"), projection.seed_payload());
+            if fs::read_to_string(&lock_path).is_ok_and(|existing| {
+                projection
+                    .validate_projected(&existing, self.cargo_package_name(), self.cargo_package_version())
+                    .is_ok()
+            }) {
+                return Ok(false);
+            }
+            return Self::write_file_if_changed(&lock_path, projection.seed_payload());
         }
-        Self::write_file_if_changed(&self.output_dir.join("Cargo.lock"), payload)
+        Self::write_file_if_changed(&lock_path, payload)
     }
 }
 

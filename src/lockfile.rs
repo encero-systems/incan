@@ -1393,6 +1393,126 @@ mod tests {
         }
     }
 
+    fn production_toolchain_semantic_fixture(
+        checkout: &Path,
+    ) -> Result<(Vec<DependencySpec>, ProviderPlan, SdkInventory, ResolvedSdkComponents), Box<dyn std::error::Error>>
+    {
+        let derive_root = checkout.join("crates/incan_derive");
+        fs::create_dir_all(derive_root.join("src"))?;
+        fs::write(
+            derive_root.join("Cargo.toml"),
+            "[package]\nname = \"incan_derive\"\nversion = \"0.5.0\"\n",
+        )?;
+        fs::write(derive_root.join("src/lib.rs"), "pub fn derive_marker() {}\n")?;
+
+        let provider_root = checkout.join("sdk/components/support-provider");
+        fs::create_dir_all(provider_root.join("src"))?;
+        fs::write(
+            provider_root.join("Cargo.toml"),
+            format!(
+                "[package]\nname = \"support_provider\"\nversion = \"0.5.0\"\n\n[dependencies]\nincan_derive = {{ path = \"{}\" }}\n",
+                derive_root.display()
+            ),
+        )?;
+        fs::write(provider_root.join("src/lib.rs"), "pub fn support() {}\n")?;
+        let manifest_path = provider_root.join("support_provider.incnlib");
+        let mut manifest = crate::library_manifest::LibraryManifest::new("support_provider", "0.5.0");
+        manifest.contract_metadata.provider.implementation_facets.push(
+            crate::library_manifest::ProviderImplementationFacet {
+                id: "derive-support".to_string(),
+                required_modules: BTreeSet::new(),
+                required_features: BTreeSet::new(),
+                cargo_features: BTreeMap::new(),
+                cargo_dependencies: vec![crate::library_manifest::ProviderCargoDependency {
+                    crate_name: "incan_derive".to_string(),
+                    package: None,
+                    version: None,
+                    features: BTreeSet::new(),
+                    default_features: false,
+                    source: crate::library_manifest::ProviderCargoDependencySource::Toolchain {
+                        relative_path: "crates/incan_derive".to_string(),
+                    },
+                }],
+            },
+        );
+        manifest.write_to_path(&manifest_path)?;
+        let physical_digest = crate::library_manifest::digest_provider_artifact(&provider_root)?;
+        let artifact = crate::frontend::library_manifest_index::LibraryArtifactMetadata::from_manifest_path(
+            "support_provider",
+            "support_provider",
+            manifest_path.clone(),
+            provider_root.clone(),
+        );
+        let provider = ProviderRecord {
+            identity: crate::provider::ProviderIdentity {
+                name: "support_provider".to_string(),
+                version: "0.5.0".to_string(),
+                digest: physical_digest.clone(),
+                feature_projection: BTreeSet::new(),
+            },
+            provenance: ProviderProvenance::Sdk {
+                sdk_identity: "incan@0.5.0".to_string(),
+                component_id: "support".to_string(),
+                inventory_path: None,
+            },
+            authority: crate::provider::NamespaceAuthority::SdkReserved,
+            namespace_claims: BTreeSet::new(),
+            available: true,
+            enabled: true,
+            manifest: Some(std::sync::Arc::new(manifest)),
+            artifact: Some(artifact),
+            implementation_facets: Vec::new(),
+        };
+        let provider_plan = ProviderPlan::new(
+            crate::frontend::library_manifest_index::LibraryManifestIndex::default(),
+            vec![provider],
+            std::iter::empty::<Vec<String>>(),
+        )?;
+        let inventory = SdkInventory {
+            root: checkout.join("sdk"),
+            sdk_id: "incan".to_string(),
+            sdk_version: "0.5.0".to_string(),
+            compiler_requirement: "^0.5".to_string(),
+            components: BTreeMap::from([(
+                "support".to_string(),
+                crate::provider::SdkComponent {
+                    id: "support".to_string(),
+                    version: "0.5.0".to_string(),
+                    mandatory: false,
+                    available: true,
+                    dependencies: BTreeSet::new(),
+                    providers: vec![crate::provider::SdkProviderDescriptor {
+                        name: "support_provider".to_string(),
+                        version: "0.5.0".to_string(),
+                        digest: physical_digest,
+                        namespace_claims: BTreeSet::new(),
+                        manifest_path: Some(manifest_path),
+                        crate_root: Some(provider_root),
+                    }],
+                },
+            )]),
+            profiles: BTreeMap::from([("default".to_string(), BTreeSet::from(["support".to_string()]))]),
+        };
+        let components = ResolvedSdkComponents {
+            sdk_identity: "incan@0.5.0".to_string(),
+            profile: "default".to_string(),
+            enabled: BTreeSet::from(["support".to_string()]),
+            unavailable: BTreeSet::new(),
+            reasons: BTreeMap::from([(
+                "support".to_string(),
+                ComponentSelectionReason::Profile {
+                    profile: "default".to_string(),
+                },
+            )]),
+        };
+        Ok((
+            vec![sdk_path_spec("incan_derive", &derive_root)],
+            provider_plan,
+            inventory,
+            components,
+        ))
+    }
+
     #[test]
     fn fingerprint_is_stable_across_feature_order() {
         let deps = vec![sample_spec("alpha", vec!["b", "a"])];
@@ -1544,68 +1664,35 @@ mod tests {
     #[test]
     fn sdk_toolchain_fingerprint_tracks_content_not_source_checkout_path_issue921() -> TestResult {
         let temp = tempfile::tempdir()?;
-        let first_home = temp.path().join("source-checkout-a/crates");
-        let second_home = temp.path().join("source-checkout-b/crates");
-        let crate_names = ["incan_stdlib", "incan_derive", "incan_web_macros"];
-        for home in [&first_home, &second_home] {
-            for crate_name in crate_names {
-                let crate_root = home.join(crate_name);
-                fs::create_dir_all(crate_root.join("src"))?;
-                fs::write(
-                    crate_root.join("Cargo.toml"),
-                    format!("[package]\nname = \"{crate_name}\"\nversion = \"0.5.0\"\n"),
-                )?;
-                fs::write(
-                    crate_root.join("src/lib.rs"),
-                    format!("pub fn {crate_name}_marker() {{}}\n"),
-                )?;
-            }
-        }
-        fs::create_dir_all(first_home.join("incan_stdlib/stdlib/components/data/target/debug"))?;
-        fs::create_dir_all(second_home.join("incan_stdlib/stdlib/components/data/target/debug"))?;
-        fs::write(
-            first_home.join("incan_stdlib/stdlib/components/data/target/debug/cache"),
-            "source-a build cache",
+        let first_checkout = temp.path().join("source-checkout-a");
+        let second_checkout = temp.path().join("source-checkout-b");
+        let (first_specs, first_plan, first_inventory, first_components) =
+            production_toolchain_semantic_fixture(&first_checkout)?;
+        let (second_specs, second_plan, second_inventory, second_components) =
+            production_toolchain_semantic_fixture(&second_checkout)?;
+        let first_semantic = semantic_lock_state(
+            &first_checkout,
+            Some(&first_inventory),
+            Some(&first_components),
+            None,
+            &first_plan,
+            &first_specs,
         )?;
-        fs::write(
-            second_home.join("incan_stdlib/stdlib/components/data/target/debug/cache"),
-            "source-b build cache",
+        let second_semantic = semantic_lock_state(
+            &second_checkout,
+            Some(&second_inventory),
+            Some(&second_components),
+            None,
+            &second_plan,
+            &second_specs,
         )?;
-        let first_specs = crate_names
-            .iter()
-            .map(|name| sdk_path_spec(name, &first_home.join(name)))
-            .collect::<Vec<_>>();
-        let second_specs = crate_names
-            .iter()
-            .map(|name| sdk_path_spec(name, &second_home.join(name)))
-            .collect::<Vec<_>>();
-        let semantic = |specs: &[DependencySpec]| -> Result<SemanticLockState, String> {
-            Ok(SemanticLockState {
-                providers: semantic_toolchain_dependencies(specs)?
-                    .into_iter()
-                    .map(|dependency| LockedProvider {
-                        identity: format!(
-                            "toolchain:{}@0.5.0#{}[]",
-                            dependency.package_name, dependency.content_digest
-                        ),
-                        participation: "compiler-support".to_string(),
-                        namespace_claims: BTreeSet::new(),
-                        used_modules: BTreeSet::new(),
-                        implementation_facets: Vec::new(),
-                        backend_requirements: BTreeSet::new(),
-                    })
-                    .collect(),
-                ..SemanticLockState::default()
-            })
-        };
-        let first_semantic = semantic(&first_specs)?;
-        let second_semantic = semantic(&second_specs)?;
+        assert_eq!(first_semantic, second_semantic);
         let selection = CargoFeatureSelection::default();
         let first_fingerprint = compute_resolved_fingerprint_with_sdk_paths(
             &first_specs,
             &[],
             &selection,
-            Some(temp.path()),
+            Some(&first_checkout),
             &first_semantic,
             &first_specs,
         );
@@ -1613,22 +1700,30 @@ mod tests {
             &second_specs,
             &[],
             &selection,
-            Some(temp.path()),
+            Some(&second_checkout),
             &second_semantic,
             &second_specs,
         );
         assert_eq!(first_fingerprint, second_fingerprint);
 
         fs::write(
-            second_home.join("incan_derive/src/lib.rs"),
-            "pub fn incan_derive_marker() { changed(); }\n",
+            second_checkout.join("crates/incan_derive/src/lib.rs"),
+            "pub fn derive_marker() { changed(); }\n",
         )?;
-        let changed_semantic = semantic(&second_specs)?;
+        let changed_semantic = semantic_lock_state(
+            &second_checkout,
+            Some(&second_inventory),
+            Some(&second_components),
+            None,
+            &second_plan,
+            &second_specs,
+        )?;
+        assert_ne!(second_semantic, changed_semantic);
         let changed_fingerprint = compute_resolved_fingerprint_with_sdk_paths(
             &second_specs,
             &[],
             &selection,
-            Some(temp.path()),
+            Some(&second_checkout),
             &changed_semantic,
             &second_specs,
         );

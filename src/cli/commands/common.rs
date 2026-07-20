@@ -2510,6 +2510,7 @@ fn rust_inspect_workspace_fingerprint(
     sdk_artifact_projections: &[SdkArtifactProjection],
     cargo_lock_payload: Option<&str>,
     cargo_lock_projection_root: Option<&str>,
+    clear_cargo_lock: bool,
 ) -> String {
     let mut hasher = Sha256::new();
     hasher.update(b"incan_rust_inspect_workspace/2\0");
@@ -2517,6 +2518,9 @@ fn rust_inspect_workspace_fingerprint(
     hasher.update(b"\0");
     hasher.update(cargo_package_name.as_bytes());
     hasher.update(b"\0");
+    if clear_cargo_lock {
+        hasher.update(b"clear_cargo_lock\0");
+    }
     if let Some(root) = cargo_lock_projection_root {
         hasher.update(b"lock_projection\0");
         hasher.update(root.as_bytes());
@@ -2862,6 +2866,7 @@ pub(crate) fn ensure_rust_inspect_workspace(
         project_requirements,
         cargo_lock_payload,
         None,
+        false,
     )
 }
 
@@ -2877,6 +2882,7 @@ pub(crate) fn ensure_rust_inspect_workspace_with_cargo_package_name(
     project_requirements: &ProjectRequirements,
     cargo_lock_payload: Option<String>,
     cargo_lock_projection_root: Option<&str>,
+    clear_cargo_lock: bool,
 ) -> CliResult<PathBuf> {
     let fingerprint = rust_inspect_workspace_fingerprint(
         project_name,
@@ -2889,6 +2895,7 @@ pub(crate) fn ensure_rust_inspect_workspace_with_cargo_package_name(
         &project_requirements.sdk_artifact_projections,
         cargo_lock_payload.as_deref(),
         cargo_lock_projection_root,
+        clear_cargo_lock,
     );
     let rust_inspect_manifest_dir = rust_inspect_workspace_dir(project_root, project_name, &fingerprint);
     let fingerprint_path = rust_inspect_manifest_dir.join(RUST_INSPECT_WORKSPACE_FINGERPRINT_FILE);
@@ -2920,6 +2927,7 @@ pub(crate) fn ensure_rust_inspect_workspace_with_cargo_package_name(
     generator.set_rust_edition(rust_edition);
     generator.set_cargo_lock_payload(cargo_lock_payload);
     generator.set_cargo_lock_projection_root(cargo_lock_projection_root.map(ToOwned::to_owned));
+    generator.set_clear_cargo_lock(clear_cargo_lock);
     let mut referenced_crates = std::collections::BTreeSet::new();
     for dep in resolved.dependencies.iter().chain(resolved.dev_dependencies.iter()) {
         referenced_crates.insert(dep.crate_name.replace('-', "_"));
@@ -5591,6 +5599,7 @@ pub def main() -> int:
             &requirements.sdk_artifact_projections,
             Some("lock-bytes"),
             None,
+            false,
         );
         let fp_b = super::rust_inspect_workspace_fingerprint(
             "probe",
@@ -5603,6 +5612,7 @@ pub def main() -> int:
             &requirements.sdk_artifact_projections,
             Some("lock-bytes"),
             None,
+            false,
         );
         let workspace_fp = super::rust_inspect_workspace_fingerprint(
             "probe",
@@ -5615,6 +5625,7 @@ pub def main() -> int:
             &requirements.sdk_artifact_projections,
             Some("lock-bytes"),
             None,
+            false,
         );
         assert_eq!(fp_a, fp_b);
         assert_ne!(fp_a, workspace_fp);
@@ -5640,6 +5651,7 @@ pub def main() -> int:
             &requirements.sdk_artifact_projections,
             Some("lock-a"),
             None,
+            false,
         );
         let fp_two = super::rust_inspect_workspace_fingerprint(
             "p",
@@ -5652,6 +5664,7 @@ pub def main() -> int:
             &requirements.sdk_artifact_projections,
             Some("lock-b"),
             None,
+            false,
         );
         assert_ne!(fp_one, fp_two);
     }
@@ -5689,6 +5702,7 @@ pub def main() -> int:
             &requirements.sdk_artifact_projections,
             None,
             None,
+            false,
         );
         fs::write(artifact.join("src/lib.rs"), "pub fn value() -> u8 { 2 }\n")?;
         let after = super::rust_inspect_workspace_fingerprint(
@@ -5702,6 +5716,7 @@ pub def main() -> int:
             &requirements.sdk_artifact_projections,
             None,
             None,
+            false,
         );
 
         assert_ne!(before, after);
@@ -5855,6 +5870,7 @@ pub def main() -> int:
             &requirements,
             None,
             None,
+            false,
         )?;
 
         let cargo_manifest = fs::read_to_string(generated.join("Cargo.toml"))?;
@@ -5895,6 +5911,7 @@ pub def main() -> int:
             &requirements,
             None,
             None,
+            false,
         )?;
         assert_eq!(generated, regenerated);
         assert!(fs::read_to_string(shadow_root.join("src/lib.rs"))?.contains("value"));

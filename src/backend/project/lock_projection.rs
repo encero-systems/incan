@@ -13,7 +13,7 @@ pub(crate) struct CargoLockProjection {
 }
 
 /// One Cargo-owned attempt to move a regenerated package back onto a canonical coordinate.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct CargoLockUpdate {
     pub(crate) package_spec: String,
     pub(crate) precise: String,
@@ -45,9 +45,22 @@ impl CargoLockProjection {
         })
     }
 
-    /// Return the exact canonical payload that must seed Cargo's first offline resolution pass.
+    /// Return the exact canonical payload that must seed Cargo's first resolution pass.
     pub(crate) fn seed_payload(&self) -> &str {
         &self.canonical_payload
+    }
+
+    /// Return a graph-derived upper bound for successful reconciliation steps.
+    ///
+    /// Each successful step must retire one previously unseen non-canonical package selection. The sum of canonical
+    /// and projected packages is deliberately conservative while remaining proportional to the graph Cargo rendered.
+    pub(crate) fn reconciliation_pass_limit(&self, projected_payload: &str) -> io::Result<usize> {
+        let canonical = parse_lock(&self.canonical_payload, "canonical")?;
+        let projected = parse_lock(projected_payload, "projected")?;
+        Ok(package_tables(&canonical)
+            .len()
+            .saturating_add(package_tables(&projected).len())
+            .max(1))
     }
 
     /// Return Cargo update candidates for the first regenerated package that is outside the canonical lock.
@@ -216,7 +229,7 @@ impl CargoLockProjection {
             Ok(())
         } else {
             Err(io::Error::other(
-                "Cargo lock projection did not converge after a second offline resolution pass",
+                "Cargo lock projection did not converge after a second resolution pass",
             ))
         }
     }
@@ -649,6 +662,33 @@ dependencies = ["bar"]
         let projection = CargoLockProjection::new(canonical_payload(), "incan_workspace".to_string())?;
         projection.validate_convergence("stable", "stable")?;
         assert!(projection.validate_convergence("first", "second").is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn reconciliation_pass_limit_is_derived_from_the_canonical_and_projected_graphs()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let projection = CargoLockProjection::new(canonical_payload(), "incan_workspace".to_string())?;
+        let projected = format!(
+            r#"version = 4
+
+[[package]]
+name = "caller"
+version = "{}"
+
+[[package]]
+name = "foo"
+version = "1.0.0"
+
+[[package]]
+name = "extra"
+version = "2.0.0"
+"#,
+            crate::version::INCAN_VERSION
+        );
+
+        // Two canonical packages plus three Cargo-projected packages.
+        assert_eq!(projection.reconciliation_pass_limit(&projected)?, 5);
         Ok(())
     }
 

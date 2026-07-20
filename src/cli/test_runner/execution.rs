@@ -937,6 +937,7 @@ pub(super) struct PreparedTestFile {
     pub cargo_package_name: String,
     pub lock_payload: Option<String>,
     pub cargo_lock_projection_root: Option<String>,
+    pub clear_cargo_lock: bool,
     /// Checked lowering inputs supplied by the same session analysis as test diagnostics and semantic facts.
     pub prechecked_type_info: (TypeCheckInfo, HashMap<Vec<String>, TypeCheckInfo>, StdlibAstCache),
     #[cfg(feature = "rust_inspect")]
@@ -3320,7 +3321,10 @@ pub(super) fn run_file_tests_batch(
                     .collect();
             }
         };
-        let (lock_payload, cargo_lock_projection_root) = lock_resolution.cargo_lock_authority.into_generator_inputs();
+        let cargo_lock_inputs = lock_resolution.cargo_lock_authority.into_generator_inputs();
+        let lock_payload = cargo_lock_inputs.payload;
+        let cargo_lock_projection_root = cargo_lock_inputs.projection_root;
+        let clear_cargo_lock = cargo_lock_inputs.clear_existing;
 
         #[cfg(feature = "rust_inspect")]
         let rust_inspect_manifest_dir = {
@@ -3343,6 +3347,7 @@ pub(super) fn run_file_tests_batch(
                 &rust_inspect_requirements,
                 lock_payload.clone(),
                 cargo_lock_projection_root.as_deref(),
+                clear_cargo_lock,
             ) {
                 Ok(dir) => dir,
                 Err(err) => {
@@ -3427,6 +3432,7 @@ pub(super) fn run_file_tests_batch(
             project_requirements: lock_resolution.project_requirements,
             cargo_package_name: lock_resolution.cargo_package_name,
             cargo_lock_projection_root,
+            clear_cargo_lock,
             lock_payload,
             prechecked_type_info,
             #[cfg(feature = "rust_inspect")]
@@ -3532,6 +3538,7 @@ pub(super) fn run_file_tests_batch(
     ));
     generator.set_cargo_lock_payload(prepared.lock_payload.clone());
     generator.set_cargo_lock_projection_root(prepared.cargo_lock_projection_root.clone());
+    generator.set_clear_cargo_lock(prepared.clear_cargo_lock);
     let cargo_flags = common::cargo_command_flags(cargo_policy, &cargo_feature_selection);
     generator.set_cargo_policy_flags(cargo_flags.clone());
 
