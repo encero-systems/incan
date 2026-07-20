@@ -231,7 +231,8 @@ fn run_cargo_lock_projection(
     generated_package_name: &str,
     generated_package_version: &str,
 ) -> io::Result<()> {
-    let mut command = Command::new("cargo");
+    let cargo = env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let mut command = Command::new(&cargo);
     sanitize_cargo_environment(&mut command);
     let output = command
         .arg("generate-lockfile")
@@ -260,7 +261,7 @@ fn run_cargo_lock_projection(
         let mut errors = Vec::new();
         let mut updated = false;
         for candidate in candidates {
-            let mut command = Command::new("cargo");
+            let mut command = Command::new(&cargo);
             sanitize_cargo_environment(&mut command);
             let output = command
                 .arg("update")

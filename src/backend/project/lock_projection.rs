@@ -104,7 +104,7 @@ impl CargoLockProjection {
                 })
                 .filter_map(|candidate| {
                     precise_for_source(candidate.source?, candidate.version).map(|precise| CargoLockUpdate {
-                        package_spec: format!("{}@{}", coordinate.name, coordinate.version),
+                        package_spec: package_spec_for_coordinate(&coordinate),
                         precise,
                     })
                 })
@@ -213,6 +213,18 @@ fn precise_for_source(source: &str, version: &str) -> Option<String> {
         .starts_with("git+")
         .then(|| source.rsplit_once('#').map(|(_, revision)| revision.to_string()))
         .flatten()
+}
+
+fn package_spec_for_coordinate(coordinate: &PackageCoordinate<'_>) -> String {
+    let Some(source) = coordinate.source else {
+        return format!("{}@{}", coordinate.name, coordinate.version);
+    };
+    let source = if source.starts_with("git+") {
+        source.split_once('#').map_or(source, |(base, _)| base)
+    } else {
+        source
+    };
+    format!("{source}#{}@{}", coordinate.name, coordinate.version)
 }
 
 fn sort_update_candidates(mut candidates: Vec<CargoLockUpdate>) -> Vec<CargoLockUpdate> {
@@ -487,14 +499,64 @@ dependencies = ["bitflags"]
             projection.next_update_candidates(&projected, "leaf", crate::version::INCAN_VERSION)?,
             Some(vec![
                 CargoLockUpdate {
-                    package_spec: "bitflags@2.13.1".to_string(),
+                    package_spec: "registry+https://github.com/rust-lang/crates.io-index#bitflags@2.13.1".to_string(),
                     precise: "2.11.0".to_string(),
                 },
                 CargoLockUpdate {
-                    package_spec: "bitflags@2.13.1".to_string(),
+                    package_spec: "registry+https://github.com/rust-lang/crates.io-index#bitflags@2.13.1".to_string(),
                     precise: "1.3.2".to_string(),
                 },
             ])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn projection_updates_are_qualified_by_the_projected_source() -> Result<(), Box<dyn std::error::Error>> {
+        let canonical = format!(
+            r#"version = 4
+
+[[package]]
+name = "incan_workspace"
+version = "{}"
+dependencies = ["dep 1.0.0 (registry+https://first.example/index)"]
+
+[[package]]
+name = "dep"
+version = "1.0.0"
+source = "registry+https://first.example/index"
+"#,
+            crate::version::INCAN_VERSION
+        );
+        let projection = CargoLockProjection::new(canonical, "incan_workspace".to_string())?;
+        let projected = format!(
+            r#"version = 4
+
+[[package]]
+name = "caller"
+version = "{}"
+dependencies = ["dep 2.0.0 (registry+https://first.example/index)"]
+
+[[package]]
+name = "dep"
+version = "2.0.0"
+source = "registry+https://first.example/index"
+
+[[package]]
+name = "dep"
+version = "2.0.0"
+source = "registry+https://second.example/index"
+"#,
+            crate::version::INCAN_VERSION
+        );
+
+        let updates = projection
+            .next_update_candidates(&projected, "caller", crate::version::INCAN_VERSION)?
+            .ok_or("expected canonical update candidates")?;
+        assert_eq!(updates.len(), 1);
+        assert_eq!(
+            updates[0].package_spec,
+            "registry+https://first.example/index#dep@2.0.0"
         );
         Ok(())
     }

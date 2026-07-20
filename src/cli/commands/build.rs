@@ -950,10 +950,9 @@ fn prepare_project_with_options(
         #[cfg(feature = "rust_inspect")]
         rust_inspect_query_paths: &metadata_query_paths,
     })?;
-    let cargo_lock_projection_root = lock_resolution.cargo_lock_projection_root;
+    let (lock_payload, cargo_lock_projection_root) = lock_resolution.cargo_lock_authority.into_generator_inputs();
     resolved = lock_resolution.resolved;
     project_requirements = lock_resolution.project_requirements;
-    let lock_payload = lock_resolution.cargo_lock_payload;
     let cargo_package_name = lock_resolution.cargo_package_name;
     generator.set_package_name(Some(cargo_package_name.clone()));
     generator.set_stdlib_features(project_requirements.stdlib_features.clone());
@@ -1344,9 +1343,8 @@ fn prepare_library_project(
         // the parent command remains the sole owner of canonical lock generation and publication. SDK provider
         // artifact builds are excluded because their parent supplies an exact Cargo.lock payload override.
         LockResolution {
-            cargo_lock_payload: None,
+            cargo_lock_authority: super::lock::CargoLockAuthority::None,
             cargo_package_name: project_name.clone(),
-            cargo_lock_projection_root: None,
             resolved,
             project_requirements,
         }
@@ -1367,10 +1365,10 @@ fn prepare_library_project(
             rust_inspect_query_paths: &metadata_query_paths,
         })?
     };
-    let cargo_lock_projection_root = lock_resolution.cargo_lock_projection_root;
+    let (lock_payload_for_typecheck, cargo_lock_projection_root) =
+        lock_resolution.cargo_lock_authority.into_generator_inputs();
     resolved = lock_resolution.resolved;
     project_requirements = lock_resolution.project_requirements;
-    let lock_payload_for_typecheck = lock_resolution.cargo_lock_payload;
     let lock_cargo_package_name = lock_resolution.cargo_package_name;
     record_timing(&mut timings_ms, "library_resolve_lock_payload", lock_start);
     let should_preheat_library_dependencies = lock_payload_for_typecheck.is_some()

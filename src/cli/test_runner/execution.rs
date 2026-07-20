@@ -3320,7 +3320,7 @@ pub(super) fn run_file_tests_batch(
                     .collect();
             }
         };
-        let lock_payload = lock_resolution.cargo_lock_payload.clone();
+        let (lock_payload, cargo_lock_projection_root) = lock_resolution.cargo_lock_authority.into_generator_inputs();
 
         #[cfg(feature = "rust_inspect")]
         let rust_inspect_manifest_dir = {
@@ -3342,7 +3342,7 @@ pub(super) fn run_file_tests_batch(
                 &lock_resolution.resolved,
                 &rust_inspect_requirements,
                 lock_payload.clone(),
-                lock_resolution.cargo_lock_projection_root.as_deref(),
+                cargo_lock_projection_root.as_deref(),
             ) {
                 Ok(dir) => dir,
                 Err(err) => {
@@ -3426,7 +3426,7 @@ pub(super) fn run_file_tests_batch(
             resolved: lock_resolution.resolved,
             project_requirements: lock_resolution.project_requirements,
             cargo_package_name: lock_resolution.cargo_package_name,
-            cargo_lock_projection_root: lock_resolution.cargo_lock_projection_root,
+            cargo_lock_projection_root,
             lock_payload,
             prechecked_type_info,
             #[cfg(feature = "rust_inspect")]

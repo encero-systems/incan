@@ -223,12 +223,31 @@ pub(crate) struct LockResolutionRequest<'a> {
 
 /// Cargo inputs that must be consumed together by generated projects.
 pub(crate) struct LockResolution {
-    pub cargo_lock_payload: Option<String>,
+    pub cargo_lock_authority: CargoLockAuthority,
     pub cargo_package_name: String,
-    /// Exact canonical source-less root that authorizes Cargo-owned projection onto the caller manifest.
-    pub cargo_lock_projection_root: Option<String>,
     pub resolved: ResolvedDependencies,
     pub project_requirements: ProjectRequirements,
+}
+
+/// Closed authority state for generated Cargo locks.
+pub(crate) enum CargoLockAuthority {
+    /// No trusted Cargo lock payload is available, including tolerated stale locks.
+    None,
+    /// An internal artifact build consumes an exact payload directly without caller projection.
+    Exact { payload: String },
+    /// A fresh canonical payload authorizes Cargo-owned projection from one exact source-less root.
+    CanonicalProjection { payload: String, root: String },
+}
+
+impl CargoLockAuthority {
+    /// Split the closed authority state into generator inputs at the final rendering boundary.
+    pub(crate) fn into_generator_inputs(self) -> (Option<String>, Option<String>) {
+        match self {
+            Self::None => (None, None),
+            Self::Exact { payload } => (Some(payload), None),
+            Self::CanonicalProjection { payload, root } => (Some(payload), Some(root)),
+        }
+    }
 }
 
 /// Read the compiler-owned Cargo.lock payload override used while building an internal artifact.
@@ -355,7 +374,7 @@ pub(crate) fn prepare_rust_inspect_typecheck_workspace(
         sdk_profile_override: None,
         rust_inspect_query_paths: &metadata_query_paths,
     })?;
-    let cargo_lock_projection_root = lock_resolution.cargo_lock_projection_root.clone();
+    let (cargo_lock_payload, cargo_lock_projection_root) = lock_resolution.cargo_lock_authority.into_generator_inputs();
     prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {
         project_root,
         project_name,
@@ -363,7 +382,7 @@ pub(crate) fn prepare_rust_inspect_typecheck_workspace(
         rust_edition,
         resolved: &lock_resolution.resolved,
         project_requirements: &lock_resolution.project_requirements,
-        lock_payload: lock_resolution.cargo_lock_payload,
+        lock_payload: cargo_lock_payload,
         cargo_lock_projection_root: cargo_lock_projection_root.as_deref(),
         rust_inspect_query_paths: &metadata_query_paths,
         prepare_when_empty: false,
@@ -397,9 +416,8 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
 
     if manifest.is_none() {
         return Ok(LockResolution {
-            cargo_lock_payload: None,
+            cargo_lock_authority: CargoLockAuthority::None,
             cargo_package_name: project_name.to_string(),
-            cargo_lock_projection_root: None,
             resolved: caller_resolved,
             project_requirements: project_requirements.clone(),
         });
@@ -413,9 +431,8 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
         )?
     {
         return Ok(LockResolution {
-            cargo_lock_payload: Some(payload),
+            cargo_lock_authority: CargoLockAuthority::Exact { payload },
             cargo_package_name: project_name.to_string(),
-            cargo_lock_projection_root: None,
             resolved: caller_resolved,
             project_requirements: project_requirements.clone(),
         });
@@ -518,17 +535,18 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
                  rewriting it. Run `incan lock` to refresh it."
             );
             return Ok(LockResolution {
-                cargo_lock_payload: None,
+                cargo_lock_authority: CargoLockAuthority::None,
                 cargo_package_name: project_name.to_string(),
-                cargo_lock_projection_root: None,
                 resolved: caller_resolved,
                 project_requirements: project_requirements.clone(),
             });
         }
         return Ok(LockResolution {
-            cargo_lock_payload: Some(lock.cargo_lock_payload),
+            cargo_lock_authority: CargoLockAuthority::CanonicalProjection {
+                payload: lock.cargo_lock_payload,
+                root: project_name.to_string(),
+            },
             cargo_package_name: project_name.to_string(),
-            cargo_lock_projection_root: Some(project_name.to_string()),
             resolved: caller_resolved,
             project_requirements: project_requirements.clone(),
         });
@@ -552,9 +570,11 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
         rust_inspect_query_paths,
     )?;
     Ok(LockResolution {
-        cargo_lock_payload: Some(lock.cargo_lock_payload),
+        cargo_lock_authority: CargoLockAuthority::CanonicalProjection {
+            payload: lock.cargo_lock_payload,
+            root: project_name.to_string(),
+        },
         cargo_package_name: project_name.to_string(),
-        cargo_lock_projection_root: Some(project_name.to_string()),
         resolved: caller_resolved,
         project_requirements: project_requirements.clone(),
     })
@@ -637,17 +657,18 @@ fn resolve_workspace_lock_payload(request: WorkspaceLockResolutionRequest<'_>) -
                  or rewriting it. Run `incan lock` to refresh it."
             );
             return Ok(LockResolution {
-                cargo_lock_payload: None,
+                cargo_lock_authority: CargoLockAuthority::None,
                 cargo_package_name: caller_project_name.to_string(),
-                cargo_lock_projection_root: None,
                 resolved: caller_resolved,
                 project_requirements: caller_project_requirements.clone(),
             });
         }
         return Ok(LockResolution {
-            cargo_lock_payload: Some(lock.cargo_lock_payload),
+            cargo_lock_authority: CargoLockAuthority::CanonicalProjection {
+                payload: lock.cargo_lock_payload,
+                root: WORKSPACE_LOCK_CARGO_PACKAGE_NAME.to_string(),
+            },
             cargo_package_name: caller_project_name.to_string(),
-            cargo_lock_projection_root: Some(WORKSPACE_LOCK_CARGO_PACKAGE_NAME.to_string()),
             resolved: caller_resolved,
             project_requirements: caller_project_requirements.clone(),
         });
@@ -689,9 +710,11 @@ fn resolve_workspace_lock_payload(request: WorkspaceLockResolutionRequest<'_>) -
         &rust_inspect_query_paths,
     )?;
     Ok(LockResolution {
-        cargo_lock_payload: Some(lock.cargo_lock_payload),
+        cargo_lock_authority: CargoLockAuthority::CanonicalProjection {
+            payload: lock.cargo_lock_payload,
+            root: WORKSPACE_LOCK_CARGO_PACKAGE_NAME.to_string(),
+        },
         cargo_package_name: caller_project_name.to_string(),
-        cargo_lock_projection_root: Some(WORKSPACE_LOCK_CARGO_PACKAGE_NAME.to_string()),
         resolved: caller_resolved,
         project_requirements: caller_project_requirements.clone(),
     })
@@ -1873,6 +1896,26 @@ mod tests {
             optional: false,
             package: None,
         }
+    }
+
+    #[test]
+    fn cargo_lock_authority_exposes_only_closed_generator_input_pairs() {
+        assert_eq!(CargoLockAuthority::None.into_generator_inputs(), (None, None));
+        assert_eq!(
+            CargoLockAuthority::Exact {
+                payload: "exact".to_string(),
+            }
+            .into_generator_inputs(),
+            (Some("exact".to_string()), None)
+        );
+        assert_eq!(
+            CargoLockAuthority::CanonicalProjection {
+                payload: "canonical".to_string(),
+                root: "incan_workspace".to_string(),
+            }
+            .into_generator_inputs(),
+            (Some("canonical".to_string()), Some("incan_workspace".to_string()))
+        );
     }
 
     #[test]
