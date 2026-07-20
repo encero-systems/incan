@@ -938,7 +938,7 @@ mod tests {
             let file = OpenOptions::new()
                 .read(true)
                 .write(true)
-                .open(legacy_publication_lock_path(&lock_path)?)?;
+                .open(legacy_publication_lock_path(lock_path)?)?;
             file.lock()?;
             Ok((Some(file), None))
         } else {
