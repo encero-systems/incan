@@ -220,6 +220,100 @@ main = "src/main.incn"
 }
 
 #[test]
+fn build_typed_web_extractors_and_scalar_captures_issue867() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "typed_web_extractors", "")?;
+    fs::write(
+        &main_path,
+        r#"import api::routes
+from std.web import App
+
+def main() -> None:
+  App.run(host="127.0.0.1", port=0)
+"#,
+    )?;
+    let api_dir = tmp.path().join("src/api");
+    fs::create_dir_all(&api_dir)?;
+    fs::write(
+        api_dir.join("routes.incn"),
+        r#"from std.web import route, Json, Query, Path, GET, POST
+from std.serde import json
+import std.async
+
+@derive(json)
+model Search:
+  q: str
+
+@derive(json)
+model Update:
+  name: str
+
+@derive(json)
+model Reply:
+  value: str
+
+@route("/search", methods=[GET])
+async def search(query: Query[Search]) -> Json[Reply]:
+  return Json(Reply(value=query.q))
+
+@route("/json", methods=[POST])
+async def create(body: Json[Update]) -> Json[Reply]:
+  return Json(Reply(value=body.name))
+
+@route("/typed/{id}", methods=[GET])
+async def typed_path(_: Path[int]) -> Json[Reply]:
+  return Json(Reply(value="typed"))
+
+@route("/scalar/{id}", methods=[GET])
+async def scalar_path(id: int) -> Json[Reply]:
+  return Json(Reply(value=f"{id}"))
+
+@route("/multi/{year}/{month}", methods=[GET])
+async def multiple_paths(year: int, month: int) -> Json[Reply]:
+  return Json(Reply(value=f"{year}-{month}"))
+
+@route("/mixed/{id}", methods=[POST])
+async def mixed(id: int, _query: Query[Search], _body: Json[Update]) -> Json[Reply]:
+  return Json(Reply(value=f"{id}"))
+
+@route("/methods", methods=[GET, POST])
+async def multiple_methods() -> Json[Reply]:
+  return Json(Reply(value="methods"))
+"#,
+    )?;
+
+    let output = run_incan(
+        tmp.path(),
+        &["build", main_path.to_string_lossy().as_ref(), "--offline"],
+    )?;
+    assert_success(&output, "typed web extractor build");
+
+    let generated_root = tmp.path().join("target/incan/typed_web_extractors/src");
+    let generated_main = fs::read_to_string(generated_root.join("main.rs"))?;
+    let generated_routes = fs::read_to_string(generated_root.join("api/routes.rs"))?;
+    let generated = format!("{generated_main}\n{generated_routes}");
+    let compact_generated = generated
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    assert!(
+        generated.contains("\"/typed/{id}\""),
+        "generated route must retain Axum 0.8 capture syntax"
+    );
+    assert!(
+        compact_generated.contains("Query<Search>") && compact_generated.contains("Json<Update>"),
+        "generated typed request extractors must retain their concrete types"
+    );
+    assert!(
+        generated.contains("\"/multi/{year}/{month}\"")
+            && !compact_generated.contains("Query<_>")
+            && !compact_generated.contains("Json<_>"),
+        "generated multiple captures must retain Axum 0.8 syntax without inferred item signatures"
+    );
+    Ok(())
+}
+
+#[test]
 fn run_synchronous_result_main_issue843() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "synchronous_result_main", "")?;
