@@ -65,7 +65,7 @@ use super::lock::{RustInspectWorkspaceRequest, prepare_rust_inspect_workspace};
 use super::vocab_extraction::{PendingDesugarerArtifact, collect_library_vocab_metadata};
 use crate::cli::prelude::ParsedModule;
 #[cfg(feature = "rust_inspect")]
-use crate::rust_inspect::{InspectError, Inspector, InspectorConfig};
+use crate::rust_inspect::{Inspector, InspectorConfig, RustMetadataError};
 use sha2::{Digest as _, Sha256};
 
 // ============================================================================
@@ -359,7 +359,10 @@ fn collect_library_rust_abi_query_paths(
 }
 
 #[cfg(feature = "rust_inspect")]
-/// Read prewarmed Rust metadata from the generated inspect workspace and package it as manifest ABI.
+/// Extract complete Rust metadata from the generated inspect workspace and package it as manifest ABI.
+///
+/// Prewarm deliberately permits a fast syntax-only fallback. A library artifact is a durable semantic boundary, so
+/// publishing whatever happens to be in that shared cache would make its ABI depend on earlier compiler queries.
 fn collect_library_rust_abi(
     rust_inspect_manifest_dir: &Path,
     query_paths: &[String],
@@ -371,12 +374,22 @@ fn collect_library_rust_abi(
     let inspector = Inspector::new(InspectorConfig::new(rust_inspect_manifest_dir.to_path_buf()));
     let mut items = Vec::new();
     for path in query_paths {
-        match inspector.get(path) {
-            Ok(result) => items.push((*result.metadata).clone()),
-            Err(InspectError::MetadataMiss { .. }) => {}
+        let Some(lookup_path) = Inspector::normalize_lookup_path(path) else {
+            continue;
+        };
+        match inspector
+            .cache()
+            .get_or_extract_complete(rust_inspect_manifest_dir, lookup_path, &|_| ())
+        {
+            Ok(metadata) => items.push((*metadata).clone()),
+            Err(
+                RustMetadataError::CrateNotFound(_)
+                | RustMetadataError::PathNotResolved(_)
+                | RustMetadataError::UnsupportedMacro(_),
+            ) => {}
             Err(err) => {
                 return Err(CliError::failure(format!(
-                    "failed to read Rust ABI metadata for `{path}` from {}: {err}",
+                    "failed to extract complete Rust ABI metadata for `{path}` from {}: {err}",
                     rust_inspect_manifest_dir.display()
                 )));
             }
@@ -3007,6 +3020,66 @@ mod tests {
             paths.iter().any(|path| path == "incan_stdlib::num::gcd_i64"),
             "expected rust.extern backing item in ABI query paths, got: {paths:?}"
         );
+        Ok(())
+    }
+
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn library_rust_abi_is_independent_of_partial_prewarm_cache_issue922() -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = tempfile::tempdir()?;
+        let root = workspace.path().join("root");
+        let dependency = workspace.path().join("source-dep");
+        fs::create_dir_all(root.join("src"))?;
+        fs::create_dir_all(dependency.join("src"))?;
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"root\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nsource-dep = { path = \"../source-dep\" }\n",
+        )?;
+        fs::write(root.join("src/lib.rs"), "pub fn keep() {}\n")?;
+        fs::write(
+            dependency.join("Cargo.toml"),
+            "[package]\nname = \"source-dep\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\nname = \"source_dep\"\n",
+        )?;
+        fs::write(
+            dependency.join("src/lib.rs"),
+            r#"
+pub struct ChildId(String);
+
+impl ChildId {
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+}
+"#,
+        )?;
+
+        let query_path = "source_dep::ChildId".to_string();
+        let inspector = Inspector::new(InspectorConfig::new(root.clone()));
+        inspector.prewarm([query_path.clone()], &|_| ())?;
+        let prewarmed = inspector.get(&query_path)?;
+        let incan_core::interop::RustItemKind::Type(prewarmed_type) = &prewarmed.metadata.kind else {
+            return Err("expected prewarmed ChildId type metadata".into());
+        };
+        assert!(
+            !prewarmed_type.metadata_completeness.has_methods(),
+            "the regression requires the fast prewarm route to persist partial source metadata"
+        );
+
+        let query_paths = vec![query_path.clone()];
+        let cold = collect_library_rust_abi(&root, &query_paths)?.ok_or("expected cold library Rust ABI")?;
+        inspector.cache().get_or_extract_complete(&root, &query_path, &|_| ())?;
+        let warm = collect_library_rust_abi(&root, &query_paths)?.ok_or("expected warm library Rust ABI")?;
+
+        assert_eq!(
+            cold, warm,
+            "library ABI publication must not depend on whether a previous compiler query upgraded the shared cache"
+        );
+        let child_id = warm.get(&query_path).ok_or("expected ChildId ABI item")?;
+        let incan_core::interop::RustItemKind::Type(child_id_type) = &child_id.kind else {
+            return Err("expected ChildId ABI type metadata".into());
+        };
+        assert!(child_id_type.metadata_completeness.has_methods());
+        assert!(child_id_type.methods.iter().any(|method| method.name == "as_str"));
         Ok(())
     }
 
