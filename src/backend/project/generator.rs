@@ -3022,13 +3022,20 @@ dependencies = ["itoa"]
         let temp = tempfile::tempdir()?;
         let first = temp.path().join("foo-v1");
         let second = temp.path().join("foo-v2");
-        for (path, version) in [(&first, "1.0.0"), (&second, "2.0.0")] {
-            fs::create_dir_all(path)?;
-            fs::write(
-                path.join("Cargo.toml"),
-                format!("[package]\nname = \"foo\"\nversion = \"{version}\"\nedition = \"2021\"\n"),
-            )?;
-        }
+        fs::write(
+            temp.path().join("Cargo.toml"),
+            "[workspace]\nmembers = [\"foo-v1\", \"foo-v2\"]\n\n[workspace.package]\nversion = \"1.0.0\"\n",
+        )?;
+        fs::create_dir_all(&first)?;
+        fs::write(
+            first.join("Cargo.toml"),
+            "[package]\nname = \"foo\"\nversion.workspace = true\nedition = \"2021\"\n",
+        )?;
+        fs::create_dir_all(&second)?;
+        fs::write(
+            second.join("Cargo.toml"),
+            "[package]\nname = \"foo\"\nversion = \"2.0.0\"\nedition = \"2021\"\n",
+        )?;
 
         let mut generator = ProjectGenerator::new(temp.path().join("generated"), "leaf", false);
         generator.set_package_metadata(Some("0.2.0".to_string()), None);
