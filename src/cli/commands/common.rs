@@ -14,8 +14,8 @@ use std::sync::{Arc, LazyLock, Mutex};
 #[cfg(feature = "rust_inspect")]
 use crate::backend::ProjectGenerator;
 use crate::backend::ir::detect_serde_non_import_usage;
-use crate::backend::project::INCAN_STDLIB_CRATE_NAME;
 use crate::backend::project::generator::GENERATED_CARGO_TARGET_DIR_ENV;
+use crate::backend::project::{GENERATED_TOOLCHAIN_SUPPORT_CRATES, INCAN_STDLIB_CRATE_NAME};
 use crate::cli::prelude::ParsedModule;
 use crate::cli::{CliError, CliResult};
 use crate::dependency_resolver::ResolvedDependencies;
@@ -1953,7 +1953,7 @@ fn parser_only_library_manifest_entry(
 }
 
 /// Ensure clean check/format/test entrypoints see the same public dependency manifests as warmed worktrees.
-fn prepare_library_dependency_artifacts(
+pub(crate) fn prepare_library_dependency_artifacts(
     manifest: &ProjectManifest,
     feature_plan: Option<&PackageFeaturePlan>,
     active_dependencies: &BTreeSet<String>,
@@ -2183,6 +2183,39 @@ pub(crate) fn collect_project_requirements(
     }
 
     Ok(requirements)
+}
+
+/// Return the exact compiler-owned path catalog used only for semantic generated-artifact identity.
+pub(crate) fn semantic_sdk_path_dependencies(requirements: &ProjectRequirements) -> Vec<DependencySpec> {
+    let mut dependencies = requirements.sdk_path_dependencies.clone();
+    for crate_name in GENERATED_TOOLCHAIN_SUPPORT_CRATES {
+        if dependencies
+            .iter()
+            .any(|dependency| dependency.crate_name == crate_name)
+        {
+            continue;
+        }
+        dependencies.push(compiler_support_dependency_spec(crate_name));
+    }
+    dependencies.sort_by(|left, right| {
+        (&left.crate_name, left.package.as_deref()).cmp(&(&right.crate_name, right.package.as_deref()))
+    });
+    dependencies
+}
+
+/// Describe one support crate emitted into every generated Cargo project as an exact compiler-owned path.
+fn compiler_support_dependency_spec(crate_name: &str) -> DependencySpec {
+    DependencySpec {
+        crate_name: crate_name.to_string(),
+        version: None,
+        features: Vec::new(),
+        default_features: true,
+        source: DependencySource::Path {
+            path: stdlib_extra_crate_workspace_root().join("crates").join(crate_name),
+        },
+        optional: false,
+        package: None,
+    }
 }
 
 /// Build a dependency specification from a stdlib extra crate requirement.

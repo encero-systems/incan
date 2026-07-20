@@ -54,7 +54,7 @@ use super::common::{
     collect_project_requirements, collect_rust_dependency_uses, discover_effective_project_manifest,
     enforce_project_toolchain_constraint, extend_requirements_with_provider_plan, format_dependency_error,
     imported_module_deps_for_with_index, merge_project_requirement_dependencies, module_key_index,
-    resolve_project_root, resolve_source_root, validate_output_dir,
+    resolve_project_root, resolve_source_root, semantic_sdk_path_dependencies, validate_output_dir,
 };
 use super::lock::{
     GeneratedLibraryDependencyPreheatRequest, LockResolution, LockResolutionRequest, resolve_lock_context,
@@ -811,12 +811,14 @@ fn prepare_project_with_options(
     let provider_plan = compilation_session.provider_plan_for_modules(&modules)?;
     let compiled_sdk_modules = CompiledSdkModules::from_provider_plan(&provider_plan);
     extend_requirements_with_provider_plan(&mut project_requirements, &provider_plan)?;
+    let semantic_sdk_paths = semantic_sdk_path_dependencies(&project_requirements);
     let semantic = semantic_lock_state(
         &project_root,
         compilation_session.sdk_inventory.as_deref(),
         compilation_session.sdk_components.as_ref(),
         package_feature_plan.as_ref(),
         &provider_plan,
+        &semantic_sdk_paths,
     )
     .map_err(CliError::failure)?;
     // Artifact-owned stdlib modules resolve from checked metadata and are supplied by its linked Rust crate. Keep
@@ -1248,12 +1250,14 @@ fn prepare_library_project(
     let provider_plan = compilation_session.provider_plan_for_modules(&modules)?;
     let compiled_sdk_modules = CompiledSdkModules::from_provider_plan(&provider_plan);
     extend_requirements_with_provider_plan(&mut project_requirements, &provider_plan)?;
+    let semantic_sdk_paths = semantic_sdk_path_dependencies(&project_requirements);
     let semantic = semantic_lock_state(
         &project_root,
         compilation_session.sdk_inventory.as_deref(),
         compilation_session.sdk_components.as_ref(),
         Some(&package_feature_plan),
         &provider_plan,
+        &semantic_sdk_paths,
     )
     .map_err(CliError::failure)?;
     let contract_model_bundles = read_project_model_bundles(&project_root, &manifest.contract_model_bundle_paths())

@@ -3265,12 +3265,14 @@ pub(super) fn run_file_tests_batch(
                 .map(|test| (test.clone(), TestResult::Failed(start.elapsed(), error.message.clone())))
                 .collect();
         }
+        let semantic_sdk_paths = common::semantic_sdk_path_dependencies(&lock_project_requirements);
         let semantic = match semantic_lock_state(
             &project_root,
             compilation_session.sdk_inventory.as_deref(),
             compilation_session.sdk_components.as_ref(),
             compilation_session.package_feature_plan.as_ref(),
             &provider_plan,
+            &semantic_sdk_paths,
         ) {
             Ok(semantic) => semantic,
             Err(error) => {

@@ -1478,12 +1478,16 @@ root_lib = { workspace = true }
     );
     assert_success(&lock_output, "fresh rooted workspace lock generation");
 
-    // The first lock prepares the previously missing root artifact, which currently changes the semantic fingerprint.
-    // Refresh once so this regression reaches the independent library package-identity boundary from #909.
+    let first_lock = fs::read(root.path().join("incan.lock"))?;
     let lock_refresh = run_incan(root.path(), &["lock"])?;
     assert_success(
         &lock_refresh,
-        "rooted workspace lock refresh after artifact preparation",
+        "rooted workspace lock convergence check after artifact preparation",
+    );
+    assert_eq!(
+        first_lock,
+        fs::read(root.path().join("incan.lock"))?,
+        "the first lock must snapshot the root artifact it prepared and converge without a fingerprint-only refresh"
     );
 
     let library_output = run_incan(root.path(), &["build", "--lib", "--member", "root_lib", "--locked"])?;
