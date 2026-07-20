@@ -1568,11 +1568,15 @@ library = "src/lib.incn"
 [rust-dependencies.json_alias]
 package = "serde_json"
 version = "1"
+
+[rust-dependencies.old_flags]
+package = "bitflags"
+version = "=1.3.2"
 "#,
     )?;
     fs::write(
         leaf.join("src/lib.incn"),
-        "from rust::json_alias import Value\n\n\npub def leaf_value() -> int:\n  return 2\n",
+        "from rust::json_alias import Value\nfrom rust::old_flags import bitflags\n\n\npub def leaf_value() -> int:\n  return 2\n",
     )?;
 
     let sibling = root.path().join("sibling");
@@ -1588,11 +1592,15 @@ library = "src/lib.incn"
 
 [rust-dependencies]
 regex = "1"
+
+[rust-dependencies.new_flags]
+package = "bitflags"
+version = "=2.11.0"
 "#,
     )?;
     fs::write(
         sibling.join("src/lib.incn"),
-        "from rust::regex import Regex\n\n\npub def sibling_value() -> int:\n  return 3\n",
+        "from rust::regex import Regex\nfrom rust::new_flags import bitflags\n\n\npub def sibling_value() -> int:\n  return 3\n",
     )?;
 
     let lock_output = run_incan(root.path(), &["lock"])?;
@@ -1602,6 +1610,9 @@ regex = "1"
     );
     let canonical = incan::lockfile::IncanLock::load(&root.path().join("incan.lock"))?;
     let canonical_cargo: toml::Value = toml::from_str(&canonical.cargo_lock_payload)?;
+    let canonical_packages = canonical_cargo["package"]
+        .as_array()
+        .ok_or("canonical aggregate Cargo lock had no package array")?;
     assert!(
         canonical_cargo["package"]
             .as_array()
@@ -1609,6 +1620,17 @@ regex = "1"
             .flatten()
             .all(|package| package["name"].as_str() != Some("leaf") || package.get("source").is_some()),
         "the regression requires an unreferenced member absent from the aggregate Cargo lock roots"
+    );
+    let mut canonical_bitflags_versions = canonical_packages
+        .iter()
+        .filter(|package| package["name"].as_str() == Some("bitflags"))
+        .filter_map(|package| package["version"].as_str())
+        .collect::<Vec<_>>();
+    canonical_bitflags_versions.sort_unstable();
+    assert_eq!(
+        canonical_bitflags_versions,
+        vec!["1.3.2", "2.11.0"],
+        "the aggregate lock must contain both aliased sibling resolutions for this regression"
     );
 
     let _ = fs::remove_dir_all(root.path().join("target"));
@@ -1633,6 +1655,16 @@ regex = "1"
         packages
             .iter()
             .any(|package| package["name"].as_str() == Some("serde_json"))
+    );
+    let selected_bitflags_versions = packages
+        .iter()
+        .filter(|package| package["name"].as_str() == Some("bitflags"))
+        .filter_map(|package| package["version"].as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        selected_bitflags_versions,
+        vec!["1.3.2"],
+        "the sibling's incompatible aliased package resolution leaked into the selected member Cargo lock"
     );
     assert!(
         packages.iter().all(|package| package["name"].as_str() != Some("regex")),

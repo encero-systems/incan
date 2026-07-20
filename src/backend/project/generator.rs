@@ -17,7 +17,7 @@ use crate::compiled_sdk::CompiledSdkModules;
 use crate::frontend::library_manifest_index::LibraryArtifactMetadata;
 use crate::library_manifest::{LibraryManifest, ProviderDependencyKind, digest_provider_artifact};
 use crate::lockfile::WORKSPACE_LOCK_CARGO_PACKAGE_NAME;
-use crate::manifest::{DependencySource, DependencySpec};
+use crate::manifest::{DependencySource, DependencySpec, GitReference};
 use crate::provider::{ProviderPlan, SDK_PROVIDER_BUILD_ENV, SdkArtifactProjection, SdkDependencyRebinding};
 use incan_core::lang::{rust_keywords, stdlib};
 use sha2::{Digest as _, Sha256};
@@ -35,6 +35,80 @@ struct ProjectedArtifactEdge {
     kind: ProviderDependencyKind,
     default_features: bool,
     optional: bool,
+}
+
+#[derive(Clone)]
+struct LockedCargoPackage {
+    name: String,
+    version: String,
+    source: Option<String>,
+    dependencies: Vec<String>,
+}
+
+/// Split Cargo's compact lock dependency reference into package name, optional version, and optional source.
+fn locked_dependency_parts(dependency: &str) -> (&str, Option<&str>, Option<&str>) {
+    let mut parts = dependency.splitn(3, ' ');
+    let name = parts.next().unwrap_or_default();
+    let version = parts.next();
+    let source = parts.next().map(|source| source.trim_matches(['(', ')']));
+    (name, version, source)
+}
+
+/// Return whether one compact root dependency reference resolves to `candidate`.
+fn locked_dependency_resolves_to(dependency: &str, candidate: &LockedCargoPackage) -> bool {
+    let (name, version, source) = locked_dependency_parts(dependency);
+    candidate.name == name
+        && version.is_none_or(|version| candidate.version == version)
+        && source.is_none_or(|source| candidate.source.as_deref() == Some(source))
+}
+
+/// Return whether a locked package satisfies the complete source identity and version requirement of `spec`.
+fn dependency_spec_matches_locked_package(spec: &DependencySpec, candidate: &LockedCargoPackage) -> bool {
+    let package_name = spec.package.as_deref().unwrap_or(&spec.crate_name);
+    if candidate.name != package_name {
+        return false;
+    }
+    if let Some(requirement) = spec.version.as_deref() {
+        match (
+            semver::VersionReq::parse(requirement),
+            semver::Version::parse(&candidate.version),
+        ) {
+            (Ok(requirement), Ok(version)) if requirement.matches(&version) => {}
+            (Err(_), _) if requirement == candidate.version => {}
+            _ => return false,
+        }
+    }
+    match &spec.source {
+        DependencySource::Registry => candidate
+            .source
+            .as_deref()
+            .is_some_and(|source| source.starts_with("registry+") || source.starts_with("sparse+")),
+        DependencySource::Path { .. } => candidate.source.is_none(),
+        DependencySource::Git { url, reference } => candidate.source.as_deref().is_some_and(|source| {
+            let Some(git_source) = source.strip_prefix("git+") else {
+                return false;
+            };
+            if git_source.split(['?', '#']).next() != Some(url.as_str()) {
+                return false;
+            }
+            match reference {
+                GitReference::Branch(branch) => git_source.contains(&format!("branch={branch}")),
+                GitReference::Tag(tag) => git_source.contains(&format!("tag={tag}")),
+                GitReference::Rev(revision) => git_source.contains(&format!("rev={revision}")),
+            }
+        }),
+    }
+}
+
+/// Compare locked versions by SemVer where possible, with a deterministic textual fallback.
+fn compare_locked_package_versions(left: &LockedCargoPackage, right: &LockedCargoPackage) -> std::cmp::Ordering {
+    match (
+        semver::Version::parse(&left.version),
+        semver::Version::parse(&right.version),
+    ) {
+        (Ok(left), Ok(right)) => left.cmp(&right),
+        _ => left.version.cmp(&right.version),
+    }
 }
 
 // ============================================================================
@@ -1430,14 +1504,6 @@ impl ProjectGenerator {
     /// reachable from one selected library. Project the canonical payload to the matching source-less root's reachable
     /// package graph so Cargo does not need to prune unrelated workspace packages under a strict policy.
     fn cargo_lock_payload_for_package<'a>(&self, payload: &'a str) -> io::Result<Cow<'a, str>> {
-        #[derive(Clone)]
-        struct LockedPackage {
-            name: String,
-            version: String,
-            source: Option<String>,
-            dependencies: Vec<String>,
-        }
-
         let mut document = toml::from_str::<toml::Value>(payload)
             .map_err(|error| io::Error::other(format!("failed to parse generated Cargo.lock payload: {error}")))?;
         let package_name = self.cargo_package_name();
@@ -1447,7 +1513,7 @@ impl ProjectGenerator {
         };
         let mut locked_packages = packages
             .iter()
-            .map(|package| LockedPackage {
+            .map(|package| LockedCargoPackage {
                 name: package
                     .get("name")
                     .and_then(toml::Value::as_str)
@@ -1485,35 +1551,56 @@ impl ProjectGenerator {
             else {
                 return Ok(Cow::Borrowed(payload));
             };
-            let mut selected_package_names = BTreeSet::from([
-                super::INCAN_STDLIB_CRATE_NAME.to_string(),
-                super::INCAN_DERIVE_CRATE_NAME.to_string(),
-            ]);
-            let selected_dependencies = self.dependencies.iter().chain(
+            let support_dependencies =
+                [super::INCAN_STDLIB_CRATE_NAME, super::INCAN_DERIVE_CRATE_NAME].map(|crate_name| DependencySpec {
+                    crate_name: crate_name.to_string(),
+                    version: None,
+                    features: Vec::new(),
+                    default_features: true,
+                    source: DependencySource::Path { path: PathBuf::new() },
+                    optional: false,
+                    package: None,
+                });
+            let selected_dependencies = support_dependencies.iter().chain(self.dependencies.iter()).chain(
                 self.include_dev_dependencies
                     .then_some(self.dev_dependencies.as_slice())
                     .unwrap_or_default(),
             );
+            let mut selected_specs = Vec::new();
+            let mut rendered_dependency_keys = BTreeSet::new();
             for dependency in selected_dependencies {
-                selected_package_names.insert(
-                    dependency
-                        .package
-                        .as_deref()
-                        .unwrap_or(&dependency.crate_name)
-                        .to_string(),
-                );
+                let rendered_key = dependency.crate_name.replace('-', "_");
+                if rendered_dependency_keys.insert(rendered_key) {
+                    selected_specs.push(dependency);
+                }
             }
-            let dependencies = workspace_root
-                .dependencies
-                .iter()
-                .filter(|dependency| {
-                    let package_name = dependency.split_once(' ').map_or(dependency.as_str(), |(name, _)| name);
-                    selected_package_names.contains(package_name)
-                })
-                .cloned()
-                .collect::<Vec<_>>();
+            let mut dependencies = BTreeSet::new();
+            for spec in selected_specs {
+                let mut best_match: Option<(&String, &LockedCargoPackage)> = None;
+                for dependency in &workspace_root.dependencies {
+                    for candidate in &locked_packages {
+                        if !locked_dependency_resolves_to(dependency, candidate)
+                            || !dependency_spec_matches_locked_package(spec, candidate)
+                        {
+                            continue;
+                        }
+                        let replace = best_match.is_none_or(|(best_dependency, best_candidate)| {
+                            compare_locked_package_versions(candidate, best_candidate)
+                                .then_with(|| dependency.cmp(best_dependency))
+                                .is_gt()
+                        });
+                        if replace {
+                            best_match = Some((dependency, candidate));
+                        }
+                    }
+                }
+                if let Some((dependency, _)) = best_match {
+                    dependencies.insert(dependency.clone());
+                }
+            }
+            let dependencies = dependencies.into_iter().collect::<Vec<_>>();
             let root_index = locked_packages.len();
-            locked_packages.push(LockedPackage {
+            locked_packages.push(LockedCargoPackage {
                 name: package_name.to_string(),
                 version: package_version.to_string(),
                 source: None,
@@ -2691,24 +2778,47 @@ dependencies = ["path_helper"]
     -> Result<(), Box<dyn std::error::Error>> {
         let mut generator = ProjectGenerator::new("/tmp/generated_unreferenced_member_lock", "leaf", false);
         generator.set_package_metadata(Some("0.2.0".to_string()), None);
-        generator.set_dependencies(vec![DependencySpec {
-            crate_name: "json_alias".to_string(),
-            version: Some("1".to_string()),
-            features: Vec::new(),
-            default_features: true,
-            source: DependencySource::Registry,
-            optional: false,
-            package: Some("serde_json".to_string()),
-        }]);
+        generator.set_dependencies(vec![
+            DependencySpec {
+                crate_name: "json_alias".to_string(),
+                version: Some("1".to_string()),
+                features: Vec::new(),
+                default_features: true,
+                source: DependencySource::Registry,
+                optional: false,
+                package: Some("serde_json".to_string()),
+            },
+            DependencySpec {
+                crate_name: "old_flags".to_string(),
+                version: Some("=1.3.2".to_string()),
+                features: Vec::new(),
+                default_features: true,
+                source: DependencySource::Registry,
+                optional: false,
+                package: Some("bitflags".to_string()),
+            },
+        ]);
         let payload = r#"version = 4
 
 [[package]]
 name = "incan_workspace"
 version = "0.5.0-dev.19"
 dependencies = [
+ "bitflags 1.3.2",
+ "bitflags 2.11.0",
  "regex",
  "serde_json 1.0.149 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
+
+[[package]]
+name = "bitflags"
+version = "1.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "bitflags"
+version = "2.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "itoa"
@@ -2736,7 +2846,12 @@ dependencies = ["itoa"]
             .iter()
             .filter_map(|package| package["name"].as_str())
             .collect::<Vec<_>>();
-        assert_eq!(names, vec!["itoa", "serde_json", "leaf"]);
+        assert_eq!(names, vec!["bitflags", "itoa", "serde_json", "leaf"]);
+        let bitflags = packages
+            .iter()
+            .find(|package| package["name"].as_str() == Some("bitflags"))
+            .ok_or("projected lock had no selected aliased bitflags package")?;
+        assert_eq!(bitflags["version"].as_str(), Some("1.3.2"));
         let leaf = packages
             .iter()
             .find(|package| package["name"].as_str() == Some("leaf"))
@@ -2750,7 +2865,10 @@ dependencies = ["itoa"]
             .collect::<Vec<_>>();
         assert_eq!(
             dependencies,
-            vec!["serde_json 1.0.149 (registry+https://github.com/rust-lang/crates.io-index)"]
+            vec![
+                "bitflags 1.3.2",
+                "serde_json 1.0.149 (registry+https://github.com/rust-lang/crates.io-index)",
+            ]
         );
         Ok(())
     }
