@@ -7198,6 +7198,24 @@ async def main() -> None:
             2,
             "every borrowed regex capture name should be copied into an owned dictionary key:\n{generated_core}"
         );
+        assert_eq!(
+            generated_core
+                .matches("&str_slice_byte_range(&text, last_end, start)")
+                .count(),
+            3,
+            "every replacement loop should concatenate the owned Rust byte-range result through the string helper:\n{generated_core}"
+        );
+        assert_eq!(
+            generated_core
+                .matches("&str_slice_from_byte_offset(&text, last_end)")
+                .count(),
+            3,
+            "every replacement loop should concatenate the owned Rust suffix through the string helper:\n{generated_core}"
+        );
+        assert!(
+            !generated_core.contains("out = out + str_slice"),
+            "compiled std.regex providers must not lower owned Rust String results through infix String + String:\n{generated_core}"
+        );
         Ok(())
     }
 

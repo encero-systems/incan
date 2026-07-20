@@ -4826,6 +4826,60 @@ pub def exported_value() -> int:
 }
 
 #[test]
+fn cold_library_build_preserves_rust_string_compound_assignment_issue896() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let stdlib_crate = Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib");
+    let stdlib_path = stdlib_crate.to_string_lossy().replace('\\', "\\\\");
+    let _main_path = write_minimal_project(
+        tmp.path(),
+        "cold_rust_string_compound_assignment",
+        &format!(
+            r#"
+[sdk]
+profile = "minimal"
+
+[rust-dependencies.incan_stdlib]
+path = "{stdlib_path}"
+"#,
+        ),
+    )?;
+    fs::write(
+        tmp.path().join("src/lib.incn"),
+        r#"from rust::incan_stdlib::strings import str_slice_byte_range
+
+
+pub def append_range(text: str, start: int, end: int) -> str:
+  mut out = ""
+  out += str_slice_byte_range(text, start, end)
+  return out
+"#,
+    )?;
+
+    assert!(
+        !tmp.path().join("target").exists(),
+        "the regression must begin without a project-local Rust metadata cache"
+    );
+    let build = run_incan_with_env(tmp.path(), &["build", "--lib"], &[("INCAN_RUST_INSPECT_PREWARM", "0")])?;
+    assert_success(
+        &build,
+        "cold library build with a direct Rust String compound assignment",
+    );
+
+    let generated = fs::read_to_string(tmp.path().join("target/lib/src/lib.rs"))?;
+    let compact_generated = generated.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact_generated.contains("out=incan_stdlib::strings::str_concat(")
+            && compact_generated.contains("&str_slice_byte_range(&text,start,end),"),
+        "cold Rust metadata must select string-aware compound-assignment lowering:\n{generated}"
+    );
+    assert!(
+        !compact_generated.contains("out=out+str_slice_byte_range"),
+        "a direct Rust String result must not reach generated Rust's owned `String + String` path:\n{generated}"
+    );
+    Ok(())
+}
+
+#[test]
 fn build_lib_recreates_dependency_preheat_workspace_from_existing_lock() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let helper_dir = tmp.path().join("library_preheat_existing_lock_helper");
