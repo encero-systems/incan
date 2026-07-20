@@ -75,6 +75,8 @@ pub(crate) struct GeneratedLibraryDependencyPreheatRequest<'a> {
     pub target_dir: &'a Path,
     /// Embedded Cargo.lock payload from `incan.lock`.
     pub cargo_lock_payload: &'a str,
+    /// Exact canonical root authorizing Cargo-owned projection for the generated dependency workspace.
+    pub cargo_lock_projection_root: Option<&'a str>,
 }
 
 /// Generate or update incan.lock for a project.
@@ -215,25 +217,16 @@ pub(crate) struct LockResolutionRequest<'a> {
     pub package_features: Option<&'a FeatureSelection>,
     /// Command-local SDK profile used when rebuilding the canonical project-wide lock context.
     pub sdk_profile_override: Option<&'a str>,
-    /// Whether a workspace caller generates the aggregate synthetic package or one published member artifact.
-    pub workspace_projection: WorkspaceLockProjection,
     #[cfg(feature = "rust_inspect")]
     pub rust_inspect_query_paths: &'a [String],
-}
-
-/// Dependency projection consumed by a generated package backed by the canonical workspace lock.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum WorkspaceLockProjection {
-    /// Generate the synthetic package that owns the aggregate workspace Cargo graph.
-    Aggregate,
-    /// Generate one member package without unrelated dependencies from sibling members.
-    Member,
 }
 
 /// Cargo inputs that must be consumed together by generated projects.
 pub(crate) struct LockResolution {
     pub cargo_lock_payload: Option<String>,
     pub cargo_package_name: String,
+    /// Exact canonical source-less root that authorizes Cargo-owned projection onto the caller manifest.
+    pub cargo_lock_projection_root: Option<String>,
     pub resolved: ResolvedDependencies,
     pub project_requirements: ProjectRequirements,
 }
@@ -273,6 +266,7 @@ pub(crate) struct RustInspectWorkspaceRequest<'a> {
     pub resolved: &'a ResolvedDependencies,
     pub project_requirements: &'a ProjectRequirements,
     pub lock_payload: Option<String>,
+    pub cargo_lock_projection_root: Option<&'a str>,
     pub rust_inspect_query_paths: &'a [String],
     pub prepare_when_empty: bool,
 }
@@ -288,6 +282,7 @@ pub(crate) fn prepare_rust_inspect_workspace(request: RustInspectWorkspaceReques
         resolved,
         project_requirements,
         lock_payload,
+        cargo_lock_projection_root,
         rust_inspect_query_paths,
         prepare_when_empty,
     } = request;
@@ -303,6 +298,7 @@ pub(crate) fn prepare_rust_inspect_workspace(request: RustInspectWorkspaceReques
         resolved,
         project_requirements,
         lock_payload,
+        cargo_lock_projection_root,
     )?;
     prewarm_rust_inspect_workspace(&rust_inspect_manifest_dir, rust_inspect_query_paths)?;
     Ok(Some(rust_inspect_manifest_dir))
@@ -357,9 +353,9 @@ pub(crate) fn prepare_rust_inspect_typecheck_workspace(
         semantic: None,
         package_features: None,
         sdk_profile_override: None,
-        workspace_projection: WorkspaceLockProjection::Aggregate,
         rust_inspect_query_paths: &metadata_query_paths,
     })?;
+    let cargo_lock_projection_root = lock_resolution.cargo_lock_projection_root.clone();
     prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {
         project_root,
         project_name,
@@ -368,6 +364,7 @@ pub(crate) fn prepare_rust_inspect_typecheck_workspace(
         resolved: &lock_resolution.resolved,
         project_requirements: &lock_resolution.project_requirements,
         lock_payload: lock_resolution.cargo_lock_payload,
+        cargo_lock_projection_root: cargo_lock_projection_root.as_deref(),
         rust_inspect_query_paths: &metadata_query_paths,
         prepare_when_empty: false,
     })
@@ -391,16 +388,19 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
         semantic,
         package_features,
         sdk_profile_override,
-        workspace_projection,
         #[cfg(feature = "rust_inspect")]
         rust_inspect_query_paths,
     } = request;
+
+    let mut caller_resolved = resolved.clone();
+    merge_project_requirement_dependencies(&mut caller_resolved, project_requirements)?;
 
     if manifest.is_none() {
         return Ok(LockResolution {
             cargo_lock_payload: None,
             cargo_package_name: project_name.to_string(),
-            resolved: resolved.clone(),
+            cargo_lock_projection_root: None,
+            resolved: caller_resolved,
             project_requirements: project_requirements.clone(),
         });
     }
@@ -415,7 +415,8 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
         return Ok(LockResolution {
             cargo_lock_payload: Some(payload),
             cargo_package_name: project_name.to_string(),
-            resolved: resolved.clone(),
+            cargo_lock_projection_root: None,
+            resolved: caller_resolved,
             project_requirements: project_requirements.clone(),
         });
     }
@@ -428,9 +429,8 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
         return resolve_workspace_lock_payload(WorkspaceLockResolutionRequest {
             workspace: &workspace,
             caller_project_name: project_name,
-            caller_resolved: resolved,
+            caller_resolved: &caller_resolved,
             caller_project_requirements: project_requirements,
-            projection: workspace_projection,
             caller_entry_file: entry_file,
             cargo_features,
             cargo_policy,
@@ -452,10 +452,10 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
     } else {
         None
     };
-    let (resolved, project_requirements) = if let Some(context) = project_context.as_ref() {
+    let (canonical_resolved, canonical_project_requirements) = if let Some(context) = project_context.as_ref() {
         (context.resolved.clone(), context.project_requirements.clone())
     } else {
-        (resolved.clone(), project_requirements.clone())
+        (caller_resolved.clone(), project_requirements.clone())
     };
     #[cfg(feature = "rust_inspect")]
     let rust_inspect_query_paths = project_context
@@ -465,8 +465,11 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
 
     let lock_path = project_root.join("incan.lock");
     let rust_edition = manifest.and_then(|m| m.build.as_ref().and_then(|b| b.rust_edition.clone()));
-    let mut resolved_with_requirements = resolved.clone();
-    merge_project_requirement_dependencies(&mut resolved_with_requirements, &project_requirements)?;
+    let mut canonical_resolved_with_requirements = canonical_resolved;
+    merge_project_requirement_dependencies(
+        &mut canonical_resolved_with_requirements,
+        &canonical_project_requirements,
+    )?;
     // A manifest-backed lock is project-wide, so its canonical context must win over an entrypoint-local semantic
     // snapshot. The supplied snapshot remains authoritative for manifest-less callers, where no project closure can
     // be rebuilt.
@@ -475,10 +478,10 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
         .map(|context| context.semantic.clone())
         .or_else(|| semantic.cloned())
         .unwrap_or_default();
-    let semantic_sdk_paths = semantic_sdk_path_dependencies(&project_requirements);
+    let semantic_sdk_paths = semantic_sdk_path_dependencies(&canonical_project_requirements);
     let fingerprint = compute_resolved_fingerprint_with_sdk_paths(
-        &resolved_with_requirements.dependencies,
-        &resolved_with_requirements.dev_dependencies,
+        &canonical_resolved_with_requirements.dependencies,
+        &canonical_resolved_with_requirements.dev_dependencies,
         cargo_features,
         Some(project_root),
         &semantic,
@@ -486,7 +489,7 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
     );
 
     let strict = cargo_policy.locked || cargo_policy.frozen;
-    if strict && let Some(message) = strict_git_source_error(&resolved_with_requirements) {
+    if strict && let Some(message) = strict_git_source_error(&canonical_resolved_with_requirements) {
         return Err(CliError::failure(message));
     }
     if lock_path.exists() {
@@ -511,21 +514,23 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
                 )));
             }
             eprintln!(
-                "warning: incan.lock is out of date; using the existing lock payload without rewriting it. \
-                 Run `incan lock` to refresh it."
+                "warning: incan.lock is out of date; continuing without using it as Cargo lock authority or \
+                 rewriting it. Run `incan lock` to refresh it."
             );
             return Ok(LockResolution {
-                cargo_lock_payload: Some(lock.cargo_lock_payload),
+                cargo_lock_payload: None,
                 cargo_package_name: project_name.to_string(),
-                resolved,
-                project_requirements,
+                cargo_lock_projection_root: None,
+                resolved: caller_resolved,
+                project_requirements: project_requirements.clone(),
             });
         }
         return Ok(LockResolution {
             cargo_lock_payload: Some(lock.cargo_lock_payload),
             cargo_package_name: project_name.to_string(),
-            resolved,
-            project_requirements,
+            cargo_lock_projection_root: Some(project_name.to_string()),
+            resolved: caller_resolved,
+            project_requirements: project_requirements.clone(),
         });
     }
 
@@ -537,8 +542,8 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
         project_root,
         project_name,
         rust_edition,
-        &resolved_with_requirements,
-        &project_requirements,
+        &canonical_resolved_with_requirements,
+        &canonical_project_requirements,
         cargo_features,
         cargo_policy,
         &semantic,
@@ -549,8 +554,9 @@ pub(crate) fn resolve_lock_context(request: LockResolutionRequest<'_>) -> CliRes
     Ok(LockResolution {
         cargo_lock_payload: Some(lock.cargo_lock_payload),
         cargo_package_name: project_name.to_string(),
-        resolved,
-        project_requirements,
+        cargo_lock_projection_root: Some(project_name.to_string()),
+        resolved: caller_resolved,
+        project_requirements: project_requirements.clone(),
     })
 }
 
@@ -563,7 +569,6 @@ struct WorkspaceLockResolutionRequest<'a> {
     caller_project_name: &'a str,
     caller_resolved: &'a ResolvedDependencies,
     caller_project_requirements: &'a ProjectRequirements,
-    projection: WorkspaceLockProjection,
     caller_entry_file: Option<&'a Path>,
     cargo_features: &'a CargoFeatureSelection,
     cargo_policy: &'a CargoPolicy,
@@ -580,7 +585,6 @@ fn resolve_workspace_lock_payload(request: WorkspaceLockResolutionRequest<'_>) -
         caller_project_name,
         caller_resolved,
         caller_project_requirements,
-        projection,
         caller_entry_file,
         cargo_features,
         cargo_policy,
@@ -613,6 +617,8 @@ fn resolve_workspace_lock_payload(request: WorkspaceLockResolutionRequest<'_>) -
         return Err(CliError::failure(message));
     }
 
+    let caller_resolved = caller_resolved.clone();
+
     let lock_path = workspace.root().join("incan.lock");
     if lock_path.exists() {
         let lock = IncanLock::load(&lock_path).map_err(|error| CliError::failure(error.to_string()))?;
@@ -627,39 +633,23 @@ fn resolve_workspace_lock_payload(request: WorkspaceLockResolutionRequest<'_>) -
                 )));
             }
             eprintln!(
-                "warning: workspace incan.lock is out of date; using the existing root lock payload without rewriting \
-                 it. Run `incan lock` to refresh it."
+                "warning: workspace incan.lock is out of date; continuing without using it as Cargo lock authority \
+                 or rewriting it. Run `incan lock` to refresh it."
             );
             return Ok(LockResolution {
-                cargo_lock_payload: Some(lock.cargo_lock_payload),
-                cargo_package_name: match projection {
-                    WorkspaceLockProjection::Aggregate => WORKSPACE_LOCK_CARGO_PACKAGE_NAME.to_string(),
-                    WorkspaceLockProjection::Member => caller_project_name.to_string(),
-                },
-                resolved: match projection {
-                    WorkspaceLockProjection::Aggregate => resolved,
-                    WorkspaceLockProjection::Member => caller_resolved.clone(),
-                },
-                project_requirements: match projection {
-                    WorkspaceLockProjection::Aggregate => requirements,
-                    WorkspaceLockProjection::Member => caller_project_requirements.clone(),
-                },
+                cargo_lock_payload: None,
+                cargo_package_name: caller_project_name.to_string(),
+                cargo_lock_projection_root: None,
+                resolved: caller_resolved,
+                project_requirements: caller_project_requirements.clone(),
             });
         }
         return Ok(LockResolution {
             cargo_lock_payload: Some(lock.cargo_lock_payload),
-            cargo_package_name: match projection {
-                WorkspaceLockProjection::Aggregate => WORKSPACE_LOCK_CARGO_PACKAGE_NAME.to_string(),
-                WorkspaceLockProjection::Member => caller_project_name.to_string(),
-            },
-            resolved: match projection {
-                WorkspaceLockProjection::Aggregate => resolved,
-                WorkspaceLockProjection::Member => caller_resolved.clone(),
-            },
-            project_requirements: match projection {
-                WorkspaceLockProjection::Aggregate => requirements,
-                WorkspaceLockProjection::Member => caller_project_requirements.clone(),
-            },
+            cargo_package_name: caller_project_name.to_string(),
+            cargo_lock_projection_root: Some(WORKSPACE_LOCK_CARGO_PACKAGE_NAME.to_string()),
+            resolved: caller_resolved,
+            project_requirements: caller_project_requirements.clone(),
         });
     }
 
@@ -700,18 +690,10 @@ fn resolve_workspace_lock_payload(request: WorkspaceLockResolutionRequest<'_>) -
     )?;
     Ok(LockResolution {
         cargo_lock_payload: Some(lock.cargo_lock_payload),
-        cargo_package_name: match projection {
-            WorkspaceLockProjection::Aggregate => WORKSPACE_LOCK_CARGO_PACKAGE_NAME.to_string(),
-            WorkspaceLockProjection::Member => caller_project_name.to_string(),
-        },
-        resolved: match projection {
-            WorkspaceLockProjection::Aggregate => resolved,
-            WorkspaceLockProjection::Member => caller_resolved.clone(),
-        },
-        project_requirements: match projection {
-            WorkspaceLockProjection::Aggregate => requirements,
-            WorkspaceLockProjection::Member => caller_project_requirements.clone(),
-        },
+        cargo_package_name: caller_project_name.to_string(),
+        cargo_lock_projection_root: Some(WORKSPACE_LOCK_CARGO_PACKAGE_NAME.to_string()),
+        resolved: caller_resolved,
+        project_requirements: caller_project_requirements.clone(),
     })
 }
 
@@ -1484,6 +1466,7 @@ pub(crate) fn run_generated_library_dependency_preheat(
         cargo_policy,
         target_dir,
         cargo_lock_payload,
+        cargo_lock_projection_root,
     } = request;
     if !lock_dependency_preheat_enabled() {
         eprintln!("generated library dependency preheat: disabled by INCAN_LOCK_PREHEAT");
@@ -1497,6 +1480,7 @@ pub(crate) fn run_generated_library_dependency_preheat(
         resolved,
         project_requirements,
         cargo_lock_payload,
+        cargo_lock_projection_root,
     )?;
 
     let cargo_flags = cargo_command_flags(cargo_policy, cargo_features);
@@ -1603,6 +1587,7 @@ fn materialize_dependency_preheat_workspace(
     resolved: &ResolvedDependencies,
     project_requirements: &ProjectRequirements,
     cargo_lock_payload: &str,
+    cargo_lock_projection_root: Option<&str>,
 ) -> CliResult<()> {
     let mut generator = ProjectGenerator::new(lock_dir, project_name, false);
     generator.set_dependencies(resolved.dependencies.clone());
@@ -1614,9 +1599,15 @@ fn materialize_dependency_preheat_workspace(
     generator.set_sdk_path_dependencies(project_requirements.sdk_path_dependencies.clone());
     generator.set_sdk_artifact_projections(project_requirements.sdk_artifact_projections.clone());
     generator.set_cargo_lock_payload(Some(cargo_lock_payload.to_string()));
+    generator.set_cargo_lock_projection_root(cargo_lock_projection_root.map(ToOwned::to_owned));
     generator
         .generate("pub fn __incan_dependency_preheat() {}")
         .map_err(|err| CliError::failure(format!("Failed to generate dependency preheat project: {err}")))?;
+    generator.materialize_cargo_lock_projection().map_err(|error| {
+        CliError::failure(format!(
+            "Failed to project generated dependency preheat Cargo.lock: {error}"
+        ))
+    })?;
     Ok(())
 }
 

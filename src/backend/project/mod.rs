@@ -20,6 +20,7 @@
 
 pub mod cargo_toml;
 pub mod generator;
+pub(crate) mod lock_projection;
 pub mod plan;
 pub mod runner;
 

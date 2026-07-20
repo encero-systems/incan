@@ -57,8 +57,8 @@ use super::common::{
     resolve_project_root, resolve_source_root, semantic_sdk_path_dependencies, validate_output_dir,
 };
 use super::lock::{
-    GeneratedLibraryDependencyPreheatRequest, LockResolution, LockResolutionRequest, WorkspaceLockProjection,
-    resolve_lock_context, run_generated_library_dependency_preheat,
+    GeneratedLibraryDependencyPreheatRequest, LockResolution, LockResolutionRequest, resolve_lock_context,
+    run_generated_library_dependency_preheat,
 };
 #[cfg(feature = "rust_inspect")]
 use super::lock::{RustInspectWorkspaceRequest, prepare_rust_inspect_workspace};
@@ -136,6 +136,7 @@ struct PreparedLibraryProject {
     generator: ProjectGenerator,
     project_root: PathBuf,
     lock_cargo_package_name: String,
+    cargo_lock_projection_root: Option<String>,
     rust_edition: Option<String>,
     out_dir: PathBuf,
     manifest_path: PathBuf,
@@ -946,10 +947,10 @@ fn prepare_project_with_options(
         semantic: Some(&semantic),
         package_features: Some(package_features),
         sdk_profile_override: options.sdk_profile_override,
-        workspace_projection: WorkspaceLockProjection::Aggregate,
         #[cfg(feature = "rust_inspect")]
         rust_inspect_query_paths: &metadata_query_paths,
     })?;
+    let cargo_lock_projection_root = lock_resolution.cargo_lock_projection_root;
     resolved = lock_resolution.resolved;
     project_requirements = lock_resolution.project_requirements;
     let lock_payload = lock_resolution.cargo_lock_payload;
@@ -969,6 +970,7 @@ fn prepare_project_with_options(
             resolved: &resolved,
             project_requirements: &project_requirements,
             lock_payload: lock_payload.clone(),
+            cargo_lock_projection_root: cargo_lock_projection_root.as_deref(),
             rust_inspect_query_paths: &metadata_query_paths,
             prepare_when_empty: true,
         })?
@@ -1009,6 +1011,7 @@ fn prepare_project_with_options(
     codegen.set_stdlib_cache(compilation_analysis.stdlib_cache().clone());
     codegen.set_prechecked_type_info(main_type_info, dependency_type_info);
     generator.set_cargo_lock_payload(lock_payload);
+    generator.set_cargo_lock_projection_root(cargo_lock_projection_root);
 
     let cargo_flags = cargo_command_flags(cargo_policy, &cargo_features);
     generator.set_cargo_policy_flags(cargo_flags);
@@ -1343,6 +1346,7 @@ fn prepare_library_project(
         LockResolution {
             cargo_lock_payload: None,
             cargo_package_name: project_name.clone(),
+            cargo_lock_projection_root: None,
             resolved,
             project_requirements,
         }
@@ -1359,11 +1363,11 @@ fn prepare_library_project(
             semantic: Some(&semantic),
             package_features: Some(package_features),
             sdk_profile_override,
-            workspace_projection: WorkspaceLockProjection::Member,
             #[cfg(feature = "rust_inspect")]
             rust_inspect_query_paths: &metadata_query_paths,
         })?
     };
+    let cargo_lock_projection_root = lock_resolution.cargo_lock_projection_root;
     resolved = lock_resolution.resolved;
     project_requirements = lock_resolution.project_requirements;
     let lock_payload_for_typecheck = lock_resolution.cargo_lock_payload;
@@ -1383,6 +1387,7 @@ fn prepare_library_project(
             resolved: &resolved,
             project_requirements: &project_requirements,
             lock_payload: lock_payload_for_typecheck.clone(),
+            cargo_lock_projection_root: cargo_lock_projection_root.as_deref(),
             rust_inspect_query_paths: &metadata_query_paths,
             prepare_when_empty: true,
         })?
@@ -1624,6 +1629,7 @@ fn prepare_library_project(
     #[cfg(feature = "rust_inspect")]
     codegen.set_rust_inspect_manifest_dir(rust_inspect_manifest_dir.clone());
     generator.set_cargo_lock_payload(lock_payload_for_typecheck);
+    generator.set_cargo_lock_projection_root(cargo_lock_projection_root.clone());
     generator.set_cargo_policy_flags(cargo_command_flags(&cargo_policy, &cargo_features));
     let resolved_dependencies_for_preheat = resolved.clone();
     let project_requirements_for_preheat = project_requirements.clone();
@@ -1707,6 +1713,7 @@ fn prepare_library_project(
         generator,
         project_root,
         lock_cargo_package_name,
+        cargo_lock_projection_root,
         rust_edition,
         out_dir,
         manifest_path,
@@ -2497,6 +2504,7 @@ pub(crate) fn build_library_report(
             cargo_policy: &prepared.cargo_policy,
             target_dir: &prepared.generator.cargo_target_dir(),
             cargo_lock_payload: lock_payload,
+            cargo_lock_projection_root: prepared.cargo_lock_projection_root.as_deref(),
         })?;
     }
     prepared

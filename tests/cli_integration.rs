@@ -1555,12 +1555,22 @@ default-members = ["root_lib", "leaf", "sibling"]
     )?;
 
     let vendor = root.path().join("vendor");
+    fs::create_dir_all(&vendor)?;
+    fs::write(
+        vendor.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"foo-v1\", \"foo-v2\"]\n\n[workspace.package]\nversion = \"1.0.0\"\n",
+    )?;
     for (directory, version) in [("foo-v1", "1.0.0"), ("foo-v2", "2.0.0")] {
         let package = vendor.join(directory);
         fs::create_dir_all(package.join("src"))?;
+        let version = if directory == "foo-v1" {
+            "version.workspace = true".to_string()
+        } else {
+            format!("version = \"{version}\"")
+        };
         fs::write(
             package.join("Cargo.toml"),
-            format!("[package]\nname = \"foo\"\nversion = \"{version}\"\nedition = \"2021\"\n"),
+            format!("[package]\nname = \"foo\"\n{version}\nedition = \"2021\"\n"),
         )?;
         fs::write(package.join("src/lib.rs"), "pub fn value() -> i64 { 1 }\n")?;
     }
@@ -1591,7 +1601,7 @@ path = "../vendor/foo-v1"
     )?;
     fs::write(
         leaf.join("src/lib.incn"),
-        "from rust::json_alias import Value\nfrom rust::old_flags import bitflags\nfrom rust::foo_old import value\n\n\npub def leaf_value() -> int:\n  return 2\n",
+        "from std.json import JsonValue\nfrom rust::json_alias import Value\nfrom rust::old_flags import bitflags\nfrom rust::foo_old import value\n\n\npub def leaf_value() -> int:\n  return 2\n",
     )?;
 
     let sibling = root.path().join("sibling");
@@ -1605,9 +1615,6 @@ version = "0.3.0"
 [project.scripts]
 library = "src/lib.incn"
 
-[rust-dependencies]
-regex = "1"
-
 [rust-dependencies.new_flags]
 package = "bitflags"
 version = "=2.11.0"
@@ -1619,7 +1626,7 @@ path = "../vendor/foo-v2"
     )?;
     fs::write(
         sibling.join("src/lib.incn"),
-        "from rust::regex import Regex\nfrom rust::new_flags import bitflags\nfrom rust::foo_new import value\n\n\npub def sibling_value() -> int:\n  return 3\n",
+        "from std.regex import Regex as StdRegex\nfrom rust::new_flags import bitflags\nfrom rust::foo_new import value\n\n\npub def sibling_value() -> int:\n  return 3\n",
     )?;
 
     let lock_output = run_incan(root.path(), &["lock"])?;
@@ -1675,26 +1682,33 @@ path = "../vendor/foo-v2"
     let packages = generated["package"]
         .as_array()
         .ok_or("generated selected-member Cargo.lock had no package array")?;
-    assert!(packages.iter().any(|package| {
-        package["name"].as_str() == Some("leaf")
-            && package["version"].as_str() == Some("0.2.0")
-            && package.get("source").is_none()
-    }));
+    let selected_root = packages
+        .iter()
+        .find(|package| {
+            package["name"].as_str() == Some("leaf")
+                && package["version"].as_str() == Some("0.2.0")
+                && package.get("source").is_none()
+        })
+        .ok_or("generated selected-member Cargo.lock had no selected root package")?;
+    let selected_root_dependencies = selected_root["dependencies"]
+        .as_array()
+        .ok_or("generated selected-member root had no dependency array")?
+        .iter()
+        .filter_map(toml::Value::as_str)
+        .collect::<Vec<_>>();
+    assert!(selected_root_dependencies.contains(&"bitflags 1.3.2"));
+    assert!(
+        !selected_root_dependencies.contains(&"bitflags 2.11.0"),
+        "the sibling's direct aliased bitflags edge leaked into the selected root package"
+    );
     assert!(
         packages
             .iter()
             .any(|package| package["name"].as_str() == Some("serde_json"))
     );
-    let selected_bitflags_versions = packages
-        .iter()
-        .filter(|package| package["name"].as_str() == Some("bitflags"))
-        .filter_map(|package| package["version"].as_str())
-        .collect::<Vec<_>>();
-    assert_eq!(
-        selected_bitflags_versions,
-        vec!["1.3.2"],
-        "the sibling's incompatible aliased package resolution leaked into the selected member Cargo lock"
-    );
+    assert!(packages.iter().any(|package| {
+        package["name"].as_str() == Some("bitflags") && package["version"].as_str() == Some("1.3.2")
+    }));
     let selected_foo_versions = packages
         .iter()
         .filter(|package| package["name"].as_str() == Some("foo"))
@@ -1705,9 +1719,88 @@ path = "../vendor/foo-v2"
         vec!["1.0.0"],
         "the sibling's different same-name path package leaked into the selected member Cargo lock"
     );
+    let generated_manifest: toml::Value = toml::from_str(&fs::read_to_string(leaf.join("target/lib/Cargo.toml"))?)?;
     assert!(
-        packages.iter().all(|package| package["name"].as_str() != Some("regex")),
-        "an unrelated sibling dependency leaked into the selected member Cargo lock"
+        generated_manifest["dependencies"].get("new_flags").is_none(),
+        "the sibling's aliased direct requirement leaked into the selected member Cargo manifest"
+    );
+    let stdlib_features = generated_manifest["dependencies"]["incan_stdlib"]["features"]
+        .as_array()
+        .ok_or("generated selected-member Cargo.toml had no incan_stdlib features")?
+        .iter()
+        .filter_map(toml::Value::as_str)
+        .collect::<Vec<_>>();
+    assert!(stdlib_features.contains(&"json"));
+    assert!(
+        !stdlib_features.contains(&"regex"),
+        "the sibling entrypoint's provider feature leaked into the selected member Cargo manifest"
+    );
+    Ok(())
+}
+
+#[test]
+fn stale_workspace_lock_cannot_authorize_selected_library_projection() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::write(
+        root.path().join("incan.toml"),
+        "[workspace]\nmembers = [\"leaf\"]\ndefault-members = [\"leaf\"]\n",
+    )?;
+    let leaf = root.path().join("leaf");
+    fs::create_dir_all(leaf.join("src"))?;
+    fs::write(
+        leaf.join("incan.toml"),
+        r#"[project]
+name = "leaf"
+version = "0.1.0"
+
+[project.scripts]
+library = "src/lib.incn"
+
+[rust-dependencies]
+bitflags = "=1.3.2"
+"#,
+    )?;
+    fs::write(
+        leaf.join("src/lib.incn"),
+        "from rust::bitflags import bitflags\n\n\npub def value() -> int:\n  return 1\n",
+    )?;
+
+    let lock_output = run_incan(root.path(), &["lock"])?;
+    assert_success(&lock_output, "fresh canonical workspace lock");
+    let lock_path = root.path().join("incan.lock");
+    let fresh = fs::read_to_string(&lock_path)?;
+    let stale = fresh
+        .replace("deps-fingerprint = \"sha256:", "deps-fingerprint = \"sha256:stale")
+        .replace("bitflags 1.3.2", "bitflags 9.9.9")
+        .replace("version = \"1.3.2\"", "version = \"9.9.9\"");
+    assert_ne!(
+        fresh, stale,
+        "the regression must corrupt canonical projection authority"
+    );
+    fs::write(&lock_path, &stale)?;
+    let _ = fs::remove_dir_all(root.path().join("target"));
+    let _ = fs::remove_dir_all(leaf.join("target"));
+
+    let non_strict = run_incan(root.path(), &["build", "--lib", "--member", "leaf"])?;
+    assert_success(
+        &non_strict,
+        "non-strict selected library build with stale canonical lock",
+    );
+    assert_eq!(
+        fs::read_to_string(&lock_path)?,
+        stale,
+        "a tolerated stale canonical lock must never be rewritten by a selected member build"
+    );
+    let generated = fs::read_to_string(leaf.join("target/lib/Cargo.lock"))?;
+    assert!(generated.contains("version = \"1.3.2\""));
+    assert!(!generated.contains("version = \"9.9.9\""));
+
+    let strict = run_incan(root.path(), &["build", "--lib", "--member", "leaf", "--locked"])?;
+    assert_failure(&strict, "strict selected library build with stale canonical lock");
+    assert!(
+        String::from_utf8_lossy(&strict.stderr).contains("workspace incan.lock is out of date"),
+        "strict stale rejection must occur before projection:\n{}",
+        String::from_utf8_lossy(&strict.stderr)
     );
     Ok(())
 }
@@ -4622,7 +4715,9 @@ fn build_reuses_stale_lockfile_without_rewriting_by_default() -> Result<(), Box<
     assert_success(&build_output, "incan build with stale lockfile by default");
     let stderr = String::from_utf8_lossy(&build_output.stderr);
     assert!(
-        stderr.contains("warning: incan.lock is out of date; using the existing lock payload without rewriting it"),
+        stderr.contains(
+            "warning: incan.lock is out of date; continuing without using it as Cargo lock authority or rewriting it"
+        ),
         "default build should warn instead of silently refreshing the stale lockfile, got:\n{stderr}"
     );
     assert_eq!(
@@ -5267,7 +5362,9 @@ def test_smoke() -> None:
     assert_success(&test_output, "incan test with stale lockfile by default");
     let stderr = String::from_utf8_lossy(&test_output.stderr);
     assert!(
-        stderr.contains("warning: incan.lock is out of date; using the existing lock payload without rewriting it"),
+        stderr.contains(
+            "warning: incan.lock is out of date; continuing without using it as Cargo lock authority or rewriting it"
+        ),
         "default test should warn instead of silently refreshing the stale lockfile, got:\n{stderr}"
     );
     assert_eq!(

@@ -936,6 +936,7 @@ pub(super) struct PreparedTestFile {
     pub project_requirements: ProjectRequirements,
     pub cargo_package_name: String,
     pub lock_payload: Option<String>,
+    pub cargo_lock_projection_root: Option<String>,
     /// Checked lowering inputs supplied by the same session analysis as test diagnostics and semantic facts.
     pub prechecked_type_info: (TypeCheckInfo, HashMap<Vec<String>, TypeCheckInfo>, StdlibAstCache),
     #[cfg(feature = "rust_inspect")]
@@ -3308,7 +3309,6 @@ pub(super) fn run_file_tests_batch(
             semantic: Some(&semantic),
             package_features: Some(package_features),
             sdk_profile_override,
-            workspace_projection: commands::WorkspaceLockProjection::Aggregate,
             #[cfg(feature = "rust_inspect")]
             rust_inspect_query_paths: &metadata_query_paths,
         }) {
@@ -3342,6 +3342,7 @@ pub(super) fn run_file_tests_batch(
                 &lock_resolution.resolved,
                 &rust_inspect_requirements,
                 lock_payload.clone(),
+                lock_resolution.cargo_lock_projection_root.as_deref(),
             ) {
                 Ok(dir) => dir,
                 Err(err) => {
@@ -3425,6 +3426,7 @@ pub(super) fn run_file_tests_batch(
             resolved: lock_resolution.resolved,
             project_requirements: lock_resolution.project_requirements,
             cargo_package_name: lock_resolution.cargo_package_name,
+            cargo_lock_projection_root: lock_resolution.cargo_lock_projection_root,
             lock_payload,
             prechecked_type_info,
             #[cfg(feature = "rust_inspect")]
@@ -3529,6 +3531,7 @@ pub(super) fn run_file_tests_batch(
         &prepared.module_harnesses,
     ));
     generator.set_cargo_lock_payload(prepared.lock_payload.clone());
+    generator.set_cargo_lock_projection_root(prepared.cargo_lock_projection_root.clone());
     let cargo_flags = common::cargo_command_flags(cargo_policy, &cargo_feature_selection);
     generator.set_cargo_policy_flags(cargo_flags.clone());
 
@@ -3613,6 +3616,10 @@ pub(super) fn run_file_tests_batch(
             Ok(changed) => changed,
             Err(e) => return gen_err(format!("Failed to generate project: {}", e)),
         }
+    };
+    let generated_changed = match generator.materialize_cargo_lock_projection() {
+        Ok(projected) => generated_changed || projected,
+        Err(error) => return gen_err(format!("Failed to project generated Cargo.lock: {error}")),
     };
 
     let shared_target_dir = shared_cargo_target_dir(&prepared.project_root);

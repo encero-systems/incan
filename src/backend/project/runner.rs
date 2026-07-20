@@ -4,6 +4,7 @@
 //! their result types.
 
 use std::env;
+use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -25,6 +26,34 @@ pub(crate) fn sanitize_cargo_environment(command: &mut Command) {
 }
 
 impl ProjectGenerator {
+    /// Ask Cargo to project a fresh canonical seed onto this caller-local manifest and prove two-pass convergence.
+    pub(crate) fn materialize_cargo_lock_projection(&self) -> io::Result<bool> {
+        let Some(projection) = self.cargo_lock_projection()? else {
+            return Ok(false);
+        };
+        let lock_path = self.output_dir.join("Cargo.lock");
+        let seed = fs::read_to_string(&lock_path)?;
+        run_cargo_lock_projection(
+            &self.output_dir,
+            &projection,
+            self.cargo_package_name(),
+            self.cargo_package_version(),
+        )?;
+        let first = fs::read_to_string(&lock_path)?;
+        projection.validate_projected(&first, self.cargo_package_name(), self.cargo_package_version())?;
+
+        fs::write(&lock_path, projection.seed_payload())?;
+        run_cargo_lock_projection(
+            &self.output_dir,
+            &projection,
+            self.cargo_package_name(),
+            self.cargo_package_version(),
+        )?;
+        let second = fs::read_to_string(&lock_path)?;
+        projection.validate_convergence(&first, &second)?;
+        Ok(seed != first)
+    }
+
     /// Whether `incan run` must invoke Cargo before executing the generated binary.
     fn should_build_before_run(&self, project_changed: bool) -> bool {
         project_changed || !self.run_binary_path().is_file()
@@ -73,6 +102,7 @@ impl ProjectGenerator {
 
     /// Build the project using cargo.
     pub fn build(&self) -> io::Result<BuildResult> {
+        self.materialize_cargo_lock_projection()?;
         let cargo_target_dir = self.cargo_target_dir();
         let mut command = Command::new("cargo");
         sanitize_cargo_environment(&mut command);
@@ -119,6 +149,7 @@ impl ProjectGenerator {
     /// Cargo build output is streamed directly to the terminal so incremental compilation progress remains visible on
     /// slow first runs and long rebuilds.
     pub fn run_with_cwd(&self, cwd: &Path, project_changed: bool) -> io::Result<RunResult> {
+        let project_changed = project_changed || self.materialize_cargo_lock_projection()?;
         if self.should_build_before_run(project_changed) {
             // ---- Context: build generated crate with selected run profile ----
             let cargo_target_dir = self.cargo_target_dir();
@@ -191,6 +222,75 @@ impl ProjectGenerator {
             .join(self.run_profile_binary_dir())
             .join(self.cargo_target_name())
     }
+}
+
+/// Run one offline Cargo-owned projection pass against an already rendered generated manifest.
+fn run_cargo_lock_projection(
+    output_dir: &Path,
+    projection: &super::lock_projection::CargoLockProjection,
+    generated_package_name: &str,
+    generated_package_version: &str,
+) -> io::Result<()> {
+    let mut command = Command::new("cargo");
+    sanitize_cargo_environment(&mut command);
+    let output = command
+        .arg("generate-lockfile")
+        .arg("--offline")
+        .arg("--manifest-path")
+        .arg(output_dir.join("Cargo.toml"))
+        .env_remove("CARGO_MANIFEST_DIR")
+        .env_remove("CARGO_MANIFEST_PATH")
+        .current_dir(output_dir)
+        .output()?;
+    if !output.status.success() {
+        return Err(io::Error::other(format!(
+            "Cargo could not derive an offline lock projection from the canonical Incan lock:\n{}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+
+    let lock_path = output_dir.join("Cargo.lock");
+    for _ in 0..1024 {
+        let payload = fs::read_to_string(&lock_path)?;
+        let Some(candidates) =
+            projection.next_update_candidates(&payload, generated_package_name, generated_package_version)?
+        else {
+            return Ok(());
+        };
+        let mut errors = Vec::new();
+        let mut updated = false;
+        for candidate in candidates {
+            let mut command = Command::new("cargo");
+            sanitize_cargo_environment(&mut command);
+            let output = command
+                .arg("update")
+                .arg("--offline")
+                .arg("--manifest-path")
+                .arg(output_dir.join("Cargo.toml"))
+                .arg("--package")
+                .arg(&candidate.package_spec)
+                .arg("--precise")
+                .arg(&candidate.precise)
+                .env_remove("CARGO_MANIFEST_DIR")
+                .env_remove("CARGO_MANIFEST_PATH")
+                .current_dir(output_dir)
+                .output()?;
+            if output.status.success() {
+                updated = true;
+                break;
+            }
+            errors.push(String::from_utf8_lossy(&output.stderr).trim().to_string());
+        }
+        if !updated {
+            return Err(io::Error::other(format!(
+                "Cargo could not reconcile a generated dependency with the canonical Incan lock:\n{}",
+                errors.join("\n")
+            )));
+        }
+    }
+    Err(io::Error::other(
+        "Cargo lock projection exceeded its bounded canonical reconciliation passes",
+    ))
 }
 
 /// Result of a cargo build.
