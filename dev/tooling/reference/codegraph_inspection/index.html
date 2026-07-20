@@ -885,6 +885,8 @@
       
         
       
+        
+      
     
     
       
@@ -1347,6 +1349,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../language/tutorials/typed_registries/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Typed registries
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../language/tutorials/web_framework/" class="md-nav__link">
         
   
@@ -1377,6 +1400,8 @@
   
     
     
+      
+        
       
         
       
@@ -1895,6 +1920,27 @@
   
   <span class="md-ellipsis">
     Testing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/typed_registries/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Typed registries
   </span>
   
 
@@ -2534,6 +2580,8 @@
       
         
       
+        
+      
     
     
       
@@ -2902,6 +2950,27 @@
   
   <span class="md-ellipsis">
     std.regex
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib/registry/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.registry
   </span>
   
 
@@ -3540,6 +3609,8 @@
       
         
       
+        
+      
     
     
       
@@ -3646,6 +3717,27 @@
   
   <span class="md-ellipsis">
     Compile time and runtime
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/explanation/checked_and_loaded_registries/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Checked catalogues and loaded registries
   </span>
   
 
@@ -4039,7 +4131,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_22" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_23" >
         
           
           
@@ -4055,14 +4147,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_5_22" id="__nav_3_5_22_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_5_23" id="__nav_3_5_23_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_22_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_5_22">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_23_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5_23">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -6436,16 +6528,16 @@
 
 
 <h1 id="codegraph-inspection">Codegraph inspection<a class="headerlink" href="#codegraph-inspection" title="Permanent link">&para;</a></h1>
-<p><code>incan inspect codegraph</code> exports deterministic JSONL records for the source structure the compiler can see without asking a downstream tool to scrape <code>.incn</code> text. The 0.4 surface is deliberately small: it emits Incan-language files, modules, top-level declarations, imports, public exports, containment edges, body-level reference and call syntax, conservative resolved reference and call targets, source spans, provenance, degraded state, and diagnostics. This is the first durable RFC 106 codegraph slice under the broader RFC 102 semantic inspection surface.</p>
-<p>Use it when an editor, CI job, architecture review tool, or agent needs basic Incan structure with compiler-owned provenance. Do not treat it as a graph database, full reference index, whole-program call graph, or stable generated-Rust ABI. The command reports source and syntax facts today, with diagnostics in tolerant mode; checked typechecking facts can populate <code>reference.target_id</code> and <code>call.target_id</code> when the compiler has a conservative declaration identity for the source target.</p>
-<p>Codegraph inspection is one piece of the 0.4 semantic-inspection baseline. Pair it with <code>incan check --format json</code> for stable diagnostics, <code>incan build --report json</code> for build and artifact metadata, and <code>incan inspect rust --format json</code> for current generated Rust output. The four surfaces should agree on schema version, compiler version, project identity, source breadcrumbs, and explicit degraded-state or diagnostic reporting where their scopes overlap.</p>
+<p><code>incan inspect codegraph</code> exports deterministic JSONL records for the source structure the compiler can see without asking a downstream tool to scrape <code>.incn</code> text. The v0.5 surface emits Incan-language files, modules, top-level declarations, imports, public exports, checked registry entries, containment edges, body-level reference and call syntax, conservative resolved reference and call targets, source spans, provenance, degraded state, and diagnostics. This is the initial durable compiler-owned codegraph surface.</p>
+<p>Use it when an editor, CI job, architecture review tool, or agent needs basic Incan structure with compiler-owned provenance. Do not treat it as a graph database, full reference index, whole-program call graph, or stable generated-Rust ABI. The command reports source and syntax facts, compiler-proven registry entries, and diagnostics in tolerant mode; checked typechecking facts can populate <code>reference.target_id</code> and <code>call.target_id</code> when the compiler has a conservative declaration identity for the source target.</p>
+<p>Codegraph inspection is one piece of the v0.5 semantic-inspection baseline. Pair it with <code>incan check --format json</code> for stable diagnostics, <code>incan build --report json</code> for build and artifact metadata, <code>incan inspect registry</code> for one selected complete checked catalogue, and <code>incan inspect rust --format json</code> for current generated Rust output. The surfaces should agree on compiler version, project identity, source breadcrumbs, and explicit degraded-state or diagnostic reporting where their scopes overlap.</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>inspect<span class="w"> </span>codegraph<span class="w"> </span>src/main.incn<span class="w"> </span>--format<span class="w"> </span>jsonl
 incan<span class="w"> </span>inspect<span class="w"> </span>codegraph<span class="w"> </span>src<span class="w"> </span>--format<span class="w"> </span>jsonl<span class="w"> </span>--allow-errors
 </code></pre></div>
-<p>JSONL itself has no header. The CodeGraph protocol uses the first JSON object as snapshot metadata, identified in schema v1 by <code>"record": "header"</code>. It includes the schema version, compiler version, strict or tolerant mode, requested root path, languages represented by the export, optional package identity from <code>incan.toml</code>, and whether the export is degraded. Subsequent records describe source files, modules, declarations, imports, exports, body references, body calls, containment relationships, and diagnostics. Every fact record carries <code>language</code>, <code>provenance</code>, and <code>degraded</code> fields. Body facts with a compiler-proven <code>target_id</code> use <code>provenance: "checked"</code>; syntax-only body facts keep <code>provenance: "syntax"</code>. In 0.4, <code>target_id</code> points only at declaration records emitted in the same JSONL export. Public-package manifest identity is still checked during typechecking and remains available in library manifests, but external package declarations are not emitted as codegraph declaration records until the schema grows a first-class external-target shape. Consumers should treat unknown future record kinds as opaque records rather than failing closed.</p>
+<p>The first record is always a <code>header</code> record. It includes schema version 2, compiler version, strict or tolerant mode, requested root path, languages represented by the export, optional package identity from <code>incan.toml</code>, typed SDK/package/provider semantic contexts, and whether the export is degraded. Subsequent records describe source files, modules, declarations, imports, exports, checked registry entries, body references, body calls, containment relationships, and diagnostics. Every non-header record carries <code>language</code>, <code>provenance</code>, and <code>degraded</code> fields. Registry records always use <code>provenance: "checked"</code>: they contain the structural key and descriptor values, canonical subject kind and identity, visibility, registration and subject anchors, and any public facade projections from the same typechecker facts used by <code>incan inspect registry</code>. A facade projection gives another import path; it never creates a duplicate registry record or changes its canonical subject. Registry records do not describe loaded runtime registry state. Body facts with a compiler-proven <code>target_id</code> also use <code>provenance: "checked"</code>; syntax-only body facts keep <code>provenance: "syntax"</code>. <code>target_id</code> points only at declaration records emitted in the same JSONL export. Public-package manifest identity is still checked during typechecking and remains available in library manifests, but external package declarations are not emitted as codegraph declaration records until the schema grows a first-class external-target shape. Consumers should treat unknown future record kinds as opaque records rather than failing closed.</p>
 <p>Strict mode is the default. If parsing, import resolution, or type checking produces diagnostics for a checked entrypoint, the command fails instead of emitting a partial graph. <code>--allow-errors</code> changes that contract: parseable files still produce facts, diagnostics become graph records, and the snapshot metadata marks the export as degraded. That mode is meant for WIP packages and agent context, not for release gates that require a fully checked graph.</p>
 <p><code>std.graph</code> and <code>incan inspect codegraph</code> solve different problems. <code>std.graph</code> is a runtime library for graph values inside Incan programs. <code>incan inspect codegraph</code> is tooling output about Incan source and project structure. Sharing the word "graph" does not make the tooling export part of the runtime standard library, and runtime graph APIs should not depend on this command.</p>
-<p>The 0.4 exporter emits <code>language: "incan"</code> facts only. First-class Rust graph records, MCP tools, task-ranked context packing, process-risk signals, and architecture findings are RFC 106 follow-up work. Generated Rust remains inspectable through <code>incan inspect rust</code>, but that command is not a substitute for Rust codegraph facts.</p>
+<p>The 0.5 exporter emits <code>language: "incan"</code> facts only. First-class Rust graph records, MCP tools, task-ranked context packing, process-risk signals, and architecture findings remain future work. Generated Rust remains inspectable through <code>incan inspect rust</code>, but that command is not a substitute for Rust codegraph facts.</p>
 <h2 id="external-importer-example">External importer example<a class="headerlink" href="#external-importer-example" title="Permanent link">&para;</a></h2>
 <p><code>examples/pro/codegraph_importer</code> is a runnable Incan-authored consumer of this JSONL contract. It takes an exported <code>codegraph.jsonl</code> file, validates the schema-v1 snapshot metadata and fact envelope, counts the current record kinds, preserves unknown future kinds as opaque, and prints a deterministic JSON summary.</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>inspect<span class="w"> </span>codegraph<span class="w"> </span>src/main.incn<span class="w"> </span>--format<span class="w"> </span>jsonl<span class="w"> </span>&gt;<span class="w"> </span>codegraph.jsonl
@@ -6462,6 +6554,7 @@ incan<span class="w"> </span>run<span class="w"> </span>src/main.incn
 <li><code>declaration</code>: source language, top-level declaration kind, name, visibility, type parameters, optional signature, source span, provenance, and degraded flag.</li>
 <li><code>import</code>: source language, import kind, path, imported items, alias, visibility, source span, provenance, and degraded flag.</li>
 <li><code>export</code>: public symbol exported by a declaration or public import.</li>
+<li><code>registry</code>: complete compiler-checked typed registry entry with canonical registry and subject identities, key and descriptor structure, visibility, registration and subject anchors, optional <code>reexport_paths</code> (each with a facade <code>path</code> and source <code>span</code>), and checked provenance. A reexport does not create a duplicate registry fact.</li>
 <li><code>reference</code>: source-level name references inside declaration bodies, including identifier, field, <code>self</code>, and surface-path forms. <code>target_id</code> points at an emitted declaration record for compiler-proven source identifiers, including local declarations and supported source imports within the exported graph. Unsupported, ambiguous, degraded, field, <code>self</code>, surface-path, external-package, and syntax-only cases keep <code>target_id: null</code>.</li>
 <li><code>call</code>: source-level call expressions inside declaration bodies, including function, method, constructor, and surface-symbol calls. <code>target_id</code> points at an emitted declaration record for compiler-proven source function and constructor calls, including local declarations, supported source imports, and facade reexports where the original declaration identity is known within the exported graph. Unsupported, ambiguous, degraded, method, surface-symbol, external-package, and syntax-only cases keep <code>target_id: null</code>.</li>
 <li><code>containment</code>: parent-child relationship between file, module, declaration, import, reference, or call records.</li>

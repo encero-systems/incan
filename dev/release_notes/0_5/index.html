@@ -885,6 +885,8 @@
       
         
       
+        
+      
     
     
       
@@ -1347,6 +1349,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../language/tutorials/typed_registries/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Typed registries
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../language/tutorials/web_framework/" class="md-nav__link">
         
   
@@ -1377,6 +1400,8 @@
   
     
     
+      
+        
       
         
       
@@ -1895,6 +1920,27 @@
   
   <span class="md-ellipsis">
     Testing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/typed_registries/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Typed registries
   </span>
   
 
@@ -2534,6 +2580,8 @@
       
         
       
+        
+      
     
     
       
@@ -2902,6 +2950,27 @@
   
   <span class="md-ellipsis">
     std.regex
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/registry/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.registry
   </span>
   
 
@@ -3540,6 +3609,8 @@
       
         
       
+        
+      
     
     
       
@@ -3646,6 +3717,27 @@
   
   <span class="md-ellipsis">
     Compile time and runtime
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/explanation/checked_and_loaded_registries/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Checked catalogues and loaded registries
   </span>
   
 
@@ -4039,7 +4131,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_22" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_23" >
         
           
           
@@ -4055,14 +4147,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_5_22" id="__nav_3_5_22_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_5_23" id="__nav_3_5_23_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_22_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_5_22">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_23_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5_23">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -6462,6 +6554,7 @@
 <li><strong>Stdlib</strong>: <code>Iterator.sum()</code> is now ordinary source-owned Incan behavior through <code>Sum[int]</code> and <code>Sum[float]</code>, including supported validated numeric newtypes, rather than a Rust-source backend special case (#510).</li>
 <li><strong>Compiled providers, SDK components, and package features</strong>: Checked Incan libraries and official SDK artifacts now enter compilation through one session-owned provider plan. The standard library ships as nine independently addressable components with <code>minimal</code>, <code>default</code>, and <code>full</code> profiles; project manifests can refine the selected profile without changing stable <code>std.*</code> imports. Package-owned features resolve additively across optional Incan dependencies, support compile-time <code>when feature(...)</code> source projection, and remain distinct from private Cargo implementation features. <code>incan inspect providers</code> and <code>incan inspect features</code> explain the resolved graph, while canonical locks record the semantic component, feature, provider, and implementation-facet closure ([RFC 114], #544).</li>
 <li><strong>Compact offline SDK seed</strong>: Toolchain archives carry relocatable, integrity-checked provider payloads and one shared Cargo lock without provider source, mutable build targets, or repeated per-project caches. Installed compilers publish the selected profile into a shared content-addressed store with crash-safe coordination, and generated build and test projects reuse those compiled providers instead of materializing standard-library source (#544).</li>
+<li><strong>Stdlib/tooling</strong>: <code>std.registry</code> adds typed declaration catalogues that preserve one source authority across runtime loading and static tooling. Libraries define a domain-owned <code>Registry[K, T]</code>, opt descriptor models into immutable structural snapshots with <code>@derive(Descriptor)</code>, and attach functions or concrete methods with the non-wrapping <code>@describe</code> decorator; explicit entries cover compilation-unit and package facts without fake declarations. <code>loaded_entries()</code> exposes only entries initialized in the current process, while <code>incan inspect registry</code> returns the complete deterministic checked projection without executing modules. Public facts travel in <code>.incnlib</code> artifacts and feed LSP navigation, codegraph facade projections, and the generated feature inventory. Existing custom registries can migrate to this single authority when their entries are structurally knowable at compile time; dynamic-only registries remain runtime-only by design. Start with the <a href="../../language/tutorials/typed_registries/">typed-registry tutorial</a>, use the <a href="../../language/how-to/typed_registries/">migration and inspection how-to</a>, and consult the <a href="../../language/reference/stdlib/registry/"><code>std.registry</code> reference</a> for exact contracts (RFC 113, #575).</li>
 </ul>
 <h2 id="tooling">Tooling<a class="headerlink" href="#tooling" title="Permanent link">&para;</a></h2>
 <ul>

@@ -885,6 +885,8 @@
       
         
       
+        
+      
     
     
       
@@ -1347,6 +1349,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../language/tutorials/typed_registries/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Typed registries
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../language/tutorials/web_framework/" class="md-nav__link">
         
   
@@ -1377,6 +1400,8 @@
   
     
     
+      
+        
       
         
       
@@ -1895,6 +1920,27 @@
   
   <span class="md-ellipsis">
     Testing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/typed_registries/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Typed registries
   </span>
   
 
@@ -2534,6 +2580,8 @@
       
         
       
+        
+      
     
     
       
@@ -2902,6 +2950,27 @@
   
   <span class="md-ellipsis">
     std.regex
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib/registry/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.registry
   </span>
   
 
@@ -3540,6 +3609,8 @@
       
         
       
+        
+      
     
     
       
@@ -3646,6 +3717,27 @@
   
   <span class="md-ellipsis">
     Compile time and runtime
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/explanation/checked_and_loaded_registries/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Checked catalogues and loaded registries
   </span>
   
 
@@ -4039,7 +4131,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_22" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5_23" >
         
           
           
@@ -4055,14 +4147,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3_5_22" id="__nav_3_5_22_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3_5_23" id="__nav_3_5_23_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_22_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_5_22">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_5_23_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5_23">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -6821,7 +6913,7 @@ hint:<span class="w"> </span>Wrap<span class="w"> </span>the<span class="w"> </s
 <p>Hover over any symbol to see its type:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">process</span><span class="p">(</span><span class="n">data</span><span class="p">:</span> <span class="kt">List</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nc">Error</span><span class="p">]</span>
 </code></pre></div>
-<p>When the file type-checks successfully, hover also previews checked public API metadata for public declarations, public partial callable presets, fields on public models/classes, checked public methods, and public enum variants. These previews use the same checked metadata extractor as <code>incan tools metadata api</code>, so they can include raw docstrings, checked signatures, partial target/preset provenance, field visibility and aliases/descriptions, enum backing values, derives, trait adoption, and safe const values. Private class fields are labeled private in their field preview without becoming accessible outside the declaring class. For value enums, enum and variant hover details show the backing type and variant raw value where available.</p>
+<p>When the file type-checks successfully, hover also previews checked public API metadata for public declarations, public partial callable presets, fields on public models/classes, checked public methods, and public enum variants. These previews use the same checked metadata extractor as <code>incan tools metadata api</code>, so they can include raw docstrings, checked signatures, partial target/preset provenance, field visibility and aliases/descriptions, enum backing values, derives, trait adoption, and safe const values. Private class fields are labeled private in their field preview without becoming accessible outside the declaring class. Hovering a canonical or supported-alias <code>@describe</code> decorator additionally shows its checked registry membership: registry, key, descriptor, and described subject. For value enums, enum and variant hover details show the backing type and variant raw value where available.</p>
 <p>If the file has parse or type errors, diagnostics remain the source of truth and the LSP falls back to syntax-oriented hover details. The current LSP does not expose a workspace command for fetching the full checked API metadata JSON package from the editor; use <code>incan tools metadata api</code> for that.</p>
 <h3 id="contract-model-emit-command">Contract model emit command<a class="headerlink" href="#contract-model-emit-command" title="Permanent link">&para;</a></h3>
 <p>Editor integrations can call <code>workspace/executeCommand</code> command <code>incan.metadata.model.emit</code> to emit a contract-backed model from the same checked metadata used by the CLI:</p>
@@ -6844,6 +6936,7 @@ hint:<span class="w"> </span>Wrap<span class="w"> </span>the<span class="w"> </s
 </ul>
 <p>Works for:</p>
 <ul>
+<li><code>@describe</code> decorators: navigate to the described function or concrete method after a successful typecheck.</li>
 <li>Functions</li>
 <li>Models</li>
 <li>Classes</li>
