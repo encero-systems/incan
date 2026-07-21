@@ -14,7 +14,7 @@ pub const SDK_INVENTORY_FILE: &str = "sdk-inventory.json";
 /// Source catalog used by SDK publishers to build the installed inventory.
 pub const SDK_SOURCE_CATALOG_FILE: &str = "sdk-components.toml";
 /// Current JSON schema version for SDK inventory files.
-pub const SDK_INVENTORY_SCHEMA_VERSION: u32 = 1;
+pub const SDK_INVENTORY_SCHEMA_VERSION: u32 = 2;
 
 /// One compiled provider artifact advertised by an SDK component.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,6 +61,8 @@ pub struct SdkInventory {
     pub sdk_version: String,
     /// Compiler compatibility requirement authored by the SDK.
     pub compiler_requirement: String,
+    /// Target-independent revision of the compiler code generator that emitted the providers.
+    pub provider_codegen_revision: u32,
     /// Complete known component catalog, including unavailable entries.
     pub components: BTreeMap<String, SdkComponent>,
     /// Named profile membership owned by this SDK release.
@@ -217,6 +219,21 @@ pub enum SdkInventoryError {
         /// Compiler-supported schema version.
         expected: u32,
     },
+    /// The inventory predates the compiler's target-independent provider codegen marker.
+    #[error("SDK inventory schema 2 is missing its provider codegen revision")]
+    MissingProviderCodegenRevision,
+    /// The immutable providers were emitted by an incompatible compiler code generator.
+    #[error(
+        "SDK {sdk_identity} was generated with provider codegen revision {actual}, but this compiler requires revision {expected}"
+    )]
+    ProviderCodegenRevisionMismatch {
+        /// Stable SDK identity recorded by the inventory.
+        sdk_identity: String,
+        /// Revision recorded by the provider publisher.
+        actual: u32,
+        /// Revision required by the active compiler.
+        expected: u32,
+    },
     /// A required identity, version, path, digest, profile, or edge is invalid.
     #[error("invalid SDK inventory: {0}")]
     Invalid(String),
@@ -286,6 +303,7 @@ struct RawSdkInventory {
     sdk_id: String,
     sdk_version: String,
     compiler_requirement: String,
+    provider_codegen_revision: Option<u32>,
     components: BTreeMap<String, RawSdkComponent>,
     profiles: BTreeMap<String, Vec<String>>,
 }
@@ -509,6 +527,9 @@ impl SdkInventory {
                 expected: SDK_INVENTORY_SCHEMA_VERSION,
             });
         }
+        let provider_codegen_revision = raw
+            .provider_codegen_revision
+            .ok_or(SdkInventoryError::MissingProviderCodegenRevision)?;
         validate_nonempty_identifier("SDK id", &raw.sdk_id)?;
         Version::parse(&raw.sdk_version)
             .map_err(|error| SdkInventoryError::Invalid(format!("invalid sdk_version: {error}")))?;
@@ -577,6 +598,7 @@ impl SdkInventory {
             sdk_id: raw.sdk_id,
             sdk_version: raw.sdk_version,
             compiler_requirement: raw.compiler_requirement,
+            provider_codegen_revision,
             components,
             profiles,
         })
@@ -627,6 +649,7 @@ impl SdkInventory {
             sdk_id: self.sdk_id.clone(),
             sdk_version: self.sdk_version.clone(),
             compiler_requirement: self.compiler_requirement.clone(),
+            provider_codegen_revision: Some(self.provider_codegen_revision),
             components,
             profiles: self
                 .profiles
@@ -761,6 +784,24 @@ impl SdkInventory {
                 self.identity(),
                 self.compiler_requirement
             )))
+        }
+    }
+
+    /// Verify both the semantic compiler requirement and the provider codegen revision.
+    pub fn validate_compiler_compatibility(
+        &self,
+        compiler_version: &str,
+        provider_codegen_revision: u32,
+    ) -> Result<(), SdkInventoryError> {
+        self.validate_compiler_version(compiler_version)?;
+        if self.provider_codegen_revision == provider_codegen_revision {
+            Ok(())
+        } else {
+            Err(SdkInventoryError::ProviderCodegenRevisionMismatch {
+                sdk_identity: self.identity(),
+                actual: self.provider_codegen_revision,
+                expected: provider_codegen_revision,
+            })
         }
     }
 
@@ -978,10 +1019,11 @@ mod tests {
 
     const INVENTORY: &str = r#"
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "sdk_id": "incan",
   "sdk_version": "0.5.0",
   "compiler_requirement": ">=0.5.0-dev.5,<0.6.0",
+  "provider_codegen_revision": 5,
   "components": {
     "stdlib-core": {
       "version": "0.5.0",
@@ -1105,6 +1147,41 @@ mod tests {
             .ok_or("expected incompatible compiler version")?;
         assert!(error.to_string().contains("requires compiler"));
         Ok(())
+    }
+
+    #[test]
+    fn rejects_incompatible_provider_codegen_revision() -> TestResult {
+        let inventory = SdkInventory::from_json(INVENTORY, Path::new("/sdk"))?;
+
+        let error = inventory
+            .validate_compiler_compatibility("0.5.0-dev.5", 6)
+            .err()
+            .ok_or("expected incompatible provider codegen revision")?;
+        assert!(error.to_string().contains("provider codegen revision 5"));
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_pre_revision_inventory_schema() {
+        let stale = INVENTORY
+            .replace("\"schema_version\": 2", "\"schema_version\": 1")
+            .replace("  \"provider_codegen_revision\": 5,\n", "");
+        let error = SdkInventory::from_json(&stale, Path::new("/sdk"));
+
+        assert!(matches!(
+            error,
+            Err(SdkInventoryError::UnsupportedSchema { actual: 1, expected: 2 })
+        ));
+    }
+
+    #[test]
+    fn rejects_current_schema_without_provider_codegen_revision() {
+        let missing_revision = INVENTORY.replace("  \"provider_codegen_revision\": 5,\n", "");
+
+        assert!(matches!(
+            SdkInventory::from_json(&missing_revision, Path::new("/sdk")),
+            Err(SdkInventoryError::MissingProviderCodegenRevision)
+        ));
     }
 
     #[test]

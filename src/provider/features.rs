@@ -1604,6 +1604,7 @@ serializer = { path = "../serializer", optional = true, default-features = false
             sdk_id: "incan".to_string(),
             sdk_version: "0.5.0".to_string(),
             compiler_requirement: ">=0.5.0-dev.16,<0.6.0".to_string(),
+            provider_codegen_revision: crate::version::SDK_PROVIDER_CODEGEN_REVISION,
             components: BTreeMap::from([(
                 "runtime".to_string(),
                 crate::provider::SdkComponent {

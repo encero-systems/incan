@@ -1498,6 +1498,7 @@ mod tests {
             sdk_id: "incan".to_string(),
             sdk_version: "0.5.0".to_string(),
             compiler_requirement: "^0.5".to_string(),
+            provider_codegen_revision: crate::version::SDK_PROVIDER_CODEGEN_REVISION,
             components: BTreeMap::from([(
                 "support".to_string(),
                 crate::provider::SdkComponent {
@@ -1872,6 +1873,7 @@ mod tests {
             sdk_id: "incan".to_string(),
             sdk_version: "0.5.0".to_string(),
             compiler_requirement: "^0.5".to_string(),
+            provider_codegen_revision: crate::version::SDK_PROVIDER_CODEGEN_REVISION,
             components: BTreeMap::from([(
                 "stdlib-data".to_string(),
                 crate::provider::SdkComponent {

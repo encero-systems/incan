@@ -85,8 +85,8 @@ use crate::rust_inspect::{Inspector, RustMetadataCache};
 use helpers::{collection_name, collection_type_id, render_resolved_type_as_rust_arg, stringlike_type_id};
 use incan_core::interop::{
     RUST_NEVER_TYPE_DISPLAY, RustFunctionSig, RustItemKind, RustItemMetadata, RustParam, RustTypeShape,
-    metadata_free_method_signature, render_rust_type_shape_path, split_top_level_rust_args,
-    strip_rust_borrow_lifetimes,
+    metadata_free_method_signature, render_rust_type_shape_path, rust_display_is_owned_string,
+    split_top_level_rust_args, strip_rust_borrow_lifetimes,
 };
 use incan_core::lang::conventions;
 use incan_core::lang::decorators::{self as core_decorators, DecoratorId};
@@ -1398,7 +1398,8 @@ impl TypeChecker {
     /// Map structured rust-inspect [`RustTypeShape`] into a [`ResolvedType`] for field access and pattern typing.
     ///
     /// `Option`/`Result` become [`ResolvedType::Generic`] with constructor names `Option` and `Result`. Concrete paths
-    /// use [`Self::render_rust_shape_path`] so generic arguments stay attached to [`ResolvedType::RustPath`].
+    /// are rendered through the ordinary Rust-display resolver so a structured metadata path receives the same
+    /// primitive classification as its textual fallback (notably owned Rust strings).
     pub(crate) fn resolved_type_from_rust_shape(&self, shape: &RustTypeShape) -> ResolvedType {
         match shape {
             RustTypeShape::Never => ResolvedType::Never,
@@ -1425,7 +1426,15 @@ impl TypeChecker {
                     .collect(),
             ),
             RustTypeShape::Ref(inner) => ResolvedType::Ref(Box::new(self.resolved_type_from_rust_shape(inner))),
-            RustTypeShape::RustPath { path, args } => ResolvedType::RustPath(Self::render_rust_shape_path(path, args)),
+            RustTypeShape::RustPath { path, args } => {
+                // `String` has an implementation allocator argument in some rustc metadata views. That argument
+                // does not change the language-level string value contract, so retain `str` semantics from the
+                // canonical nominal path instead of rendering it as an opaque generic Rust display.
+                if rust_display_is_owned_string(path) {
+                    return ResolvedType::Str;
+                }
+                self.resolved_type_from_rust_display(Self::render_rust_shape_path(path, args).as_str())
+            }
             RustTypeShape::TypeParam(name) => ResolvedType::TypeVar(name.clone()),
             RustTypeShape::Unknown => ResolvedType::Unknown,
         }
@@ -1521,6 +1530,9 @@ impl TypeChecker {
                 ResolvedType::Ref(Box::new(inner_ty))
             };
         }
+        if rust_display_is_owned_string(normalized.as_str()) {
+            return ResolvedType::Str;
+        }
         match normalized.as_str() {
             "{unknown}" => ResolvedType::Unknown,
             "bool" => ResolvedType::Bool,
@@ -1538,7 +1550,7 @@ impl TypeChecker {
             "u64" => ResolvedType::Numeric(NumericTypeId::U64),
             "u128" => ResolvedType::Numeric(NumericTypeId::U128),
             "usize" => ResolvedType::Numeric(NumericTypeId::USize),
-            "str" | "&str" | "String" | "std::string::String" | "alloc::string::String" => ResolvedType::Str,
+            "str" | "&str" => ResolvedType::Str,
             "Vec<u8>" | "std::vec::Vec<u8>" | "alloc::vec::Vec<u8>" | "&[u8]" => ResolvedType::Bytes,
             "()" => ResolvedType::Unit,
             _ if normalized.ends_with('>') => {

@@ -8,7 +8,10 @@ use crate::frontend::diagnostics::{CompileError, errors};
 use crate::frontend::resolved_type_subst::substitute_resolved_type;
 use crate::frontend::symbols::{FieldInfo, FunctionInfo, FunctionOverloadInfo, ResolvedType, SymbolKind, TypeInfo};
 use crate::frontend::typechecker::IdentKind;
-use incan_core::interop::{RustFieldInfo, RustItemKind, RustTypeInfo, metadata_free_function_signature};
+use incan_core::interop::{
+    RustFieldInfo, RustFunctionSig, RustItemKind, RustTypeInfo, compiler_owned_function_signature,
+    metadata_free_function_signature,
+};
 use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::keywords::{self, KeywordId};
 use incan_core::lang::stdlib;
@@ -332,6 +335,16 @@ impl TypeChecker {
                             self.check_call_args(args);
                             return ResolvedType::Unknown;
                         }
+                        if let Some(sig) = compiler_owned_function_signature(info.path.as_str()) {
+                            return self.validate_and_record_rust_import_function_call(
+                                info.path.as_str(),
+                                &sig,
+                                args,
+                                span,
+                                callee.span,
+                                expected_return_ty,
+                            );
+                        }
                         let metadata = info
                             .metadata
                             .clone()
@@ -339,29 +352,14 @@ impl TypeChecker {
                         if let Some(meta) = metadata.as_ref() {
                             match &meta.kind {
                                 RustItemKind::Function(sig) => {
-                                    let error_count_before = self.errors.len();
-                                    let result = self.validate_rust_function_call_with_expected(
+                                    return self.validate_and_record_rust_import_function_call(
                                         info.path.as_str(),
                                         sig,
                                         args,
                                         span,
+                                        callee.span,
                                         expected_return_ty,
                                     );
-                                    if self.errors.len() == error_count_before {
-                                        self.record_expr_type(
-                                            callee.span,
-                                            self.resolved_function_type_from_rust_sig_for_owner_path(
-                                                sig,
-                                                false,
-                                                info.path.as_str(),
-                                            ),
-                                        );
-                                        self.type_info
-                                            .expressions
-                                            .ident_kinds
-                                            .insert((callee.span.start, callee.span.end), IdentKind::RustImport);
-                                    }
-                                    return result;
                                 }
                                 RustItemKind::Type(type_info)
                                     if !type_info.fields.is_empty()
@@ -406,29 +404,14 @@ impl TypeChecker {
                                 }
                             }
                         } else if let Some(sig) = metadata_free_function_signature(info.path.as_str()) {
-                            let error_count_before = self.errors.len();
-                            let result = self.validate_rust_function_call_with_expected(
+                            return self.validate_and_record_rust_import_function_call(
                                 info.path.as_str(),
                                 &sig,
                                 args,
                                 span,
+                                callee.span,
                                 expected_return_ty,
                             );
-                            if self.errors.len() == error_count_before {
-                                self.record_expr_type(
-                                    callee.span,
-                                    self.resolved_function_type_from_rust_sig_for_owner_path(
-                                        &sig,
-                                        false,
-                                        info.path.as_str(),
-                                    ),
-                                );
-                                self.type_info
-                                    .expressions
-                                    .ident_kinds
-                                    .insert((callee.span.start, callee.span.end), IdentKind::RustImport);
-                            }
-                            return result;
                         } else if rust_path_last_segment_looks_like_type(info.path.as_str()) {
                             return self.check_metadata_free_rust_named_field_constructor_call(
                                 info.path.as_str(),
@@ -822,6 +805,31 @@ impl TypeChecker {
             return ResolvedType::RustPath(path.to_string());
         }
         ResolvedType::Unknown
+    }
+
+    /// Validate one Rust import call and record its callable semantics when validation succeeds.
+    fn validate_and_record_rust_import_function_call(
+        &mut self,
+        path: &str,
+        signature: &RustFunctionSig,
+        args: &[CallArg],
+        span: Span,
+        callee_span: Span,
+        expected_return_ty: Option<&ResolvedType>,
+    ) -> ResolvedType {
+        let error_count_before = self.errors.len();
+        let result = self.validate_rust_function_call_with_expected(path, signature, args, span, expected_return_ty);
+        if self.errors.len() == error_count_before {
+            self.record_expr_type(
+                callee_span,
+                self.resolved_function_type_from_rust_sig_for_owner_path(signature, false, path),
+            );
+            self.type_info
+                .expressions
+                .ident_kinds
+                .insert((callee_span.start, callee_span.end), IdentKind::RustImport);
+        }
+        result
     }
 
     /// Type-check a Rust struct field argument with the metadata-provided target type as context.

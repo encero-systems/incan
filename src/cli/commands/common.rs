@@ -559,7 +559,10 @@ fn prepare_sdk_provider_inventory() -> CliResult<Arc<SdkInventory>> {
         let inventory =
             SdkInventory::read_from_path(&inventory_path).map_err(|error| CliError::failure(error.to_string()))?;
         inventory
-            .validate_compiler_version(crate::version::INCAN_VERSION)
+            .validate_compiler_compatibility(
+                crate::version::INCAN_VERSION,
+                crate::version::SDK_PROVIDER_CODEGEN_REVISION,
+            )
             .map_err(|error| CliError::failure(error.to_string()))?;
         record_sdk_provider_root(&artifact_root)?;
         return Ok(Arc::new(inventory));
@@ -853,6 +856,7 @@ fn source_catalog_inventory(catalog: &SdkSourceCatalog, root: &Path) -> SdkInven
         sdk_id: catalog.sdk_id.clone(),
         sdk_version: catalog.sdk_version.clone(),
         compiler_requirement: catalog.compiler_requirement.clone(),
+        provider_codegen_revision: crate::version::SDK_PROVIDER_CODEGEN_REVISION,
         components,
         profiles: catalog.profiles.clone(),
     }
@@ -998,7 +1002,7 @@ fn split_env_cargo_args(value: Option<&str>) -> Vec<String> {
 }
 
 /// Discover the active component-aware SDK relative to the selected toolchain or an explicit override.
-pub(crate) fn discover_active_sdk_inventory() -> CliResult<Option<Arc<SdkInventory>>> {
+fn discover_active_sdk_inventory() -> CliResult<Option<Arc<SdkInventory>>> {
     let explicit = env::var_os(SDK_INVENTORY_OVERRIDE_ENV)
         .filter(|path| !path.is_empty())
         .map(PathBuf::from);
@@ -1027,7 +1031,10 @@ pub(crate) fn discover_active_sdk_inventory() -> CliResult<Option<Arc<SdkInvento
     };
     let inventory = SdkInventory::read_from_path(&path).map_err(|error| CliError::failure(error.to_string()))?;
     inventory
-        .validate_compiler_version(crate::version::INCAN_VERSION)
+        .validate_compiler_compatibility(
+            crate::version::INCAN_VERSION,
+            crate::version::SDK_PROVIDER_CODEGEN_REVISION,
+        )
         .map_err(|error| CliError::failure(error.to_string()))?;
     Ok(Some(Arc::new(inventory)))
 }
