@@ -1007,6 +1007,7 @@ enum ActiveSdkInventoryError {
 }
 
 impl ActiveSdkInventoryError {
+    /// Render the validated inventory failure for the CLI when no source rebuild is possible.
     fn into_cli_error(self) -> CliError {
         match self {
             Self::Rebuildable(error) => CliError::failure(error.to_string()),
@@ -1015,6 +1016,7 @@ impl ActiveSdkInventoryError {
     }
 }
 
+/// Identify inventory failures that a source checkout can repair by republishing providers.
 fn is_rebuildable_sdk_inventory_error(error: &crate::provider::SdkInventoryError) -> bool {
     matches!(
         error,
