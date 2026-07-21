@@ -6566,6 +6566,7 @@
 </ul>
 <h2 id="bugfixes">Bugfixes<a class="headerlink" href="#bugfixes" title="Permanent link">&para;</a></h2>
 <ul>
+<li><strong>Lockfiles</strong>: Compiled providers now publish a digest of their authored manifest and selected Incan source inputs for canonical semantic identity, while generated Rust and host ABI metadata remain under the byte-exact physical artifact digest. Equivalent native provider builds therefore share one SDK inventory and dependency fingerprint across macOS and Linux without weakening strict locks or user-authored path dependency identity (#931).</li>
 <li><strong>Compiler</strong>: Published Rust ABI metadata now excludes traits introduced only by unrelated downstream crates in the loaded inspection graph, keeping SDK provider identities and workspace dependency fingerprints stable across cache state and host platforms (#924).</li>
 <li><strong>Tooling</strong>: Canonical lock publication now keeps its persistent cross-process guard under ignored compiler target state instead of leaving <code>.incan.lock.incan.lock</code> in the project root (#912).</li>
 <li><strong>SDK providers</strong>: Official stdlib component packages now preserve their source-owned Apache-2.0 license in generated Cargo metadata, so downstream dependency audits no longer classify synthesized provider crates as unlicensed (#920).</li>

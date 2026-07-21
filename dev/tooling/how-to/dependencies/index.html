@@ -6920,6 +6920,7 @@
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>lock
 </code></pre></div>
 <p><code>incan.lock</code> embeds the resolved <code>Cargo.lock</code> and a fingerprint of your dependency inputs. <strong>Commit it to version control</strong> for reproducible builds.</p>
+<p>For compiled SDK providers, the fingerprint identifies checked provider contracts, dependency and feature choices, and authored Incan inputs. Native Rust output and host-derived ABI metadata remain covered by each installed provider artifact's exact integrity digest, but do not make an otherwise equivalent macOS and Linux SDK selection semantically different. User-authored path dependencies remain part of the semantic fingerprint.</p>
 <h3 id="default-buildtest-behavior">Default build/test behavior<a class="headerlink" href="#default-buildtest-behavior" title="Permanent link">&para;</a></h3>
 <p>If <code>incan.lock</code> doesn't exist and you run <code>incan build</code> or <code>incan test</code> without strict flags, the lock file is created automatically on first build.</p>
 <p>If <code>incan.lock</code> already exists but is stale, default <code>incan build</code> and <code>incan test</code> warn and leave the file untouched, but do not use its embedded <code>Cargo.lock</code> as dependency authority. Run <code>incan lock</code> when you intentionally want to refresh the committed lock file. Strict <code>--locked</code> and <code>--frozen</code> commands reject the stale lock.</p>
