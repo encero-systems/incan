@@ -6768,6 +6768,7 @@
 <li><strong>Duplicates are errors</strong>: <code>Point(x=1, x=2)</code> is a type error.</li>
 <li><strong>Missing required fields are errors</strong>: if a field has no default, you must pass it.</li>
 </ul>
+<p>Importing a public class does not make its private fields readable. Construction still follows the declaring provider's complete field order so private defaults are applied by that provider, including through direct imports, aliases, and multi-hop public facade re-exports. A later <code>value.private_field</code> access remains a type error outside methods on the declaring class.</p>
 <h2 id="field-access">Field access<a class="headerlink" href="#field-access" title="Permanent link">&para;</a></h2>
 <p>Access a field with dot syntax:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
