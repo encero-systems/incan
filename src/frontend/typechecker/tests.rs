@@ -3453,6 +3453,17 @@ fn test_resolved_type_from_structured_rust_string_shapes_is_str() {
 }
 
 #[test]
+fn test_resolved_type_from_generic_rust_string_display_is_str() {
+    let checker = TypeChecker::new();
+
+    assert_eq!(
+        checker.resolved_type_from_rust_display("std::string::String<alloc::alloc::Global>"),
+        ResolvedType::Str,
+        "an implementation allocator argument must not erase canonical Rust String semantics"
+    );
+}
+
+#[test]
 fn test_resolved_param_type_from_builtin_borrowed_displays_preserves_ref_payload() {
     let checker = TypeChecker::new();
     assert_eq!(

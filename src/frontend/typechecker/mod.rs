@@ -1555,6 +1555,9 @@ impl TypeChecker {
             "()" => ResolvedType::Unit,
             _ if normalized.ends_with('>') => {
                 if let Some((base, args)) = Self::rust_generic_base_and_args(normalized.as_str()) {
+                    if matches!(base, "String" | "std::string::String" | "alloc::string::String") {
+                        return ResolvedType::Str;
+                    }
                     let tail = base.rsplit("::").next().unwrap_or(base);
                     match collection_type_id(tail) {
                         Some(CollectionTypeId::Option) => {

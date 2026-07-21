@@ -7236,7 +7236,7 @@ async def main() -> None:
   "sdk_id": "incan",
   "sdk_version": "0.5.0",
   "compiler_requirement": ">=0.5.0-dev.6,<0.6.0",
-  "provider_codegen_revision": 2,
+  "provider_codegen_revision": 3,
   "components": {},
   "profiles": {"default": []}
 }"#,
