@@ -39,7 +39,7 @@ use crate::library_manifest::LibraryRustAbi;
 use crate::library_manifest::{
     CompiledProviderMetadata, LibraryManifest, ProviderCargoDependency, ProviderCargoDependencySource,
     ProviderDependencyKind, ProviderDependencyMetadata, ProviderFactKind, ProviderFactRequirement,
-    ProviderImplementationFacet, ProviderModuleClaim, digest_provider_artifact,
+    ProviderImplementationFacet, ProviderModuleClaim, digest_provider_artifact, digest_provider_source_inputs,
 };
 use crate::lockfile::{CargoFeatureSelection, semantic_lock_state};
 use crate::manifest::{DependencySource, DependencySpec, ProjectManifest};
@@ -1914,7 +1914,30 @@ fn compiled_provider_metadata(
     let provider_dependencies =
         compiled_provider_dependencies(feature_plan, library_manifest_index, provider_plan, artifact_root)?;
     let implementation_facets = provider_implementation_facets(&namespace_claims);
+    let semantic_source_inputs = modules
+        .iter()
+        .filter(|module| !module_is_owned_by_dependency_provider(provider_plan, &module.path_segments))
+        .map(|module| {
+            let label = if module.path_segments.is_empty() {
+                "<root>".to_string()
+            } else {
+                module.path_segments.join(".")
+            };
+            (label, module.file_path.clone())
+        })
+        .collect::<Vec<_>>();
+    let trusted_source_roots = crate::toolchain_layout::find_stdlib_source_dir()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let semantic_source_digest = digest_provider_source_inputs(
+        manifest.project_root(),
+        manifest.path(),
+        &semantic_source_inputs,
+        &trusted_source_roots,
+    )
+    .map_err(|error| CliError::failure(format!("failed to fingerprint authored provider inputs: {error}")))?;
     Ok(CompiledProviderMetadata {
+        semantic_source_digest: Some(semantic_source_digest),
         namespace_claims,
         public_features,
         active_features: root_features.active_features.clone(),

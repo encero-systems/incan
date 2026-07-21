@@ -149,6 +149,9 @@ fn validate_compiled_provider_metadata(metadata: &CompiledProviderMetadata) -> R
             metadata.schema_version, COMPILED_PROVIDER_METADATA_SCHEMA_VERSION
         )));
     }
+    if let Some(digest) = &metadata.semantic_source_digest {
+        validate_sha256_digest("provider semantic source", digest)?;
+    }
     for feature in metadata.public_features.keys() {
         validate_provider_identifier("public feature", feature)?;
     }
@@ -290,14 +293,19 @@ fn validate_compiled_provider_metadata(metadata: &CompiledProviderMetadata) -> R
 
 /// Validate the exact SHA-256 identity emitted by the compiled-provider artifact hasher.
 fn validate_provider_artifact_digest(dependency_key: &str, digest: &str) -> Result<(), LibraryManifestError> {
+    validate_sha256_digest(&format!("provider dependency `{dependency_key}` artifact"), digest)
+}
+
+/// Validate one exact SHA-256 identity with a caller-owned diagnostic label.
+fn validate_sha256_digest(label: &str, digest: &str) -> Result<(), LibraryManifestError> {
     let Some(hex) = digest.strip_prefix("sha256:") else {
         return Err(LibraryManifestError::Invalid(format!(
-            "provider dependency `{dependency_key}` artifact digest must start with `sha256:`"
+            "{label} digest must start with `sha256:`"
         )));
     };
     if hex.len() != 64 || !hex.chars().all(|character| character.is_ascii_hexdigit()) {
         return Err(LibraryManifestError::Invalid(format!(
-            "provider dependency `{dependency_key}` artifact digest must contain 64 hexadecimal characters"
+            "{label} digest must contain 64 hexadecimal characters"
         )));
     }
     Ok(())

@@ -1336,6 +1336,7 @@ fn manifest_reader_rejects_unknown_manifest_format() -> Result<(), Box<dyn std::
 fn compiled_provider_metadata_roundtrips_feature_and_facet_facts() -> Result<(), Box<dyn std::error::Error>> {
     let mut manifest = LibraryManifest::new("reporting", "0.5.0");
     manifest.contract_metadata.provider = CompiledProviderMetadata {
+        semantic_source_digest: Some(format!("sha256:{}", "b".repeat(64))),
         namespace_claims: vec![ProviderModuleClaim {
             module_path: vec!["reports".to_string()],
             required_features: BTreeSet::new(),
@@ -1387,6 +1388,20 @@ fn compiled_provider_metadata_roundtrips_feature_and_facet_facts() -> Result<(),
     let loaded = LibraryManifest::read_from_path(&path)?;
 
     assert_eq!(loaded.contract_metadata.provider, manifest.contract_metadata.provider);
+    Ok(())
+}
+
+#[test]
+fn compiled_provider_metadata_rejects_invalid_semantic_source_digest() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("reporting", "0.5.0");
+    manifest.contract_metadata.provider.semantic_source_digest = Some("sha256:not-a-digest".to_string());
+    let dir = tempfile::tempdir()?;
+    let error = manifest
+        .write_to_path(&dir.path().join("reporting.incnlib"))
+        .err()
+        .ok_or("expected invalid provider semantic source digest to fail")?;
+
+    assert!(matches!(error, LibraryManifestError::Invalid(message) if message.contains("provider semantic source")));
     Ok(())
 }
 

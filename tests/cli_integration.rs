@@ -1531,6 +1531,103 @@ regex = "1"
 }
 
 #[test]
+fn cold_rooted_workspace_lock_publishes_and_strict_library_build_agrees_issue931()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("src"))?;
+    fs::write(
+        root.path().join("incan.toml"),
+        r#"[project]
+name = "hees_ai"
+version = "0.0.1"
+
+[project.scripts]
+library = "src/lib.incn"
+
+[workspace]
+members = ["consumer"]
+default-members = ["hees_ai", "consumer"]
+
+[workspace.dependencies]
+hees_ai = { path = "." }
+"#,
+    )?;
+    fs::write(
+        root.path().join("src/lib.incn"),
+        "from std.json import JsonValue\n\n\npub def answer() -> int:\n  return 42\n",
+    )?;
+
+    let consumer = root.path().join("consumer");
+    fs::create_dir_all(consumer.join("src"))?;
+    fs::write(
+        consumer.join("incan.toml"),
+        r#"[project]
+name = "hees_consumer"
+version = "0.0.1"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+hees_ai = { workspace = true }
+"#,
+    )?;
+    fs::write(
+        consumer.join("src/main.incn"),
+        "from pub::hees_ai import answer\n\n\ndef main() -> None:\n  println(answer())\n",
+    )?;
+
+    let source_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let stdlib = source_root.join("crates/incan_stdlib/stdlib");
+    let toolchain_crates = source_root.join("crates");
+    let incan_home = root.path().join(".incan-home");
+    let provider_store = incan_home.join("cache/providers/sdk-v2");
+    let generated_target = incan_home.join("generated-target");
+    let run = |args: &[&str]| -> Result<Output, Box<dyn std::error::Error>> {
+        Ok(Command::new(incan_binary())
+            .args(args)
+            .current_dir(root.path())
+            .env("CARGO_NET_OFFLINE", "true")
+            .env("INCAN_NO_BANNER", "1")
+            .env("INCAN_LOCK_PREHEAT", "1")
+            .env("INCAN_SOURCE_ROOT", source_root)
+            .env("INCAN_STDLIB", &stdlib)
+            .env("INCAN_STDLIB_DIR", &stdlib)
+            .env("INCAN_TOOLCHAIN_CRATES_DIR", &toolchain_crates)
+            .env("INCAN_HOME", &incan_home)
+            .env("INCAN_INTERNAL_SDK_PROVIDER_STORE", &provider_store)
+            .env("INCAN_GENERATED_CARGO_TARGET_DIR", &generated_target)
+            .output()?)
+    };
+
+    assert!(!root.path().join("target").exists());
+    assert!(!incan_home.exists());
+    assert!(!root.path().join("incan.lock").exists());
+
+    let first_lock_output = run(&["lock"])?;
+    assert_success(&first_lock_output, "cold rooted workspace lock publication");
+    let lock_path = root.path().join("incan.lock");
+    let first_lock = fs::read(&lock_path)?;
+    let parsed = incan::lockfile::IncanLock::load(&lock_path)?;
+    assert!(!parsed.deps_fingerprint.is_empty());
+    assert!(root.path().join("target/lib/hees_ai.incnlib").is_file());
+    assert!(incan_home.is_dir());
+
+    let second_lock_output = run(&["lock"])?;
+    assert_success(&second_lock_output, "cold rooted workspace lock fixed point");
+    assert_eq!(first_lock, fs::read(&lock_path)?);
+
+    let build_output = run(&["build", "--lib", "--member", "hees_ai"])?;
+    assert_success(&build_output, "rooted workspace library build after lock publication");
+    assert_eq!(first_lock, fs::read(&lock_path)?);
+
+    let strict_output = run(&["build", "--lib", "--member", "hees_ai", "--locked"])?;
+    assert_success(&strict_output, "strict rooted workspace library build");
+    assert_eq!(first_lock, fs::read(&lock_path)?);
+    Ok(())
+}
+
+#[test]
 fn locked_build_synthesizes_unreferenced_selected_workspace_member_cargo_root() -> Result<(), Box<dyn std::error::Error>>
 {
     let root = tempfile::tempdir()?;
