@@ -7232,10 +7232,11 @@ async def main() -> None:
         fs::write(
             &stale_inventory,
             r#"{
-  "schema_version": 1,
+  "schema_version": 2,
   "sdk_id": "incan",
   "sdk_version": "0.5.0",
   "compiler_requirement": ">=0.5.0-dev.6,<0.6.0",
+  "provider_codegen_revision": 2,
   "components": {},
   "profiles": {"default": []}
 }"#,
@@ -7256,7 +7257,7 @@ async def main() -> None:
             .output()?;
         assert!(
             output.status.success(),
-            "a stale installed SDK inventory should rebuild from source when available: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            "a schema-2 inventory from the prior provider-codegen revision should rebuild from source when available: status={:?}\nstdout:\n{}\nstderr:\n{}",
             output.status,
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)

@@ -3438,6 +3438,18 @@ fn test_resolved_type_from_structured_rust_string_shapes_is_str() {
             "structured Rust metadata path {path} must retain Incan string semantics"
         );
     }
+
+    assert_eq!(
+        checker.resolved_type_from_rust_shape(&RustTypeShape::RustPath {
+            path: "std::string::String".to_string(),
+            args: vec![RustTypeShape::RustPath {
+                path: "alloc::alloc::Global".to_string(),
+                args: vec![],
+            }],
+        }),
+        ResolvedType::Str,
+        "a canonical String path must retain string semantics when rustc exposes its allocator argument"
+    );
 }
 
 #[test]

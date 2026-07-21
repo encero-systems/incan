@@ -1427,6 +1427,15 @@ impl TypeChecker {
             ),
             RustTypeShape::Ref(inner) => ResolvedType::Ref(Box::new(self.resolved_type_from_rust_shape(inner))),
             RustTypeShape::RustPath { path, args } => {
+                // `String` has an implementation allocator argument in some rustc metadata views. That argument
+                // does not change the language-level string value contract, so retain `str` semantics from the
+                // canonical nominal path instead of rendering it as an opaque generic Rust display.
+                if matches!(
+                    path.as_str(),
+                    "String" | "std::string::String" | "alloc::string::String"
+                ) {
+                    return ResolvedType::Str;
+                }
                 self.resolved_type_from_rust_display(Self::render_rust_shape_path(path, args).as_str())
             }
             RustTypeShape::TypeParam(name) => ResolvedType::TypeVar(name.clone()),
