@@ -74,7 +74,9 @@ use std::sync::Arc;
 use crate::frontend::ast::*;
 use crate::frontend::diagnostics::{CompileError, ErrorKind, errors};
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
-use crate::frontend::module::{ExportedSymbol, canonicalize_source_module_segments, exported_symbols};
+use crate::frontend::module::{
+    ExportedSymbol, canonicalize_source_module_segments, exported_symbols, logical_source_import_candidates,
+};
 use crate::frontend::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::frontend::surface_semantics::SurfaceContext;
 use crate::frontend::symbols::*;
@@ -4625,14 +4627,40 @@ impl TypeChecker {
             .collect()
     }
 
-    /// Return the exact symbol kind for one dependency module member path.
-    pub(crate) fn dependency_member_symbol_for_path(&self, module: &ImportPath, item_name: &str) -> Option<SymbolKind> {
-        if module.parent_levels > 0 || module.segments.is_empty() {
+    /// Select one dependency cache entry using source-resolution order and an unambiguous nested-entry fallback.
+    fn dependency_module_entry_for_path<'a, T>(
+        &self,
+        module: &ImportPath,
+        entries: &'a HashMap<String, T>,
+    ) -> Option<&'a T> {
+        let current_module_path = self.current_module_path.as_deref().unwrap_or_default();
+        for candidate in logical_source_import_candidates(current_module_path, module) {
+            if let Some(entry) = entries.get(&candidate.join("_")) {
+                return Some(entry);
+            }
+        }
+        if module.is_absolute || module.parent_levels > 0 {
             return None;
         }
-        let module_name = canonicalize_source_module_segments(&module.segments).join("_");
-        self.dependency_member_symbols
-            .get(&module_name)?
+
+        // A nested CLI entrypoint is represented as logical `main`, so its sibling prefix is unavailable here even
+        // though source discovery already admitted the exact dependency. Bind a bare suffix only when one cached
+        // canonical module owns it; ambiguous same-leaf modules deliberately remain unresolved.
+        let suffix = canonicalize_source_module_segments(&module.segments).join("_");
+        if suffix.is_empty() {
+            return None;
+        }
+        let suffix = format!("_{suffix}");
+        let mut matches = entries
+            .iter()
+            .filter_map(|(key, entry)| key.ends_with(&suffix).then_some(entry));
+        let entry = matches.next()?;
+        matches.next().is_none().then_some(entry)
+    }
+
+    /// Return the exact symbol kind for one dependency module member path.
+    pub(crate) fn dependency_member_symbol_for_path(&self, module: &ImportPath, item_name: &str) -> Option<SymbolKind> {
+        self.dependency_module_entry_for_path(module, &self.dependency_member_symbols)?
             .get(item_name)
             .cloned()
     }
@@ -4643,12 +4671,7 @@ impl TypeChecker {
         module: &ImportPath,
         item_name: &str,
     ) -> Option<PartialProjectionInfo> {
-        if module.parent_levels > 0 || module.segments.is_empty() {
-            return None;
-        }
-        let module_name = canonicalize_source_module_segments(&module.segments).join("_");
-        self.dependency_member_partial_projections
-            .get(&module_name)?
+        self.dependency_module_entry_for_path(module, &self.dependency_member_partial_projections)?
             .get(item_name)
             .cloned()
     }

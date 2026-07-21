@@ -1,6 +1,6 @@
 //! Class declaration lowering, including inherited field/method collection.
 
-use super::super::super::decl::{IrStruct, StructField};
+use super::super::super::decl::{IrStruct, IrStructKind, StructField};
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
 use crate::frontend::ast::{self, Spanned};
@@ -62,6 +62,7 @@ impl AstLowering {
         }
 
         Ok(IrStruct {
+            kind: IrStructKind::Class,
             name: c.name.clone(),
             docstring: c.docstring.clone(),
             fields,

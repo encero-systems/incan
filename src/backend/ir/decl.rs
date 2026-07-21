@@ -281,6 +281,8 @@ pub struct FunctionParam {
 /// IR struct definition
 #[derive(Debug, Clone)]
 pub struct IrStruct {
+    /// Source declaration category retained so emission does not infer model, class, or newtype semantics from shape.
+    pub kind: IrStructKind,
     pub name: String,
     /// Source docstring attached to the type declaration, when present.
     pub docstring: Option<String>,
@@ -295,6 +297,17 @@ pub struct IrStruct {
     pub derive_rust_modules: std::collections::HashMap<String, String>,
     /// Targeted Rust lint suppressions from RFC 057 `@rust.allow(...)`.
     pub lint_allows: Vec<IrRustLintAllow>,
+}
+
+/// Source declaration category for a struct-shaped IR nominal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IrStructKind {
+    /// A value-oriented `model` declaration.
+    Model,
+    /// An identity-oriented `class` declaration.
+    Class,
+    /// A validated or transparent `newtype` declaration.
+    Newtype,
 }
 
 /// Struct field

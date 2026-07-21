@@ -323,6 +323,9 @@ impl<'a> IrEmitter<'a> {
         qualifier: &IrImportQualifier,
         path: &[String],
     ) -> Vec<TokenStream> {
+        let resolved_source_path = self.resolved_source_import_path(origin, qualifier, path);
+        let is_resolved_source_path = resolved_source_path.is_some();
+        let path = resolved_source_path.as_deref().unwrap_or(path);
         let is_pub_library_import = matches!(origin, IrImportOrigin::PubLibrary { .. });
         let is_stdlib = Self::is_incan_source_stdlib_import(origin, qualifier, path);
 
@@ -361,7 +364,7 @@ impl<'a> IrEmitter<'a> {
         let mut tokens: Vec<TokenStream> = Vec::new();
         match qualifier {
             IrImportQualifier::Auto => {
-                if self.is_internal_module_path(path) {
+                if is_resolved_source_path || self.is_internal_module_path(path) {
                     tokens.push(quote! { crate });
                 }
             }
@@ -378,6 +381,49 @@ impl<'a> IrEmitter<'a> {
             quote! { #ident }
         }));
         tokens
+    }
+
+    /// Resolve an ordinary source import using the same sibling-before-root order as source resolution.
+    ///
+    /// Rust has no implicit sibling-module lookup. Without this normalization, an Incan source import such as
+    /// `from text_vaults import Vault` in `pkg.consumer` becomes `use text_vaults::Vault`, which Cargo interprets as
+    /// an external dependency instead of the generated `crate::pkg::text_vaults` module.
+    fn resolved_source_import_path(
+        &self,
+        origin: &IrImportOrigin,
+        qualifier: &IrImportQualifier,
+        path: &[String],
+    ) -> Option<Vec<String>> {
+        if !matches!(origin, IrImportOrigin::Standard)
+            || !matches!(qualifier, IrImportQualifier::Auto)
+            || stdlib::is_any_stdlib_path(path)
+        {
+            return None;
+        }
+
+        if let Some(current_module) = &self.current_source_module_path {
+            let mut sibling = current_module[..current_module.len().saturating_sub(1)].to_vec();
+            sibling.extend(path.iter().cloned());
+            if self.source_module_paths.contains(&sibling) {
+                return Some(sibling);
+            }
+        }
+
+        if self.source_module_paths.contains(path) {
+            return Some(path.to_vec());
+        }
+
+        // Some CLI root-program paths do not retain a logical source-module name through the final emitter setup.
+        // Constructor metadata is already seeded from every checked ordinary source provider for #886, so it provides
+        // a safe fallback only when the requested suffix has one unambiguous canonical owner.
+        let mut provider_candidates = self
+            .source_dependency_constructor_metadata
+            .keys()
+            .filter_map(|(module_path, _)| module_path.ends_with(path).then_some(module_path.clone()))
+            .collect::<Vec<_>>();
+        provider_candidates.sort();
+        provider_candidates.dedup();
+        (provider_candidates.len() == 1).then(|| provider_candidates.remove(0))
     }
 
     /// Return an absolute runtime path for a stdlib facade re-export of a runtime-owned surface type.

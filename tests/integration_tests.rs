@@ -4241,6 +4241,205 @@ def main() -> None:
     }
 
     #[test]
+    fn test_imported_private_class_constructor_compile_and_run_issue886() -> Result<(), Box<dyn std::error::Error>> {
+        let root = make_temp_dir("incan_imported_private_class_constructor");
+        let package = root.join("src").join("pkg");
+        fs::create_dir_all(&package)?;
+        fs::write(
+            root.join("incan.toml"),
+            "[project]\nname = \"imported_private_class_constructor\"\nversion = \"0.1.0\"\n",
+        )?;
+        fs::write(
+            package.join("text_vaults.incn"),
+            r#"
+pub class Vault:
+    secret: str = "sealed"
+    pub label: str
+    revision: int = 7
+
+    def private_value(self) -> str:
+        return self.secret
+
+    def revision_value(self) -> int:
+        return self.revision
+"#,
+        )?;
+        fs::write(
+            package.join("number_vaults.incn"),
+            r#"
+pub class Vault:
+    secret: int = 41
+    pub label: int
+    revision: str = "r2"
+
+    def private_value(self) -> int:
+        return self.secret
+
+    def revision_value(self) -> str:
+        return self.revision
+"#,
+        )?;
+        fs::write(
+            package.join("vault_facade.incn"),
+            "pub from text_vaults import Vault as FacadeVault\n",
+        )?;
+        fs::write(
+            package.join("public_api.incn"),
+            "pub from vault_facade import FacadeVault as ExportedVault\n",
+        )?;
+        let main_path = package.join("consumer.incn");
+        fs::write(
+            &main_path,
+            r#"
+from text_vaults import Vault
+
+def main() -> None:
+    vault = Vault(label="direct")
+    println(vault.label)
+    println(vault.private_value())
+    println(vault.revision_value())
+"#,
+        )?;
+
+        let direct_output = incan_command()
+            .current_dir(&root)
+            .args(["run", main_path.to_string_lossy().as_ref()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            direct_output.status.success(),
+            "direct imported private class constructor failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            direct_output.status,
+            String::from_utf8_lossy(&direct_output.stdout),
+            String::from_utf8_lossy(&direct_output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&direct_output.stdout).trim(),
+            "direct\nsealed\n7"
+        );
+
+        fs::write(
+            &main_path,
+            r#"
+from text_vaults import Vault as TextVault
+from number_vaults import Vault as NumberVault
+
+def main() -> None:
+    text = TextVault(label="visible", revision=9)
+    number = NumberVault(label=5)
+    println(text.label)
+    println(text.private_value())
+    println(text.revision_value())
+    println(number.label)
+    println(number.private_value())
+    println(number.revision_value())
+"#,
+        )?;
+        let alias_output = incan_command()
+            .current_dir(&root)
+            .args(["run", main_path.to_string_lossy().as_ref()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            alias_output.status.success(),
+            "aliased same-leaf private class constructors failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            alias_output.status,
+            String::from_utf8_lossy(&alias_output.stdout),
+            String::from_utf8_lossy(&alias_output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&alias_output.stdout).trim(),
+            "visible\nsealed\n9\n5\n41\nr2"
+        );
+
+        fs::write(
+            &main_path,
+            r#"
+from public_api import ExportedVault as ConsumerVault
+
+def main() -> None:
+    value = ConsumerVault(label="facade", revision=11)
+    println(value.label)
+    println(value.private_value())
+    println(value.revision_value())
+"#,
+        )?;
+        let facade_output = incan_command()
+            .current_dir(&root)
+            .args(["run", main_path.to_string_lossy().as_ref()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            facade_output.status.success(),
+            "multi-hop aliased source facade constructor failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            facade_output.status,
+            String::from_utf8_lossy(&facade_output.stdout),
+            String::from_utf8_lossy(&facade_output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&facade_output.stdout).trim(),
+            "facade\nsealed\n11"
+        );
+
+        let tests_dir = root.join("tests");
+        fs::create_dir_all(&tests_dir)?;
+        fs::write(
+            tests_dir.join("test_private_class_facade.incn"),
+            r#"
+from pkg.public_api import ExportedVault as TestVault
+
+def test_private_class_facade_constructor() -> None:
+    value = TestVault(label="test-batch", revision=13)
+    assert value.label == "test-batch"
+    assert value.private_value() == "sealed"
+    assert value.revision_value() == 13
+"#,
+        )?;
+        let test_output = incan_command()
+            .current_dir(&root)
+            .args(["test", tests_dir.to_string_lossy().as_ref()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            test_output.status.success(),
+            "multi-hop source facade constructor failed in a generated test batch: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            test_output.status,
+            String::from_utf8_lossy(&test_output.stdout),
+            String::from_utf8_lossy(&test_output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&test_output.stdout).contains("test_private_class_facade_constructor"),
+            "expected generated test batch to execute the facade constructor regression:\n{}",
+            String::from_utf8_lossy(&test_output.stdout)
+        );
+
+        fs::write(
+            &main_path,
+            r#"
+from text_vaults import Vault as PrivateVault
+
+def main() -> None:
+    value = PrivateVault(label="visible")
+    println(value.secret)
+"#,
+        )?;
+        let private_check = incan_command()
+            .current_dir(&root)
+            .args(["--check", main_path.to_string_lossy().as_ref()])
+            .output()?;
+        assert!(
+            !private_check.status.success(),
+            "expected imported private-field access to fail Incan typechecking"
+        );
+        let private_stderr = strip_ansi_escapes(&String::from_utf8_lossy(&private_check.stderr));
+        assert!(
+            private_stderr.contains("Field 'secret' on 'PrivateVault' is private"),
+            "expected source-level private-field diagnostic, got:\n{private_stderr}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_imported_value_enum_ordinal_map_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
         let root = make_temp_dir("incan_imported_ordinal_enum");
         fs::create_dir_all(root.join("pkg"))?;
@@ -4293,17 +4492,26 @@ def main() -> None:
             r#"
 pub def BytesIO(initial: int = 7) -> int:
     return initial
+
+pub class FactoryValue:
+    secret: str = "sealed"
+    pub label: str
+
+pub def MakeValue(label: str) -> FactoryValue:
+    return FactoryValue(label=label)
 "#,
         )?;
         let main_path = root.join("factory_call.incn");
         fs::write(
             &main_path,
             r#"
-from pkg.factory import BytesIO
+from pkg.factory import BytesIO, MakeValue
 
 def main() -> None:
     println(BytesIO())
     println(BytesIO(3))
+    value = MakeValue(label="factory")
+    println(value.label)
 "#,
         )?;
         let output = incan_command()
@@ -4317,7 +4525,7 @@ def main() -> None:
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "7\n3");
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "7\n3\nfactory");
         Ok(())
     }
 

@@ -20,7 +20,7 @@ use crate::cli::prelude::ParsedModule;
 use crate::cli::{CliError, CliResult};
 use crate::dependency_resolver::ResolvedDependencies;
 use crate::dependency_resolver::{DependencyError, InlineRustImport};
-use crate::frontend::ast::{ImportKind, Program, Span};
+use crate::frontend::ast::{ImportKind, ImportPath, Program, Span};
 use crate::frontend::contract_metadata::{
     CanonicalModelBundle, materialize_contract_models, read_project_model_bundles,
 };
@@ -29,7 +29,8 @@ use crate::frontend::library_manifest_index::{
     LibraryArtifactMetadata, LibraryManifestFailureKind, LibraryManifestIndex, LibraryManifestIndexEntry,
 };
 use crate::frontend::module::{
-    SourceModuleImportResolution, canonicalize_source_module_segments, resolve_program_source_imports,
+    SourceModuleImportResolution, canonicalize_source_module_segments, logical_source_import_candidates,
+    resolve_program_source_imports,
 };
 use crate::frontend::testing_markers::{
     TestingMarkerSemantics, load_testing_marker_semantics, testing_marker_semantics_from_manifest,
@@ -3865,6 +3866,42 @@ pub(crate) fn imported_module_deps_for_with_index<'m>(
         module_index: usize,
         module_idx_by_key: &HashMap<String, usize>,
     ) -> BTreeSet<usize> {
+        /// Resolve one import path to the exact collected source module, including a safe nested-entry fallback.
+        fn resolve_local_dep_index(
+            current_module_path: &[String],
+            path: &ImportPath,
+            module_idx_by_key: &HashMap<String, usize>,
+        ) -> Option<usize> {
+            let exact = logical_source_import_candidates(current_module_path, path)
+                .into_iter()
+                .find_map(|candidate| {
+                    let key = canonicalize_source_module_segments(&candidate).join("_");
+                    module_idx_by_key.get(&key).copied()
+                });
+            if exact.is_some() || path.is_absolute || path.parent_levels > 0 {
+                return exact;
+            }
+
+            // CLI entrypoints retain the synthetic logical name `main` even when their file lives in a nested source
+            // directory. The on-disk resolver has already admitted the sibling into this module set; recover that
+            // canonical identity only when the bare import suffix identifies exactly one collected module.
+            let suffix = canonicalize_source_module_segments(&path.segments).join("_");
+            if suffix.is_empty() {
+                return None;
+            }
+            let suffix = format!("_{suffix}");
+            let mut matches = module_idx_by_key
+                .iter()
+                .filter_map(|(key, index)| key.ends_with(&suffix).then_some(*index))
+                .collect::<Vec<_>>();
+            matches.sort_unstable();
+            matches.dedup();
+            match matches.as_slice() {
+                [index] => Some(*index),
+                _ => None,
+            }
+        }
+
         let mut dep_indexes: BTreeSet<usize> = BTreeSet::new();
         for decl in &modules[module_index].ast.declarations {
             let crate::frontend::ast::Declaration::Import(import) = &decl.node else {
@@ -3872,34 +3909,28 @@ pub(crate) fn imported_module_deps_for_with_index<'m>(
             };
             match &import.kind {
                 ImportKind::From { module, .. } => {
-                    if module.parent_levels > 0 || module.segments.is_empty() {
-                        continue;
-                    }
-                    let key = canonicalize_source_module_segments(&module.segments).join("_");
-                    if let Some(dep_idx) = module_idx_by_key.get(&key).copied()
+                    if let Some(dep_idx) =
+                        resolve_local_dep_index(&modules[module_index].path_segments, module, module_idx_by_key)
                         && dep_idx != module_index
                     {
                         dep_indexes.insert(dep_idx);
                     }
                 }
                 ImportKind::Module(path) => {
-                    if path.parent_levels > 0 || path.segments.is_empty() {
-                        continue;
-                    }
-                    let full_key = canonicalize_source_module_segments(&path.segments).join("_");
-                    if let Some(dep_idx) = module_idx_by_key.get(&full_key).copied()
+                    let dep_idx = resolve_local_dep_index(
+                        &modules[module_index].path_segments,
+                        path,
+                        module_idx_by_key,
+                    )
+                    .or_else(|| {
+                        let mut parent_path = path.clone();
+                        parent_path.segments.pop();
+                        resolve_local_dep_index(&modules[module_index].path_segments, &parent_path, module_idx_by_key)
+                    });
+                    if let Some(dep_idx) = dep_idx
                         && dep_idx != module_index
                     {
                         dep_indexes.insert(dep_idx);
-                    }
-                    if path.segments.len() > 1 {
-                        let parent_key =
-                            canonicalize_source_module_segments(&path.segments[..path.segments.len() - 1]).join("_");
-                        if let Some(dep_idx) = module_idx_by_key.get(&parent_key).copied()
-                            && dep_idx != module_index
-                        {
-                            dep_indexes.insert(dep_idx);
-                        }
                     }
                 }
                 _ => {}
@@ -5053,6 +5084,67 @@ pub def probe() -> SubstraitPlan:
                 .into());
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn imported_module_deps_preserve_bare_sibling_class_privacy_issue886() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let src_dir = tmp.path().join("src");
+        let pkg_dir = src_dir.join("pkg");
+        std::fs::create_dir_all(&pkg_dir)?;
+        std::fs::write(
+            tmp.path().join("incan.toml"),
+            "[project]\nname = \"sibling_private_class\"\nversion = \"0.1.0\"\n",
+        )?;
+        std::fs::write(
+            pkg_dir.join("vaults.incn"),
+            "pub class Vault:\n    secret: str = \"sealed\"\n    pub label: str\n",
+        )?;
+        let consumer_path = pkg_dir.join("consumer.incn");
+        std::fs::write(
+            &consumer_path,
+            r#"from vaults import Vault
+
+def leak() -> str:
+    value = Vault(label="visible")
+    return value.secret
+"#,
+        )?;
+
+        let modules = collect_modules(consumer_path.to_string_lossy().as_ref())?;
+        let consumer_index = modules
+            .iter()
+            .position(|module| module.file_path == consumer_path)
+            .ok_or("expected nested consumer module")?;
+        let module_idx_by_key = module_key_index(&modules);
+        let dependencies = imported_module_deps_for_with_index(&modules, consumer_index, &module_idx_by_key);
+        assert!(
+            dependencies.iter().any(|(name, _)| *name == "pkg_vaults"),
+            "bare sibling imports must retain the canonical nested dependency; modules={:?}, dependencies={:?}",
+            modules
+                .iter()
+                .map(|module| (module.name.clone(), module.path_segments.clone()))
+                .collect::<Vec<_>>(),
+            dependencies
+                .iter()
+                .map(|(name, _)| (*name).to_string())
+                .collect::<Vec<_>>()
+        );
+
+        let mut checker = typechecker::TypeChecker::new();
+        checker.set_current_module_path(Some(modules[consumer_index].path_segments.clone()));
+        let errors = match checker.check_with_imports(&modules[consumer_index].ast, &dependencies) {
+            Ok(()) => return Err("private sibling field access must fail typechecking".into()),
+            Err(errors) => errors,
+        };
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains("Field 'secret' on 'Vault' is private")),
+            "expected private-field diagnostic, got: {:?}",
+            errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+        );
         Ok(())
     }
 

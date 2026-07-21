@@ -1,6 +1,6 @@
 //! Model declaration lowering.
 
-use super::super::super::decl::{IrStruct, StructField};
+use super::super::super::decl::{IrStruct, IrStructKind, StructField};
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
 use crate::frontend::ast;
@@ -53,6 +53,7 @@ impl AstLowering {
         }
 
         Ok(IrStruct {
+            kind: IrStructKind::Model,
             name: m.name.clone(),
             docstring: m.docstring.clone(),
             fields,

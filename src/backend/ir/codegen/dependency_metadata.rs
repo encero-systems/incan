@@ -6,7 +6,7 @@ use crate::backend::ir::expr::{IrDictEntry, IrGeneratorClause, IrListEntry, Meth
 use crate::backend::ir::{IrDecl, IrDeclKind, IrExpr, IrExprKind, IrProgram, IrStmt, IrStmtKind, IrType};
 use crate::frontend::ast::{self, Declaration, Expr, ImportKind, ImportPath, Program};
 use crate::frontend::decorator_resolution;
-use crate::frontend::module::canonicalize_source_module_segments;
+use crate::frontend::module::{canonicalize_source_module_segments, logical_source_import_candidates};
 use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
 use incan_core::lang::{
     generated_support, stdlib,
@@ -48,32 +48,58 @@ pub(super) fn collect_model_field_aliases(
     out
 }
 
-/// Resolve a source import path to the generated Rust module path used for dependency emission.
-fn generated_module_path_for_source_import(path: &ImportPath, current_module_path: &[String]) -> Option<Vec<String>> {
-    let resolved_segments = if path.parent_levels > 0 {
-        let keep = current_module_path.len().checked_sub(path.parent_levels)?;
-        let mut resolved = current_module_path[..keep].to_vec();
-        resolved.extend(path.segments.clone());
-        resolved
-    } else {
-        path.segments.clone()
-    };
-    let mut segments = canonicalize_source_module_segments(&resolved_segments);
-
-    if segments.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT) {
-        segments[0] = stdlib::INCAN_STD_NAMESPACE.to_string();
-    }
-
-    Some(segments)
-}
-
-/// Convert a dependency's source path into the Rust module path used by generated reachability metadata.
-fn generated_module_path_for_dependency(path_segments: &[String]) -> Vec<String> {
-    let mut segments = canonicalize_source_module_segments(path_segments);
+/// Convert one canonical source path into its generated Rust module path.
+fn generated_module_path_for_source_path(path: &[String]) -> Vec<String> {
+    let mut segments = canonicalize_source_module_segments(path);
     if segments.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT) {
         segments[0] = stdlib::INCAN_STD_NAMESPACE.to_string();
     }
     segments
+}
+
+/// Convert a dependency's source path into the Rust module path used by generated reachability metadata.
+fn generated_module_path_for_dependency(path_segments: &[String]) -> Vec<String> {
+    generated_module_path_for_source_path(path_segments)
+}
+
+/// Resolve a source import to a generated dependency module path.
+///
+/// Source programs may import a sibling by its local spelling while generated dependency modules retain their
+/// canonical source path. Use that exact path when available; otherwise accept a suffix only when it identifies one
+/// provider module. Multiple providers with the same suffix remain unresolved rather than selecting one by name.
+fn generated_dependency_module_path_for_source_import(
+    path: &ImportPath,
+    current_module_path: &[String],
+    module_paths: &HashSet<Vec<String>>,
+) -> Option<Vec<String>> {
+    let candidates = logical_source_import_candidates(current_module_path, path)
+        .into_iter()
+        .map(|candidate| generated_module_path_for_source_path(&candidate))
+        .collect::<Vec<_>>();
+    for candidate in &candidates {
+        if module_paths.contains(candidate) {
+            return Some(candidate.clone());
+        }
+    }
+    let generated_path = candidates.last()?.clone();
+    if path.is_absolute || path.parent_levels > 0 {
+        return Some(generated_path);
+    }
+
+    let mut providers = module_paths
+        .iter()
+        .filter(|module_path| module_path.ends_with(&generated_path))
+        .cloned()
+        .collect::<Vec<_>>();
+    providers.sort();
+    providers.dedup();
+    if providers.len() == 1 {
+        Some(providers.remove(0))
+    } else {
+        // Keep existing handling for standard-library and non-provider imports. An ambiguous provider suffix is
+        // intentionally left at its source spelling, so it cannot retain declarations from an arbitrary module.
+        Some(generated_path)
+    }
 }
 
 /// True when a dependency module should keep its public API even if the main module does not import every item.
@@ -688,7 +714,9 @@ pub(super) fn collect_externally_reachable_items_by_module(
             };
             match &import.kind {
                 ImportKind::From { module, items } => {
-                    let Some(module_path) = generated_module_path_for_source_import(module, current_module_path) else {
+                    let Some(module_path) =
+                        generated_dependency_module_path_for_source_import(module, current_module_path, module_paths)
+                    else {
                         continue;
                     };
                     let reachable_items = reachable.entry(module_path.clone()).or_default();
@@ -703,7 +731,9 @@ pub(super) fn collect_externally_reachable_items_by_module(
                     }
                 }
                 ImportKind::Module(path) => {
-                    let Some(segments) = generated_module_path_for_source_import(path, current_module_path) else {
+                    let Some(segments) =
+                        generated_dependency_module_path_for_source_import(path, current_module_path, module_paths)
+                    else {
                         continue;
                     };
                     if module_paths.contains(&segments) {
@@ -858,6 +888,52 @@ pub trait {sum}[T]:
         };
         assert!(selected.contains(iterator));
         assert!(selected.contains(sum));
+    }
+
+    #[test]
+    fn bare_source_import_keeps_unique_canonical_provider_item() {
+        let main = parse("from text_vaults import Vault\n");
+        let vaults = parse("pub class Vault:\n    value: str\n");
+        let path = vec!["pkg".to_string(), "text_vaults".to_string()];
+        let reachable =
+            collect_externally_reachable_items_by_module(&main, &[("text_vaults", &vaults, Some(path.clone()))]);
+
+        assert_eq!(reachable.get(&path), Some(&HashSet::from(["Vault".to_string()])));
+    }
+
+    #[test]
+    fn bare_source_import_does_not_choose_ambiguous_provider_suffix() {
+        let main = parse("from text_vaults import Vault\n");
+        let vaults = parse("pub class Vault:\n    value: str\n");
+        let first = vec!["pkg".to_string(), "text_vaults".to_string()];
+        let second = vec!["other".to_string(), "text_vaults".to_string()];
+        let reachable = collect_externally_reachable_items_by_module(
+            &main,
+            &[
+                ("text_vaults", &vaults, Some(first.clone())),
+                ("text_vaults", &vaults, Some(second.clone())),
+            ],
+        );
+
+        assert!(!reachable.contains_key(&first));
+        assert!(!reachable.contains_key(&second));
+    }
+
+    #[test]
+    fn source_import_prefers_exact_sibling_over_source_root() {
+        let path = ImportPath::simple(vec!["text_vaults".to_string()]);
+        let sibling = vec!["pkg".to_string(), "text_vaults".to_string()];
+        let root = vec!["text_vaults".to_string()];
+        let module_paths = HashSet::from([root, sibling.clone()]);
+
+        assert_eq!(
+            generated_dependency_module_path_for_source_import(
+                &path,
+                &["pkg".to_string(), "consumer".to_string()],
+                &module_paths,
+            ),
+            Some(sibling)
+        );
     }
 }
 
