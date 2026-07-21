@@ -14,9 +14,9 @@
     },
     {
       "path": "crates/incan_core/src/interop/metadata.rs",
-      "category": "registry-backed Rust collection metadata policy and shared Rust type-shape parsing, including borrowed impl-trait interop bounds",
-      "expected_count": 25,
-      "expected_fingerprint": "0x14563632957da1e4"
+      "category": "registry-backed Rust collection and compiler-owned function metadata policy, plus shared Rust type-shape parsing including canonical owned String displays with allocator arguments",
+      "expected_count": 26,
+      "expected_fingerprint": "0x313c8a3ca86c1175"
     },
     {
       "path": "crates/rust_inspect/src/cache.rs",
@@ -80,9 +80,9 @@
     },
     {
       "path": "src/backend/ir/conversions.rs",
-      "category": "central argument conversion shape checks",
-      "expected_count": 3,
-      "expected_fingerprint": "0x4d96219944d67d53"
+      "category": "central argument conversion and canonical owned Rust String shape checks",
+      "expected_count": 2,
+      "expected_fingerprint": "0xc102811ab1ea1d38"
     },
     {
       "path": "src/backend/ir/emit/decls/functions.rs",
@@ -344,9 +344,9 @@
     },
     {
       "path": "src/frontend/typechecker/mod.rs",
-      "category": "Rust display type parsing and nominal String canonicalization, source type-name validation, and stdlib derive compatibility",
-      "expected_count": 39,
-      "expected_fingerprint": "0x81c4c95b10579d08"
+      "category": "Rust display type parsing and shared nominal String canonicalization, source type-name validation, and stdlib derive compatibility",
+      "expected_count": 38,
+      "expected_fingerprint": "0xddf8ee5a4184529a"
     },
     {
       "path": "src/frontend/typechecker/stdlib_loader.rs",

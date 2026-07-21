@@ -13,7 +13,7 @@ pub const INCAN_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Compatibility revision for generated SDK provider Rust.
 ///
-/// This is deliberately independent of the public compiler version: an installed SDK
-/// seed is immutable and may outlive a version-neutral compiler code-generation fix.
-/// Increase it whenever a change can require every SDK provider to be regenerated.
+/// This is deliberately independent of the public compiler version: an installed SDK seed is immutable and may
+/// outlive a version-neutral compiler code-generation fix. Increase it whenever a change can require every SDK
+/// provider to be regenerated.
 pub const SDK_PROVIDER_CODEGEN_REVISION: u32 = 5;

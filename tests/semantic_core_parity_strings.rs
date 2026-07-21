@@ -36,6 +36,12 @@ fn semantics_vs_runtime_concat_and_contains() {
 }
 
 #[test]
+fn compiler_owned_byte_slice_helpers_keep_the_registered_runtime_abi() {
+    let _: fn(&str, i64, i64) -> String = rt_str_slice_byte_range;
+    let _: fn(&str, i64) -> String = rt_str_slice_from_byte_offset;
+}
+
+#[test]
 fn semantics_vs_runtime_index_and_slice() -> Result<(), StringAccessError> {
     let s = "héllo";
     // Index

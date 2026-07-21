@@ -2933,9 +2933,10 @@ impl Default for AstLowering {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::ir::expr::{CollectionMethodKind, IrExprKind, MethodKind, StringMethodKind, UnaryOp};
-    use crate::backend::ir::stmt::IrStmtKind;
-    use crate::frontend::{lexer, parser};
+    use crate::backend::ir::conversions::{BinOpEmitKind, determine_binop_plan};
+    use crate::backend::ir::expr::{BinOp, CollectionMethodKind, IrExprKind, MethodKind, StringMethodKind, UnaryOp};
+    use crate::backend::ir::stmt::{AssignTarget, IrStmtKind};
+    use crate::frontend::{lexer, parser, typechecker::TypeChecker};
 
     fn must_ok<T, E: std::fmt::Debug>(result: Result<T, E>) -> T {
         match result {
@@ -2953,6 +2954,61 @@ mod tests {
         });
         let mut lowering = AstLowering::new();
         lowering.lower_program(&ast)
+    }
+
+    #[test]
+    fn rust_string_slice_import_add_assign_preserves_owned_rhs_issue896() -> Result<(), String> {
+        let source = r#"
+from rust::incan_stdlib::strings import str_slice_byte_range
+
+def concat_slice(text: str) -> str:
+    mut out = ""
+    out += str_slice_byte_range(text, 0, 1)
+    return out
+"#;
+        let tokens = lexer::lex(source).map_err(|errs| format!("lex failed: {errs:?}"))?;
+        let ast = parser::parse(&tokens).map_err(|errs| format!("parse failed: {errs:?}"))?;
+        let mut checker = TypeChecker::new();
+        checker
+            .check_program(&ast)
+            .map_err(|errs| format!("typecheck failed: {errs:?}"))?;
+
+        let mut lowering = AstLowering::new_with_type_info(checker.type_info().clone());
+        let program = lowering
+            .lower_program(&ast)
+            .map_err(|err| format!("lowering failed: {err:?}"))?;
+        let function = program
+            .declarations
+            .iter()
+            .find_map(|decl| match &decl.kind {
+                IrDeclKind::Function(function) if function.name == "concat_slice" => Some(function),
+                _ => None,
+            })
+            .ok_or_else(|| "expected lowered function `concat_slice`".to_string())?;
+        let value = function
+            .body
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                IrStmtKind::Assign {
+                    target: AssignTarget::Var(name),
+                    value,
+                } if name == "out" && matches!(value.kind, IrExprKind::BinOp { .. }) => Some(value),
+                _ => None,
+            })
+            .ok_or_else(|| format!("expected lowered `out += ...` assignment, got {:?}", function.body))?;
+        let IrExprKind::BinOp { op, left, right } = &value.kind else {
+            return Err(format!("expected binary addition, got {:?}", value.kind));
+        };
+
+        assert_eq!(*op, BinOp::Add);
+        assert_eq!(left.ty, IrType::String);
+        assert_eq!(right.ty, IrType::String);
+        let BinOpEmitKind::StdlibCall { path, borrow_args } = determine_binop_plan(op, left, right).emit else {
+            return Err("owned Rust string RHS should lower through a stdlib call".to_string());
+        };
+        assert_eq!(path.to_string(), "incan_stdlib :: strings :: str_concat");
+        assert!(borrow_args);
+        Ok(())
     }
 
     fn spanned<T>(node: T) -> ast::Spanned<T> {

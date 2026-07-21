@@ -179,18 +179,18 @@ pub struct MetadataFreeMethodSignatureRule {
     pub is_unsafe: bool,
 }
 
-/// One parameter in a metadata-free Rust free-function signature.
+/// One parameter in a registry-backed Rust free-function signature.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MetadataFreeFunctionParamRule {
+pub struct RustFunctionParamRule {
     pub name: Option<&'static str>,
     pub type_display: &'static str,
 }
 
-/// Complete callable signature for one metadata-free Rust free-function surface.
+/// Complete callable contract for one registry-backed Rust free-function surface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MetadataFreeFunctionSignatureRule {
+pub struct RustFunctionSignatureRule {
     pub path: &'static str,
-    pub params: &'static [MetadataFreeFunctionParamRule],
+    pub params: &'static [RustFunctionParamRule],
     pub return_type: &'static str,
     pub is_async: bool,
     pub is_unsafe: bool,
@@ -268,29 +268,69 @@ pub const METADATA_FREE_METHOD_SIGNATURE_RULES: &[MetadataFreeMethodSignatureRul
     },
 ];
 
-/// Metadata-free Rust free-function signatures used when rust-inspect cannot inspect sysroot crates.
+/// Authoritative signatures for compiler-owned runtime helpers whose source typing must be cache-independent.
+pub const COMPILER_OWNED_FUNCTION_SIGNATURE_RULES: &[RustFunctionSignatureRule] = &[
+    RustFunctionSignatureRule {
+        path: "incan_stdlib::strings::str_slice_byte_range",
+        params: &[
+            RustFunctionParamRule {
+                name: Some("s"),
+                type_display: "&str",
+            },
+            RustFunctionParamRule {
+                name: Some("start"),
+                type_display: "i64",
+            },
+            RustFunctionParamRule {
+                name: Some("end"),
+                type_display: "i64",
+            },
+        ],
+        return_type: "String",
+        is_async: false,
+        is_unsafe: false,
+    },
+    RustFunctionSignatureRule {
+        path: "incan_stdlib::strings::str_slice_from_byte_offset",
+        params: &[
+            RustFunctionParamRule {
+                name: Some("s"),
+                type_display: "&str",
+            },
+            RustFunctionParamRule {
+                name: Some("start"),
+                type_display: "i64",
+            },
+        ],
+        return_type: "String",
+        is_async: false,
+        is_unsafe: false,
+    },
+];
+
+/// Metadata-free Rust free-function signatures used when rust-inspect cannot inspect a stable Rust surface.
 ///
 /// rust-inspect intentionally indexes Cargo workspace crates and path/registry dependencies; sysroot crates such as
-/// `std` are not always available as ordinary metadata roots. Keep this table to stable std APIs whose signatures are
-/// part of Rust's public contract and whose result shapes matter for Incan source typing.
-pub const METADATA_FREE_FUNCTION_SIGNATURE_RULES: &[MetadataFreeFunctionSignatureRule] = &[
-    MetadataFreeFunctionSignatureRule {
+/// `std` are not always available as ordinary metadata roots. Keep this table to stable APIs whose signatures are part
+/// of Rust's public contract and whose result shapes matter for Incan source typing.
+pub const METADATA_FREE_FUNCTION_SIGNATURE_RULES: &[RustFunctionSignatureRule] = &[
+    RustFunctionSignatureRule {
         path: "std::io::stdin",
         params: &[],
         return_type: "std::io::Stdin",
         is_async: false,
         is_unsafe: false,
     },
-    MetadataFreeFunctionSignatureRule {
+    RustFunctionSignatureRule {
         path: "std::io::stdout",
         params: &[],
         return_type: "std::io::Stdout",
         is_async: false,
         is_unsafe: false,
     },
-    MetadataFreeFunctionSignatureRule {
+    RustFunctionSignatureRule {
         path: "std::fs::metadata",
-        params: &[MetadataFreeFunctionParamRule {
+        params: &[RustFunctionParamRule {
             name: Some("path"),
             type_display: "impl AsRef<std::path::Path>",
         }],
@@ -298,9 +338,9 @@ pub const METADATA_FREE_FUNCTION_SIGNATURE_RULES: &[MetadataFreeFunctionSignatur
         is_async: false,
         is_unsafe: false,
     },
-    MetadataFreeFunctionSignatureRule {
+    RustFunctionSignatureRule {
         path: "std::fs::symlink_metadata",
-        params: &[MetadataFreeFunctionParamRule {
+        params: &[RustFunctionParamRule {
             name: Some("path"),
             type_display: "impl AsRef<std::path::Path>",
         }],
@@ -308,9 +348,9 @@ pub const METADATA_FREE_FUNCTION_SIGNATURE_RULES: &[MetadataFreeFunctionSignatur
         is_async: false,
         is_unsafe: false,
     },
-    MetadataFreeFunctionSignatureRule {
+    RustFunctionSignatureRule {
         path: "std::fs::read",
-        params: &[MetadataFreeFunctionParamRule {
+        params: &[RustFunctionParamRule {
             name: Some("path"),
             type_display: "impl AsRef<std::path::Path>",
         }],
@@ -318,9 +358,9 @@ pub const METADATA_FREE_FUNCTION_SIGNATURE_RULES: &[MetadataFreeFunctionSignatur
         is_async: false,
         is_unsafe: false,
     },
-    MetadataFreeFunctionSignatureRule {
+    RustFunctionSignatureRule {
         path: "std::fs::read_dir",
-        params: &[MetadataFreeFunctionParamRule {
+        params: &[RustFunctionParamRule {
             name: Some("path"),
             type_display: "impl AsRef<std::path::Path>",
         }],
@@ -328,9 +368,9 @@ pub const METADATA_FREE_FUNCTION_SIGNATURE_RULES: &[MetadataFreeFunctionSignatur
         is_async: false,
         is_unsafe: false,
     },
-    MetadataFreeFunctionSignatureRule {
+    RustFunctionSignatureRule {
         path: "std::fs::read_to_string",
-        params: &[MetadataFreeFunctionParamRule {
+        params: &[RustFunctionParamRule {
             name: Some("path"),
             type_display: "impl AsRef<std::path::Path>",
         }],
@@ -338,14 +378,14 @@ pub const METADATA_FREE_FUNCTION_SIGNATURE_RULES: &[MetadataFreeFunctionSignatur
         is_async: false,
         is_unsafe: false,
     },
-    MetadataFreeFunctionSignatureRule {
+    RustFunctionSignatureRule {
         path: "std::fs::write",
         params: &[
-            MetadataFreeFunctionParamRule {
+            RustFunctionParamRule {
                 name: Some("path"),
                 type_display: "impl AsRef<std::path::Path>",
             },
-            MetadataFreeFunctionParamRule {
+            RustFunctionParamRule {
                 name: Some("contents"),
                 type_display: "impl AsRef<[u8]>",
             },
@@ -386,7 +426,25 @@ pub fn metadata_free_function_signature(rust_path: &str) -> Option<RustFunctionS
     let rule = METADATA_FREE_FUNCTION_SIGNATURE_RULES
         .iter()
         .find(|rule| rule.path == rust_path)?;
-    Some(RustFunctionSig {
+    Some(function_signature_from_rule(rule))
+}
+
+/// Return the authoritative callable contract for a compiler-owned Rust runtime helper.
+///
+/// These helpers are part of the compiler/runtime ABI, so their source typing must not vary with the availability or
+/// freshness of optional rust-inspect metadata. Keep this set deliberately narrow: ordinary Rust dependencies remain
+/// owned by their extracted metadata.
+#[must_use]
+pub fn compiler_owned_function_signature(rust_path: &str) -> Option<RustFunctionSig> {
+    let rule = COMPILER_OWNED_FUNCTION_SIGNATURE_RULES
+        .iter()
+        .find(|rule| rule.path == rust_path)?;
+    Some(function_signature_from_rule(rule))
+}
+
+/// Materialize a portable callable signature from one registry rule.
+fn function_signature_from_rule(rule: &RustFunctionSignatureRule) -> RustFunctionSig {
+    RustFunctionSig {
         type_params: Vec::new(),
         params: rule
             .params
@@ -399,7 +457,7 @@ pub fn metadata_free_function_signature(rust_path: &str) -> Option<RustFunctionS
         return_type: rule.return_type.to_string(),
         is_async: rule.is_async,
         is_unsafe: rule.is_unsafe,
-    })
+    }
 }
 
 /// A single parameter in a Rust function signature (display strings only for Phase 1).
@@ -1532,6 +1590,36 @@ pub fn run_inline<D: FnMut(&mut Data, &OutputCallbackInfo)>(callback: D) {
         assert!(!signature.is_async);
         assert!(!signature.is_unsafe);
         assert!(metadata_free_function_signature("std::fs::remove_file").is_none());
+    }
+
+    #[test]
+    fn compiler_owned_function_signatures_preserve_owned_stdlib_slice_results() -> Result<(), String> {
+        let expected = [
+            (
+                "incan_stdlib::strings::str_slice_byte_range",
+                vec![(Some("s"), "&str"), (Some("start"), "i64"), (Some("end"), "i64")],
+            ),
+            (
+                "incan_stdlib::strings::str_slice_from_byte_offset",
+                vec![(Some("s"), "&str"), (Some("start"), "i64")],
+            ),
+        ];
+
+        for (path, expected_params) in expected {
+            let signature = compiler_owned_function_signature(path)
+                .ok_or_else(|| format!("{path} should have a compiler-owned signature"))?;
+            assert!(signature.type_params.is_empty(), "{path}");
+            assert_eq!(signature.return_type, "String", "{path}");
+            assert_eq!(signature.params.len(), expected_params.len(), "{path}");
+            for (actual, (expected_name, expected_type)) in signature.params.iter().zip(expected_params) {
+                assert_eq!(actual.name.as_deref(), expected_name, "{path}");
+                assert_eq!(actual.type_display, expected_type, "{path}");
+            }
+            assert!(!signature.is_async, "{path}");
+            assert!(!signature.is_unsafe, "{path}");
+        }
+        assert!(compiler_owned_function_signature("demo::str_slice_byte_range").is_none());
+        Ok(())
     }
 
     #[test]

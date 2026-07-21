@@ -3464,6 +3464,26 @@ fn test_resolved_type_from_generic_rust_string_display_is_str() {
 }
 
 #[test]
+fn test_noncanonical_rust_string_like_shapes_remain_external() {
+    let checker = TypeChecker::new();
+
+    for display in ["demo::String", "StringBuilder", "demo::String<alloc::alloc::Global>"] {
+        assert_eq!(
+            checker.resolved_type_from_rust_display(display),
+            ResolvedType::RustPath(display.to_string()),
+            "noncanonical Rust type {display} must not acquire Incan string semantics"
+        );
+    }
+    assert_eq!(
+        checker.resolved_type_from_rust_shape(&RustTypeShape::RustPath {
+            path: "demo::String".to_string(),
+            args: vec![],
+        }),
+        ResolvedType::RustPath("demo::String".to_string())
+    );
+}
+
+#[test]
 fn test_resolved_param_type_from_builtin_borrowed_displays_preserves_ref_payload() {
     let checker = TypeChecker::new();
     assert_eq!(
@@ -4184,6 +4204,72 @@ def f() -> None:
         result.is_ok(),
         "expected permissive fallback when metadata is unavailable, got {result:?}"
     );
+    Ok(())
+}
+
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn compiler_owned_function_contract_overrides_stale_warm_metadata() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+from rust::incan_stdlib::strings import str_slice_byte_range
+
+def slice(text: str) -> str:
+  return str_slice_byte_range(text, 0, 1)
+"#;
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("lex failed: {errors:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("parse failed: {errors:?}")))?;
+    let mut checker = TypeChecker::new();
+    let tmp = seeded_rust_inspect_workspace()?;
+    let manifest_dir = tmp.path().to_path_buf();
+    checker.set_rust_inspect_manifest_dir(manifest_dir.clone());
+    checker
+        .rust_inspect_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "incan_stdlib::strings::str_slice_byte_range".to_string(),
+                definition_path: Some("incan_stdlib::strings::str_slice_byte_range".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Function(RustFunctionSig {
+                    type_params: Vec::new(),
+                    params: vec![
+                        RustParam {
+                            name: Some("s".to_string()),
+                            type_display: "&str".to_string(),
+                        },
+                        RustParam {
+                            name: Some("start".to_string()),
+                            type_display: "i64".to_string(),
+                        },
+                        RustParam {
+                            name: Some("end".to_string()),
+                            type_display: "i64".to_string(),
+                        },
+                    ],
+                    return_type: "i64".to_string(),
+                    is_async: false,
+                    is_unsafe: false,
+                }),
+            },
+        )
+        .map_err(|error| std::io::Error::other(format!("seed stale rust-inspect function: {error}")))?;
+    let Some(RustItemMetadata {
+        kind: RustItemKind::Function(stale_signature),
+        ..
+    }) = checker.rust_item_metadata_for_path("incan_stdlib::strings::str_slice_byte_range")
+    else {
+        return Err(std::io::Error::other("expected stale warm helper metadata to be visible").into());
+    };
+    assert_eq!(
+        stale_signature.return_type, "i64",
+        "the regression must exercise a warm metadata result that disagrees with the compiler-owned contract"
+    );
+
+    checker.check_program(&ast).map_err(|errors| {
+        std::io::Error::other(format!(
+            "compiler-owned String return must win over stale warm metadata: {errors:?}"
+        ))
+    })?;
     Ok(())
 }
 

@@ -7071,8 +7071,9 @@ async def main() -> None:
         Ok(())
     }
 
-    #[test]
-    fn test_run_std_regex_rfc059_surface_from_cold_sdk_provider() -> Result<(), Box<dyn std::error::Error>> {
+    fn assert_std_regex_surface_from_cold_sdk_provider(
+        fresh_cargo_home: bool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let source = tmp.path().join("std_regex_surface.incn");
         fs::copy(
@@ -7082,14 +7083,29 @@ async def main() -> None:
         let generated_project = tmp.path().join("target/incan/std_regex_surface");
         let provider_store = tmp.path().join("sdk-provider-store");
         let generated_cargo_target = tmp.path().join("generated-cargo-target");
+        let cargo_home = tmp.path().join("cargo-home");
 
-        let output = incan_command()
+        let mut command = incan_command();
+        command
             .current_dir(tmp.path())
+            .env("INCAN_SOURCE_ROOT", env!("CARGO_MANIFEST_DIR"))
+            .env(
+                "INCAN_STDLIB",
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib/stdlib"),
+            )
+            .env_remove("INCAN_STDLIB_DIR")
+            .env_remove("INCAN_SDK_INVENTORY")
+            .env_remove("INCAN_HOME")
             .env("INCAN_INTERNAL_SDK_PROVIDER_STORE", &provider_store)
             .env("INCAN_GENERATED_CARGO_TARGET_DIR", &generated_cargo_target)
             .arg("run")
-            .arg(&source)
-            .output()?;
+            .arg(&source);
+        if fresh_cargo_home {
+            // The explicit acceptance lane starts without a Cargo registry or crate cache, so it permits Cargo to
+            // populate the isolated home while resolving the generated std.regex consumer's direct dependency.
+            command.env("CARGO_HOME", &cargo_home).env_remove("CARGO_NET_OFFLINE");
+        }
+        let output = command.output()?;
 
         assert!(
             output.status.success(),
@@ -7198,19 +7214,23 @@ async def main() -> None:
             2,
             "every borrowed regex capture name should be copied into an owned dictionary key:\n{generated_core}"
         );
+        let compact_generated_core = generated_core
+            .chars()
+            .filter(|ch| !ch.is_whitespace())
+            .collect::<String>();
         assert_eq!(
-            generated_core
-                .matches("&str_slice_byte_range(&text, last_end, start)")
+            compact_generated_core
+                .matches("incan_stdlib::strings::str_concat(&out,&str_slice_byte_range(&text,last_end,start),)")
                 .count(),
             3,
-            "every replacement loop should concatenate the owned Rust byte-range result through the string helper:\n{generated_core}"
+            "every replacement loop should pass the owned Rust byte-range result directly to str_concat:\n{generated_core}"
         );
         assert_eq!(
-            generated_core
-                .matches("&str_slice_from_byte_offset(&text, last_end)")
+            compact_generated_core
+                .matches("incan_stdlib::strings::str_concat(&out,&str_slice_from_byte_offset(&text,last_end),)")
                 .count(),
             3,
-            "every replacement loop should concatenate the owned Rust suffix through the string helper:\n{generated_core}"
+            "every replacement loop should pass the owned Rust suffix directly to str_concat:\n{generated_core}"
         );
         assert!(
             !generated_core.contains("out = out + str_slice"),
@@ -7220,8 +7240,18 @@ async def main() -> None:
     }
 
     #[test]
-    fn stale_sdk_inventory_rebuilds_regex_provider_with_current_codegen_revision()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn test_run_std_regex_rfc059_surface_from_cold_sdk_provider() -> Result<(), Box<dyn std::error::Error>> {
+        assert_std_regex_surface_from_cold_sdk_provider(false)
+    }
+
+    #[test]
+    #[ignore = "requires an online crates.io registry to populate a genuinely fresh Cargo home"]
+    fn test_run_std_regex_rfc059_surface_from_fresh_cargo_home() -> Result<(), Box<dyn std::error::Error>> {
+        assert_std_regex_surface_from_cold_sdk_provider(true)
+    }
+
+    #[test]
+    fn explicit_stale_sdk_inventory_fails_closed() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let source = tmp.path().join("std_regex_surface.incn");
         fs::copy(
@@ -7241,9 +7271,8 @@ async def main() -> None:
   "profiles": {"default": []}
 }"#,
         )?;
-        let provider_store = tmp.path().join("rebuilt-sdk-provider-store");
+        let provider_store = tmp.path().join("unused-sdk-provider-store");
         let generated_cargo_target = tmp.path().join("generated-cargo-target");
-        let generated_project = tmp.path().join("target/incan/std_regex_surface");
 
         let output = incan_command()
             .current_dir(tmp.path())
@@ -7256,48 +7285,26 @@ async def main() -> None:
             .arg(&source)
             .output()?;
         assert!(
-            output.status.success(),
-            "a schema-2 inventory from the prior provider-codegen revision should rebuild from source when available: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            !output.status.success(),
+            "an explicit SDK inventory is authoritative and must not be replaced from nearby source: status={:?}\nstdout:\n{}\nstderr:\n{}",
             output.status,
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-
-        let inventory_paths = fs::read_dir(&provider_store)?
-            .filter_map(Result::ok)
-            .map(|entry| entry.path().join("sdk-inventory.json"))
-            .filter(|path| path.is_file())
-            .collect::<Vec<_>>();
-        assert_eq!(inventory_paths.len(), 1, "expected one regenerated SDK inventory");
-        let rebuilt_inventory = incan::provider::SdkInventory::read_from_path(&inventory_paths[0])?;
-        rebuilt_inventory.validate_compiler_compatibility(
-            incan::version::INCAN_VERSION,
-            incan::version::SDK_PROVIDER_CODEGEN_REVISION,
-        )?;
-        let consumer_cargo = fs::read_to_string(generated_project.join("Cargo.toml"))?;
+        let stderr = strip_ansi_escapes(&String::from_utf8_lossy(&output.stderr));
         assert!(
-            consumer_cargo.contains("incan_stdlib_data"),
-            "a rebuilt SDK must remain provider-backed in the generated consumer:\n{consumer_cargo}"
+            stderr.contains("generated with provider codegen revision 4") && stderr.contains("requires revision 5"),
+            "the failure should report the exact incompatible provider revision:\n{stderr}"
         );
         assert!(
-            !generated_project.join("src/__incan_std").exists(),
-            "a rebuilt SDK must not fall back to an inlined stdlib source tree"
-        );
-        let provider_root = inventory_paths[0].parent().ok_or("inventory had no parent")?;
-        let generated_core = fs::read_to_string(provider_root.join("components/stdlib-data/src/regex/_core.rs"))?;
-        assert!(
-            generated_core.contains("str_concat("),
-            "the regenerated std.regex provider must lower owned-string concatenation through str_concat:\n{generated_core}"
-        );
-        assert!(
-            !generated_core.contains("out = out + str_slice"),
-            "the regenerated std.regex provider must not retain stale String + String lowering:\n{generated_core}"
+            !provider_store.exists(),
+            "rejecting an explicit incompatible SDK inventory must not publish replacement providers"
         );
         Ok(())
     }
 
     #[test]
-    fn stale_sdk_inventory_rebuild_keeps_lock_preheat_provider_backed() -> Result<(), Box<dyn std::error::Error>> {
+    fn explicit_legacy_sdk_inventory_blocks_lock_preheat() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let project = tmp.path().join("provider_backed_library");
         fs::create_dir_all(project.join("src"))?;
@@ -7318,7 +7325,7 @@ async def main() -> None:
   "profiles": {"default": []}
 }"#,
         )?;
-        let provider_store = tmp.path().join("rebuilt-sdk-provider-store");
+        let provider_store = tmp.path().join("unused-sdk-provider-store");
         let generated_cargo_target = tmp.path().join("generated-cargo-target");
         let configure = |command: &mut Command| {
             command
@@ -7334,38 +7341,21 @@ async def main() -> None:
         configure(&mut lock);
         let lock = lock.arg("lock").output()?;
         assert!(
-            lock.status.success(),
-            "stale SDK lock preheat should rebuild from source: {}",
+            !lock.status.success(),
+            "an explicit legacy SDK inventory must fail before lock preheat can replace it: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            lock.status,
+            String::from_utf8_lossy(&lock.stdout),
             String::from_utf8_lossy(&lock.stderr)
         );
-        let mut build = incan_command();
-        configure(&mut build);
-        let build = build.args(["build", "--lib", "--locked"]).output()?;
+        let stderr = strip_ansi_escapes(&String::from_utf8_lossy(&lock.stderr));
         assert!(
-            build.status.success(),
-            "provider-backed library build after stale SDK lock preheat failed: {}",
-            String::from_utf8_lossy(&build.stderr)
-        );
-
-        let library_cargo = fs::read_to_string(project.join("target/lib/Cargo.toml"))?;
-        assert!(
-            library_cargo.contains("incan_stdlib_core"),
-            "library output must retain the rebuilt stdlib-core provider dependency:\n{library_cargo}"
+            stderr.contains("unsupported SDK inventory schema 1") && stderr.contains("expected 2"),
+            "the failure should report the exact unsupported inventory schema:\n{stderr}"
         );
         assert!(
-            !project.join("target/lib/src/__incan_std").exists(),
-            "library output must not inline the SDK after stale-seed recovery"
+            !provider_store.exists(),
+            "rejecting an explicit legacy SDK inventory must not publish replacement providers"
         );
-        let inventory_path = fs::read_dir(&provider_store)?
-            .filter_map(Result::ok)
-            .map(|entry| entry.path().join("sdk-inventory.json"))
-            .find(|path| path.is_file())
-            .ok_or("expected rebuilt SDK inventory")?;
-        let rebuilt_inventory = incan::provider::SdkInventory::read_from_path(&inventory_path)?;
-        rebuilt_inventory.validate_compiler_compatibility(
-            incan::version::INCAN_VERSION,
-            incan::version::SDK_PROVIDER_CODEGEN_REVISION,
-        )?;
         Ok(())
     }
 
