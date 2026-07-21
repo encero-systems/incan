@@ -4395,6 +4395,62 @@ def main() -> None:
     }
 
     #[test]
+    fn legacy_file_builtin_errors_honor_declared_string_type_issue874() -> Result<(), Box<dyn std::error::Error>> {
+        let missing_root = std::env::temp_dir().join(format!(
+            "incan_legacy_file_error_type_issue874_{}_missing",
+            std::process::id()
+        ));
+        let read_path = missing_root.join("read.txt");
+        let write_path = missing_root.join("write.txt");
+        let source = format!(
+            r#"
+def normalize(error: str) -> str:
+    return error.upper()
+
+def main() -> None:
+    match read_file("{read_path}").map_err((error) => normalize(error)):
+        Ok(_) => println("unexpected read success")
+        Err(error) => println(error)
+    match write_file("{write_path}", "data").map_err((error) => normalize(error)):
+        Ok(_) => println("unexpected write success")
+        Err(error) => println(error)
+    match read_file().map_err((error) => normalize(error)):
+        Ok(_) => println("unexpected missing read argument success")
+        Err(error) => println(error)
+    match write_file().map_err((error) => normalize(error)):
+        Ok(_) => println("unexpected missing write arguments success")
+        Err(error) => println(error)
+"#,
+            read_path = read_path.display(),
+            write_path = write_path.display(),
+        );
+        let output = incan_command()
+            .args(["run", "-c", source.as_str()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "legacy file builtin string error regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8(output.stdout)?;
+        let lines = stdout.lines().collect::<Vec<_>>();
+        assert_eq!(
+            lines.len(),
+            4,
+            "expected valid- and missing-argument errors for read and write:\n{stdout}"
+        );
+        assert!(
+            lines
+                .iter()
+                .all(|line| !line.is_empty() && *line == line.to_uppercase())
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_match_rust_result_non_clone_payload_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
         let output = incan_command()
             .args([

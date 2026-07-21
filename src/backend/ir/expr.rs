@@ -657,9 +657,9 @@ pub enum BuiltinFn {
     Zip,
     /// `sorted(xs)` → sorted copy
     Sorted,
-    /// `read_file(path)` → `std::fs::read_to_string(path)`
+    /// `read_file(path)` → `std::fs::read_to_string(path).map_err(|error| error.to_string())`
     ReadFile,
-    /// `write_file(path, content)` → `std::fs::write(path, content)`
+    /// `write_file(path, content)` → `std::fs::write(path, content).map_err(|error| error.to_string())`
     WriteFile,
     /// `json_stringify(x)` → `incan_stdlib::json::__private::stringify_or_raise(&x, type_name)`
     JsonStringify,
