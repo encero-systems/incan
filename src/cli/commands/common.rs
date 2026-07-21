@@ -559,7 +559,10 @@ fn prepare_sdk_provider_inventory() -> CliResult<Arc<SdkInventory>> {
         let inventory =
             SdkInventory::read_from_path(&inventory_path).map_err(|error| CliError::failure(error.to_string()))?;
         inventory
-            .validate_compiler_version(crate::version::INCAN_VERSION)
+            .validate_compiler_compatibility(
+                crate::version::INCAN_VERSION,
+                crate::version::SDK_PROVIDER_CODEGEN_REVISION,
+            )
             .map_err(|error| CliError::failure(error.to_string()))?;
         record_sdk_provider_root(&artifact_root)?;
         return Ok(Arc::new(inventory));
@@ -853,6 +856,7 @@ fn source_catalog_inventory(catalog: &SdkSourceCatalog, root: &Path) -> SdkInven
         sdk_id: catalog.sdk_id.clone(),
         sdk_version: catalog.sdk_version.clone(),
         compiler_requirement: catalog.compiler_requirement.clone(),
+        provider_codegen_revision: crate::version::SDK_PROVIDER_CODEGEN_REVISION,
         components,
         profiles: catalog.profiles.clone(),
     }
@@ -997,17 +1001,40 @@ fn split_env_cargo_args(value: Option<&str>) -> Vec<String> {
         .collect()
 }
 
+enum ActiveSdkInventoryError {
+    Rebuildable(crate::provider::SdkInventoryError),
+    Failure(CliError),
+}
+
+impl ActiveSdkInventoryError {
+    fn into_cli_error(self) -> CliError {
+        match self {
+            Self::Rebuildable(error) => CliError::failure(error.to_string()),
+            Self::Failure(error) => error,
+        }
+    }
+}
+
+fn is_rebuildable_sdk_inventory_error(error: &crate::provider::SdkInventoryError) -> bool {
+    matches!(
+        error,
+        crate::provider::SdkInventoryError::UnsupportedSchema { .. }
+            | crate::provider::SdkInventoryError::MissingProviderCodegenRevision
+            | crate::provider::SdkInventoryError::ProviderCodegenRevisionMismatch { .. }
+    )
+}
+
 /// Discover the active component-aware SDK relative to the selected toolchain or an explicit override.
-pub(crate) fn discover_active_sdk_inventory() -> CliResult<Option<Arc<SdkInventory>>> {
+fn discover_active_sdk_inventory() -> Result<Option<Arc<SdkInventory>>, ActiveSdkInventoryError> {
     let explicit = env::var_os(SDK_INVENTORY_OVERRIDE_ENV)
         .filter(|path| !path.is_empty())
         .map(PathBuf::from);
     let inventory_path = if let Some(path) = explicit.as_ref() {
         if !path.is_file() {
-            return Err(CliError::failure(format!(
+            return Err(ActiveSdkInventoryError::Failure(CliError::failure(format!(
                 "{SDK_INVENTORY_OVERRIDE_ENV} points to missing SDK inventory {}",
                 path.display()
-            )));
+            ))));
         }
         Some(path.clone())
     } else {
@@ -1025,17 +1052,43 @@ pub(crate) fn discover_active_sdk_inventory() -> CliResult<Option<Arc<SdkInvento
     let Some(path) = inventory_path else {
         return Ok(None);
     };
-    let inventory = SdkInventory::read_from_path(&path).map_err(|error| CliError::failure(error.to_string()))?;
+    let inventory = SdkInventory::read_from_path(&path).map_err(|error| {
+        if is_rebuildable_sdk_inventory_error(&error) {
+            ActiveSdkInventoryError::Rebuildable(error)
+        } else {
+            ActiveSdkInventoryError::Failure(CliError::failure(error.to_string()))
+        }
+    })?;
     inventory
-        .validate_compiler_version(crate::version::INCAN_VERSION)
-        .map_err(|error| CliError::failure(error.to_string()))?;
+        .validate_compiler_compatibility(
+            crate::version::INCAN_VERSION,
+            crate::version::SDK_PROVIDER_CODEGEN_REVISION,
+        )
+        .map_err(|error| {
+            if is_rebuildable_sdk_inventory_error(&error) {
+                ActiveSdkInventoryError::Rebuildable(error)
+            } else {
+                ActiveSdkInventoryError::Failure(CliError::failure(error.to_string()))
+            }
+        })?;
     Ok(Some(Arc::new(inventory)))
 }
 
 /// Discover an installed SDK inventory or publish the source checkout's component providers on demand.
 pub(crate) fn prepare_or_discover_sdk_inventory() -> CliResult<Option<Arc<SdkInventory>>> {
-    if let Some(inventory) = discover_active_sdk_inventory()? {
-        return Ok(Some(inventory));
+    match discover_active_sdk_inventory() {
+        Ok(Some(inventory)) => return Ok(Some(inventory)),
+        Ok(None) => {}
+        Err(ActiveSdkInventoryError::Rebuildable(error)) => {
+            if env::var_os(SDK_PROVIDER_BUILD_ENV).is_none()
+                && crate::cli::prelude::find_stdlib_dir()
+                    .is_some_and(|root| root.join(SDK_SOURCE_CATALOG_FILE).is_file())
+            {
+                return prepare_sdk_provider_inventory().map(Some);
+            }
+            return Err(ActiveSdkInventoryError::Rebuildable(error).into_cli_error());
+        }
+        Err(error) => return Err(error.into_cli_error()),
     }
     if env::var_os(SDK_PROVIDER_BUILD_ENV).is_some() {
         return Ok(None);
@@ -6393,5 +6446,37 @@ def main() -> None:
         assert!(analysis.type_info_for_module_path(&["first".to_string()]).is_some());
         assert!(analysis.type_info_for_module_path(&["second".to_string()]).is_some());
         Ok(())
+    }
+
+    #[test]
+    fn stale_sdk_inventory_without_source_reports_its_codegen_incompatibility() {
+        let error =
+            ActiveSdkInventoryError::Rebuildable(crate::provider::SdkInventoryError::ProviderCodegenRevisionMismatch {
+                sdk_identity: "incan@0.5.0".to_string(),
+                actual: 1,
+                expected: crate::version::SDK_PROVIDER_CODEGEN_REVISION,
+            })
+            .into_cli_error();
+
+        assert!(error.message.contains("provider codegen revision 1"));
+        assert!(error.message.contains("requires revision"));
+    }
+
+    #[test]
+    fn every_stale_provider_inventory_form_is_rebuildable_from_source() {
+        let stale_forms = [
+            crate::provider::SdkInventoryError::UnsupportedSchema {
+                actual: 1,
+                expected: crate::provider::SDK_INVENTORY_SCHEMA_VERSION,
+            },
+            crate::provider::SdkInventoryError::MissingProviderCodegenRevision,
+            crate::provider::SdkInventoryError::ProviderCodegenRevisionMismatch {
+                sdk_identity: "incan@0.5.0".to_string(),
+                actual: 1,
+                expected: crate::version::SDK_PROVIDER_CODEGEN_REVISION,
+            },
+        ];
+
+        assert!(stale_forms.iter().all(is_rebuildable_sdk_inventory_error));
     }
 }

@@ -7220,6 +7220,155 @@ async def main() -> None:
     }
 
     #[test]
+    fn stale_sdk_inventory_rebuilds_regex_provider_with_current_codegen_revision()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let source = tmp.path().join("std_regex_surface.incn");
+        fs::copy(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/valid/std_regex_surface.incn"),
+            &source,
+        )?;
+        let stale_inventory = tmp.path().join("stale-sdk-inventory.json");
+        fs::write(
+            &stale_inventory,
+            r#"{
+  "schema_version": 1,
+  "sdk_id": "incan",
+  "sdk_version": "0.5.0",
+  "compiler_requirement": ">=0.5.0-dev.6,<0.6.0",
+  "components": {},
+  "profiles": {"default": []}
+}"#,
+        )?;
+        let provider_store = tmp.path().join("rebuilt-sdk-provider-store");
+        let generated_cargo_target = tmp.path().join("generated-cargo-target");
+        let generated_project = tmp.path().join("target/incan/std_regex_surface");
+
+        let output = incan_command()
+            .current_dir(tmp.path())
+            .env_remove("INCAN_STDLIB")
+            .env_remove("INCAN_STDLIB_DIR")
+            .env("INCAN_SDK_INVENTORY", &stale_inventory)
+            .env("INCAN_INTERNAL_SDK_PROVIDER_STORE", &provider_store)
+            .env("INCAN_GENERATED_CARGO_TARGET_DIR", &generated_cargo_target)
+            .arg("run")
+            .arg(&source)
+            .output()?;
+        assert!(
+            output.status.success(),
+            "a stale installed SDK inventory should rebuild from source when available: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let inventory_paths = fs::read_dir(&provider_store)?
+            .filter_map(Result::ok)
+            .map(|entry| entry.path().join("sdk-inventory.json"))
+            .filter(|path| path.is_file())
+            .collect::<Vec<_>>();
+        assert_eq!(inventory_paths.len(), 1, "expected one regenerated SDK inventory");
+        let rebuilt_inventory = incan::provider::SdkInventory::read_from_path(&inventory_paths[0])?;
+        rebuilt_inventory.validate_compiler_compatibility(
+            incan::version::INCAN_VERSION,
+            incan::version::SDK_PROVIDER_CODEGEN_REVISION,
+        )?;
+        let consumer_cargo = fs::read_to_string(generated_project.join("Cargo.toml"))?;
+        assert!(
+            consumer_cargo.contains("incan_stdlib_data"),
+            "a rebuilt SDK must remain provider-backed in the generated consumer:\n{consumer_cargo}"
+        );
+        assert!(
+            !generated_project.join("src/__incan_std").exists(),
+            "a rebuilt SDK must not fall back to an inlined stdlib source tree"
+        );
+        let provider_root = inventory_paths[0].parent().ok_or("inventory had no parent")?;
+        let generated_core = fs::read_to_string(provider_root.join("components/stdlib-data/src/regex/_core.rs"))?;
+        assert!(
+            generated_core.contains("str_concat("),
+            "the regenerated std.regex provider must lower owned-string concatenation through str_concat:\n{generated_core}"
+        );
+        assert!(
+            !generated_core.contains("out = out + str_slice"),
+            "the regenerated std.regex provider must not retain stale String + String lowering:\n{generated_core}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn stale_sdk_inventory_rebuild_keeps_lock_preheat_provider_backed() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project = tmp.path().join("provider_backed_library");
+        fs::create_dir_all(project.join("src"))?;
+        fs::write(
+            project.join("incan.toml"),
+            "[project]\nname = \"provider_backed_library\"\nversion = \"0.1.0\"\n\n[project.scripts]\nlibrary = \"src/lib.incn\"\n",
+        )?;
+        fs::write(project.join("src/lib.incn"), "pub def answer() -> int:\n  return 42\n")?;
+        let stale_inventory = tmp.path().join("stale-sdk-inventory.json");
+        fs::write(
+            &stale_inventory,
+            r#"{
+  "schema_version": 1,
+  "sdk_id": "incan",
+  "sdk_version": "0.5.0",
+  "compiler_requirement": ">=0.5.0-dev.6,<0.6.0",
+  "components": {},
+  "profiles": {"default": []}
+}"#,
+        )?;
+        let provider_store = tmp.path().join("rebuilt-sdk-provider-store");
+        let generated_cargo_target = tmp.path().join("generated-cargo-target");
+        let configure = |command: &mut Command| {
+            command
+                .current_dir(&project)
+                .env_remove("INCAN_STDLIB")
+                .env_remove("INCAN_STDLIB_DIR")
+                .env("INCAN_SDK_INVENTORY", &stale_inventory)
+                .env("INCAN_INTERNAL_SDK_PROVIDER_STORE", &provider_store)
+                .env("INCAN_GENERATED_CARGO_TARGET_DIR", &generated_cargo_target);
+        };
+
+        let mut lock = incan_command();
+        configure(&mut lock);
+        let lock = lock.arg("lock").output()?;
+        assert!(
+            lock.status.success(),
+            "stale SDK lock preheat should rebuild from source: {}",
+            String::from_utf8_lossy(&lock.stderr)
+        );
+        let mut build = incan_command();
+        configure(&mut build);
+        let build = build.args(["build", "--lib", "--locked"]).output()?;
+        assert!(
+            build.status.success(),
+            "provider-backed library build after stale SDK lock preheat failed: {}",
+            String::from_utf8_lossy(&build.stderr)
+        );
+
+        let library_cargo = fs::read_to_string(project.join("target/lib/Cargo.toml"))?;
+        assert!(
+            library_cargo.contains("incan_stdlib_core"),
+            "library output must retain the rebuilt stdlib-core provider dependency:\n{library_cargo}"
+        );
+        assert!(
+            !project.join("target/lib/src/__incan_std").exists(),
+            "library output must not inline the SDK after stale-seed recovery"
+        );
+        let inventory_path = fs::read_dir(&provider_store)?
+            .filter_map(Result::ok)
+            .map(|entry| entry.path().join("sdk-inventory.json"))
+            .find(|path| path.is_file())
+            .ok_or("expected rebuilt SDK inventory")?;
+        let rebuilt_inventory = incan::provider::SdkInventory::read_from_path(&inventory_path)?;
+        rebuilt_inventory.validate_compiler_compatibility(
+            incan::version::INCAN_VERSION,
+            incan::version::SDK_PROVIDER_CODEGEN_REVISION,
+        )?;
+        Ok(())
+    }
+
+    #[test]
     fn test_run_std_regex_unsupported_safe_engine_pattern_reports_error() -> Result<(), Box<dyn std::error::Error>> {
         let output = incan_command()
             .args([

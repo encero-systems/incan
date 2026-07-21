@@ -369,10 +369,11 @@ fn write_fixture_sdk_provider_seed(root: &Path, profile: &str) -> Result<PathBuf
         );
     }
     let inventory = serde_json::json!({
-        "schema_version": 1,
+        "schema_version": 2,
         "sdk_id": "incan-fixture",
         "sdk_version": "0.5.0",
         "compiler_requirement": ">=0.5.0-dev.6,<0.6.0",
+        "provider_codegen_revision": incan::version::SDK_PROVIDER_CODEGEN_REVISION,
         "components": inventory_components,
         "profiles": {
             "minimal": ["stdlib-core"],
@@ -663,6 +664,12 @@ fn toolchain_archive_packager_writes_archive_checksum_and_release_metadata() -> 
         .arg(&extracted)
         .status()?;
     assert!(extract.success(), "toolchain archive extraction failed");
+    let shipped_inventory =
+        incan::provider::SdkInventory::read_from_path(&extracted.join("share/incan/sdk/sdk-inventory.json"))?;
+    shipped_inventory.validate_compiler_compatibility(
+        incan::version::INCAN_VERSION,
+        incan::version::SDK_PROVIDER_CODEGEN_REVISION,
+    )?;
     let metadata = Command::new("cargo")
         .args(["metadata", "--no-deps", "--format-version", "1", "--manifest-path"])
         .arg(extracted.join("crates/Cargo.toml"))
