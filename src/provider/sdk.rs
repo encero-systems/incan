@@ -1023,7 +1023,7 @@ mod tests {
   "sdk_id": "incan",
   "sdk_version": "0.5.0",
   "compiler_requirement": ">=0.5.0-dev.5,<0.6.0",
-  "provider_codegen_revision": 4,
+  "provider_codegen_revision": 5,
   "components": {
     "stdlib-core": {
       "version": "0.5.0",
@@ -1154,10 +1154,10 @@ mod tests {
         let inventory = SdkInventory::from_json(INVENTORY, Path::new("/sdk"))?;
 
         let error = inventory
-            .validate_compiler_compatibility("0.5.0-dev.5", 5)
+            .validate_compiler_compatibility("0.5.0-dev.5", 6)
             .err()
             .ok_or("expected incompatible provider codegen revision")?;
-        assert!(error.to_string().contains("provider codegen revision 4"));
+        assert!(error.to_string().contains("provider codegen revision 5"));
         Ok(())
     }
 
@@ -1165,7 +1165,7 @@ mod tests {
     fn rejects_pre_revision_inventory_schema() {
         let stale = INVENTORY
             .replace("\"schema_version\": 2", "\"schema_version\": 1")
-            .replace("  \"provider_codegen_revision\": 4,\n", "");
+            .replace("  \"provider_codegen_revision\": 5,\n", "");
         let error = SdkInventory::from_json(&stale, Path::new("/sdk"));
 
         assert!(matches!(
@@ -1176,7 +1176,7 @@ mod tests {
 
     #[test]
     fn rejects_current_schema_without_provider_codegen_revision() {
-        let missing_revision = INVENTORY.replace("  \"provider_codegen_revision\": 4,\n", "");
+        let missing_revision = INVENTORY.replace("  \"provider_codegen_revision\": 5,\n", "");
 
         assert!(matches!(
             SdkInventory::from_json(&missing_revision, Path::new("/sdk")),

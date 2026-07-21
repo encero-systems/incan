@@ -7,6 +7,18 @@ use serde::{Deserialize, Serialize};
 
 use crate::lang::types::collections::{self, CollectionTypeId};
 
+/// Return whether a Rust display names the canonical owned `String` type.
+///
+/// Rust metadata can expose `String` with implementation-only allocator arguments. Classify only the three canonical
+/// paths, while deliberately ignoring the generic arguments so `String<alloc::alloc::Global>` retains string
+/// semantics without accepting unrelated types that merely end in `String`.
+#[must_use]
+pub fn rust_display_is_owned_string(display: &str) -> bool {
+    let normalized = display.trim().replace(' ', "");
+    let base = normalized.split('<').next().unwrap_or(normalized.as_str());
+    matches!(base, "String" | "std::string::String" | "alloc::string::String")
+}
+
 /// Whether an item is visible across crate boundaries for ordinary `pub` Rust APIs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum RustVisibility {

@@ -175,6 +175,7 @@ use super::reference_shape::expr_has_rust_reference_shape;
 use super::types::Mutability;
 use super::{IrExpr, IrExprKind, IrType, TypedExpr};
 use crate::numeric_adapters::{ir_type_to_numeric_ty, numeric_op_from_ir, pow_exponent_kind_from_ir};
+use incan_core::interop::rust_display_is_owned_string;
 use incan_core::lang::types::collections::{self, CollectionTypeId};
 use incan_core::lang::types::numerics::{self, NumericFamily};
 use incan_core::{NumericOp, NumericTy, needs_float_promotion, result_numeric_type};
@@ -625,7 +626,7 @@ pub(super) fn is_owned_string_type(ty: &IrType) -> bool {
         || matches!(
             ty,
             IrType::Struct(name) | IrType::NamedGeneric(name, _) | IrType::RustDisplay(name)
-                if matches!(name.as_str(), "String" | "std::string::String" | "alloc::string::String")
+                if rust_display_is_owned_string(name)
         )
 }
 
@@ -1086,6 +1087,7 @@ mod tests {
             IrType::RustDisplay("String".to_string()),
             IrType::RustDisplay("std::string::String".to_string()),
             IrType::RustDisplay("alloc::string::String".to_string()),
+            IrType::RustDisplay("std::string::String<alloc::alloc::Global>".to_string()),
             IrType::Ref(Box::new(IrType::String)),
         ] {
             let right = IrExpr::new(

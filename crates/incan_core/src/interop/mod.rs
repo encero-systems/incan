@@ -21,7 +21,7 @@ pub use metadata::{
     RustModuleChild, RustModuleChildKind, RustModuleInfo, RustParam, RustTraitAssoc, RustTraitInfo, RustTypeInfo,
     RustTypeMetadataCompleteness, RustTypeShape, RustTypeShapePathFallback, RustVariantInfo, RustVisibility,
     metadata_free_function_signature, metadata_free_method_signature, parse_rust_type_shape_text,
-    render_rust_type_shape, render_rust_type_shape_path, rust_display_is_callable_bound,
+    render_rust_type_shape, render_rust_type_shape_path, rust_display_is_callable_bound, rust_display_is_owned_string,
     rust_source_borrowed_type_param_bound_display, rust_source_callable_bound_for_type_param,
     rust_source_type_param_has_as_fd_bound, split_top_level_rust_args, strip_rust_borrow_lifetimes,
 };
