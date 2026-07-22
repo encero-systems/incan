@@ -186,6 +186,7 @@ fn sole_cache_target_for_profile(incan_home: &Path, profile: &str) -> Result<Pat
 }
 
 fn assert_project_rust_inspect_target(
+    stage: &str,
     project_root: &Path,
     expected_target: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -205,8 +206,10 @@ fn assert_project_rust_inspect_target(
     let expected = expected_target.to_string_lossy();
     assert!(
         configs.iter().all(|config| config.contains(expected.as_ref())),
-        "command configured rust-inspect outside the canonical managed target {}",
-        expected_target.display()
+        "{stage} configured rust-inspect outside the canonical managed target {} for {}:\n{}",
+        expected_target.display(),
+        project_root.display(),
+        configs.join("\n---\n")
     );
     Ok(())
 }
@@ -258,7 +261,7 @@ fn managed_cache_reuses_offline_across_projects_and_cleans_interrupted_entry() -
         .env("CARGO_BUILD_BUILD_DIR", &inherited_build_dir);
     run_checked(check, "cold managed rust-inspect check")?;
     let canonical_rust_inspect_target = sole_cache_target_for_profile(&incan_home, "rust-inspect")?;
-    assert_project_rust_inspect_target(&check_root, &canonical_rust_inspect_target)?;
+    assert_project_rust_inspect_target("check", &check_root, &canonical_rust_inspect_target)?;
     assert!(!inherited_build_dir.exists());
     assert!(
         !check_root.join("target/.cargo-target").exists(),
@@ -277,7 +280,7 @@ fn managed_cache_reuses_offline_across_projects_and_cleans_interrupted_entry() -
         .args(["build", "src/main.incn", "--offline"])
         .env("CARGO_BUILD_BUILD_DIR", &inherited_build_dir);
     run_checked(first, "first offline build")?;
-    assert_project_rust_inspect_target(&first_root, &canonical_rust_inspect_target)?;
+    assert_project_rust_inspect_target("first build", &first_root, &canonical_rust_inspect_target)?;
     assert!(
         !inherited_build_dir.exists(),
         "managed build inherited Cargo output outside its lifecycle-owned target"
@@ -291,7 +294,7 @@ fn managed_cache_reuses_offline_across_projects_and_cleans_interrupted_entry() -
     let mut second = incan_command(&second_root, &incan_home);
     second.args(["build", "src/main.incn", "--offline"]);
     run_checked(second, "compatible offline build")?;
-    assert_project_rust_inspect_target(&second_root, &canonical_rust_inspect_target)?;
+    assert_project_rust_inspect_target("relocated build", &second_root, &canonical_rust_inspect_target)?;
     assert!(
         !second_root.join("target/.cargo-target").exists(),
         "relocated rust-inspect workspace created a project-local Cargo target"
@@ -316,12 +319,12 @@ fn managed_cache_reuses_offline_across_projects_and_cleans_interrupted_entry() -
     let mut first_run = incan_command(&first_root, &incan_home);
     first_run.args(["run", "src/main.incn", "--offline"]);
     run_checked(first_run, "first offline run")?;
-    assert_project_rust_inspect_target(&first_root, &canonical_rust_inspect_target)?;
+    assert_project_rust_inspect_target("first run", &first_root, &canonical_rust_inspect_target)?;
     let run_dependency_before = dependency_artifact_snapshots(&incan_home, "debug", "debug", "libserde_json-")?;
     let mut second_run = incan_command(&second_root, &incan_home);
     second_run.args(["run", "src/main.incn", "--offline"]);
     run_checked(second_run, "compatible offline run")?;
-    assert_project_rust_inspect_target(&second_root, &canonical_rust_inspect_target)?;
+    assert_project_rust_inspect_target("relocated run", &second_root, &canonical_rust_inspect_target)?;
     let run_dependency_after = dependency_artifact_snapshots(&incan_home, "debug", "debug", "libserde_json-")?;
     assert_eq!(run_dependency_after, run_dependency_before);
     let run_warm_snapshot = cache_logical_snapshot(&incan_home)?;
@@ -335,12 +338,12 @@ fn managed_cache_reuses_offline_across_projects_and_cleans_interrupted_entry() -
     let mut first_test = incan_command(&first_root, &incan_home);
     first_test.args(["test", "tests/cache_test.incn", "--offline"]);
     run_checked(first_test, "first offline test")?;
-    assert_project_rust_inspect_target(&first_root, &canonical_rust_inspect_target)?;
+    assert_project_rust_inspect_target("first test", &first_root, &canonical_rust_inspect_target)?;
     let test_dependency_before = dependency_artifact_snapshots(&incan_home, "test", "debug", "libserde_json-")?;
     let mut second_test = incan_command(&second_root, &incan_home);
     second_test.args(["test", "tests/cache_test.incn", "--offline"]);
     run_checked(second_test, "compatible offline test")?;
-    assert_project_rust_inspect_target(&second_root, &canonical_rust_inspect_target)?;
+    assert_project_rust_inspect_target("relocated test", &second_root, &canonical_rust_inspect_target)?;
     let test_dependency_after = dependency_artifact_snapshots(&incan_home, "test", "debug", "libserde_json-")?;
     assert_eq!(test_dependency_after, test_dependency_before);
     let test_warm_snapshot = cache_logical_snapshot(&incan_home)?;
@@ -354,12 +357,12 @@ fn managed_cache_reuses_offline_across_projects_and_cleans_interrupted_entry() -
     let mut first_library = incan_command(&first_root, &incan_home);
     first_library.args(["build", "--lib", "--offline"]);
     run_checked(first_library, "first offline library build")?;
-    assert_project_rust_inspect_target(&first_root, &canonical_rust_inspect_target)?;
+    assert_project_rust_inspect_target("first library", &first_root, &canonical_rust_inspect_target)?;
     let library_dependency_before = dependency_artifact_snapshots(&incan_home, "release", "release", "libserde_json-")?;
     let mut second_library = incan_command(&second_root, &incan_home);
     second_library.args(["build", "--lib", "--offline"]);
     run_checked(second_library, "compatible offline library build")?;
-    assert_project_rust_inspect_target(&second_root, &canonical_rust_inspect_target)?;
+    assert_project_rust_inspect_target("relocated library", &second_root, &canonical_rust_inspect_target)?;
     let library_dependency_after = dependency_artifact_snapshots(&incan_home, "release", "release", "libserde_json-")?;
     assert_eq!(library_dependency_after, library_dependency_before);
     let library_warm_snapshot = cache_logical_snapshot(&incan_home)?;
@@ -389,7 +392,7 @@ fn managed_cache_reuses_offline_across_projects_and_cleans_interrupted_entry() -
     let mut lock = incan_command(&lock_root, &incan_home);
     lock.arg("lock");
     run_checked(lock, "standalone lock prewarm")?;
-    assert_project_rust_inspect_target(&lock_root, &canonical_rust_inspect_target)?;
+    assert_project_rust_inspect_target("standalone lock", &lock_root, &canonical_rust_inspect_target)?;
     assert_eq!(
         sole_cache_target_for_profile(&incan_home, "rust-inspect")?,
         canonical_rust_inspect_target,
