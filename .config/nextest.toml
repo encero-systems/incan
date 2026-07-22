@@ -5,7 +5,9 @@
 dir = "target/nextest"
 
 [test-groups]
-nested-cargo = { max-threads = 12 }
+# Nested Cargo builds contend for CPU, the shared generated target, and the provider-store lock.
+# Two tests with two Cargo jobs each keeps the host responsive while allowing useful overlap.
+nested-cargo = { max-threads = 4 }
 
 [profile.default]
 # Fail fast: stop after the first test failure during local development.
@@ -25,9 +27,9 @@ slow-timeout = "30s"
 leak-timeout = "2s"
 
 [[profile.default.overrides]]
-filter = 'binary_id(incan::integration_tests) | binary_id(incan::cli_integration) | binary_id(incan::std_encoding_algorithm_modules) | binary_id(incan::generated_rust_artifact_tests) | binary_id(incan::generated_rust_callability_artifact_tests) | binary_id(incan::generated_rust_native_consumer_tests)'
+filter = 'binary_id(incan::integration_tests) | binary_id(incan::cli_integration) | binary_id(incan::std_encoding_algorithm_modules) | binary_id(incan::generated_rust_artifact_tests) | binary_id(incan::generated_rust_callability_artifact_tests) | binary_id(incan::generated_rust_native_consumer_tests) | binary_id(incan::toolchain_installer_tests) | test(/(generated_rust_warning_clean|build_library_accepts_nested_directory_modules|build_library_accepts_canonical_nested_module_imports|collect_library_vocab_metadata_requires_library_vocab_entrypoint|collect_library_vocab_metadata_extracts_payload_and_projection|collect_library_vocab_metadata_uses_generated_target_cache_base)/)'
 test-group = 'nested-cargo'
 
 [[profile.ci.overrides]]
-filter = 'binary_id(incan::integration_tests) | binary_id(incan::cli_integration) | binary_id(incan::std_encoding_algorithm_modules) | binary_id(incan::generated_rust_artifact_tests) | binary_id(incan::generated_rust_callability_artifact_tests) | binary_id(incan::generated_rust_native_consumer_tests)'
+filter = 'binary_id(incan::integration_tests) | binary_id(incan::cli_integration) | binary_id(incan::std_encoding_algorithm_modules) | binary_id(incan::generated_rust_artifact_tests) | binary_id(incan::generated_rust_callability_artifact_tests) | binary_id(incan::generated_rust_native_consumer_tests) | binary_id(incan::toolchain_installer_tests) | test(/(generated_rust_warning_clean|build_library_accepts_nested_directory_modules|build_library_accepts_canonical_nested_module_imports|collect_library_vocab_metadata_requires_library_vocab_entrypoint|collect_library_vocab_metadata_extracts_payload_and_projection|collect_library_vocab_metadata_uses_generated_target_cache_base)/)'
 test-group = 'nested-cargo'

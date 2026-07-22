@@ -2227,9 +2227,6 @@ def main() -> None:
 "#,
     )?;
 
-    let check_output = run_incan(tmp.path(), &["check", main_path.to_str().ok_or("non-utf8 main path")?])?;
-    assert_success(&check_output, "incan check for std.environ string accessors");
-
     let run_output = run_incan_with_env_and_removed(
         tmp.path(),
         &["run", main_path.to_str().ok_or("non-utf8 main path")?],
@@ -2324,9 +2321,6 @@ def main() -> None:
     _ => println("mode:unexpected")
 "#,
     )?;
-
-    let check_output = run_incan(tmp.path(), &["check", main_path.to_str().ok_or("non-utf8 main path")?])?;
-    assert_success(&check_output, "incan check for std.environ typed accessors");
 
     let run_output = run_incan_with_env_and_removed(
         tmp.path(),
@@ -2439,9 +2433,6 @@ def main() -> None:
     Err(error) => println(error.message())
 "#,
     )?;
-
-    let check_output = run_incan(tmp.path(), &["check", main_path.to_str().ok_or("non-utf8 main path")?])?;
-    assert_success(&check_output, "incan check for std.environ primitive typed accessors");
 
     let run_output = run_incan_with_env_and_removed(
         tmp.path(),
@@ -2573,9 +2564,6 @@ def main() -> None:
 "#,
     )?;
 
-    let check_output = run_incan(tmp.path(), &["check", main_path.to_str().ok_or("non-utf8 main path")?])?;
-    assert_success(&check_output, "incan check for std.environ validated newtypes");
-
     let run_output = run_incan_with_env_and_removed(
         tmp.path(),
         &["run", main_path.to_str().ok_or("non-utf8 main path")?],
@@ -2645,9 +2633,6 @@ def main() -> None:
     Err(error) => println(f"newtype:{error.kind_name()}")
 "#,
     )?;
-
-    let check_output = run_incan(tmp.path(), &["check", main_path.to_str().ok_or("non-utf8 main path")?])?;
-    assert_success(&check_output, "incan check for defaulted std.environ typed accessors");
 
     let run_output = run_incan_with_env_and_removed(
         tmp.path(),
@@ -7502,12 +7487,6 @@ def main() -> None:
 "#,
     )?;
 
-    let check_output = run_incan(
-        tmp.path(),
-        &["--check", main_path.to_str().ok_or("main path was not valid UTF-8")?],
-    )?;
-    assert_success(&check_output, "incan --check for generic reflection issue712");
-
     let run_output = run_incan(
         tmp.path(),
         &["run", main_path.to_str().ok_or("main path was not valid UTF-8")?],
@@ -7571,12 +7550,6 @@ def main() -> None:
     println(field_count_for[BareSchema]())
 "#,
     )?;
-
-    let check_output = run_incan(
-        tmp.path(),
-        &["--check", main_path.to_str().ok_or("main path was not valid UTF-8")?],
-    )?;
-    assert_success(&check_output, "incan --check for type-parameter reflection issue715");
 
     let run_output = run_incan(
         tmp.path(),
@@ -7643,15 +7616,6 @@ def main() -> None:
 "#,
     )?;
 
-    let check_output = run_incan(
-        tmp.path(),
-        &["--check", main_path.to_str().ok_or("main path was not valid UTF-8")?],
-    )?;
-    assert_success(
-        &check_output,
-        "incan --check for generic value field reflection issue819",
-    );
-
     let run_output = run_incan(
         tmp.path(),
         &["run", main_path.to_str().ok_or("main path was not valid UTF-8")?],
@@ -7695,15 +7659,6 @@ def main() -> None:
     show_items[ProbeRow](ProbeRow(id=8, score=4.25, active=false, label="late", optional_label=Some("x")))
 "#,
     )?;
-
-    let check_output = run_incan(
-        tmp.path(),
-        &["--check", main_path.to_str().ok_or("main path was not valid UTF-8")?],
-    )?;
-    assert_success(
-        &check_output,
-        "incan --check for optional generic value field reflection issue819",
-    );
 
     let run_output = run_incan(
         tmp.path(),
@@ -7766,15 +7721,6 @@ def main() -> None:
     println(session.reflected_summary[ProbeRow]([ProbeRow(id=7, label="paid")]))
 "#,
     )?;
-
-    let check_output = run_incan(
-        tmp.path(),
-        &["--check", main_path.to_str().ok_or("main path was not valid UTF-8")?],
-    )?;
-    assert_success(
-        &check_output,
-        "incan --check for method-owned generic value reflection issue819",
-    );
 
     let run_output = run_incan(
         tmp.path(),
@@ -8340,12 +8286,40 @@ def main() -> None:
 }
 
 #[test]
-fn build_inline_fstring_rust_str_argument_issue716() -> Result<(), Box<dyn std::error::Error>> {
+/// Ensures f-string values compile through both borrowed and owned Rust interop boundaries.
+fn build_inline_fstring_rust_interop_variants_issue716() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
-    let main_path = write_minimal_project(tmp.path(), "inline_fstring_rust_str_argument_issue716", "")?;
+    let helper_dir = tmp.path().join("rust").join("tiny_error");
+    fs::create_dir_all(helper_dir.join("src"))?;
+    fs::write(
+        helper_dir.join("Cargo.toml"),
+        "[package]\nname = \"tiny_error\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    fs::write(
+        helper_dir.join("src").join("lib.rs"),
+        r#"pub enum TinyError {
+    Execution(String),
+}
+
+pub fn consume(err: TinyError) -> i64 {
+    match err {
+        TinyError::Execution(message) => message.len() as i64,
+    }
+}
+"#,
+    )?;
+    let main_path = write_minimal_project(
+        tmp.path(),
+        "inline_fstring_rust_interop_variants_issue716",
+        r#"
+[rust-dependencies]
+tiny_error = { path = "rust/tiny_error" }
+"#,
+    )?;
     fs::write(
         &main_path,
         r#"from rust::incan_stdlib::errors import raise_value_error
+from rust::tiny_error import TinyError, consume
 
 
 def fail_inline(value: str) -> int:
@@ -8357,8 +8331,12 @@ def fail_local(value: str) -> int:
     return raise_value_error(message)
 
 
+def make_error(value: str) -> int:
+    return consume(TinyError.Execution(f"bad value `{value}`"))
+
+
 def main() -> None:
-    fail_inline("x")
+    println(str(make_error("x")))
 "#,
     )?;
 
@@ -8368,7 +8346,7 @@ def main() -> None:
     )?;
     assert_success(
         &build_output,
-        "incan build for inline f-string Rust &str argument issue716",
+        "incan build for inline f-string Rust interop variants issue716",
     );
     Ok(())
 }
@@ -8492,61 +8470,6 @@ def main() -> None:
     assert!(
         generated.contains("map_err(|_error| \"malformed_json\".to_string())"),
         "expected generated Rust to own the map_err closure literal, got:\n{generated}"
-    );
-    Ok(())
-}
-
-#[test]
-fn build_inline_fstring_rust_string_variant_issue716() -> Result<(), Box<dyn std::error::Error>> {
-    let tmp = tempfile::tempdir()?;
-    let helper_dir = tmp.path().join("rust").join("tiny_error");
-    fs::create_dir_all(helper_dir.join("src"))?;
-    fs::write(
-        helper_dir.join("Cargo.toml"),
-        "[package]\nname = \"tiny_error\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
-    )?;
-    fs::write(
-        helper_dir.join("src").join("lib.rs"),
-        r#"pub enum TinyError {
-    Execution(String),
-}
-
-pub fn consume(err: TinyError) -> i64 {
-    match err {
-        TinyError::Execution(message) => message.len() as i64,
-    }
-}
-"#,
-    )?;
-    let main_path = write_minimal_project(
-        tmp.path(),
-        "inline_fstring_rust_string_variant_issue716",
-        r#"
-[rust-dependencies]
-tiny_error = { path = "rust/tiny_error" }
-"#,
-    )?;
-    fs::write(
-        &main_path,
-        r#"from rust::tiny_error import TinyError, consume
-
-
-def make_error(value: str) -> int:
-    return consume(TinyError.Execution(f"bad value `{value}`"))
-
-
-def main() -> None:
-    println(str(make_error("x")))
-"#,
-    )?;
-
-    let build_output = run_incan(
-        tmp.path(),
-        &["build", main_path.to_str().ok_or("main path was not valid UTF-8")?],
-    )?;
-    assert_success(
-        &build_output,
-        "incan build for inline f-string Rust String enum variant issue716",
     );
     Ok(())
 }

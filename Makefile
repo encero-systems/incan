@@ -3,18 +3,21 @@
 
 NEXTEST := $(shell command -v cargo-nextest 2>/dev/null)
 TEST_VERBOSE ?= 0
+# Limit each test's nested Cargo fan-out; override locally when investigating a build.
+INCAN_TEST_CARGO_BUILD_JOBS ?= 4
+TEST_ENV = CARGO_BUILD_JOBS=$(INCAN_TEST_CARGO_BUILD_JOBS)
 
 ifeq ($(strip $(NEXTEST)),)
 ifeq ($(TEST_VERBOSE),1)
-TEST_CMD = cargo test --all --features lsp --verbose
+TEST_CMD = $(TEST_ENV) cargo test --all --features lsp --verbose
 else
-TEST_CMD = cargo test --all --features lsp
+TEST_CMD = $(TEST_ENV) cargo test --all --features lsp
 endif
 else
 ifeq ($(TEST_VERBOSE),1)
-TEST_CMD = cargo nextest run --all --features lsp --status-level all
+TEST_CMD = $(TEST_ENV) cargo nextest run --all --features lsp --status-level all
 else
-TEST_CMD = cargo nextest run --all --features lsp --status-level slow --final-status-level slow
+TEST_CMD = $(TEST_ENV) cargo nextest run --all --features lsp --status-level slow --final-status-level slow
 endif
 endif
 
@@ -204,6 +207,7 @@ pre-commit-full-gate:
 	$(MAKE) -s rustdoc-gate-ci; \
 	echo "\033[32mDONE\033[0m"; \
 	t2=$$(date +%s); \
+	$(MAKE) -s test-prewarm-sdk; \
 	echo "\033[1mRunning tests...\033[0m"; \
 	$(TEST_CMD); \
 	echo "\033[32mDONE\033[0m"; \
@@ -228,6 +232,7 @@ pre-commit:
 
 .PHONY: ci-full  ## quality - Full CI check: fmt, lint, udeps, test, and release build
 ci-full: fmt lint udeps
+	@$(MAKE) -s test-prewarm-sdk
 	@echo "\033[1mRunning tests...\033[0m"
 	@$(TEST_CMD)
 	@echo "\033[1mBuilding release...\033[0m"
@@ -238,10 +243,19 @@ ci-full: fmt lint udeps
 # Testing
 # =============================================================================
 
-.PHONY: test  ## test - Run all tests
-test:
+.PHONY: test test-prewarm-sdk  ## test - Run all tests
+test: test-prewarm-sdk
 	@echo "\033[1mRunning tests...\033[0m"
 	@$(TEST_CMD)
+
+test-prewarm-sdk:
+	@echo "\033[1mPrewarming shared test SDK providers...\033[0m"
+	@if [ -n "$(NEXTEST)" ]; then $(TEST_ENV) cargo nextest run --all --features lsp --no-run; else $(TEST_ENV) cargo build --features lsp; fi
+	@CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 \
+		INCAN_STDLIB="$(CURDIR)/crates/incan_stdlib/stdlib" \
+		INCAN_STDLIB_DIR="$(CURDIR)/crates/incan_stdlib/stdlib" \
+		INCAN_INTERNAL_SDK_PROVIDER_STORE="$(CURDIR)/target/incan_test_sdk_provider_store" \
+		./target/debug/incan check tests/fixtures/test_assert_canary.incn
 
 .PHONY: test-rust-inspect  ## test - Run focused rust-inspect regression tests
 test-rust-inspect:

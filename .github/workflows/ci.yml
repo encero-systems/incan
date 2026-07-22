@@ -96,7 +96,15 @@ jobs:
       - uses: ./.github/actions/setup-rust-sccache
       - uses: taiki-e/install-action@nextest
       - name: Compile test suite
-        run: cargo nextest run --all --profile ci --no-run
+        run: CARGO_BUILD_JOBS=4 cargo nextest run --all --profile ci --no-run
+      - name: Prewarm compiled SDK providers
+        # The immutable provider store is shared by subprocess-heavy tests and must be cached with the test binaries.
+        run: >-
+          CARGO_NET_OFFLINE=true
+          INCAN_STDLIB="$GITHUB_WORKSPACE/crates/incan_stdlib/stdlib"
+          INCAN_STDLIB_DIR="$GITHUB_WORKSPACE/crates/incan_stdlib/stdlib"
+          INCAN_INTERNAL_SDK_PROVIDER_STORE="$GITHUB_WORKSPACE/target/incan_test_sdk_provider_store"
+          ./target/debug/incan check tests/fixtures/test_assert_canary.incn
       - name: Show sccache stats
         if: always()
         run: ${SCCACHE_PATH:-sccache} --show-stats || true
@@ -125,7 +133,7 @@ jobs:
       - uses: ./.github/actions/setup-rust-sccache
       - uses: taiki-e/install-action@nextest
       - name: Run test shard
-        run: cargo nextest run --all --profile ci --partition slice:${{ matrix.partition }}/${{ matrix.total }}
+        run: CARGO_BUILD_JOBS=4 cargo nextest run --all --profile ci --partition slice:${{ matrix.partition }}/${{ matrix.total }}
       - name: Show sccache stats
         if: always()
         run: ${SCCACHE_PATH:-sccache} --show-stats || true
@@ -170,7 +178,15 @@ jobs:
       - uses: ./.github/actions/setup-rust-sccache
       - uses: taiki-e/install-action@nextest
       - name: Compile test suite
-        run: cargo nextest run --all --profile ci --no-run
+        run: CARGO_BUILD_JOBS=4 cargo nextest run --all --profile ci --no-run
+      - name: Prewarm compiled SDK providers
+        # The immutable provider store is shared by subprocess-heavy tests and must be cached with the test binaries.
+        run: >-
+          CARGO_NET_OFFLINE=true
+          INCAN_STDLIB="$GITHUB_WORKSPACE/crates/incan_stdlib/stdlib"
+          INCAN_STDLIB_DIR="$GITHUB_WORKSPACE/crates/incan_stdlib/stdlib"
+          INCAN_INTERNAL_SDK_PROVIDER_STORE="$GITHUB_WORKSPACE/target/incan_test_sdk_provider_store"
+          ./target/debug/incan check tests/fixtures/test_assert_canary.incn
       - name: Show sccache stats
         if: always()
         run: ${SCCACHE_PATH:-sccache} --show-stats || true
@@ -199,7 +215,7 @@ jobs:
       - uses: ./.github/actions/setup-rust-sccache
       - uses: taiki-e/install-action@nextest
       - name: Run test shard
-        run: cargo nextest run --all --profile ci --partition slice:${{ matrix.partition }}/${{ matrix.total }}
+        run: CARGO_BUILD_JOBS=4 cargo nextest run --all --profile ci --partition slice:${{ matrix.partition }}/${{ matrix.total }}
       - name: Show sccache stats
         if: always()
         run: ${SCCACHE_PATH:-sccache} --show-stats || true
@@ -268,7 +284,15 @@ jobs:
       - uses: ./.github/actions/setup-rust-sccache
       - uses: taiki-e/install-action@nextest
       - name: Compile test suite (locked)
-        run: cargo nextest run --locked --profile ci --no-run
+        run: CARGO_BUILD_JOBS=4 cargo nextest run --locked --profile ci --no-run
+      - name: Prewarm compiled SDK providers
+        # The immutable provider store is shared by subprocess-heavy tests and must be cached with the test binaries.
+        run: >-
+          CARGO_NET_OFFLINE=true
+          INCAN_STDLIB="$GITHUB_WORKSPACE/crates/incan_stdlib/stdlib"
+          INCAN_STDLIB_DIR="$GITHUB_WORKSPACE/crates/incan_stdlib/stdlib"
+          INCAN_INTERNAL_SDK_PROVIDER_STORE="$GITHUB_WORKSPACE/target/incan_test_sdk_provider_store"
+          ./target/debug/incan check tests/fixtures/test_assert_canary.incn
       - name: Show sccache stats
         if: always()
         run: ${SCCACHE_PATH:-sccache} --show-stats || true
@@ -299,7 +323,7 @@ jobs:
       - uses: ./.github/actions/setup-rust-sccache
       - uses: taiki-e/install-action@nextest
       - name: Cargo test shard (locked)
-        run: cargo nextest run --locked --profile ci --partition slice:${{ matrix.partition }}/${{ matrix.total }}
+        run: CARGO_BUILD_JOBS=4 cargo nextest run --locked --profile ci --partition slice:${{ matrix.partition }}/${{ matrix.total }}
       - name: Show sccache stats
         if: always()
         run: ${SCCACHE_PATH:-sccache} --show-stats || true
