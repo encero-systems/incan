@@ -82,7 +82,7 @@ jobs:
         run: rustup target add wasm32-wasip1
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: incan-stable
+          shared-key: incan-stable-tests-v1
           # The warmup job owns writes for pushes and same-repository PRs, whose shards restore the warmed Cargo cache.
           # Fork PRs cannot publish that cache; they still receive the explicitly transferred SDK provider artifact.
           save-if: >-
@@ -139,7 +139,7 @@ jobs:
         run: rustup target add wasm32-wasip1
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: incan-stable
+          shared-key: incan-stable-tests-v1
           # Test shards restore the cache produced by the warmup job; the warmup job owns writes.
           save-if: false
       - uses: ./.github/actions/setup-rust-sccache
@@ -185,7 +185,7 @@ jobs:
         run: rustup target add wasm32-wasip1
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: incan-stable
+          shared-key: incan-stable-tests-v1
           # The warmup job owns writes for pushes and same-repository PRs, whose shards restore the warmed Cargo cache.
           # Fork PRs cannot publish that cache; they still receive the explicitly transferred SDK provider artifact.
           save-if: >-
@@ -242,7 +242,7 @@ jobs:
         run: rustup target add wasm32-wasip1
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: incan-stable
+          shared-key: incan-stable-tests-v1
           # Test shards restore the cache produced by the warmup job; the warmup job owns writes.
           save-if: false
       - uses: ./.github/actions/setup-rust-sccache
@@ -312,7 +312,7 @@ jobs:
         run: rustup target add wasm32-wasip1
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: incan-msrv-test
+          shared-key: incan-msrv-tests-v1
           # The warmup job owns writes for pushes and same-repository PRs, whose shards restore the warmed Cargo cache.
           # Fork PRs cannot publish that cache; they still receive the explicitly transferred SDK provider artifact.
           save-if: >-
@@ -371,7 +371,7 @@ jobs:
         run: rustup target add wasm32-wasip1
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: incan-msrv-test
+          shared-key: incan-msrv-tests-v1
           # Test shards restore the cache produced by the warmup job; the warmup job owns writes.
           save-if: false
       - uses: ./.github/actions/setup-rust-sccache
