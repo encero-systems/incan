@@ -381,6 +381,11 @@ fn managed_cache_reuses_offline_across_projects_and_cleans_interrupted_entry() -
     );
     let lock_root = fixture.path().join("lock-only");
     write_dependency_project(&lock_root)?;
+    fs::create_dir_all(lock_root.join(".cargo"))?;
+    fs::write(
+        lock_root.join(".cargo/config.toml"),
+        format!("[build]\nbuild-dir = {:?}\n", inherited_build_dir),
+    )?;
     let mut lock = incan_command(&lock_root, &incan_home);
     lock.arg("lock");
     run_checked(lock, "standalone lock prewarm")?;
