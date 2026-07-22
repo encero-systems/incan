@@ -118,6 +118,8 @@ libc = "0.2"
 byteorder = "1"
 # Runtime crate used by std.uuid generated-project offline smoke tests.
 rand = "0.8"
+# Runtime crate used by std.regex generated-project offline smoke tests.
+regex = "1"
 # Runtime crates used by std.compression generated-project offline smoke tests.
 flate2 = "1"
 zstd = "0.13"

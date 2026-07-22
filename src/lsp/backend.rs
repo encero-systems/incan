@@ -852,6 +852,7 @@ fn spawn_rust_inspect_prewarm(
 }
 
 #[cfg(feature = "rust_inspect")]
+/// Drain coalesced rust-inspect prewarm requests while retaining the generated-cache lease.
 async fn run_rust_inspect_prewarm_queue(
     manifest_dir: PathBuf,
     target_dir: PathBuf,
@@ -951,6 +952,7 @@ struct LspRustInspectContext {
 }
 
 #[cfg(feature = "rust_inspect")]
+/// Prepare the rust-inspect Cargo workspace and managed target used by one LSP analysis request.
 fn prepare_lsp_rust_inspect_workspace(
     manifest: &ProjectManifest,
     modules: &[ParsedModule],
@@ -980,6 +982,7 @@ fn prepare_lsp_rust_inspect_workspace(
 }
 
 #[cfg(all(test, feature = "rust_inspect"))]
+/// Prepare an LSP rust-inspect workspace against a test-owned generated-cache root.
 fn prepare_lsp_rust_inspect_workspace_in_cache_root(
     manifest: &ProjectManifest,
     modules: &[ParsedModule],
@@ -1009,6 +1012,7 @@ fn prepare_lsp_rust_inspect_workspace_in_cache_root(
 }
 
 #[cfg(feature = "rust_inspect")]
+/// Build an LSP rust-inspect context with a caller-supplied generated-target resolver.
 fn prepare_lsp_rust_inspect_workspace_with_target_resolver<F>(
     manifest: &ProjectManifest,
     modules: &[ParsedModule],

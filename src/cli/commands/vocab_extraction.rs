@@ -500,6 +500,7 @@ fn read_companion_package_name(cargo_manifest_path: &Path) -> CliResult<String> 
     Ok(package_name.to_string())
 }
 
+/// Build one generated vocab companion for the requested Rust target and profile.
 fn run_cargo_build_for_target(
     cargo_manifest_path: &Path,
     target_dir: &Path,
@@ -737,6 +738,7 @@ fn escape_cargo_toml_string(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+/// Materialize a declared vocab desugarer into the selected generated target.
 fn build_pending_desugarer_artifact(
     target_dir: &Path,
     package_name: &str,

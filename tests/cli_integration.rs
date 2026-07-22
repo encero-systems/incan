@@ -632,6 +632,16 @@ fn concurrent_sdk_provider_publication_reuses_one_complete_identity() -> Result<
         inventory.components.values().all(|component| component.available),
         "the reused full-profile provider identity must contain every component"
     );
+    let workspace_lock: toml::Value = toml::from_str(&fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock"),
+    )?)?;
+    let locked_packages = workspace_lock
+        .get("package")
+        .and_then(toml::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|package| package.get("name").and_then(toml::Value::as_str))
+        .collect::<std::collections::HashSet<_>>();
     for component_id in inventory.components.keys() {
         let manifest_path = artifact_roots
             .first()
@@ -657,6 +667,27 @@ fn concurrent_sdk_provider_publication_reuses_one_complete_identity() -> Result<
             "SPDX-licensed SDK provider `{component_id}` must not invent a Cargo license-file: {}",
             manifest_path.display()
         );
+        for (dependency_name, dependency) in manifest
+            .get("dependencies")
+            .and_then(toml::Value::as_table)
+            .into_iter()
+            .flatten()
+        {
+            let dependency_table = dependency.as_table();
+            if dependency_table.is_some_and(|dependency| dependency.contains_key("path")) {
+                continue;
+            }
+            let package_name = dependency_table
+                .and_then(|dependency| dependency.get("package"))
+                .and_then(toml::Value::as_str)
+                .unwrap_or(dependency_name);
+            assert!(
+                locked_packages.contains(package_name),
+                "SDK provider `{component_id}` registry dependency `{package_name}` must be anchored in the workspace \
+                 lock so offline integration shards can resolve it: {}",
+                manifest_path.display()
+            );
+        }
     }
     Ok(())
 }

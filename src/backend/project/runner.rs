@@ -417,11 +417,13 @@ impl ProjectGenerator {
             .join(format!(".{}.incan-run-fingerprint", self.name))
     }
 
+    /// Return whether the published run binary still belongs to the selected generated-build domain.
     fn run_publication_fingerprint_matches(&self) -> bool {
         fs::read_to_string(self.run_publication_fingerprint_path())
             .is_ok_and(|fingerprint| fingerprint.trim() == self.run_publication_fingerprint())
     }
 
+    /// Atomically record the generated-build domain that supplied the published run binary.
     fn write_run_publication_fingerprint(&self) -> io::Result<()> {
         let path = self.run_publication_fingerprint_path();
         let parent = path

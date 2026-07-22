@@ -2780,6 +2780,7 @@ fn write_rust_inspect_cargo_config(manifest_dir: &Path, target_dir: &Path) -> Cl
 }
 
 #[cfg(feature = "rust_inspect")]
+/// Point one generated rust-inspect workspace at its selected Cargo target.
 pub(crate) fn configure_rust_inspect_cargo_target(manifest_dir: &Path, target_dir: &Path) -> CliResult<()> {
     write_rust_inspect_cargo_config(manifest_dir, target_dir)
 }

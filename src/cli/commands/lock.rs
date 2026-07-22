@@ -325,6 +325,7 @@ pub(crate) struct PreparedRustInspectTypecheckWorkspace {
 
 #[cfg(feature = "rust_inspect")]
 impl PreparedRustInspectTypecheckWorkspace {
+    /// Return the generated Cargo workspace used for rust-inspect typechecking.
     pub(crate) fn manifest_dir(&self) -> &Path {
         &self.manifest_dir
     }
