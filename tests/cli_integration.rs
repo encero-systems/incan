@@ -2,6 +2,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
+mod support;
+
 fn incan_binary() -> PathBuf {
     if let Ok(path) = std::env::var("CARGO_BIN_EXE_incan") {
         return PathBuf::from(path);
@@ -60,12 +62,9 @@ fn configured_incan_command(current_dir: &Path, args: &[&str]) -> Command {
         )
         .env(
             "INCAN_GENERATED_CARGO_TARGET_DIR",
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("target/incan_generated_shared_target"),
+            support::generated_cargo_target_dir(),
         )
-        .env(
-            "INCAN_INTERNAL_SDK_PROVIDER_STORE",
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("target/incan_test_sdk_provider_store"),
-        );
+        .env("INCAN_INTERNAL_SDK_PROVIDER_STORE", support::sdk_provider_store());
     command
 }
 
@@ -165,12 +164,9 @@ fn run_incan_with_os_env(
         )
         .env(
             "INCAN_GENERATED_CARGO_TARGET_DIR",
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("target/incan_generated_shared_target"),
+            support::generated_cargo_target_dir(),
         )
-        .env(
-            "INCAN_INTERNAL_SDK_PROVIDER_STORE",
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("target/incan_test_sdk_provider_store"),
-        )
+        .env("INCAN_INTERNAL_SDK_PROVIDER_STORE", support::sdk_provider_store())
         .env(key, value)
         .output()?)
 }
@@ -1946,7 +1942,7 @@ fn workspace_lock_concurrent_publishers_leave_one_parseable_root_lock() -> Resul
     }
 
     let stdlib = Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib/stdlib");
-    let generated_target = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/incan_generated_shared_target");
+    let generated_target = support::generated_cargo_target_dir();
     let spawn_lock = |member: &str| -> Result<std::process::Child, Box<dyn std::error::Error>> {
         Ok(Command::new(incan_binary())
             .arg("lock")

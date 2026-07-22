@@ -8,12 +8,12 @@ outputs project-local.
 
 | Category | Default owner and location | Lifecycle |
 | --- | --- | --- |
-| Generated Rust source and manifests | Project `target/incan/`, `target/incan_tests/`, and `target/incan_lock/` | Recreated from Incan source; remains project-local |
+| Generated Rust source and manifests | Project `target/incan/`, `target/incan_tests/`, and `target/incan_lock/` by default; a caller-selected generated output directory when supplied | Recreated from Incan source; remains caller/project-owned |
 | Generated Cargo dependency and intermediate output | `$INCAN_HOME/cache/generated-cargo/v1/<identity>/target/` | Shared by compatible commands; idle domains are LRU-pruned toward a 20 GiB soft limit, and an idle domain whose measured output exceeds its 20 GiB default safety bound has only its rebuildable Cargo target discarded |
-| Published executable | The generated project below project `target/incan/` | Copied atomically from Cargo output after a successful build; never pruned by `incan cache` |
+| Published executable | The generated project below project `target/incan/` by default, or below a caller-selected generated output directory | Copied atomically from Cargo output after a successful build; never pruned by `incan cache` |
 | Test harness and rust-inspect workspace source/metadata | Project `target/incan_tests/` and `target/incan_lock/rust_inspect/` | Project-local generated inputs; their Cargo output uses the applicable shared or explicit target |
 | Compiled SDK providers | The selected SDK provider store below `INCAN_HOME`, or an explicit provider-store override | Content-addressed SDK lifecycle; not removed by generated-cache pruning |
-| Vocab companion metadata | Beside the selected generated target, unless `INCAN_VOCAB_COMPANION_CACHE_DIR` overrides it | Input-fingerprinted companion cache |
+| Vocab companion metadata | `<generated-target>/incan-vocab-cache`, unless `INCAN_VOCAB_COMPANION_CACHE_DIR` overrides it | Pruned with a managed generated target; an explicit override is caller-owned and not pruned by `incan cache` |
 | Durable Incan library | Project `target/lib/*.incnlib` | User-facing build artifact; never removed by generated-cache pruning |
 | Incan compiler repository build | Repository `target/` | Ordinary Cargo development state, outside the installed compiler's generated-cache manager |
 | Legacy Rust `CompilationPlan` executor output | Caller-selected plan output directory | Caller-owned compatibility API; contained below that output and not used by CLI build, run, test, lock, or library paths |
@@ -35,9 +35,19 @@ and feature inputs, so an unchanged logical fixture does not leave a new top-lev
 because a temporary project directory changed. A per-root exclusive lock spans Cargo execution and atomic project-local
 publication; the executable path itself comes from Cargo's JSON artifact message, including target-triple layouts.
 
-Incan takes a shared activity lease before Cargo can use a domain. Cleanup takes an exclusive lease and skips active domains. Automatic cleanup runs before acquiring the requested domain and prunes other idle domains first. The total limit is therefore soft while domains are active. When the final Cargo lease ends, Incan measures the domain; if it exceeds the per-domain safety bound, Incan discards that domain's rebuildable `target/` tree while preserving its identity metadata. The same recovery runs before reusing an interrupted idle domain, so repeated crashes cannot retain unmeasured growth indefinitely. Set `INCAN_GENERATED_CACHE_MAX_ENTRY_BYTES` to change the bound, or use an explicit generated-target override when an external system owns a larger target lifecycle. The lease ends after Cargo has published the project-local executable and before `incan run` starts user code.
+Incan takes a shared activity lease before Cargo can use a domain. Cleanup takes an exclusive lease and skips active domains. Automatic cleanup runs before acquiring the requested domain and again after a completed lease makes new usage idle. The total limit is therefore soft only while domains are active; each completion brings the measurable idle set back toward the limit. When the final Cargo lease ends, Incan measures the domain; if it exceeds the per-domain safety bound, Incan discards that domain's rebuildable `target/` tree while preserving its identity metadata. The same recovery runs before reusing an interrupted idle domain, so repeated crashes cannot retain unmeasured growth indefinitely. Set `INCAN_GENERATED_CACHE_MAX_ENTRY_BYTES` to change the bound, or use an explicit generated-target override when an external system owns a larger target lifecycle. The lease ends after Cargo has published the project-local executable and before `incan run` starts user code.
 
 If a build process exits before releasing its lease, the next acquisition of that idle identity treats its unmeasured size as unknown, measures the partial domain before taking the new shared lease, and discards an oversized rebuildable target. Acquiring a different identity also includes the interrupted idle domain in ordinary LRU pruning.
+
+## Repository CI ownership
+
+Incan's repository CI deliberately supplies `INCAN_GENERATED_CARGO_TARGET_DIR`, so the workflow—not the managed
+`INCAN_HOME` cache—owns generated Cargo cleanup and persistence there. Warmup jobs compile the test suite with inner
+`CARGO_BUILD_JOBS=2`; `rust-cache` transfers ordinary Cargo state where GitHub permissions allow it. Compiled SDK
+providers are prewarmed separately and uploaded as an immutable short-lived artifact for each platform/toolchain's
+test shards. Shards restore that provider store, keep the two-job Cargo child cap, and use nextest's bounded
+`nested-cargo` group. Local and installed compiler use continues to use the managed cache unless the caller makes the
+same explicit target choice.
 
 ## Reproducing the audit
 
@@ -70,7 +80,7 @@ from 241,280 KiB to 285,924 KiB (+44,644 KiB) while the provider store stayed at
 source identity above fixes that demonstrated root-artifact growth mechanism. Regression checks assert stable identities
 rather than those machine-specific byte totals.
 
-The completed audit reran the same matrix on 2026-07-22 under the uncontended
+The completed audit recorded one observational matrix on 2026-07-22 under the uncontended
 `/private/tmp/incan-v05-heavy-gate.lease`. The small fixture used `serde_json`; the downstream-shaped fixture retained
 InQL's DataFusion 53, DataFusion-Substrait 53, Substrait 0.63, and Prost 0.14 dependency graph while using minimal current
 Incan source, because the copied older InQL source itself no longer typechecked on current main. Cargo sources were
@@ -100,7 +110,8 @@ vocab surface, so it created no vocab companion cache. These numbers show that C
 cost and that the default 20 GiB managed soft limit bounds them independently of project source and durable artifacts.
 
 The release-test topology was also measured with the same warmed binaries, shared generated target, provider store,
-inner `CARGO_BUILD_JOBS=2`, and 12 representative nested-Cargo CLI regressions. Outer nextest limits of 12, 6, 4, and 2
+inner `CARGO_BUILD_JOBS=2`, and 12 representative nested-Cargo CLI regressions. These machine-specific timings are
+evidence for the selected topology, not a portable benchmark claim. Outer nextest limits of 12, 6, 4, and 2
 completed in 18.45 s, 25.10 s, 39.03 s, and 62.21 s respectively. The provisional limit of 2 was therefore rejected as
 a 3.4x warmed-throughput regression. The shipped limit of 6 halves the previous outer fan-out while remaining 2.5x
 faster than 2 on the cache-identical sample; CI additionally transfers a fully prewarmed immutable SDK-provider store

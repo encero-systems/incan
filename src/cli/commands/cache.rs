@@ -67,9 +67,13 @@ pub fn prune_generated_cache(
         human_bytes(report.after_bytes),
         human_bytes(report.max_bytes)
     );
-    println!("Removed {} compatibility domain(s).", report.removed_entries.len());
+    let entry_action = prune_entry_action(dry_run);
+    println!(
+        "{entry_action} {} compatibility domain(s).",
+        report.removed_entries.len()
+    );
     for identity in &report.removed_entries {
-        println!("  removed {identity}");
+        println!("  {} {identity}", entry_action.to_ascii_lowercase());
     }
     if !report.skipped_active_entries.is_empty() {
         println!(
@@ -84,6 +88,11 @@ pub fn prune_generated_cache(
         println!("  not found {identity}");
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// Describe entry removal without claiming a dry-run changed storage.
+fn prune_entry_action(dry_run: bool) -> &'static str {
+    if dry_run { "Would remove" } else { "Removed" }
 }
 
 /// Render byte counts compactly without adding a formatting dependency to the compiler.
@@ -104,12 +113,18 @@ fn human_bytes(bytes: u64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::human_bytes;
+    use super::{human_bytes, prune_entry_action};
 
     #[test]
     fn formats_binary_byte_units() {
         assert_eq!(human_bytes(512), "512 B");
         assert_eq!(human_bytes(1024), "1.0 KiB");
         assert_eq!(human_bytes(1024 * 1024 * 2), "2.0 MiB");
+    }
+
+    #[test]
+    fn dry_run_uses_predictive_removal_language() {
+        assert_eq!(prune_entry_action(true), "Would remove");
+        assert_eq!(prune_entry_action(false), "Removed");
     }
 }

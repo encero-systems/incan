@@ -7,10 +7,9 @@ use std::process::{Command, Output};
 use std::sync::{Arc, Barrier};
 use std::time::{Duration, SystemTime};
 
+mod support;
+
 fn incan_command(project_root: &Path, incan_home: &Path) -> Command {
-    let provider_store = std::env::var_os("INCAN_INTERNAL_SDK_PROVIDER_STORE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("target/incan_test_sdk_provider_store"));
     let mut command = Command::new(env!("CARGO_BIN_EXE_incan"));
     command
         .current_dir(project_root)
@@ -30,7 +29,7 @@ fn incan_command(project_root: &Path, incan_home: &Path) -> Command {
             Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib/stdlib"),
         )
         .env("CARGO_NET_OFFLINE", "true")
-        .env("INCAN_INTERNAL_SDK_PROVIDER_STORE", provider_store);
+        .env("INCAN_INTERNAL_SDK_PROVIDER_STORE", support::sdk_provider_store());
     command
 }
 
@@ -489,6 +488,7 @@ fn managed_cache_reuses_offline_across_projects_and_cleans_interrupted_entry() -
         .arg(&explicit_output);
     run_checked(explicit, "explicit generated target and output build")?;
     assert!(explicit_output.join("Cargo.toml").is_file());
+    assert!(explicit_output.join("target/release/generated_cache_fixture").is_file());
     assert!(explicit_target.exists());
     assert_eq!(cache_entries(&incan_home)?.len(), before_explicit);
 
@@ -557,6 +557,11 @@ fn cold_explicit_target_owns_dependency_preheat_without_managed_side_effects() -
     assert!(project_root.join("incan.lock").is_file());
     assert!(explicit_target.exists());
     assert!(explicit_output.join("Cargo.toml").is_file());
+    assert!(explicit_output.join("target/release/generated_cache_fixture").is_file());
+    assert!(
+        !project_root.join("target/incan/generated_cache_fixture").exists(),
+        "an explicit generated output also populated the default project-local generated directory"
+    );
     assert!(
         cache_entries(&incan_home)?.is_empty(),
         "cold explicit-target lock preheat populated the managed cache"

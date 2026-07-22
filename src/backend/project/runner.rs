@@ -311,7 +311,11 @@ impl ProjectGenerator {
 
         // ---- Context: execute built binary with caller-provided cwd ----
         eprintln!("Build finished. Running generated binary...");
-        let mut child = Command::new(self.run_binary_path())
+        // The default generated output can be relative to the invocation directory while `cwd` is the discovered
+        // project root. Resolve the published artifact before changing directory or the child would look for the
+        // relative `target/incan/...` path beneath the project root instead of beneath the invocation directory.
+        let run_binary = fs::canonicalize(self.run_binary_path())?;
+        let mut child = Command::new(run_binary)
             .current_dir(cwd)
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())

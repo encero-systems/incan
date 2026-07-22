@@ -6,6 +6,8 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+mod support;
+
 use incan::frontend::module::{ExportedTypeLikeDoc, ExportedTypeLikeKind, exported_type_like_docs};
 use incan::frontend::{lexer, parser, typechecker};
 
@@ -857,9 +859,7 @@ fn incan_debug_binary() -> std::path::PathBuf {
 }
 
 fn shared_generated_cargo_target_dir() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("target")
-        .join("incan_generated_shared_target")
+    support::generated_cargo_target_dir()
 }
 
 fn incan_command() -> Command {
@@ -867,10 +867,7 @@ fn incan_command() -> Command {
     command
         .env("INCAN_GENERATED_CARGO_TARGET_DIR", shared_generated_cargo_target_dir())
         .env("CARGO_NET_OFFLINE", "true")
-        .env(
-            "INCAN_INTERNAL_SDK_PROVIDER_STORE",
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("target/incan_test_sdk_provider_store"),
-        );
+        .env("INCAN_INTERNAL_SDK_PROVIDER_STORE", support::sdk_provider_store());
     command
 }
 

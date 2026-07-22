@@ -58,7 +58,9 @@ impl GeneratedCargoTarget {
 /// Shared advisory lock proving that one managed cache entry is in active use.
 pub(crate) struct GeneratedCacheLease {
     file: Option<File>,
+    cache_root: PathBuf,
     entry_root: PathBuf,
+    max_bytes: u64,
     max_entry_bytes: u64,
     finalized: bool,
 }
@@ -70,6 +72,7 @@ impl Drop for GeneratedCacheLease {
         }
         self.release_activity_lock();
         let _ = self.refresh_size_if_idle(false);
+        let _ = self.prune_completed_domains();
     }
 }
 
@@ -77,7 +80,9 @@ impl GeneratedCacheLease {
     /// Finish one compiler-owned Cargo operation before user code may continue outside the cache lease.
     pub(crate) fn finish(mut self) -> io::Result<()> {
         self.release_activity_lock();
-        let result = self.refresh_size_if_idle(true);
+        let result = self
+            .refresh_size_if_idle(true)
+            .and_then(|()| self.prune_completed_domains());
         self.finalized = true;
         result
     }
@@ -120,6 +125,13 @@ impl GeneratedCacheLease {
         metadata.last_used_unix_seconds = measured_at;
         metadata.last_measured_unix_seconds = measured_at;
         write_metadata(&self.entry_root, &metadata)?;
+        Ok(())
+    }
+
+    /// Bring aggregate idle usage back toward the configured cache limit after completed concurrent builds.
+    fn prune_completed_domains(&self) -> io::Result<()> {
+        let _manager = acquire_manager_lock(&self.cache_root)?;
+        prune_entries_while_locked(&self.cache_root, self.max_bytes, false, &[], false)?;
         Ok(())
     }
 }
@@ -405,20 +417,35 @@ pub(crate) fn rust_backend_identity(cargo_working_dir: &Path) -> io::Result<Stri
             format!("{} -vV returned invalid UTF-8: {error}", cargo.to_string_lossy()),
         )
     })?;
-    let mut identity = format_rust_backend_identity(
+    Ok(format_complete_backend_identity(
         &rustc.to_string_lossy(),
         verbose_version.trim(),
         rust_backend_identity_selectors(),
-    );
+        &cargo.to_string_lossy(),
+        cargo_verbose_version.trim(),
+        &cargo_config_identity(cargo_working_dir),
+    ))
+}
+
+/// Format the complete Rust/Cargo/config contract used by compatibility identity hashing.
+fn format_complete_backend_identity(
+    rustc_command: &str,
+    rustc_verbose_version: &str,
+    selectors: impl IntoIterator<Item = (String, String)>,
+    cargo_command: &str,
+    cargo_verbose_version: &str,
+    cargo_config: &str,
+) -> String {
+    let mut identity = format_rust_backend_identity(rustc_command, rustc_verbose_version, selectors);
     identity.push_str("cargo_command=");
-    identity.push_str(&cargo.to_string_lossy());
+    identity.push_str(cargo_command);
     identity.push('\n');
     identity.push_str("cargo_verbose_version=\n");
-    identity.push_str(cargo_verbose_version.trim());
+    identity.push_str(cargo_verbose_version);
     identity.push('\n');
     identity.push_str("cargo_config_identity=");
-    identity.push_str(&cargo_config_identity(cargo_working_dir));
-    Ok(identity)
+    identity.push_str(cargo_config);
+    identity
 }
 
 /// Resolve the directory context for toolchain probes before a generated output directory necessarily exists.
@@ -445,11 +472,18 @@ fn rust_backend_identity_selectors() -> BTreeMap<String, String> {
         let Some(name) = name.to_str() else {
             continue;
         };
-        if name.starts_with("CARGO_PROFILE_") || name.starts_with("CARGO_TARGET_") {
+        // Managed commands replace this output-only path with the selected lifecycle target, so inheriting a
+        // worktree-specific outer target must not fragment otherwise compatible domains.
+        if inherited_selector_affects_managed_artifacts(name) {
             selectors.insert(name.to_string(), value.to_string_lossy().into_owned());
         }
     }
     selectors
+}
+
+/// Whether one inherited Cargo variable remains effective after Incan installs its managed output paths.
+fn inherited_selector_affects_managed_artifacts(name: &str) -> bool {
+    name.starts_with("CARGO_PROFILE_") || (name.starts_with("CARGO_TARGET_") && name != "CARGO_TARGET_DIR")
 }
 
 /// Format backend identity inputs deterministically for hashing and metadata.
@@ -663,7 +697,9 @@ fn acquire_managed_target(
         path: entry_root.join("target"),
         lease: Some(GeneratedCacheLease {
             file: Some(active_file),
+            cache_root: cache_root.to_path_buf(),
             entry_root,
+            max_bytes,
             max_entry_bytes,
             finalized: false,
         }),
@@ -1099,18 +1135,35 @@ mod tests {
 
     #[test]
     fn rust_backend_identity_includes_compiler_and_cargo_selectors() {
-        let identity = format_rust_backend_identity(
+        let identity = format_complete_backend_identity(
             "/toolchains/nightly/bin/rustc",
             "rustc 1.99.0\nhost: aarch64-apple-darwin",
             [
                 ("RUSTUP_TOOLCHAIN".to_string(), "nightly".to_string()),
                 ("CARGO_BUILD_TARGET".to_string(), "x86_64-unknown-linux-gnu".to_string()),
             ],
+            "/toolchains/nightly/bin/cargo",
+            "cargo 1.99.0\nrelease: 1.99.0",
+            "config-sha256",
         );
         assert!(identity.contains("rustc_command=/toolchains/nightly/bin/rustc"));
         assert!(identity.contains("host: aarch64-apple-darwin"));
         assert!(identity.contains("RUSTUP_TOOLCHAIN=nightly"));
         assert!(identity.contains("CARGO_BUILD_TARGET=x86_64-unknown-linux-gnu"));
+        assert!(identity.contains("cargo_command=/toolchains/nightly/bin/cargo"));
+        assert!(identity.contains("cargo 1.99.0"));
+        assert!(identity.contains("cargo_config_identity=config-sha256"));
+    }
+
+    #[test]
+    fn managed_identity_ignores_overridden_outer_target_directory() {
+        assert!(!inherited_selector_affects_managed_artifacts("CARGO_TARGET_DIR"));
+        assert!(inherited_selector_affects_managed_artifacts(
+            "CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER"
+        ));
+        assert!(inherited_selector_affects_managed_artifacts(
+            "CARGO_PROFILE_RELEASE_LTO"
+        ));
     }
 
     #[test]
@@ -1336,6 +1389,66 @@ mod tests {
         lease.finish()?;
         assert!(entry_root.exists());
         assert!(!entry_root.join("target").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn completed_concurrent_domains_are_pruned_to_the_aggregate_limit() -> io::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let cache_root = temp.path().join("cache");
+        let features = CargoFeatureSelection::default();
+        let mut first_metadata = cache_entry_metadata("first", "release", None, &features, &[], "rustc-a")?;
+        first_metadata.identity = "first".to_string();
+        first_metadata.last_used_unix_seconds = 1;
+        let mut second_metadata = cache_entry_metadata("second", "release", None, &features, &[], "rustc-b")?;
+        second_metadata.identity = "second".to_string();
+        second_metadata.last_used_unix_seconds = 2;
+
+        let GeneratedCargoTarget {
+            lease: Some(mut first), ..
+        } = acquire_managed_target(&cache_root, u64::MAX, u64::MAX, first_metadata)?
+        else {
+            return Err(io::Error::other("first managed acquisition omitted its activity lease"));
+        };
+        let GeneratedCargoTarget {
+            lease: Some(mut second),
+            ..
+        } = acquire_managed_target(&cache_root, u64::MAX, u64::MAX, second_metadata)?
+        else {
+            return Err(io::Error::other(
+                "second managed acquisition omitted its activity lease",
+            ));
+        };
+        let first_root = cache_root.join("first");
+        let second_root = cache_root.join("second");
+        fs::create_dir_all(first_root.join("target"))?;
+        fs::create_dir_all(second_root.join("target"))?;
+        fs::write(first_root.join("target/artifact"), [0_u8; 256])?;
+        fs::write(second_root.join("target/artifact"), [0_u8; 256])?;
+
+        // Set a cap that retains either completed domain alone but not both. The small allowance covers the few digits
+        // added when the final logical-byte measurement is written back into entry metadata.
+        let max_bytes = directory_size(&first_root)?
+            .max(directory_size(&second_root)?)
+            .saturating_add(64);
+        first.max_bytes = max_bytes;
+        second.max_bytes = max_bytes;
+
+        first.finish()?;
+        assert!(
+            second_root.exists(),
+            "aggregate pruning removed a domain that still held an activity lease"
+        );
+        second.finish()?;
+
+        let inspection = inspect_cache_root(&cache_root, max_bytes)?;
+        assert!(inspection.total_bytes <= max_bytes);
+        assert_eq!(
+            inspection.entries.len(),
+            1,
+            "the older completed domain should be reclaimed"
+        );
+        assert_eq!(inspection.entries[0].identity, "second");
         Ok(())
     }
 }
