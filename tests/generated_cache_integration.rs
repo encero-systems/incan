@@ -385,6 +385,7 @@ fn managed_cache_reuses_offline_across_projects_and_cleans_interrupted_entry() -
     );
     let lock_root = fixture.path().join("lock-only");
     write_dependency_project(&lock_root)?;
+    write_test_and_library_sources(&lock_root)?;
     fs::create_dir_all(lock_root.join(".cargo"))?;
     fs::write(
         lock_root.join(".cargo/config.toml"),
