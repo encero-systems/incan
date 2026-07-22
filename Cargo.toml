@@ -144,6 +144,11 @@ incan_stdlib = { path = "crates/incan_stdlib" }
 tempfile = "3"
 wat = "1"
 
+[package.metadata.cargo-udeps.ignore]
+# `regex` deliberately anchors generated std.regex consumers in Cargo.lock for offline test shards; the Rust test
+# harness does not link it directly.
+development = ["regex"]
+
 [[bin]]
 name = "incan"
 path = "src/main.rs"
