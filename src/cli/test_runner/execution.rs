@@ -3623,15 +3623,11 @@ pub(super) fn run_file_tests_batch(
     let batch_file_paths = tests.iter().map(|test| test.file_path.clone()).collect::<Vec<_>>();
     let dir_suffix = file_batch_dir_suffix(&batch_file_paths, &prepared.project_root);
     let runner_crate_name = runner_crate_name_for_batch_suffix(&dir_suffix);
-    let temp_dir = format!("target/incan_tests/{}", dir_suffix);
-    let temp_dir_path = PathBuf::from(&temp_dir);
-    let manifest_path = if temp_dir_path.is_absolute() {
-        temp_dir_path.join("Cargo.toml")
-    } else if let Ok(cwd) = std::env::current_dir() {
-        cwd.join(&temp_dir).join("Cargo.toml")
-    } else {
-        temp_dir_path.join("Cargo.toml")
-    };
+    // Generated harness source is project-owned even though compatible Cargo artifacts are shared. Anchoring this
+    // path at the project root prevents path-independent batch identities from making unrelated projects overwrite
+    // the same `Cargo.toml` under the compiler process's working directory.
+    let temp_dir_path = prepared.project_root.join("target/incan_tests").join(&dir_suffix);
+    let manifest_path = temp_dir_path.join("Cargo.toml");
 
     let explicit_target = generated_test_target_override(&prepared.project_root);
     let cargo_flags = common::cargo_command_flags(cargo_policy, &cargo_feature_selection);
@@ -3663,7 +3659,7 @@ pub(super) fn run_file_tests_batch(
     };
     let (shared_target_dir, managed_target_lease, managed_target_identity) = managed_target.into_parts();
 
-    let mut generator = ProjectGenerator::new(&temp_dir, &runner_crate_name, false);
+    let mut generator = ProjectGenerator::new(&temp_dir_path, &runner_crate_name, false);
     generator.set_cargo_target_dir_override(Some(shared_target_dir.clone()));
     generator.set_generated_cache_context(managed_target_lease, managed_target_identity);
     generator.set_provider_plan(&prepared.provider_plan);

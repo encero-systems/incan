@@ -11780,16 +11780,22 @@ def test_generic_json_result_infers_from_parameter_context() -> None:
             .join("incan_e2e_shared_target")
     }
 
-    fn test_runner_batch_manifest_path(file_path: &Path) -> PathBuf {
-        let canonical = std::fs::canonicalize(file_path).unwrap_or_else(|_| file_path.to_path_buf());
-        let mut hasher = Sha256::new();
-        hasher.update(canonical.to_string_lossy().as_bytes());
-        let digest = hex::encode(hasher.finalize());
-        let suffix = format!("batch_{}", &digest[..16]);
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("target/incan_tests")
-            .join(suffix)
-            .join("Cargo.toml")
+    fn test_runner_batch_manifest_path(project_root: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        let harness_root = project_root.join("target/incan_tests");
+        let manifests = std::fs::read_dir(&harness_root)?
+            .filter_map(Result::ok)
+            .map(|entry| entry.path().join("Cargo.toml"))
+            .filter(|path| path.is_file())
+            .collect::<Vec<_>>();
+        match manifests.as_slice() {
+            [manifest] => Ok(manifest.clone()),
+            _ => Err(format!(
+                "expected exactly one generated test manifest below {}, found {}",
+                harness_root.display(),
+                manifests.len()
+            )
+            .into()),
+        }
     }
 
     fn run_build_lib(project_root: &Path) -> Result<std::process::Output, Box<dyn std::error::Error>> {
@@ -16864,7 +16870,7 @@ def main() -> None:
 
         let build_toml = std::fs::read_to_string(build_out_dir.join("Cargo.toml"))?;
         let lock_toml = std::fs::read_to_string(project_root.join("target/incan_lock/Cargo.toml"))?;
-        let test_manifest_path = test_runner_batch_manifest_path(&project_root.join("tests/test_provider.incn"));
+        let test_manifest_path = test_runner_batch_manifest_path(project_root)?;
         let test_toml = std::fs::read_to_string(&test_manifest_path).map_err(|err| {
             std::io::Error::new(
                 err.kind(),
