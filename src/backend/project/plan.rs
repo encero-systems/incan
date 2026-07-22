@@ -6,7 +6,9 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
+
+use super::runner::{cargo_command, configure_cargo_target};
 
 /// A file to be written as part of a compilation plan.
 #[derive(Debug, Clone)]
@@ -99,6 +101,8 @@ impl CompilationPlan {
 /// Executes a [`CompilationPlan`] by performing filesystem operations and running commands.
 ///
 /// This is the only place where side effects occur in the project generation pipeline.
+/// The caller owns the plan's output directory and its contained Cargo target. Incan's CLI does not use this legacy
+/// executor; CLI build/run/test/library commands select the managed generated-build cache instead.
 #[derive(Debug, Default)]
 pub struct Executor;
 
@@ -129,7 +133,9 @@ impl Executor {
         // ---- Run cargo command if specified ----
         match &plan.cargo_command {
             Some(CargoCommand::Build) => {
-                let output = Command::new("cargo")
+                let mut command = cargo_command();
+                configure_cargo_target(&mut command, &plan_cargo_target_dir(&plan.output_dir)?);
+                let output = command
                     .arg("build")
                     .arg("--release")
                     // Ensure we don't inherit a broken CA bundle path from the parent env.
@@ -150,7 +156,9 @@ impl Executor {
                 }))
             }
             Some(CargoCommand::Run) => {
-                let mut child = Command::new("cargo")
+                let mut command = cargo_command();
+                configure_cargo_target(&mut command, &plan_cargo_target_dir(&plan.output_dir)?);
+                let mut child = command
                     .arg("run")
                     .arg("--release")
                     // Ensure we don't inherit a broken CA bundle path from the parent env.
@@ -178,6 +186,14 @@ impl Executor {
     }
 }
 
+/// Resolve the caller-owned target absolutely so a relative output directory is not applied twice by Cargo's cwd.
+fn plan_cargo_target_dir(output_dir: &Path) -> io::Result<PathBuf> {
+    if output_dir.is_absolute() {
+        return Ok(output_dir.join("target"));
+    }
+    Ok(std::env::current_dir()?.join(output_dir).join("target"))
+}
+
 /// Result of executing a cargo command.
 #[derive(Debug, Clone)]
 pub struct ExecutionResult {
@@ -185,4 +201,28 @@ pub struct ExecutionResult {
     pub stdout: String,
     pub stderr: String,
     pub exit_code: Option<i32>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::plan_cargo_target_dir;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn plan_target_matches_relative_output_from_process_cwd() -> Result<(), Box<dyn std::error::Error>> {
+        assert_eq!(
+            plan_cargo_target_dir(Path::new("generated/demo"))?,
+            std::env::current_dir()?.join("generated/demo/target")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn plan_target_matches_absolute_output() -> Result<(), Box<dyn std::error::Error>> {
+        assert_eq!(
+            plan_cargo_target_dir(Path::new("/private/tmp/generated/demo"))?,
+            PathBuf::from("/private/tmp/generated/demo/target")
+        );
+        Ok(())
+    }
 }

@@ -177,6 +177,22 @@ pub enum ColorMode {
     Never,
 }
 
+/// Output encoding for generated-cache inspection and pruning reports.
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CacheOutputFormat {
+    /// Human-readable cache summary.
+    Text,
+    /// Stable machine-readable JSON report.
+    Json,
+}
+
+/// Managed cache category selected by cache-management commands.
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CacheCategory {
+    /// Cargo artifacts produced from generated Rust projects.
+    GeneratedCargo,
+}
+
 /// Incan package-feature selection shared by compilation commands.
 ///
 /// These flags select package-owned semantic features. They are intentionally separate from the explicitly prefixed
@@ -442,6 +458,12 @@ pub enum Command {
     Tools {
         #[command(subcommand)]
         command: ToolsCommand,
+    },
+
+    /// Inspect or prune Incan-managed generated-build caches
+    Cache {
+        #[command(subcommand)]
+        command: CacheCommand,
     },
 
     /// Inspect compiler artifacts and semantic projections
@@ -806,6 +828,38 @@ pub enum ToolsMetadataCommand {
     },
 }
 
+/// Generated-build cache management subcommands.
+#[derive(Subcommand, Debug)]
+pub enum CacheCommand {
+    /// Report managed generated-build cache usage and active domains
+    Inspect {
+        /// Cache category to inspect
+        #[arg(long, value_enum, default_value = "generated-cargo")]
+        category: CacheCategory,
+        /// Output format
+        #[arg(long = "format", value_enum, default_value = "text")]
+        format: CacheOutputFormat,
+    },
+    /// Prune idle domains toward a soft limit or remove selected exact identities
+    Prune {
+        /// Cache category to prune
+        #[arg(long, value_enum, default_value = "generated-cargo")]
+        category: CacheCategory,
+        /// Preview removals without changing the cache
+        #[arg(long)]
+        dry_run: bool,
+        /// Override the configured cache limit for this prune, in bytes
+        #[arg(long = "max-bytes", value_name = "BYTES")]
+        max_bytes: Option<u64>,
+        /// Remove only the selected compatibility identity (repeatable)
+        #[arg(long = "identity", value_name = "SHA256", conflicts_with = "max_bytes")]
+        identities: Vec<String>,
+        /// Output format
+        #[arg(long = "format", value_enum, default_value = "text")]
+        format: CacheOutputFormat,
+    },
+}
+
 // ============================================================================
 // CLI entry point
 // ============================================================================
@@ -1146,6 +1200,24 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                     commands::tools_metadata_model(&path, &model, format)
                 }
             },
+        },
+        Some(Command::Cache { command }) => match command {
+            CacheCommand::Inspect { category, format } => {
+                commands::inspect_generated_cache(category, matches!(format, CacheOutputFormat::Json))
+            }
+            CacheCommand::Prune {
+                category,
+                dry_run,
+                max_bytes,
+                identities,
+                format,
+            } => commands::prune_generated_cache(
+                category,
+                max_bytes,
+                dry_run,
+                &identities,
+                matches!(format, CacheOutputFormat::Json),
+            ),
         },
         Some(Command::New {
             name,
@@ -2049,6 +2121,63 @@ mod tests {
         };
         assert!(file.is_none());
         assert!(lib_mode);
+        Ok(())
+    }
+
+    #[test]
+    fn test_cli_parse_generated_cache_commands() -> Result<(), clap::Error> {
+        let inspect = parse_cli(["incan", "cache", "inspect", "--format", "json"])?;
+        assert!(matches!(
+            inspect.command,
+            Some(Command::Cache {
+                command: CacheCommand::Inspect {
+                    category: CacheCategory::GeneratedCargo,
+                    format: CacheOutputFormat::Json
+                }
+            })
+        ));
+
+        let prune = parse_cli(["incan", "cache", "prune", "--dry-run", "--max-bytes", "1048576"])?;
+        let Some(Command::Cache {
+            command:
+                CacheCommand::Prune {
+                    category,
+                    dry_run,
+                    max_bytes,
+                    identities,
+                    format,
+                },
+        }) = prune.command
+        else {
+            return Err(expected_command("cache prune"));
+        };
+        assert_eq!(category, CacheCategory::GeneratedCargo);
+        assert!(dry_run);
+        assert_eq!(max_bytes, Some(1_048_576));
+        assert!(identities.is_empty());
+        assert_eq!(format, CacheOutputFormat::Text);
+
+        let selective = parse_cli([
+            "incan",
+            "cache",
+            "prune",
+            "--category",
+            "generated-cargo",
+            "--identity",
+            "abc",
+            "--identity",
+            "def",
+        ])?;
+        assert!(matches!(
+            selective.command,
+            Some(Command::Cache {
+                command: CacheCommand::Prune {
+                    category: CacheCategory::GeneratedCargo,
+                    identities,
+                    ..
+                }
+            }) if identities == ["abc", "def"]
+        ));
         Ok(())
     }
 

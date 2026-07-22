@@ -646,6 +646,7 @@ fn build_sdk_components_into_staging(
     }
     let mut inventory = source_catalog_inventory(catalog, staging_root);
     let inventory_path = staging_root.join(SDK_INVENTORY_FILE);
+    let cargo_target_dir = staging_root.join(".cargo-target");
     let mut built_any = false;
 
     for component in catalog.publication_order() {
@@ -675,11 +676,8 @@ fn build_sdk_components_into_staging(
             .current_dir(&component.project_root)
             .args(["build", "--lib", "."])
             .arg(&output_root)
-            .arg("--all-features")
-            .env_remove(INTERNAL_MANIFEST_OVERRIDE_ENV)
-            .env_remove(INTERNAL_PROJECT_ROOT_OVERRIDE_ENV)
-            .env(SDK_PROVIDER_BUILD_ENV, &component.id)
-            .env(INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, "1");
+            .arg("--all-features");
+        configure_sdk_provider_build_environment(&mut command, &component.id, &cargo_target_dir);
         if built_any {
             inventory
                 .write_to_path(&inventory_path)
@@ -751,11 +749,30 @@ fn build_sdk_components_into_staging(
         }];
         built_any = true;
     }
+    if cargo_target_dir.exists() {
+        fs::remove_dir_all(&cargo_target_dir).map_err(|error| {
+            CliError::failure(format!(
+                "failed to remove transient SDK provider Cargo target {}: {error}",
+                cargo_target_dir.display()
+            ))
+        })?;
+    }
     restrict_staged_sdk_profile(catalog, distribution_profile, staging_root, &mut inventory)?;
     inventory
         .write_to_path(&inventory_path)
         .map_err(|error| CliError::failure(error.to_string()))?;
     Ok(inventory)
+}
+
+/// Keep provider-publication Cargo state private to its staging transaction rather than the user generated cache.
+fn configure_sdk_provider_build_environment(command: &mut Command, component_id: &str, cargo_target_dir: &Path) {
+    command
+        .env_remove(INTERNAL_MANIFEST_OVERRIDE_ENV)
+        .env_remove(INTERNAL_PROJECT_ROOT_OVERRIDE_ENV)
+        .env(SDK_PROVIDER_BUILD_ENV, component_id)
+        .env(INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV, "1")
+        // Share transient Cargo artifacts across components, then remove them before immutable provider publication.
+        .env(GENERATED_CARGO_TARGET_DIR_ENV, cargo_target_dir);
 }
 
 /// Validate producer claims against the namespace grant before publishing them into the SDK inventory.
@@ -2789,7 +2806,8 @@ fn run_rust_inspect_out_dirs_prewarm_command(
     target_dir: &Path,
     mode: RustInspectPrewarmCargoMode,
 ) -> CliResult<std::process::Output> {
-    let mut command = Command::new("cargo");
+    let mut command = crate::backend::project::runner::cargo_command();
+    crate::backend::project::runner::configure_cargo_target(&mut command, target_dir);
     command.arg("check");
     command.arg("--manifest-path");
     command.arg(manifest_dir.join("Cargo.toml"));
@@ -2808,7 +2826,6 @@ fn run_rust_inspect_out_dirs_prewarm_command(
         .env_remove("CURL_CA_BUNDLE")
         .env_remove("REQUESTS_CA_BUNDLE")
         .env_remove("CARGO_HTTP_CAINFO")
-        .env("CARGO_TARGET_DIR", target_dir)
         .output()
         .map_err(|err| CliError::failure(format!("Failed to run rust-inspect build-script prewarm: {err}")))
 }
@@ -4171,6 +4188,18 @@ mod tests {
         };
         assert!(error.message.contains("requires the incan CLI executable"));
         Ok(())
+    }
+
+    #[test]
+    fn sdk_provider_build_uses_transaction_local_cargo_target() {
+        let mut command = Command::new("incan");
+        let target = Path::new("/staging/.cargo-target");
+        configure_sdk_provider_build_environment(&mut command, "stdlib-core", target);
+        let configured_target = command
+            .get_envs()
+            .find_map(|(name, value)| (name == GENERATED_CARGO_TARGET_DIR_ENV).then_some(value))
+            .flatten();
+        assert_eq!(configured_target, Some(target.as_os_str()));
     }
 
     #[test]

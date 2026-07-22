@@ -3,18 +3,26 @@
 
 NEXTEST := $(shell command -v cargo-nextest 2>/dev/null)
 TEST_VERBOSE ?= 0
+# Nested generated-project builds are deliberately constrained so nextest workers do not each consume all cores.
+# Override the Cargo job cap for a specific machine with `make test INCAN_TEST_CARGO_BUILD_JOBS=<n>`.
+INCAN_TEST_CARGO_BUILD_JOBS ?= 2
+INCAN_TEST_GENERATED_CARGO_TARGET_DIR ?= $(CURDIR)/target/incan_generated_shared_target
+INCAN_TEST_SDK_PROVIDER_STORE ?= $(CURDIR)/target/incan_test_sdk_provider_store
+TEST_ENV = CARGO_BUILD_JOBS=$(INCAN_TEST_CARGO_BUILD_JOBS) \
+	INCAN_GENERATED_CARGO_TARGET_DIR="$(INCAN_TEST_GENERATED_CARGO_TARGET_DIR)" \
+	INCAN_INTERNAL_SDK_PROVIDER_STORE="$(INCAN_TEST_SDK_PROVIDER_STORE)"
 
 ifeq ($(strip $(NEXTEST)),)
 ifeq ($(TEST_VERBOSE),1)
-TEST_CMD = cargo test --all --features lsp --verbose
+TEST_CMD = $(TEST_ENV) cargo test --all --features lsp --verbose
 else
-TEST_CMD = cargo test --all --features lsp
+TEST_CMD = $(TEST_ENV) cargo test --all --features lsp
 endif
 else
 ifeq ($(TEST_VERBOSE),1)
-TEST_CMD = cargo nextest run --all --features lsp --status-level all
+TEST_CMD = $(TEST_ENV) cargo nextest run --all --features lsp --status-level all
 else
-TEST_CMD = cargo nextest run --all --features lsp --status-level slow --final-status-level slow
+TEST_CMD = $(TEST_ENV) cargo nextest run --all --features lsp --status-level slow --final-status-level slow
 endif
 endif
 
@@ -205,6 +213,7 @@ pre-commit-full-gate:
 	echo "\033[32mDONE\033[0m"; \
 	t2=$$(date +%s); \
 	echo "\033[1mRunning tests...\033[0m"; \
+	$(MAKE) -s test-prewarm-sdk; \
 	$(TEST_CMD); \
 	echo "\033[32mDONE\033[0m"; \
 	t3=$$(date +%s); \
@@ -229,6 +238,7 @@ pre-commit:
 .PHONY: ci-full  ## quality - Full CI check: fmt, lint, udeps, test, and release build
 ci-full: fmt lint udeps
 	@echo "\033[1mRunning tests...\033[0m"
+	@$(MAKE) -s test-prewarm-sdk
 	@$(TEST_CMD)
 	@echo "\033[1mBuilding release...\033[0m"
 	@cargo build --release --quiet
@@ -239,9 +249,22 @@ ci-full: fmt lint udeps
 # =============================================================================
 
 .PHONY: test  ## test - Run all tests
-test:
+test: test-prewarm-sdk
 	@echo "\033[1mRunning tests...\033[0m"
 	@$(TEST_CMD)
+
+.PHONY: test-prewarm-sdk
+test-prewarm-sdk:
+	@echo "\033[1mPrewarming compiled SDK providers...\033[0m"
+	@if [ -n "$(NEXTEST)" ]; then \
+		$(TEST_ENV) cargo nextest run --all --features lsp --no-run; \
+	else \
+		$(TEST_ENV) cargo build --features lsp; \
+	fi
+	@$(TEST_ENV) CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 \
+		INCAN_STDLIB="$(CURDIR)/crates/incan_stdlib/stdlib" \
+		INCAN_STDLIB_DIR="$(CURDIR)/crates/incan_stdlib/stdlib" \
+		./target/debug/incan check tests/fixtures/test_assert_canary.incn
 
 .PHONY: test-rust-inspect  ## test - Run focused rust-inspect regression tests
 test-rust-inspect:

@@ -34,6 +34,7 @@ use crate::frontend::registry_metadata::{
 };
 use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
 use crate::frontend::{diagnostics, typechecker};
+use crate::generated_cache::resolve_generated_cargo_target;
 #[cfg(feature = "rust_inspect")]
 use crate::library_manifest::LibraryRustAbi;
 use crate::library_manifest::{
@@ -126,6 +127,7 @@ struct PrepareProjectOptions<'a> {
     output_dir: Option<&'a str>,
     project_name_override: Option<&'a str>,
     generated_cargo_target_dir: Option<&'a Path>,
+    cargo_profile: &'a str,
     sdk_profile_override: Option<&'a str>,
 }
 
@@ -764,6 +766,7 @@ fn prepare_project(
     cargo_features: Vec<String>,
     cargo_no_default_features: bool,
     cargo_all_features: bool,
+    cargo_profile: &str,
 ) -> CliResult<PreparedProject> {
     prepare_project_with_options(
         file_path,
@@ -771,6 +774,7 @@ fn prepare_project(
             output_dir,
             project_name_override: None,
             generated_cargo_target_dir: None,
+            cargo_profile,
             sdk_profile_override,
         },
         cargo_policy,
@@ -954,6 +958,7 @@ fn prepare_project_with_options(
         semantic: Some(&semantic),
         package_features: Some(package_features),
         sdk_profile_override: options.sdk_profile_override,
+        generated_cargo_target_dir: options.generated_cargo_target_dir,
         #[cfg(feature = "rust_inspect")]
         rust_inspect_query_paths: &metadata_query_paths,
     })?;
@@ -965,6 +970,20 @@ fn prepare_project_with_options(
     resolved = lock_resolution.resolved;
     project_requirements = lock_resolution.project_requirements;
     let cargo_package_name = lock_resolution.cargo_package_name;
+    let managed_target = resolve_generated_cargo_target(
+        options.generated_cargo_target_dir,
+        &project_root,
+        Path::new(&out_dir),
+        &cargo_package_name,
+        options.cargo_profile,
+        lock_payload.as_deref(),
+        &cargo_features,
+        &cargo_flags,
+    )
+    .map_err(|error| CliError::failure(format!("failed to prepare generated Cargo cache: {error}")))?;
+    let (managed_target_path, managed_target_lease, managed_target_identity) = managed_target.into_parts();
+    generator.set_cargo_target_dir_override(Some(managed_target_path));
+    generator.set_generated_cache_context(managed_target_lease, managed_target_identity);
     generator.set_package_name(Some(cargo_package_name.clone()));
     generator.set_stdlib_features(project_requirements.stdlib_features.clone());
     generator.set_include_dev_dependencies(lock_payload.is_some());
@@ -1139,6 +1158,7 @@ pub(crate) fn build_file_report(
             output_dir: output_dir.map(|s| s.as_str()),
             project_name_override: None,
             generated_cargo_target_dir: generated_cargo_target_dir.as_deref(),
+            cargo_profile: "release",
             sdk_profile_override: options.sdk_profile.as_deref(),
         },
         &options.cargo_policy,
@@ -1239,6 +1259,18 @@ fn prepare_library_project(
     let mut timings_ms = BTreeMap::new();
     let source_load_start = Instant::now();
     let project_root = resolve_library_project_root(file_path)?;
+    let out_dir = match output_dir {
+        Some(output_dir) => {
+            validate_output_dir(output_dir)?;
+            let output_dir = PathBuf::from(output_dir);
+            if output_dir.is_absolute() {
+                output_dir
+            } else {
+                project_root.join(output_dir)
+            }
+        }
+        None => project_root.join("target").join("lib"),
+    };
     let Some(manifest) = discover_effective_project_manifest(&project_root)? else {
         return Err(CliError::failure(
             "No incan.toml found for `incan build --lib` (run `incan init` first)",
@@ -1374,6 +1406,7 @@ fn prepare_library_project(
             semantic: Some(&semantic),
             package_features: Some(package_features),
             sdk_profile_override,
+            generated_cargo_target_dir,
             #[cfg(feature = "rust_inspect")]
             rust_inspect_query_paths: &metadata_query_paths,
         })?
@@ -1386,6 +1419,18 @@ fn prepare_library_project(
     resolved = lock_resolution.resolved;
     project_requirements = lock_resolution.project_requirements;
     let lock_cargo_package_name = lock_resolution.cargo_package_name;
+    let managed_target = resolve_generated_cargo_target(
+        generated_cargo_target_dir,
+        &project_root,
+        &out_dir,
+        &lock_cargo_package_name,
+        "release",
+        lock_payload_for_typecheck.as_deref(),
+        &cargo_features,
+        &cargo_flags,
+    )
+    .map_err(|error| CliError::failure(format!("failed to prepare generated Cargo cache: {error}")))?;
+    let (managed_target_path, managed_target_lease, managed_target_identity) = managed_target.into_parts();
     record_timing(&mut timings_ms, "library_resolve_lock_payload", lock_start);
     let should_preheat_library_dependencies = lock_payload_for_typecheck.is_some()
         && (!resolved.dependencies.is_empty() || !project_requirements.stdlib_features.is_empty());
@@ -1519,18 +1564,6 @@ fn prepare_library_project(
     }
     record_timing(&mut timings_ms, "library_validate_api_metadata", api_validation_start);
 
-    let out_dir = match output_dir {
-        Some(output_dir) => {
-            validate_output_dir(output_dir)?;
-            let output_dir = PathBuf::from(output_dir);
-            if output_dir.is_absolute() {
-                output_dir
-            } else {
-                project_root.join(output_dir)
-            }
-        }
-        None => project_root.join("target").join("lib"),
-    };
     std::fs::create_dir_all(&out_dir)
         .map_err(|error| CliError::failure(format!("failed to create {}: {error}", out_dir.display())))?;
 
@@ -1608,7 +1641,7 @@ fn prepare_library_project(
 
     let vocab_start = Instant::now();
     if let Some(vocab_extraction) =
-        collect_library_vocab_metadata(&manifest, &project_root, generated_cargo_target_dir)?
+        collect_library_vocab_metadata(&manifest, &project_root, Some(&managed_target_path))?
     {
         pending_desugarer_artifact = vocab_extraction.pending_desugarer_artifact;
         library_manifest.vocab = Some(vocab_extraction.payload);
@@ -1681,7 +1714,8 @@ fn prepare_library_project(
     generator.set_package_metadata(Some(project_version.clone()), project_license);
     generator.set_provider_plan(&provider_plan);
     generator.set_sdk_path_dependencies(project_requirements.sdk_path_dependencies.clone());
-    generator.set_cargo_target_dir_override(generated_cargo_target_dir.map(Path::to_path_buf));
+    generator.set_cargo_target_dir_override(Some(managed_target_path));
+    generator.set_generated_cache_context(managed_target_lease, managed_target_identity);
     generator.set_stdlib_features(project_requirements.stdlib_features.clone());
     generator.set_include_dev_dependencies(lock_payload_for_typecheck.is_some());
     let rust_edition = manifest.build.as_ref().and_then(|build| build.rust_edition.clone());
@@ -2578,7 +2612,7 @@ pub(crate) fn build_library_report(
         && let Some(lock_payload) = prepared.lock_payload.as_deref()
     {
         run_generated_library_dependency_preheat(GeneratedLibraryDependencyPreheatRequest {
-            project_root: &prepared.project_root,
+            cargo_working_dir: prepared.generator.output_dir(),
             lock_dir: &crate::lockfile::compiler_lock_state_dir(&prepared.project_root),
             project_name: &prepared.lock_cargo_package_name,
             rust_edition: prepared.rust_edition.clone(),
@@ -2667,6 +2701,7 @@ pub fn inspect_rust(path: &Path, lib_mode: bool, format: RustInspectionFormat) -
             Vec::new(),
             false,
             false,
+            "release",
         )?;
         rust_inspection_report(
             BuildReportMode::Executable,
@@ -2730,6 +2765,7 @@ pub fn run_file(
         cargo_features,
         cargo_no_default_features,
         cargo_all_features,
+        if release { "release" } else { "debug" },
     )?;
     run_prepared_project(prepared, release)
 }
@@ -2781,6 +2817,7 @@ pub fn run_inline_source(
             output_dir: Some(inline_project.output_dir.as_str()),
             project_name_override: Some(inline_project.project_name.as_str()),
             generated_cargo_target_dir: None,
+            cargo_profile: if release { "release" } else { "debug" },
             sdk_profile_override: sdk_profile.as_deref(),
         },
         &cargo_policy,
@@ -3069,6 +3106,7 @@ mod tests {
             Vec::new(),
             false,
             false,
+            "release",
         )?;
 
         let generated_manifest = std::fs::read_to_string(output_dir.join("Cargo.toml"))?;
