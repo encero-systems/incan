@@ -8,7 +8,7 @@ dir = "target/nextest"
 # Generated-project tests share Cargo targets and each Cargo child can compile several crates in parallel. Limit the
 # outer test processes here; the Makefile and CI separately cap each Cargo child so ordinary compiler unit tests do not
 # wait behind Cargo locks or an overcommitted Rust build.
-nested-cargo = { max-threads = 2 }
+nested-cargo = { max-threads = 6 }
 
 [profile.default]
 # Fail fast: stop after the first test failure during local development.

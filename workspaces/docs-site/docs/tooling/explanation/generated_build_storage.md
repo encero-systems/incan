@@ -51,7 +51,7 @@ registry first, then set `CARGO_NET_OFFLINE=true` for both runs.
 5. Compare compatibility-identity count and category growth. Do not use one platform-specific absolute byte ceiling as a
    regression assertion.
 
-### Initial v0.5 cache evidence
+### v0.5 cache evidence
 
 On 2026-07-20, a macOS APFS canary used two separate projects with the same `serde_json` dependency graph, an isolated
 `INCAN_HOME`, and `CARGO_NET_OFFLINE=true`:
@@ -70,11 +70,41 @@ from 241,280 KiB to 285,924 KiB (+44,644 KiB) while the provider store stayed at
 source identity above fixes that demonstrated root-artifact growth mechanism. Regression checks assert stable identities
 rather than those machine-specific byte totals.
 
-This table is evidence for the managed-cache reuse and profile-isolation slice, not the complete #876 audit. Before #876
-closes, the same harness must still record cold/warm `incan test` and `incan build --lib`, all four commands against a
-representative dependency-heavy downstream package, and before/after category totals for rust-inspect, lock/preheat,
-vocab, provider, and durable library output. Until those samples are recorded, release claims should describe the cache
-feature and the demonstrated fixes without claiming the broader audit is complete.
+The completed audit reran the same matrix on 2026-07-22 under the uncontended
+`/private/tmp/incan-v05-heavy-gate.lease`. The small fixture used `serde_json`; the downstream-shaped fixture retained
+InQL's DataFusion 53, DataFusion-Substrait 53, Substrait 0.63, and Prost 0.14 dependency graph while using minimal current
+Incan source, because the copied older InQL source itself no longer typechecked on current main. Cargo sources were
+seeded first, and every measured command ran with `CARGO_NET_OFFLINE=true` and `CARGO_BUILD_JOBS=2`.
+
+| Package and command | Cold | Unchanged warm | Managed logical bytes after the command pair |
+| --- | ---: | ---: | ---: |
+| Small `build` | 295.41 s | 8.14 s | 166,001,563 across canonical-lock preheat, release, and rust-inspect domains |
+| Small `run` | 12.78 s | 8.09 s | 114,226,194 across debug and rust-inspect domains |
+| Small `test` | 15.19 s | 10.65 s | 114,908,627 across test and rust-inspect domains |
+| Small `build --lib` | 300.59 s | 9.07 s | 51,703,901 across release and rust-inspect domains |
+| DataFusion-shaped `build` | 564.69 s | 11.30 s | 1,161,099,759 in the release domain; shared-home totals are below |
+| DataFusion-shaped `run` | 151.15 s | 10.21 s | 4,097,273,097 in the debug domain |
+| DataFusion-shaped `test` | 141.05 s | 13.95 s | 3,794,476,320 in the test domain |
+| DataFusion-shaped `build --lib` | 658.15 s | 77.87 s | 1,187,893,210 across release and rust-inspect domains |
+
+The first small build and library samples each crossed a compiler-binary identity change during the audit and therefore
+include a fresh SDK-provider preparation; that is why their cold time is much larger than small run or test. One
+provider identity occupied about 6 MiB. The task-local store contained two 6 MiB identities after the compiler fix,
+which is expected content-addressed invalidation rather than generated-Cargo duplication.
+
+After build, run, and test shared one heavy-package home, `incan cache inspect --format json` reported 9,052,850,583
+logical bytes: 4,097,273,097 debug, 3,794,476,320 test, 1,161,099,759 release, and a metadata-only rust-inspect domain.
+The project-owned `target` was about 394 MiB, dominated by the final generated executable; generated test source was
+88 KiB, lock/preheat source and metadata 604 KiB, and the durable `.incnlib` output 136 KiB. The fixture exercised no
+vocab surface, so it created no vocab companion cache. These numbers show that Cargo intermediates are the dominant
+cost and that the default 20 GiB managed soft limit bounds them independently of project source and durable artifacts.
+
+The release-test topology was also measured with the same warmed binaries, shared generated target, provider store,
+inner `CARGO_BUILD_JOBS=2`, and 12 representative nested-Cargo CLI regressions. Outer nextest limits of 12, 6, 4, and 2
+completed in 18.45 s, 25.10 s, 39.03 s, and 62.21 s respectively. The provisional limit of 2 was therefore rejected as
+a 3.4x warmed-throughput regression. The shipped limit of 6 halves the previous outer fan-out while remaining 2.5x
+faster than 2 on the cache-identical sample; CI additionally transfers a fully prewarmed immutable SDK-provider store
+to each shard so shard workers do not race its first publication.
 
 ## Remaining Cargo-owned cost
 

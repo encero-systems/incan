@@ -14,7 +14,7 @@ use crate::backend::project::generator::GENERATED_CARGO_TARGET_DIR_ENV;
 use crate::backend::{IrCodegen, ProjectGenerator, RunProfile};
 use crate::cli::{CliError, CliResult, ExitCode};
 use crate::compiled_sdk::CompiledSdkModules;
-use crate::dependency_resolver::{ResolvedDependencies, resolve_dependencies, resolve_reachable_dependencies};
+use crate::dependency_resolver::{ResolvedDependencies, resolve_reachable_dependencies};
 use crate::frontend::api_metadata::{
     CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, CheckedApiPackageIdentity,
     collect_checked_api_alias_metadata, collect_checked_api_metadata, materialize_api_alias_projections,
@@ -1374,7 +1374,11 @@ fn prepare_library_project(
     record_timing(&mut timings_ms, "library_collect_requirements", requirements_start);
 
     let dependency_start = Instant::now();
-    let mut resolved = match resolve_dependencies(Some(&manifest), &inline_imports, true, &cargo_features) {
+    // A library projection must consume the same source-reachable dependency graph that owns the canonical project
+    // lock. Including every declared-but-unused Rust dependency here can make the caller graph strictly larger than
+    // the canonical lock generated from scripts, tests, and this library entry, causing a valid existing lock to be
+    // rejected during rust-inspect projection.
+    let mut resolved = match resolve_reachable_dependencies(Some(&manifest), &inline_imports, true, &cargo_features) {
         Ok(resolved) => resolved,
         Err(errors) => {
             let mut msg = String::new();

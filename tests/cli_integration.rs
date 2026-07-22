@@ -4908,6 +4908,33 @@ pub def exported_value() -> int:
 }
 
 #[test]
+fn build_lib_reuses_canonical_lock_when_manifest_dependency_is_unused() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let _main_path = write_minimal_project(
+        tmp.path(),
+        "cli_library_unused_manifest_dependency",
+        r#"
+[rust-dependencies]
+serde_json = "1"
+"#,
+    )?;
+    fs::write(
+        tmp.path().join("src").join("lib.incn"),
+        "pub def exported_value() -> int:\n  return 7\n",
+    )?;
+
+    let build = run_incan(tmp.path(), &["build", "--lib"])?;
+    assert_success(&build, "incan build --lib with an unused manifest Rust dependency");
+    let generated_manifest = fs::read_to_string(tmp.path().join("target/lib/Cargo.toml"))?;
+    assert!(
+        !generated_manifest.contains("serde_json"),
+        "unused manifest dependencies must not expand the generated library beyond the canonical reachable graph:\n\
+         {generated_manifest}"
+    );
+    Ok(())
+}
+
+#[test]
 fn cold_library_build_preserves_rust_string_compound_assignment_issue896() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let stdlib_crate = Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib");
