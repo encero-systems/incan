@@ -250,6 +250,7 @@ fn managed_cache_reuses_offline_across_projects_and_cleans_interrupted_entry() -
     let inherited_build_dir = fixture.path().join("inherited-cargo-build-dir");
     let check_root = fixture.path().join("check");
     write_dependency_project(&check_root)?;
+    write_test_and_library_sources(&check_root)?;
     fs::create_dir_all(check_root.join(".cargo"))?;
     fs::write(
         check_root.join(".cargo/config.toml"),
