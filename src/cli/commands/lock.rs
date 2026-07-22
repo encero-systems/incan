@@ -22,7 +22,7 @@ use crate::dependency_resolver::{InlineRustImport, ResolvedDependencies, resolve
 use crate::frontend::ast::{Declaration, ImportKind};
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::{diagnostics, lexer, parser};
-use crate::generated_cache::resolve_generated_cargo_target;
+use crate::generated_cache::{GeneratedCacheLease, resolve_generated_cargo_target};
 use crate::lockfile::{
     CargoFeatureSelection, IncanLock, PublicationLock, SemanticLockState, WORKSPACE_LOCK_CARGO_PACKAGE_NAME,
     compute_resolved_fingerprint_with_sdk_paths, semantic_lock_state, workspace_semantic_lock_state,
@@ -318,6 +318,19 @@ pub(crate) struct RustInspectTypecheckRequest<'a> {
 }
 
 #[cfg(feature = "rust_inspect")]
+pub(crate) struct PreparedRustInspectTypecheckWorkspace {
+    manifest_dir: PathBuf,
+    _cache_lease: Option<GeneratedCacheLease>,
+}
+
+#[cfg(feature = "rust_inspect")]
+impl PreparedRustInspectTypecheckWorkspace {
+    pub(crate) fn manifest_dir(&self) -> &Path {
+        &self.manifest_dir
+    }
+}
+
+#[cfg(feature = "rust_inspect")]
 pub(crate) struct RustInspectWorkspaceRequest<'a> {
     pub project_root: &'a Path,
     pub project_name: &'a str,
@@ -329,6 +342,7 @@ pub(crate) struct RustInspectWorkspaceRequest<'a> {
     pub cargo_lock_projection_root: Option<&'a str>,
     pub clear_cargo_lock: bool,
     pub cargo_policy_flags: Vec<String>,
+    pub cargo_target_dir: &'a Path,
     pub rust_inspect_query_paths: &'a [String],
     pub prepare_when_empty: bool,
 }
@@ -347,6 +361,7 @@ pub(crate) fn prepare_rust_inspect_workspace(request: RustInspectWorkspaceReques
         cargo_lock_projection_root,
         clear_cargo_lock,
         cargo_policy_flags,
+        cargo_target_dir,
         rust_inspect_query_paths,
         prepare_when_empty,
     } = request;
@@ -364,9 +379,10 @@ pub(crate) fn prepare_rust_inspect_workspace(request: RustInspectWorkspaceReques
         lock_payload,
         cargo_lock_projection_root,
         clear_cargo_lock,
+        cargo_target_dir,
         &cargo_policy_flags,
     )?;
-    prewarm_rust_inspect_workspace(&rust_inspect_manifest_dir, rust_inspect_query_paths)?;
+    prewarm_rust_inspect_workspace(&rust_inspect_manifest_dir, cargo_target_dir, rust_inspect_query_paths)?;
     Ok(Some(rust_inspect_manifest_dir))
 }
 
@@ -374,7 +390,7 @@ pub(crate) fn prepare_rust_inspect_workspace(request: RustInspectWorkspaceReques
 #[cfg(feature = "rust_inspect")]
 pub(crate) fn prepare_rust_inspect_typecheck_workspace(
     request: RustInspectTypecheckRequest<'_>,
-) -> CliResult<Option<PathBuf>> {
+) -> CliResult<Option<PreparedRustInspectTypecheckWorkspace>> {
     let RustInspectTypecheckRequest {
         project_root,
         project_name,
@@ -424,7 +440,19 @@ pub(crate) fn prepare_rust_inspect_typecheck_workspace(
     })?;
     let cargo_lock_inputs = lock_resolution.cargo_lock_authority.into_generator_inputs();
     let rust_inspect_cargo_flags = cargo_command_flags(cargo_policy, cargo_features);
-    prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {
+    let managed_target = resolve_generated_cargo_target(
+        None,
+        project_root,
+        project_root,
+        &lock_resolution.cargo_package_name,
+        "rust-inspect",
+        cargo_lock_inputs.payload.as_deref(),
+        cargo_features,
+        &rust_inspect_cargo_flags,
+    )
+    .map_err(|error| CliError::failure(format!("failed to prepare rust-inspect Cargo cache: {error}")))?;
+    let (cargo_target_dir, cache_lease, _cache_identity) = managed_target.into_parts();
+    let manifest_dir = prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {
         project_root,
         project_name,
         cargo_package_name: &lock_resolution.cargo_package_name,
@@ -435,9 +463,14 @@ pub(crate) fn prepare_rust_inspect_typecheck_workspace(
         cargo_lock_projection_root: cargo_lock_inputs.projection_root.as_deref(),
         clear_cargo_lock: cargo_lock_inputs.clear_existing,
         cargo_policy_flags: rust_inspect_cargo_flags,
+        cargo_target_dir: &cargo_target_dir,
         rust_inspect_query_paths: &metadata_query_paths,
         prepare_when_empty: false,
-    })
+    })?;
+    Ok(manifest_dir.map(|manifest_dir| PreparedRustInspectTypecheckWorkspace {
+        manifest_dir,
+        _cache_lease: cache_lease,
+    }))
 }
 
 /// Resolve the canonical Cargo context that generated projects must consume as one unit.
@@ -1721,12 +1754,27 @@ fn run_lock_rust_inspect_prewarm(
     project_root: &Path,
     context: &DependencyPreheatContext<'_>,
     lock: &IncanLock,
+    cargo_features: &CargoFeatureSelection,
+    generated_cargo_target_dir: Option<&Path>,
     query_paths: &[String],
 ) -> CliResult<()> {
     if query_paths.is_empty() {
         return Ok(());
     }
 
+    let explicit_target = lock_dependency_preheat_target_override(project_root, generated_cargo_target_dir);
+    let managed_target = resolve_generated_cargo_target(
+        explicit_target.as_deref(),
+        project_root,
+        project_root,
+        context.project_name,
+        "rust-inspect",
+        Some(&lock.cargo_lock_payload),
+        cargo_features,
+        context.cargo_policy_flags,
+    )
+    .map_err(|error| CliError::failure(format!("failed to prepare rust-inspect Cargo cache: {error}")))?;
+    let (cargo_target_dir, _cache_lease, _cache_identity) = managed_target.into_parts();
     let rust_inspect_manifest_dir = ensure_rust_inspect_workspace(
         project_root,
         context.project_name,
@@ -1734,9 +1782,10 @@ fn run_lock_rust_inspect_prewarm(
         context.resolved,
         context.project_requirements,
         Some(lock.cargo_lock_payload.clone()),
+        &cargo_target_dir,
         context.cargo_policy_flags,
     )?;
-    prewarm_rust_inspect_workspace(&rust_inspect_manifest_dir, query_paths)
+    prewarm_rust_inspect_workspace(&rust_inspect_manifest_dir, &cargo_target_dir, query_paths)
 }
 
 /// Generate an `incan.lock` file by creating a temporary Cargo project and resolving dependencies.
@@ -1782,6 +1831,10 @@ pub(crate) fn generate_lockfile(
 
     let mut command = cargo_command();
     sanitize_cargo_environment(&mut command);
+    let lock_generation_target = generated_cargo_target_dir
+        .map(resolve_cargo_target_dir_override)
+        .unwrap_or_else(|| lock_dir.join("target"));
+    configure_cargo_target(&mut command, &lock_generation_target);
     command.arg("generate-lockfile");
     for flag in cargo_lockfile_flags(cargo_policy, cargo_features) {
         command.arg(flag);
@@ -1834,7 +1887,14 @@ pub(crate) fn generate_lockfile(
         cargo_policy_flags: &rust_inspect_cargo_flags,
     };
     #[cfg(feature = "rust_inspect")]
-    run_lock_rust_inspect_prewarm(project_root, &preheat_context, &lock, rust_inspect_query_paths)?;
+    run_lock_rust_inspect_prewarm(
+        project_root,
+        &preheat_context,
+        &lock,
+        cargo_features,
+        generated_cargo_target_dir,
+        rust_inspect_query_paths,
+    )?;
 
     let publication_lock = publication_lock
         .ok_or_else(|| CliError::failure("internal error: lock generation lost its publication guard"))?;

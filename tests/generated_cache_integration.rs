@@ -1,5 +1,6 @@
 #![cfg(any(target_os = "macos", target_os = "linux"))]
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -62,6 +63,10 @@ fn write_dependency_project(root: &Path) -> Result<PathBuf, Box<dyn std::error::
     fs::write(
         root.join("incan.toml"),
         "[project]\nname = \"generated_cache_fixture\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n\n[rust-dependencies]\nserde_json = \"1\"\n",
+    )?;
+    fs::write(
+        &source,
+        "from rust::serde_json import Value\n\ndef cache_json(value: Value) -> Value:\n  return value\n\ndef main() -> None:\n  pass\n",
     )?;
     Ok(source)
 }
@@ -137,9 +142,12 @@ fn write_test_and_library_sources(root: &Path) -> Result<(), Box<dyn std::error:
     fs::create_dir_all(root.join("tests"))?;
     fs::write(
         root.join("tests/cache_test.incn"),
-        "from std.testing import test\n\n@test\ndef test_cache_domain() -> None:\n  assert True\n",
+        "from rust::serde_json import Value\nfrom std.testing import test\n\ndef cache_json(value: Value) -> Value:\n  return value\n\n@test\ndef test_cache_domain() -> None:\n  assert True\n",
     )?;
-    fs::write(root.join("src/lib.incn"), "pub def cache_value() -> int:\n  return 1\n")?;
+    fs::write(
+        root.join("src/lib.incn"),
+        "from rust::serde_json import Value\n\npub def cache_json(value: Value) -> Value:\n  return value\n",
+    )?;
     Ok(())
 }
 
@@ -153,6 +161,63 @@ fn cache_entries(incan_home: &Path) -> Result<Vec<serde_json::Value>, Box<dyn st
         .and_then(serde_json::Value::as_array)
         .cloned()
         .ok_or("cache inspection omitted entries")?)
+}
+
+fn cache_entry_count_for_profile(incan_home: &Path, profile: &str) -> Result<usize, Box<dyn std::error::Error>> {
+    Ok(cache_entries(incan_home)?
+        .iter()
+        .filter(|entry| entry.get("profile").and_then(serde_json::Value::as_str) == Some(profile))
+        .count())
+}
+
+fn sole_cache_target_for_profile(incan_home: &Path, profile: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let matches = cache_entries(incan_home)?
+        .into_iter()
+        .filter(|entry| entry.get("profile").and_then(serde_json::Value::as_str) == Some(profile))
+        .collect::<Vec<_>>();
+    if matches.len() != 1 {
+        return Err(format!("expected exactly one `{profile}` cache domain, found {}", matches.len()).into());
+    }
+    let entry_root = matches[0]
+        .get("path")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("cache entry omitted its managed path")?;
+    Ok(PathBuf::from(entry_root).join("target"))
+}
+
+fn assert_project_rust_inspect_target(
+    project_root: &Path,
+    expected_target: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let workspace_root = project_root.join("target/incan_lock/rust_inspect");
+    let mut configs = Vec::new();
+    for entry in fs::read_dir(&workspace_root)? {
+        let entry = entry?;
+        let config = entry.path().join(".cargo/config.toml");
+        if config.is_file() {
+            configs.push(fs::read_to_string(config)?);
+        }
+    }
+    assert!(
+        !configs.is_empty(),
+        "command did not materialize a rust-inspect workspace"
+    );
+    let expected = expected_target.to_string_lossy();
+    assert!(
+        configs.iter().all(|config| config.contains(expected.as_ref())),
+        "command configured rust-inspect outside the canonical managed target {}",
+        expected_target.display()
+    );
+    Ok(())
+}
+
+fn reset_project_rust_inspect_workspaces(project_root: &Path) -> std::io::Result<()> {
+    let workspace_root = project_root.join("target/incan_lock/rust_inspect");
+    match fs::remove_dir_all(workspace_root) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
 }
 
 fn active_cache_identity(incan_home: &Path) -> Result<Option<String>, Box<dyn std::error::Error>> {
@@ -180,6 +245,26 @@ fn managed_cache_reuses_offline_across_projects_and_cleans_interrupted_entry() -
     write_test_and_library_sources(&second_root)?;
 
     let inherited_build_dir = fixture.path().join("inherited-cargo-build-dir");
+    let check_root = fixture.path().join("check");
+    write_dependency_project(&check_root)?;
+    fs::create_dir_all(check_root.join(".cargo"))?;
+    fs::write(
+        check_root.join(".cargo/config.toml"),
+        format!("[build]\nbuild-dir = {:?}\n", inherited_build_dir),
+    )?;
+    let mut check = incan_command(&check_root, &incan_home);
+    check
+        .args(["check", "src/main.incn"])
+        .env("CARGO_BUILD_BUILD_DIR", &inherited_build_dir);
+    run_checked(check, "cold managed rust-inspect check")?;
+    let canonical_rust_inspect_target = sole_cache_target_for_profile(&incan_home, "rust-inspect")?;
+    assert_project_rust_inspect_target(&check_root, &canonical_rust_inspect_target)?;
+    assert!(!inherited_build_dir.exists());
+    assert!(
+        !check_root.join("target/.cargo-target").exists(),
+        "incan check created an unleased project-local Cargo target"
+    );
+
     for project_root in [&first_root, &second_root] {
         fs::create_dir_all(project_root.join(".cargo"))?;
         fs::write(
@@ -192,33 +277,51 @@ fn managed_cache_reuses_offline_across_projects_and_cleans_interrupted_entry() -
         .args(["build", "src/main.incn", "--offline"])
         .env("CARGO_BUILD_BUILD_DIR", &inherited_build_dir);
     run_checked(first, "first offline build")?;
+    assert_project_rust_inspect_target(&first_root, &canonical_rust_inspect_target)?;
     assert!(
         !inherited_build_dir.exists(),
         "managed build inherited Cargo output outside its lifecycle-owned target"
+    );
+    assert!(
+        !first_root.join("target/.cargo-target").exists(),
+        "rust-inspect created an unleased project-local Cargo target"
     );
     let dependency_before = dependency_artifact_snapshots(&incan_home, "release", "release", "libserde_json-")?;
 
     let mut second = incan_command(&second_root, &incan_home);
     second.args(["build", "src/main.incn", "--offline"]);
     run_checked(second, "compatible offline build")?;
+    assert_project_rust_inspect_target(&second_root, &canonical_rust_inspect_target)?;
+    assert!(
+        !second_root.join("target/.cargo-target").exists(),
+        "relocated rust-inspect workspace created a project-local Cargo target"
+    );
     let dependency_after = dependency_artifact_snapshots(&incan_home, "release", "release", "libserde_json-")?;
     assert_eq!(
         dependency_after, dependency_before,
         "compatible build recompiled or replaced the warmed serde_json dependency artifact"
     );
 
-    let entries = cache_entries(&incan_home)?;
-    assert_eq!(entries.len(), 1, "compatible release builds should share one domain");
-    assert!(first_root.join("target/incan/main/target/release/main").is_file());
-    assert!(second_root.join("target/incan/main/target/release/main").is_file());
+    assert_eq!(
+        cache_entry_count_for_profile(&incan_home, "release")?,
+        1,
+        "compatible release builds should share one release domain"
+    );
+    let published_binary = Path::new("target/incan/generated_cache_fixture/target/release/generated_cache_fixture");
+    assert!(first_root.join(published_binary).is_file());
+    assert!(second_root.join(published_binary).is_file());
 
+    reset_project_rust_inspect_workspaces(&first_root)?;
+    reset_project_rust_inspect_workspaces(&second_root)?;
     let mut first_run = incan_command(&first_root, &incan_home);
     first_run.args(["run", "src/main.incn", "--offline"]);
     run_checked(first_run, "first offline run")?;
+    assert_project_rust_inspect_target(&first_root, &canonical_rust_inspect_target)?;
     let run_dependency_before = dependency_artifact_snapshots(&incan_home, "debug", "debug", "libserde_json-")?;
     let mut second_run = incan_command(&second_root, &incan_home);
     second_run.args(["run", "src/main.incn", "--offline"]);
     run_checked(second_run, "compatible offline run")?;
+    assert_project_rust_inspect_target(&second_root, &canonical_rust_inspect_target)?;
     let run_dependency_after = dependency_artifact_snapshots(&incan_home, "debug", "debug", "libserde_json-")?;
     assert_eq!(run_dependency_after, run_dependency_before);
     let run_warm_snapshot = cache_logical_snapshot(&incan_home)?;
@@ -227,13 +330,17 @@ fn managed_cache_reuses_offline_across_projects_and_cleans_interrupted_entry() -
     run_checked(repeated_run, "repeated warm offline run")?;
     assert_eq!(cache_logical_snapshot(&incan_home)?, run_warm_snapshot);
 
+    reset_project_rust_inspect_workspaces(&first_root)?;
+    reset_project_rust_inspect_workspaces(&second_root)?;
     let mut first_test = incan_command(&first_root, &incan_home);
     first_test.args(["test", "tests/cache_test.incn", "--offline"]);
     run_checked(first_test, "first offline test")?;
+    assert_project_rust_inspect_target(&first_root, &canonical_rust_inspect_target)?;
     let test_dependency_before = dependency_artifact_snapshots(&incan_home, "test", "debug", "libserde_json-")?;
     let mut second_test = incan_command(&second_root, &incan_home);
     second_test.args(["test", "tests/cache_test.incn", "--offline"]);
     run_checked(second_test, "compatible offline test")?;
+    assert_project_rust_inspect_target(&second_root, &canonical_rust_inspect_target)?;
     let test_dependency_after = dependency_artifact_snapshots(&incan_home, "test", "debug", "libserde_json-")?;
     assert_eq!(test_dependency_after, test_dependency_before);
     let test_warm_snapshot = cache_logical_snapshot(&incan_home)?;
@@ -242,13 +349,17 @@ fn managed_cache_reuses_offline_across_projects_and_cleans_interrupted_entry() -
     run_checked(repeated_test, "repeated warm offline test")?;
     assert_eq!(cache_logical_snapshot(&incan_home)?, test_warm_snapshot);
 
+    reset_project_rust_inspect_workspaces(&first_root)?;
+    reset_project_rust_inspect_workspaces(&second_root)?;
     let mut first_library = incan_command(&first_root, &incan_home);
     first_library.args(["build", "--lib", "--offline"]);
     run_checked(first_library, "first offline library build")?;
+    assert_project_rust_inspect_target(&first_root, &canonical_rust_inspect_target)?;
     let library_dependency_before = dependency_artifact_snapshots(&incan_home, "release", "release", "libserde_json-")?;
     let mut second_library = incan_command(&second_root, &incan_home);
     second_library.args(["build", "--lib", "--offline"]);
     run_checked(second_library, "compatible offline library build")?;
+    assert_project_rust_inspect_target(&second_root, &canonical_rust_inspect_target)?;
     let library_dependency_after = dependency_artifact_snapshots(&incan_home, "release", "release", "libserde_json-")?;
     assert_eq!(library_dependency_after, library_dependency_before);
     let library_warm_snapshot = cache_logical_snapshot(&incan_home)?;
@@ -258,6 +369,29 @@ fn managed_cache_reuses_offline_across_projects_and_cleans_interrupted_entry() -
     assert_eq!(cache_logical_snapshot(&incan_home)?, library_warm_snapshot);
     assert!(first_root.join("target/lib/generated_cache_fixture.incnlib").is_file());
     assert!(second_root.join("target/lib/generated_cache_fixture.incnlib").is_file());
+    assert_eq!(
+        cache_entry_count_for_profile(&incan_home, "rust-inspect")?,
+        1,
+        "check/build/run/test/library must share one canonical rust-inspect domain"
+    );
+    assert_eq!(
+        sole_cache_target_for_profile(&incan_home, "rust-inspect")?,
+        canonical_rust_inspect_target,
+        "a command replaced the canonical rust-inspect compatibility target"
+    );
+    let lock_root = fixture.path().join("lock-only");
+    write_dependency_project(&lock_root)?;
+    let mut lock = incan_command(&lock_root, &incan_home);
+    lock.arg("lock");
+    run_checked(lock, "standalone lock prewarm")?;
+    assert_project_rust_inspect_target(&lock_root, &canonical_rust_inspect_target)?;
+    assert_eq!(
+        sole_cache_target_for_profile(&incan_home, "rust-inspect")?,
+        canonical_rust_inspect_target,
+        "standalone lock created a second rust-inspect compatibility target"
+    );
+    assert!(!first_root.join("target/.cargo-target").exists());
+    assert!(!second_root.join("target/.cargo-target").exists());
 
     let third_root = fixture.path().join("third");
     let fourth_root = fixture.path().join("fourth");
@@ -265,7 +399,7 @@ fn managed_cache_reuses_offline_across_projects_and_cleans_interrupted_entry() -
     write_dependency_project(&fourth_root)?;
     fs::write(
         fourth_root.join("src/main.incn"),
-        "def cache_variant() -> int:\n  return 4\n\ndef main() -> None:\n  pass\n",
+        "from rust::serde_json import Value\n\ndef cache_json(value: Value) -> Value:\n  return value\n\ndef cache_variant() -> int:\n  return 4\n\ndef main() -> None:\n  pass\n",
     )?;
     let concurrent_home = fixture.path().join("concurrent-incan-home");
     let start_barrier = Arc::new(Barrier::new(3));
@@ -319,18 +453,18 @@ fn managed_cache_reuses_offline_across_projects_and_cleans_interrupted_entry() -
         Ok(result) => result?,
         Err(_) => return Err("fourth cache build panicked".into()),
     }
-    assert_eq!(cache_entries(&concurrent_home)?.len(), 1);
+    assert_eq!(cache_entry_count_for_profile(&concurrent_home, "release")?, 1);
 
     let invalidated_root = fixture.path().join("invalidated");
     write_dependency_project(&invalidated_root)?;
-    let before_invalidation = cache_entries(&incan_home)?.len();
+    let before_invalidation = cache_entry_count_for_profile(&incan_home, "release")?;
     let mut invalidated = incan_command(&invalidated_root, &incan_home);
     invalidated
         .args(["build", "src/main.incn", "--offline"])
         .env("RUSTC", "rustc");
     run_checked(invalidated, "backend-selector invalidation build")?;
     assert_eq!(
-        cache_entries(&incan_home)?.len(),
+        cache_entry_count_for_profile(&incan_home, "release")?,
         before_invalidation + 1,
         "a relevant backend selector must isolate the generated target domain"
     );
@@ -423,6 +557,7 @@ fn repeated_builds_discard_oversized_rebuildable_domain_output() -> Result<(), B
     let incan_home = fixture.path().join("incan-home");
     let project_root = fixture.path().join("project");
     write_project(&project_root)?;
+    let mut previous_identities = None;
 
     for label in ["first bounded build", "second bounded build"] {
         let mut build = incan_command(&project_root, &incan_home);
@@ -432,25 +567,48 @@ fn repeated_builds_discard_oversized_rebuildable_domain_output() -> Result<(), B
         run_checked(build, label)?;
 
         let entries = cache_entries(&incan_home)?;
-        assert_eq!(entries.len(), 1);
-        let entry = entries.first().ok_or("bounded cache omitted its domain")?;
-        let entry_path = entry
-            .get("path")
-            .and_then(serde_json::Value::as_str)
-            .map(PathBuf::from)
-            .ok_or("bounded cache entry omitted its path")?;
+        assert!(!entries.is_empty(), "bounded build omitted its cache domains");
+        let identities = entries
+            .iter()
+            .map(|entry| {
+                entry
+                    .get("identity")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string)
+                    .ok_or("bounded cache entry omitted its identity")
+            })
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        if let Some(previous_identities) = previous_identities.as_ref() {
+            assert_eq!(
+                &identities, previous_identities,
+                "repeated bounded build created a new compatibility domain"
+            );
+        } else {
+            previous_identities = Some(identities);
+        }
+        for entry in entries {
+            let entry_path = entry
+                .get("path")
+                .and_then(serde_json::Value::as_str)
+                .map(PathBuf::from)
+                .ok_or("bounded cache entry omitted its path")?;
+            assert!(
+                !entry_path.join("target").exists(),
+                "oversized rebuildable Cargo output remained after the lease became idle"
+            );
+            assert!(
+                entry
+                    .get("bytes")
+                    .and_then(serde_json::Value::as_u64)
+                    .is_some_and(|bytes| bytes <= ENTRY_LIMIT),
+                "retained metadata exceeded the configured per-domain bound"
+            );
+        }
         assert!(
-            !entry_path.join("target").exists(),
-            "oversized rebuildable Cargo output remained after the lease became idle"
+            project_root
+                .join("target/incan/generated_cache_fixture/target/release/generated_cache_fixture")
+                .is_file()
         );
-        assert!(
-            entry
-                .get("bytes")
-                .and_then(serde_json::Value::as_u64)
-                .is_some_and(|bytes| bytes <= ENTRY_LIMIT),
-            "retained metadata exceeded the configured per-domain bound"
-        );
-        assert!(project_root.join("target/incan/main/target/release/main").is_file());
     }
     Ok(())
 }

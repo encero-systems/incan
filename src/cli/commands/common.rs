@@ -2549,9 +2549,10 @@ fn rust_inspect_workspace_fingerprint(
     cargo_lock_payload: Option<&str>,
     cargo_lock_projection_root: Option<&str>,
     clear_cargo_lock: bool,
+    cargo_target_dir: &Path,
 ) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(b"incan_rust_inspect_workspace/2\0");
+    hasher.update(b"incan_rust_inspect_workspace/3\0");
     hasher.update(project_name.as_bytes());
     hasher.update(b"\0");
     hasher.update(cargo_package_name.as_bytes());
@@ -2559,6 +2560,9 @@ fn rust_inspect_workspace_fingerprint(
     if clear_cargo_lock {
         hasher.update(b"clear_cargo_lock\0");
     }
+    hasher.update(b"cargo_target_dir\0");
+    hasher.update(cargo_target_dir.as_os_str().as_encoded_bytes());
+    hasher.update(b"\0");
     if let Some(root) = cargo_lock_projection_root {
         hasher.update(b"lock_projection\0");
         hasher.update(root.as_bytes());
@@ -2701,21 +2705,6 @@ fn rust_inspect_workspace_dir(project_root: &Path, project_name: &str, fingerpri
 }
 
 #[cfg(feature = "rust_inspect")]
-/// Return the shared Cargo target directory used by rust-inspect prewarm workspaces that sit below `target/incan_lock`.
-fn rust_inspect_shared_target_dir(manifest_dir: &Path) -> PathBuf {
-    let Some(rust_inspect_dir) = manifest_dir.parent() else {
-        return manifest_dir.join("target");
-    };
-    let Some(incan_lock_dir) = rust_inspect_dir.parent() else {
-        return manifest_dir.join("target");
-    };
-    let Some(project_target_dir) = incan_lock_dir.parent() else {
-        return manifest_dir.join("target");
-    };
-    project_target_dir.join(".cargo-target")
-}
-
-#[cfg(feature = "rust_inspect")]
 /// Build a deterministic fingerprint for generated build-script metadata prewarm inputs and requested Rust paths.
 fn rust_inspect_out_dirs_fingerprint(
     manifest_dir: &Path,
@@ -2791,6 +2780,11 @@ fn write_rust_inspect_cargo_config(manifest_dir: &Path, target_dir: &Path) -> Cl
 }
 
 #[cfg(feature = "rust_inspect")]
+pub(crate) fn configure_rust_inspect_cargo_target(manifest_dir: &Path, target_dir: &Path) -> CliResult<()> {
+    write_rust_inspect_cargo_config(manifest_dir, target_dir)
+}
+
+#[cfg(feature = "rust_inspect")]
 /// Detect Cargo's stale-lockfile failure so prewarm can retry with an offline lock refresh instead of silently
 /// skipping.
 fn rust_inspect_locked_prewarm_needs_lock_update(stderr: &str) -> bool {
@@ -2839,12 +2833,11 @@ enum RustInspectPrewarmCargoMode {
 
 #[cfg(feature = "rust_inspect")]
 /// Prewarm generated build-script output directories for rust-inspect lookups and stamp successful runs for reuse.
-fn prewarm_rust_inspect_out_dirs(manifest_dir: &Path, query_paths: &[String]) -> CliResult<()> {
-    let target_dir = rust_inspect_shared_target_dir(manifest_dir);
-    write_rust_inspect_cargo_config(manifest_dir, &target_dir)?;
-    let fingerprint = rust_inspect_out_dirs_fingerprint(manifest_dir, &target_dir, query_paths)?;
+fn prewarm_rust_inspect_out_dirs(manifest_dir: &Path, target_dir: &Path, query_paths: &[String]) -> CliResult<()> {
+    write_rust_inspect_cargo_config(manifest_dir, target_dir)?;
+    let fingerprint = rust_inspect_out_dirs_fingerprint(manifest_dir, target_dir, query_paths)?;
     let stamp_path = manifest_dir.join(RUST_INSPECT_OUT_DIRS_FINGERPRINT_FILE);
-    if rust_inspect_out_dirs_stamp_matches(&stamp_path, &fingerprint, &target_dir) {
+    if rust_inspect_out_dirs_stamp_matches(&stamp_path, &fingerprint, target_dir) {
         return Ok(());
     }
 
@@ -2853,13 +2846,13 @@ fn prewarm_rust_inspect_out_dirs(manifest_dir: &Path, query_paths: &[String]) ->
         target_dir.display()
     );
     let mut output =
-        run_rust_inspect_out_dirs_prewarm_command(manifest_dir, &target_dir, RustInspectPrewarmCargoMode::Locked)?;
+        run_rust_inspect_out_dirs_prewarm_command(manifest_dir, target_dir, RustInspectPrewarmCargoMode::Locked)?;
     if !output.status.success()
         && rust_inspect_locked_prewarm_needs_lock_update(String::from_utf8_lossy(&output.stderr).as_ref())
     {
         eprintln!("rust-inspect build-script prewarm: generated Cargo.lock is stale; retrying offline lock refresh");
         output =
-            run_rust_inspect_out_dirs_prewarm_command(manifest_dir, &target_dir, RustInspectPrewarmCargoMode::Offline)?;
+            run_rust_inspect_out_dirs_prewarm_command(manifest_dir, target_dir, RustInspectPrewarmCargoMode::Offline)?;
     }
 
     if !output.status.success() {
@@ -2887,6 +2880,7 @@ fn prewarm_rust_inspect_out_dirs(manifest_dir: &Path, query_paths: &[String]) ->
 /// When the same inputs are seen again (for example across multiple `incan test` cases in one package), regeneration is
 /// skipped if the namespaced workspace fingerprint matches the computed digest and expected artifacts exist.
 #[cfg(feature = "rust_inspect")]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn ensure_rust_inspect_workspace(
     project_root: &Path,
     project_name: &str,
@@ -2894,6 +2888,7 @@ pub(crate) fn ensure_rust_inspect_workspace(
     resolved: &ResolvedDependencies,
     project_requirements: &ProjectRequirements,
     cargo_lock_payload: Option<String>,
+    cargo_target_dir: &Path,
     cargo_policy_flags: &[String],
 ) -> CliResult<PathBuf> {
     ensure_rust_inspect_workspace_with_cargo_package_name(
@@ -2906,6 +2901,7 @@ pub(crate) fn ensure_rust_inspect_workspace(
         cargo_lock_payload,
         None,
         false,
+        cargo_target_dir,
         cargo_policy_flags,
     )
 }
@@ -2923,6 +2919,7 @@ pub(crate) fn ensure_rust_inspect_workspace_with_cargo_package_name(
     cargo_lock_payload: Option<String>,
     cargo_lock_projection_root: Option<&str>,
     clear_cargo_lock: bool,
+    cargo_target_dir: &Path,
     cargo_policy_flags: &[String],
 ) -> CliResult<PathBuf> {
     let fingerprint = rust_inspect_workspace_fingerprint(
@@ -2937,6 +2934,7 @@ pub(crate) fn ensure_rust_inspect_workspace_with_cargo_package_name(
         cargo_lock_payload.as_deref(),
         cargo_lock_projection_root,
         clear_cargo_lock,
+        cargo_target_dir,
     );
     let rust_inspect_manifest_dir = rust_inspect_workspace_dir(project_root, project_name, &fingerprint);
     let fingerprint_path = rust_inspect_manifest_dir.join(RUST_INSPECT_WORKSPACE_FINGERPRINT_FILE);
@@ -3116,17 +3114,20 @@ fn print_rust_inspect_prewarm_progress(message: String) {
 /// `INCAN_RUST_INSPECT_PREWARM=1` to opt into eager metadata prewarm, and set
 /// `INCAN_RUST_INSPECT_EAGER_OUT_DIRS_PREWARM=1` only when debugging a suspected out-dir cache regression.
 #[cfg(feature = "rust_inspect")]
-pub(crate) fn prewarm_rust_inspect_workspace(manifest_dir: &Path, query_paths: &[String]) -> CliResult<()> {
+pub(crate) fn prewarm_rust_inspect_workspace(
+    manifest_dir: &Path,
+    target_dir: &Path,
+    query_paths: &[String],
+) -> CliResult<()> {
+    configure_rust_inspect_cargo_target(manifest_dir, target_dir)?;
     if query_paths.is_empty() {
         return Ok(());
     }
-    let target_dir = rust_inspect_shared_target_dir(manifest_dir);
-    write_rust_inspect_cargo_config(manifest_dir, &target_dir)?;
     if !rust_inspect_prewarm_enabled() {
         return Ok(());
     }
     if rust_inspect_eager_out_dirs_prewarm_enabled() {
-        prewarm_rust_inspect_out_dirs(manifest_dir, query_paths)?;
+        prewarm_rust_inspect_out_dirs(manifest_dir, target_dir, query_paths)?;
     }
     let inspector = Inspector::new(InspectorConfig::new(manifest_dir.to_path_buf()));
     inspector
@@ -5767,6 +5768,7 @@ pub def main() -> int:
             Some("lock-bytes"),
             None,
             false,
+            Path::new("/cache/target"),
         );
         let fp_b = super::rust_inspect_workspace_fingerprint(
             "probe",
@@ -5780,6 +5782,7 @@ pub def main() -> int:
             Some("lock-bytes"),
             None,
             false,
+            Path::new("/cache/target"),
         );
         let workspace_fp = super::rust_inspect_workspace_fingerprint(
             "probe",
@@ -5793,9 +5796,25 @@ pub def main() -> int:
             Some("lock-bytes"),
             None,
             false,
+            Path::new("/cache/target"),
+        );
+        let target_fp = super::rust_inspect_workspace_fingerprint(
+            "probe",
+            "probe",
+            Some("2021"),
+            &resolved,
+            &requirements.stdlib_features,
+            &requirements.sdk_dependency_rebindings,
+            &requirements.sdk_path_dependencies,
+            &requirements.sdk_artifact_projections,
+            Some("lock-bytes"),
+            None,
+            false,
+            Path::new("/cache/other-target"),
         );
         assert_eq!(fp_a, fp_b);
         assert_ne!(fp_a, workspace_fp);
+        assert_ne!(fp_a, target_fp);
         assert!(fp_a.starts_with(super::RUST_INSPECT_WORKSPACE_FINGERPRINT_PREFIX));
     }
 
@@ -5819,6 +5838,7 @@ pub def main() -> int:
             Some("lock-a"),
             None,
             false,
+            Path::new("/cache/target"),
         );
         let fp_two = super::rust_inspect_workspace_fingerprint(
             "p",
@@ -5832,6 +5852,7 @@ pub def main() -> int:
             Some("lock-b"),
             None,
             false,
+            Path::new("/cache/target"),
         );
         assert_ne!(fp_one, fp_two);
     }
@@ -5861,6 +5882,7 @@ pub def main() -> int:
             Some(&canonical),
             Some("incan_workspace"),
             false,
+            &tmp.path().join("cargo-target"),
         );
         let output_dir = super::rust_inspect_workspace_dir(tmp.path(), "policy_probe", &fingerprint);
         let flags = vec!["--frozen".to_string()];
@@ -5875,6 +5897,7 @@ pub def main() -> int:
             Some(canonical),
             Some("incan_workspace"),
             false,
+            &tmp.path().join("cargo-target"),
             &flags,
         );
         assert!(
@@ -5923,6 +5946,7 @@ pub def main() -> int:
             None,
             None,
             false,
+            &workspace.path().join("cargo-target"),
         );
         fs::write(artifact.join("src/lib.rs"), "pub fn value() -> u8 { 2 }\n")?;
         let after = super::rust_inspect_workspace_fingerprint(
@@ -5937,6 +5961,7 @@ pub def main() -> int:
             None,
             None,
             false,
+            &workspace.path().join("cargo-target"),
         );
 
         assert_ne!(before, after);
@@ -6091,6 +6116,7 @@ pub def main() -> int:
             None,
             None,
             false,
+            &workspace.path().join("cargo-target"),
             &[],
         )?;
 
@@ -6133,6 +6159,7 @@ pub def main() -> int:
             None,
             None,
             false,
+            &workspace.path().join("cargo-target"),
             &[],
         )?;
         assert_eq!(generated, regenerated);
@@ -6151,16 +6178,6 @@ pub def main() -> int:
         assert_ne!(first, second);
         assert!(first.ends_with(Path::new("target/incan_lock/rust_inspect/demo-aaaaaaaaaaaaaaaa")));
         assert!(second.ends_with(Path::new("target/incan_lock/rust_inspect/demo-bbbbbbbbbbbbbbbb")));
-    }
-
-    #[cfg(feature = "rust_inspect")]
-    #[test]
-    fn rust_inspect_shared_target_dir_matches_generated_project_target_layout() {
-        let manifest_dir = Path::new("/workspace/target/incan_lock/rust_inspect/demo-1234");
-        assert_eq!(
-            super::rust_inspect_shared_target_dir(manifest_dir),
-            PathBuf::from("/workspace/target/.cargo-target")
-        );
     }
 
     #[cfg(feature = "rust_inspect")]
@@ -6229,6 +6246,7 @@ pub def main() -> int:
             &resolved,
             &requirements,
             Some("[[package]]\nname = \"metadata_probe\"\n".to_string()),
+            &tmp.path().join("cargo-target"),
             &[],
         )?;
         assert_eq!(
@@ -6286,6 +6304,7 @@ pub def main() -> int:
             &resolved,
             &requirements,
             lock.clone(),
+            &tmp.path().join("cargo-target"),
             &[],
         )?;
         assert_eq!(
@@ -6301,6 +6320,7 @@ pub def main() -> int:
             &resolved,
             &requirements,
             lock,
+            &tmp.path().join("cargo-target"),
             &[],
         )?;
         assert_eq!(

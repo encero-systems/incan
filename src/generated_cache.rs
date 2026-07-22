@@ -181,6 +181,7 @@ pub(crate) struct GeneratedCachePruneReport {
 }
 
 /// Resolve an explicit target override or acquire the default managed compatibility-domain target.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn resolve_generated_cargo_target(
     explicit_override: Option<&Path>,
     project_root: &Path,
@@ -229,6 +230,39 @@ pub(crate) fn resolve_generated_cargo_target(
         &rust_backend_identity,
     )?;
     acquire_managed_target(&cache_root, max_bytes, max_entry_bytes, metadata)
+}
+
+/// Acquire a managed target below an explicit cache root without consulting process-global environment.
+///
+/// This is kept test-only so production callers cannot accidentally bypass `INCAN_HOME`, opt-out, explicit-target,
+/// or configured size-limit policy while proving higher-level lease ownership deterministically.
+#[cfg(all(test, feature = "rust_inspect"))]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn resolve_generated_cargo_target_in_cache_root(
+    cache_root: &Path,
+    cargo_working_dir: &Path,
+    generated_package_name: &str,
+    profile: &str,
+    lock_payload: Option<&str>,
+    cargo_features: &CargoFeatureSelection,
+    cargo_flags: &[String],
+) -> io::Result<GeneratedCargoTarget> {
+    validate_managed_cargo_flags(cargo_flags)?;
+    let rust_backend_identity = rust_backend_identity(cargo_working_dir)?;
+    let metadata = cache_entry_metadata(
+        generated_package_name,
+        profile,
+        lock_payload,
+        cargo_features,
+        cargo_flags,
+        &rust_backend_identity,
+    )?;
+    acquire_managed_target(
+        cache_root,
+        DEFAULT_GENERATED_CACHE_MAX_BYTES,
+        DEFAULT_GENERATED_CACHE_MAX_ENTRY_BYTES,
+        metadata,
+    )
 }
 
 /// Inspect the default managed cache without mutating it.

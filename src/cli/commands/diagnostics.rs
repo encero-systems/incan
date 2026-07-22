@@ -151,7 +151,9 @@ pub(crate) fn check_path_report_with_selections(
         manifest.as_ref(),
         &provider_plan,
         #[cfg(feature = "rust_inspect")]
-        rust_inspect_manifest_dir.as_deref(),
+        rust_inspect_manifest_dir
+            .as_ref()
+            .map(|workspace| workspace.manifest_dir()),
     ) {
         Ok(()) => Ok(DiagnosticReport {
             schema_version: DIAGNOSTIC_SCHEMA_VERSION,

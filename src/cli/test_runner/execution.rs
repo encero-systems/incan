@@ -942,6 +942,8 @@ pub(super) struct PreparedTestFile {
     pub prechecked_type_info: (TypeCheckInfo, HashMap<Vec<String>, TypeCheckInfo>, StdlibAstCache),
     #[cfg(feature = "rust_inspect")]
     pub rust_inspect_manifest_dir: PathBuf,
+    #[cfg(feature = "rust_inspect")]
+    pub rust_inspect_target_dir: PathBuf,
 }
 
 /// Runner harness metadata for one inline source file emitted as its own Rust module.
@@ -3339,6 +3341,37 @@ pub(super) fn run_file_tests_batch(
         let rust_inspect_cargo_flags = common::cargo_command_flags(cargo_policy, &cargo_feature_selection);
 
         #[cfg(feature = "rust_inspect")]
+        let rust_inspect_managed_target = match resolve_generated_cargo_target(
+            generated_cargo_target_dir.as_deref(),
+            &project_root,
+            &project_root,
+            &lock_resolution.cargo_package_name,
+            "rust-inspect",
+            lock_payload.as_deref(),
+            &cargo_feature_selection,
+            &rust_inspect_cargo_flags,
+        ) {
+            Ok(target) => target,
+            Err(error) => {
+                return tests
+                    .iter()
+                    .map(|test| {
+                        (
+                            test.clone(),
+                            TestResult::Failed(
+                                start.elapsed(),
+                                format!("failed to prepare rust-inspect Cargo cache: {error}"),
+                            ),
+                        )
+                    })
+                    .collect();
+            }
+        };
+        #[cfg(feature = "rust_inspect")]
+        let (rust_inspect_target_dir, _rust_inspect_cache_lease, _rust_inspect_cache_identity) =
+            rust_inspect_managed_target.into_parts();
+
+        #[cfg(feature = "rust_inspect")]
         let rust_inspect_manifest_dir = {
             let mut rust_inspect_requirements = lock_resolution.project_requirements.clone();
             rust_inspect_requirements.stdlib_features = merge_rust_inspect_stdlib_features(
@@ -3360,6 +3393,7 @@ pub(super) fn run_file_tests_batch(
                 lock_payload.clone(),
                 cargo_lock_projection_root.as_deref(),
                 clear_cargo_lock,
+                &rust_inspect_target_dir,
                 &rust_inspect_cargo_flags,
             ) {
                 Ok(dir) => dir,
@@ -3370,7 +3404,11 @@ pub(super) fn run_file_tests_batch(
                         .collect();
                 }
             };
-            if let Err(err) = prewarm_rust_inspect_workspace(&rust_inspect_manifest_dir, &metadata_query_paths) {
+            if let Err(err) = prewarm_rust_inspect_workspace(
+                &rust_inspect_manifest_dir,
+                &rust_inspect_target_dir,
+                &metadata_query_paths,
+            ) {
                 return tests
                     .iter()
                     .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), err.message.clone())))
@@ -3451,6 +3489,8 @@ pub(super) fn run_file_tests_batch(
             prechecked_type_info,
             #[cfg(feature = "rust_inspect")]
             rust_inspect_manifest_dir,
+            #[cfg(feature = "rust_inspect")]
+            rust_inspect_target_dir,
         };
         let arc = Arc::new(prepared);
         prep_cache.prepared_files.insert(cache_key, Arc::clone(&arc));
@@ -3462,6 +3502,58 @@ pub(super) fn run_file_tests_batch(
             );
         }
         arc
+    };
+
+    // A preparation-cache hit retains the rust-inspect manifest, but not an activity lease. Reacquire the exact
+    // canonical domain for every batch and keep it live through codegen, whose fallback typechecker paths may still
+    // consult Cargo metadata after the shared front-end analysis completed.
+    #[cfg(feature = "rust_inspect")]
+    let _rust_inspect_codegen_lease = {
+        let explicit_target = generated_test_target_override(&prepared.project_root);
+        let cargo_flags = common::cargo_command_flags(cargo_policy, &cargo_feature_selection);
+        let managed_target = match resolve_generated_cargo_target(
+            explicit_target.as_deref(),
+            &prepared.project_root,
+            &prepared.project_root,
+            &prepared.cargo_package_name,
+            "rust-inspect",
+            prepared.lock_payload.as_deref(),
+            &cargo_feature_selection,
+            &cargo_flags,
+        ) {
+            Ok(target) => target,
+            Err(error) => {
+                return tests
+                    .iter()
+                    .map(|test| {
+                        (
+                            test.clone(),
+                            TestResult::Failed(
+                                start.elapsed(),
+                                format!("failed to reacquire rust-inspect Cargo cache: {error}"),
+                            ),
+                        )
+                    })
+                    .collect();
+            }
+        };
+        let (target_dir, lease, _identity) = managed_target.into_parts();
+        if target_dir != prepared.rust_inspect_target_dir {
+            return tests
+                .iter()
+                .map(|test| {
+                    (
+                        test.clone(),
+                        TestResult::Failed(
+                            start.elapsed(),
+                            "rust-inspect Cargo cache identity changed between test preparation and codegen"
+                                .to_string(),
+                        ),
+                    )
+                })
+                .collect();
+        }
+        lease
     };
 
     // ---- Codegen + unified file harness (library + #[cfg(test)] module) ----

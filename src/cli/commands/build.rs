@@ -982,7 +982,22 @@ fn prepare_project_with_options(
     )
     .map_err(|error| CliError::failure(format!("failed to prepare generated Cargo cache: {error}")))?;
     let (managed_target_path, managed_target_lease, managed_target_identity) = managed_target.into_parts();
-    generator.set_cargo_target_dir_override(Some(managed_target_path));
+    #[cfg(feature = "rust_inspect")]
+    let rust_inspect_target = resolve_generated_cargo_target(
+        options.generated_cargo_target_dir,
+        &project_root,
+        Path::new(&out_dir),
+        &cargo_package_name,
+        "rust-inspect",
+        lock_payload.as_deref(),
+        &cargo_features,
+        &cargo_flags,
+    )
+    .map_err(|error| CliError::failure(format!("failed to prepare rust-inspect Cargo cache: {error}")))?;
+    #[cfg(feature = "rust_inspect")]
+    let (rust_inspect_target_path, _rust_inspect_cache_lease, _rust_inspect_cache_identity) =
+        rust_inspect_target.into_parts();
+    generator.set_cargo_target_dir_override(Some(managed_target_path.clone()));
     generator.set_generated_cache_context(managed_target_lease, managed_target_identity);
     generator.set_package_name(Some(cargo_package_name.clone()));
     generator.set_stdlib_features(project_requirements.stdlib_features.clone());
@@ -1002,6 +1017,7 @@ fn prepare_project_with_options(
             cargo_lock_projection_root: cargo_lock_projection_root.as_deref(),
             clear_cargo_lock,
             cargo_policy_flags: cargo_flags.clone(),
+            cargo_target_dir: &rust_inspect_target_path,
             rust_inspect_query_paths: &metadata_query_paths,
             prepare_when_empty: true,
         })?
@@ -1431,6 +1447,21 @@ fn prepare_library_project(
     )
     .map_err(|error| CliError::failure(format!("failed to prepare generated Cargo cache: {error}")))?;
     let (managed_target_path, managed_target_lease, managed_target_identity) = managed_target.into_parts();
+    #[cfg(feature = "rust_inspect")]
+    let rust_inspect_target = resolve_generated_cargo_target(
+        generated_cargo_target_dir,
+        &project_root,
+        &out_dir,
+        &lock_cargo_package_name,
+        "rust-inspect",
+        lock_payload_for_typecheck.as_deref(),
+        &cargo_features,
+        &cargo_flags,
+    )
+    .map_err(|error| CliError::failure(format!("failed to prepare rust-inspect Cargo cache: {error}")))?;
+    #[cfg(feature = "rust_inspect")]
+    let (rust_inspect_target_path, _rust_inspect_cache_lease, _rust_inspect_cache_identity) =
+        rust_inspect_target.into_parts();
     record_timing(&mut timings_ms, "library_resolve_lock_payload", lock_start);
     let should_preheat_library_dependencies = lock_payload_for_typecheck.is_some()
         && (!resolved.dependencies.is_empty() || !project_requirements.stdlib_features.is_empty());
@@ -1449,6 +1480,7 @@ fn prepare_library_project(
             cargo_lock_projection_root: cargo_lock_projection_root.as_deref(),
             clear_cargo_lock,
             cargo_policy_flags: cargo_flags.clone(),
+            cargo_target_dir: &rust_inspect_target_path,
             rust_inspect_query_paths: &metadata_query_paths,
             prepare_when_empty: true,
         })?

@@ -99,6 +99,7 @@ impl ProjectGenerator {
         let seed = fs::read_to_string(&lock_path)?;
         run_cargo_lock_projection(
             &self.output_dir,
+            &self.cargo_target_dir(),
             &projection,
             self.cargo_package_name(),
             self.cargo_package_version(),
@@ -111,6 +112,7 @@ impl ProjectGenerator {
         fs::write(&lock_path, projection.seed_payload())?;
         run_cargo_lock_projection(
             &self.output_dir,
+            &self.cargo_target_dir(),
             &projection,
             self.cargo_package_name(),
             self.cargo_package_version(),
@@ -335,11 +337,11 @@ impl ProjectGenerator {
             .ok_or_else(|| io::Error::other(format!("binary output has no parent: {}", destination.display())))?;
         fs::create_dir_all(parent)?;
         let staged = parent.join(format!(".incan-binary-{}.tmp", std::process::id()));
-        if let Err(error) = fs::copy(&source, &staged) {
+        if let Err(error) = fs::copy(source, &staged) {
             let _ = fs::remove_file(&staged);
             return Err(error);
         }
-        if let Err(error) = fs::rename(&staged, &destination) {
+        if let Err(error) = fs::rename(&staged, destination) {
             let _ = fs::remove_file(&staged);
             return Err(error);
         }
@@ -484,6 +486,7 @@ fn parse_cargo_json_build_output(stdout: &[u8], expected_target_name: &str) -> C
 /// Run one Cargo-owned projection pass against an already rendered generated manifest.
 fn run_cargo_lock_projection(
     output_dir: &Path,
+    target_dir: &Path,
     projection: &super::lock_projection::CargoLockProjection,
     generated_package_name: &str,
     generated_package_version: &str,
@@ -493,6 +496,7 @@ fn run_cargo_lock_projection(
     let cargo = env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
     let mut command = Command::new(&cargo);
     sanitize_cargo_environment(&mut command);
+    configure_cargo_target(&mut command, target_dir);
     if let Some(cargo_home) = cargo_home {
         command.env("CARGO_HOME", cargo_home);
     }
@@ -529,6 +533,7 @@ fn run_cargo_lock_projection(
         for candidate in candidates {
             let mut command = Command::new(&cargo);
             sanitize_cargo_environment(&mut command);
+            configure_cargo_target(&mut command, target_dir);
             if let Some(cargo_home) = cargo_home {
                 command.env("CARGO_HOME", cargo_home);
             }
@@ -1135,6 +1140,7 @@ mod tests {
 
         run_cargo_lock_projection(
             &caller,
+            &caller.join("target"),
             &projection,
             "caller",
             crate::version::INCAN_VERSION,

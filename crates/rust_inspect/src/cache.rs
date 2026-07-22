@@ -905,7 +905,7 @@ fn preferred_external_rust_path_display(path: &str, preferred_external_paths: &H
 
 /// Return the Cargo target directory configured for a generated workspace, falling back to the workspace-local
 /// `target` directory when no `.cargo/config.toml` target override is present.
-fn cargo_configured_target_dir(root: &Path) -> PathBuf {
+pub(crate) fn cargo_configured_target_dir(root: &Path) -> PathBuf {
     let config_path = root.join(".cargo").join("config.toml");
     let Ok(payload) = fs::read_to_string(config_path) else {
         return root.join("target");
@@ -3668,7 +3668,13 @@ fn extract_from_workspace_route(
         }
         Entry::Vacant(v) => {
             let load_started = Instant::now();
-            match RustWorkspace::load_with_options(route.manifest_dir(root), progress, route.include_out_dirs()) {
+            let cargo_target_dir = cargo_configured_target_dir(root);
+            match RustWorkspace::load_with_options_and_target(
+                route.manifest_dir(root),
+                &cargo_target_dir,
+                progress,
+                route.include_out_dirs(),
+            ) {
                 Ok(workspace) => {
                     log_timing_stage(
                         timing_enabled,
