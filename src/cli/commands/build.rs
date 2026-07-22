@@ -986,7 +986,7 @@ fn prepare_project_with_options(
     let rust_inspect_target = resolve_generated_cargo_target(
         options.generated_cargo_target_dir,
         &project_root,
-        Path::new(&out_dir),
+        &project_root,
         &cargo_package_name,
         "rust-inspect",
         lock_payload.as_deref(),
@@ -1451,7 +1451,7 @@ fn prepare_library_project(
     let rust_inspect_target = resolve_generated_cargo_target(
         generated_cargo_target_dir,
         &project_root,
-        &out_dir,
+        &project_root,
         &lock_cargo_package_name,
         "rust-inspect",
         lock_payload_for_typecheck.as_deref(),
