@@ -499,7 +499,11 @@ fn managed_cache_reuses_offline_across_projects_and_cleans_interrupted_entry() -
         .args(["build", "src/main.incn", "--offline"])
         .env("INCAN_GENERATED_CACHE", "0");
     run_checked(opt_out, "managed cache opt-out build")?;
-    assert!(opt_out_root.join("target/incan/main/target").is_dir());
+    assert!(
+        opt_out_root
+            .join("target/incan/generated_cache_fixture/target/release/generated_cache_fixture")
+            .is_file()
+    );
     assert_eq!(cache_entries(&incan_home)?.len(), before_explicit);
 
     let cache_root = incan_home.join("cache/generated-cargo/v1");
