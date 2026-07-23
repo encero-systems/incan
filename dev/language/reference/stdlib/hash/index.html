@@ -6766,7 +6766,7 @@
 </tr>
 </tbody>
 </table>
-<p><code>chunk_size</code> must be positive. A successful zero-length reader read marks EOF for reader helpers.</p>
+<p><code>chunk_size</code> must be positive. Reader helpers consume <code>BinaryReader.chunks(chunk_size)</code>, whose successful zero-length read marks EOF rather than hashing an empty chunk.</p>
 <h2 id="errors">Errors<a class="headerlink" href="#errors" title="Permanent link">&para;</a></h2>
 <p>Fallible helpers return <code>Result[..., HashError]</code>.</p>
 <table>

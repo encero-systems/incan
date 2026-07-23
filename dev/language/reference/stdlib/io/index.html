@@ -2933,6 +2933,15 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#fallible-chunk-streams" class="md-nav__link">
+    <span class="md-ellipsis">
+      Fallible chunk streams
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -6481,6 +6490,15 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#fallible-chunk-streams" class="md-nav__link">
+    <span class="md-ellipsis">
+      Fallible chunk streams
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -6501,7 +6519,7 @@
 
 <h1 id="stdio-reference">std.io reference<a class="headerlink" href="#stdio-reference" title="Permanent link">&para;</a></h1>
 <p><code>std.io</code> provides in-memory binary streams for byte buffers that are already in memory.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.io</span><span class="w"> </span><span class="kn">import</span> <span class="nc">BytesIO</span><span class="p">,</span> <span class="nc">Endian</span><span class="p">,</span> <span class="nc">IoError</span><span class="p">,</span> <span class="nc">BinaryReader</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.io</span><span class="w"> </span><span class="kn">import</span> <span class="nc">BinaryReader</span><span class="p">,</span> <span class="nc">BytesIO</span><span class="p">,</span> <span class="nc">Endian</span><span class="p">,</span> <span class="nc">IoError</span><span class="p">,</span> <span class="nc">ReaderChunks</span>
 </code></pre></div>
 <p>Use <code>BytesIO</code> for parser fixtures, protocol payloads, generated binary blobs, and format readers that should not depend on filesystem paths. <code>std.fs</code> gets bytes into or out of files; <code>std.io</code> moves a cursor through bytes that already exist.</p>
 <h2 id="bytesio">BytesIO<a class="headerlink" href="#bytesio" title="Permanent link">&para;</a></h2>
@@ -6528,6 +6546,11 @@
 <td><code>buf.read_bytes(size: int)</code></td>
 <td><code>Result[bytes, IoError]</code></td>
 <td>Trait-backed bounded byte read for consumers such as <code>std.hash.reader_digest</code>.</td>
+</tr>
+<tr>
+<td><code>buf.chunks(chunk_size: int)</code></td>
+<td><code>ReaderChunks[BytesIO]</code></td>
+<td>Return a fallible stream of non-empty bounded chunks.</td>
 </tr>
 <tr>
 <td><code>buf.read_exact(size: int)</code></td>
@@ -6613,7 +6636,7 @@
 </tr>
 <tr>
 <td><code>BinaryReader</code></td>
-<td><code>read_bytes(size: int) -&gt; Result[bytes, IoError]</code></td>
+<td><code>read_bytes(size: int) -&gt; Result[bytes, IoError]</code>; <code>chunks(size: int) -&gt; ReaderChunks[Self]</code></td>
 </tr>
 <tr>
 <td><code>BinaryRead[T]</code></td>
@@ -6626,6 +6649,31 @@
 </tbody>
 </table>
 <p>Supported <code>T</code> values are <code>u8</code>, <code>i8</code>, <code>u16</code>, <code>i16</code>, <code>u32</code>, <code>i32</code>, <code>u64</code>, <code>i64</code>, <code>u128</code>, <code>i128</code>, <code>f32</code>, and <code>f64</code>. Endianness is ignored for one-byte values.</p>
+<h2 id="fallible-chunk-streams">Fallible chunk streams<a class="headerlink" href="#fallible-chunk-streams" title="Permanent link">&para;</a></h2>
+<p><code>BinaryReader.chunks(size)</code> owns a reader's advancing state and yields only non-empty <code>bytes</code> values. Consume it with the error-aware loop form: the trailing <code>?</code> propagates an <code>IoError</code> from each read, while EOF ends the loop normally.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.io</span><span class="w"> </span><span class="kn">import</span> <span class="nc">BytesIO</span><span class="p">,</span> <span class="nc">IoError</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">print_chunk_lengths</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="nc">IoError</span><span class="p">]:</span>
+    <span class="k">for</span> <span class="n">chunk</span> <span class="ow">in</span> <span class="nc">BytesIO</span><span class="p">(</span><span class="sa">b</span><span class="s2">&quot;abcde&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">chunks</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span><span class="o">?</span><span class="p">:</span>
+        <span class="nb">println</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">chunk</span><span class="p">))</span>
+    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="kc">None</span><span class="p">)</span>
+</code></pre></div>
+<p>The example prints <code>2</code>, <code>2</code>, and <code>1</code>. An empty successful read is EOF; a size less than or equal to zero returns <code>IoError(kind="invalid_input")</code> on the first poll.</p>
+<p><code>ReaderChunks</code> implements <code>FallibleIterator[bytes, IoError]</code>, so it supports the generic fallible adapter and terminal surface. For example, this maps only read failures into an application error before collecting all chunks:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.io</span><span class="w"> </span><span class="kn">import</span> <span class="nc">BytesIO</span><span class="p">,</span> <span class="nc">IoError</span>
+
+<span class="k">enum</span> <span class="nc">LoadError</span><span class="p">:</span>
+    <span class="nc">Read</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">to_load_error</span><span class="p">(</span><span class="n">error</span><span class="p">:</span> <span class="nc">IoError</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">LoadError</span><span class="p">:</span>
+    <span class="k">return</span> <span class="nc">LoadError</span><span class="o">.</span><span class="nc">Read</span><span class="p">(</span><span class="n">error</span><span class="o">.</span><span class="n">detail</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">load_chunks</span><span class="p">(</span><span class="n">data</span><span class="p">:</span> <span class="nb">bytes</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="nb">bytes</span><span class="p">],</span> <span class="nc">LoadError</span><span class="p">]:</span>
+    <span class="k">return</span> <span class="nc">BytesIO</span><span class="p">(</span><span class="n">data</span><span class="p">)</span><span class="o">.</span><span class="n">chunks</span><span class="p">(</span><span class="mi">65536</span><span class="p">)</span><span class="o">.</span><span class="nb">map_err</span><span class="p">(</span><span class="n">to_load_error</span><span class="p">)</span><span class="o">.</span><span class="nb">collect</span><span class="p">()</span>
+</code></pre></div>
+<p>Use lazy <code>map</code>, <code>filter</code>, list-returning <code>flat_map</code>, <code>take</code>, <code>inspect</code>, <code>map_err</code>, and <code>inspect_err</code> when a loop pipeline should transform the stream. Use <code>collect</code> or <code>fold</code> when the whole stream should become one <code>Result</code>. See <a href="../../stdlib_traits/collection_protocols/#fallibleiterator-fallible-iteration">Collection protocols</a> for exact adapter, terminal, setup-error, and retry behavior.</p>
 <p><code>BytesIO</code> is in-memory only. Use <code>std.tempfile.SpooledTemporaryFile</code> when a stream should start in memory and roll over to a temporary file after a size threshold.</p>
 
 

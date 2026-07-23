@@ -1426,6 +1426,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#propagate-failures-while-iterating" class="md-nav__link">
+    <span class="md-ellipsis">
+      Propagate failures while iterating
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#compose-result-with-combinators" class="md-nav__link">
     <span class="md-ellipsis">
       Compose Result with combinators
@@ -6588,6 +6597,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#propagate-failures-while-iterating" class="md-nav__link">
+    <span class="md-ellipsis">
+      Propagate failures while iterating
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#compose-result-with-combinators" class="md-nav__link">
     <span class="md-ellipsis">
       Compose Result with combinators
@@ -6799,6 +6817,32 @@
     <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">user</span><span class="p">)</span>
 </code></pre></div>
 <p>The <code>?</code> is visible in the body, and the fallibility is visible in the return type. There is no hidden exception path.</p>
+<h2 id="propagate-failures-while-iterating">Propagate failures while iterating<a class="headerlink" href="#propagate-failures-while-iterating" title="Permanent link">&para;</a></h2>
+<p>Some operations can fail each time a loop requests another item. <code>FallibleIterator[T, E]</code> keeps that polling error separate from ordinary exhaustion. Put <code>?</code> on the loop header to propagate the first polling error:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.fs</span><span class="w"> </span><span class="kn">import</span> <span class="kt">Path</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.io</span><span class="w"> </span><span class="kn">import</span> <span class="nc">BinaryReader</span><span class="p">,</span> <span class="nc">IoError</span>
+
+<span class="nd">@derive</span><span class="p">(</span><span class="kt">Clone</span><span class="p">)</span>
+<span class="k">enum</span> <span class="ne">ImportError</span><span class="p">:</span>
+    <span class="nc">Read</span><span class="p">(</span><span class="nc">IoError</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">count_bytes</span><span class="p">[</span><span class="nc">R</span> <span class="k">with</span> <span class="nc">BinaryReader</span><span class="p">](</span><span class="n">reader</span><span class="p">:</span> <span class="nc">R</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="ne">ImportError</span><span class="p">]:</span>
+    <span class="k">mut</span> <span class="n">total</span> <span class="o">=</span> <span class="mi">0</span>
+
+    <span class="k">for</span> <span class="n">chunk</span> <span class="ow">in</span> <span class="n">reader</span><span class="o">.</span><span class="n">chunks</span><span class="p">(</span><span class="mi">8192</span><span class="p">)</span><span class="o">.</span><span class="nb">map_err</span><span class="p">(</span><span class="ne">ImportError</span><span class="o">.</span><span class="nc">Read</span><span class="p">)</span><span class="o">?</span><span class="p">:</span>
+        <span class="n">total</span> <span class="o">+=</span> <span class="nb">len</span><span class="p">(</span><span class="n">chunk</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">total</span><span class="p">)</span>
+</code></pre></div>
+<p>The loop sees only non-empty chunks. <code>Ok(None)</code> ends it normally; <code>Err(IoError)</code> is converted by <code>map_err</code> and propagated by the trailing <code>?</code>. The adapter is lazy, so it maps errors produced by future polls rather than an error that already exists.</p>
+<p>Opening a stream can fail once, while reading from it can fail on every poll. Keep those phases visible by unwrapping setup before the loop:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">count_path</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="kt">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="ne">ImportError</span><span class="p">]:</span>
+    <span class="n">reader</span> <span class="o">=</span> <span class="n">path</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">&quot;rb&quot;</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span><span class="o">.</span><span class="nb">map_err</span><span class="p">(</span><span class="ne">ImportError</span><span class="o">.</span><span class="nc">Read</span><span class="p">)</span><span class="o">?</span>
+    <span class="k">return</span> <span class="n">count_bytes</span><span class="p">(</span><span class="n">reader</span><span class="p">)</span>
+</code></pre></div>
+<p>In <code>count_path</code>, the first <code>?</code> handles setup. The <code>?</code> inside <code>count_bytes</code> handles polling. A single <code>for item in open_stream()?:</code> header is rejected when the setup result contains a fallible iterator because it would hide those two different failure boundaries.</p>
+<p>Fallible streams also support lazy <code>map</code>, <code>filter</code>, <code>flat_map</code>, <code>take</code>, <code>inspect</code>, <code>map_err</code>, and <code>inspect_err</code> adapters. Use <code>collect</code> or <code>fold</code> when you want one final <code>Result</code> instead of a loop. Retry is not automatic: the source must own retry because only it knows whether a failed poll advanced state or can safely be repeated.</p>
 <h2 id="compose-result-with-combinators">Compose <code>Result</code> with combinators<a class="headerlink" href="#compose-result-with-combinators" title="Permanent link">&para;</a></h2>
 <p>Use <code>Result</code> combinators when the code is transforming one branch of a result rather than making a multi-branch decision. The six standard methods are Rust-shaped and keep the same names in Incan: <code>map</code>, <code>map_err</code>, <code>and_then</code>, <code>or_else</code>, <code>inspect</code>, and <code>inspect_err</code>.</p>
 <table>
@@ -6934,6 +6978,7 @@
 <li>Is the current function the right place to decide? If yes, <code>match</code>; if no, <code>?</code>.</li>
 <li>Is this a public boundary? Convert low-level errors into the caller-facing error type.</li>
 <li>Is the code only transforming, chaining, recovering, or observing one <code>Result</code> branch? Use a Result combinator.</li>
+<li>Can fetching each next item fail? Use <code>FallibleIterator</code> and make polling propagation visible with <code>for item in stream?:</code>.</li>
 </ol>
 <h2 id="try-it">Try it<a class="headerlink" href="#try-it" title="Permanent link">&para;</a></h2>
 <ol>
@@ -6942,12 +6987,14 @@
 <li>Write <code>def describe_age(name: str, ages: dict[str, int]) -&gt; str</code> that handles <code>None</code> locally.</li>
 <li>Write <code>def require_age(name: str, ages: dict[str, int]) -&gt; Result[int, str]</code> that converts <code>None</code> into <code>Err(...)</code>.</li>
 <li>Rewrite a nested <code>match</code> over <code>Result[int, str]</code> using <code>map</code>, <code>map_err</code>, or <code>and_then</code>.</li>
+<li>Rewrite a manual <code>read_bytes</code> / empty-chunk loop using <code>reader.chunks(size)</code> and map its <code>IoError</code> into an application error.</li>
 </ol>
 <h2 id="what-to-learn-next">What to learn next<a class="headerlink" href="#what-to-learn-next" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Core concepts: <a href="../../explanation/error_handling/">Error handling</a></li>
 <li>Recipes: <a href="../../how-to/error_handling_recipes/">Error handling recipes</a></li>
 <li>File APIs with <code>Result</code>: <a href="../../how-to/file_io/">File I/O</a></li>
+<li>Fallible iterator hooks, adapters, and terminals: <a href="../../reference/stdlib_traits/collection_protocols/#fallibleiterator-fallible-iteration">Collection protocols</a></li>
 </ul>
 
 

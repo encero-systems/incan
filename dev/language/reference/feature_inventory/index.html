@@ -2498,6 +2498,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#fallible-iteration-and-combinators" class="md-nav__link">
+    <span class="md-ellipsis">
+      Fallible iteration and combinators
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#resultt-e-combinators" class="md-nav__link">
     <span class="md-ellipsis">
       Result[T, E] combinators
@@ -7306,6 +7315,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#fallible-iteration-and-combinators" class="md-nav__link">
+    <span class="md-ellipsis">
+      Fallible iteration and combinators
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#resultt-e-combinators" class="md-nav__link">
     <span class="md-ellipsis">
       Result[T, E] combinators
@@ -7752,10 +7770,10 @@
 <td>TypeSystem</td>
 <td style="text-align: right;">0.2</td>
 <td>None.</td>
-<td><code>handler: Callable[int, str] = label</code><br><code>callbacks = [on_success, on_error]</code></td>
-<td>Named functions can be passed, stored, and typed with <code>Callable[...]</code> or function type syntax.</td>
+<td><code>handler: Callable[int, str] = label</code><br><code>callbacks = [on_success, on_error]</code><br><code>Mapper with Callable1[int, str]</code></td>
+<td>Named functions and closures can be passed, stored, typed, and accepted through <code>CallableN</code> bounds.</td>
 <td>Closures or wrappers whose only job is to pass through an existing named function.</td>
-<td><a href="../functions/">Functions and calls</a>, <a href="../derives_and_traits/">Derives and traits</a>, <a href="../../../release_notes/0_2/">Release 0.2</a></td>
+<td><a href="../functions/">Functions and calls</a>, <a href="../stdlib_traits/callable/">Callable objects</a>, <a href="../../../release_notes/0_2/">Release 0.2</a>, <a href="../../../release_notes/0_5/">Release 0.5</a></td>
 </tr>
 <tr>
 <td>Explicit call-site generics</td>
@@ -7958,6 +7976,16 @@
 <td><a href="../stdlib_traits/collection_protocols/">Collection protocols</a>, <a href="../../../release_notes/0_3/">Release 0.3</a></td>
 </tr>
 <tr>
+<td>Fallible iteration and combinators</td>
+<td>Stdlib</td>
+<td style="text-align: right;">0.5</td>
+<td>Import <code>FallibleIterator</code> from <code>std.derives.collection</code> or use a standard fallible stream.</td>
+<td><code>for item in stream?:</code><br><code>stream.map(transform).map_err(to_domain_error)</code><br><code>stream.collect()?</code></td>
+<td>Fallible streams separate exhaustion from typed poll errors and support lazy pipelines.</td>
+<td>Hand-written polling loops that duplicate item, exhaustion, and error routing for each source.</td>
+<td><a href="../stdlib_traits/collection_protocols/">Collection protocols</a>, <a href="../stdlib/io/">std.io</a>, <a href="../../tutorials/fallible_and_infallible_paths/">Fallible and infallible paths</a>, <a href="../../../release_notes/0_5/">Release 0.5</a></td>
+</tr>
+<tr>
 <td><code>Result[T, E]</code> combinators</td>
 <td>Stdlib</td>
 <td style="text-align: right;">0.3</td>
@@ -8062,8 +8090,8 @@
 <td>Stdlib</td>
 <td style="text-align: right;">0.3</td>
 <td>Import from <code>std.io</code>.</td>
-<td><code>from std.io import BytesIO, Endian</code><br><code>stream.write(value, Endian.Little)</code></td>
-<td>Binary stream APIs cover <code>BytesIO</code>, endian-aware reads/writes, cursor helpers, delimiter operations, and buffer extraction.</td>
+<td><code>from std.io import BytesIO, Endian</code><br><code>stream.write(value, Endian.Little)</code><br><code>for chunk in stream.chunks(65536)?:</code></td>
+<td>Binary streams cover endian-aware I/O, cursors, delimiters, fallible chunks, and buffer extraction.</td>
 <td>Byte-twiddling helpers with unclear endian or cursor semantics.</td>
 <td><a href="../stdlib/io/">std.io</a>, <a href="../../../release_notes/0_3/">Release 0.3</a></td>
 </tr>
@@ -8429,13 +8457,14 @@
 <li><strong>Stability:</strong> <code>Stable</code></li>
 <li><strong>Activation:</strong> None.</li>
 <li><strong>Use instead of:</strong> Closures or wrappers whose only job is to pass through an existing named function.</li>
-<li><strong>References:</strong> <a href="../functions/">Functions and calls</a>, <a href="../derives_and_traits/">Derives and traits</a>, <a href="../../../release_notes/0_2/">Release 0.2</a></li>
+<li><strong>References:</strong> <a href="../functions/">Functions and calls</a>, <a href="../stdlib_traits/callable/">Callable objects</a>, <a href="../../../release_notes/0_2/">Release 0.2</a>, <a href="../../../release_notes/0_5/">Release 0.5</a></li>
 </ul>
-<p>Named functions can be passed, stored, and typed with <code>Callable[...]</code> or function type syntax.</p>
+<p>Named functions and closures can be passed, stored, typed, and accepted through <code>CallableN</code> bounds.</p>
 <p>Canonical forms:</p>
 <ul>
 <li><code>handler: Callable[int, str] = label</code></li>
 <li><code>callbacks = [on_success, on_error]</code></li>
+<li><code>Mapper with Callable1[int, str]</code></li>
 </ul>
 <h3 id="explicit-call-site-generics">Explicit call-site generics<a class="headerlink" href="#explicit-call-site-generics" title="Permanent link">&para;</a></h3>
 <ul>
@@ -8790,6 +8819,24 @@
 <li><code>items.enumerate().take(10)</code></li>
 <li><code>numbers.fold(0, add)</code></li>
 </ul>
+<h3 id="fallible-iteration-and-combinators">Fallible iteration and combinators<a class="headerlink" href="#fallible-iteration-and-combinators" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Id:</strong> <code>FallibleIteration</code></li>
+<li><strong>Category:</strong> <code>Stdlib</code></li>
+<li><strong>Since:</strong> <code>0.5</code></li>
+<li><strong>RFC:</strong> <code>RFC 115</code></li>
+<li><strong>Stability:</strong> <code>Stable</code></li>
+<li><strong>Activation:</strong> Import <code>FallibleIterator</code> from <code>std.derives.collection</code> or use a standard fallible stream.</li>
+<li><strong>Use instead of:</strong> Hand-written polling loops that duplicate item, exhaustion, and error routing for each source.</li>
+<li><strong>References:</strong> <a href="../stdlib_traits/collection_protocols/">Collection protocols</a>, <a href="../stdlib/io/">std.io</a>, <a href="../../tutorials/fallible_and_infallible_paths/">Fallible and infallible paths</a>, <a href="../../../release_notes/0_5/">Release 0.5</a></li>
+</ul>
+<p>Fallible streams separate exhaustion from typed poll errors and support lazy pipelines.</p>
+<p>Canonical forms:</p>
+<ul>
+<li><code>for item in stream?:</code></li>
+<li><code>stream.map(transform).map_err(to_domain_error)</code></li>
+<li><code>stream.collect()?</code></li>
+</ul>
 <h3 id="resultt-e-combinators"><code>Result[T, E]</code> combinators<a class="headerlink" href="#resultt-e-combinators" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Id:</strong> <code>ResultCombinators</code></li>
@@ -8979,11 +9026,12 @@
 <li><strong>Use instead of:</strong> Byte-twiddling helpers with unclear endian or cursor semantics.</li>
 <li><strong>References:</strong> <a href="../stdlib/io/">std.io</a>, <a href="../../../release_notes/0_3/">Release 0.3</a></li>
 </ul>
-<p>Binary stream APIs cover <code>BytesIO</code>, endian-aware reads/writes, cursor helpers, delimiter operations, and buffer extraction.</p>
+<p>Binary streams cover endian-aware I/O, cursors, delimiters, fallible chunks, and buffer extraction.</p>
 <p>Canonical forms:</p>
 <ul>
 <li><code>from std.io import BytesIO, Endian</code></li>
 <li><code>stream.write(value, Endian.Little)</code></li>
+<li><code>for chunk in stream.chunks(65536)?:</code></li>
 </ul>
 <h3 id="stdregex-safe-default-regular-expressions"><code>std.regex</code> safe-default regular expressions<a class="headerlink" href="#stdregex-safe-default-regular-expressions" title="Permanent link">&para;</a></h3>
 <ul>

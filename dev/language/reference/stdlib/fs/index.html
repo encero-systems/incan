@@ -7008,6 +7008,11 @@
 <td>Read at most <code>size</code> bytes, or the rest when <code>size</code> is negative.</td>
 </tr>
 <tr>
+<td><code>file.chunks(size: int)</code></td>
+<td><code>ReaderChunks[File]</code></td>
+<td>Lazily read bounded byte chunks through <code>BinaryReader</code>.</td>
+</tr>
+<tr>
 <td><code>file.read_exact(size: int)</code></td>
 <td><code>Result[bytes, IoError]</code></td>
 <td>Read exactly <code>size</code> bytes or fail.</td>
@@ -7050,6 +7055,7 @@
 </tbody>
 </table>
 <p>Successful writes do not imply crash-safe persistence. Call <code>sync()</code> or <code>sync_data()</code> when durability matters.</p>
+<p><code>File</code> implements <code>std.io.BinaryReader</code>, so <code>chunks(size)</code> uses the same fallible iteration and combinator surface as <code>BytesIO.chunks(size)</code>. See <a href="../io/#fallible-chunk-streams">std.io</a> for polling, exhaustion, error, and adapter behavior.</p>
 <h2 id="openoptions">OpenOptions<a class="headerlink" href="#openoptions" title="Permanent link">&para;</a></h2>
 <p><code>OpenOptions</code> provides explicit open flags. Builder methods are <code>read</code>, <code>write</code>, <code>append</code>, <code>truncate</code>, <code>create</code>, and <code>create_new</code>; <code>open(path)</code> returns <code>Result[File, IoError]</code>.</p>
 <h2 id="temporary-files">Temporary Files<a class="headerlink" href="#temporary-files" title="Permanent link">&para;</a></h2>

@@ -3292,6 +3292,48 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#fallibleiterator-fallible-iteration" class="md-nav__link">
+    <span class="md-ellipsis">
+      FallibleIterator (fallible iteration)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="FallibleIterator (fallible iteration)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lazy-adapters" class="md-nav__link">
+    <span class="md-ellipsis">
+      Lazy adapters
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fallible-terminals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Fallible terminals
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#retry-is-explicit-and-source-owned" class="md-nav__link">
+    <span class="md-ellipsis">
+      Retry is explicit and source-owned
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#bool-truthiness" class="md-nav__link">
     <span class="md-ellipsis">
       Bool (truthiness)
@@ -6509,6 +6551,48 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#fallibleiterator-fallible-iteration" class="md-nav__link">
+    <span class="md-ellipsis">
+      FallibleIterator (fallible iteration)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="FallibleIterator (fallible iteration)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lazy-adapters" class="md-nav__link">
+    <span class="md-ellipsis">
+      Lazy adapters
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fallible-terminals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Fallible terminals
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#retry-is-explicit-and-source-owned" class="md-nav__link">
+    <span class="md-ellipsis">
+      Retry is explicit and source-owned
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#bool-truthiness" class="md-nav__link">
     <span class="md-ellipsis">
       Bool (truthiness)
@@ -6692,6 +6776,275 @@
 </table>
 <p>Clone the iterator before a terminal call when the original iterator must still be used later.</p>
 <p><code>Generator[T]</code> implements this iteration surface. Generator functions and generator expressions can be used directly in <code>for</code> loops or passed to APIs that accept <code>Iterable[T]</code> / <code>Iterator[T]</code>.</p>
+<h2 id="fallibleiterator-fallible-iteration">FallibleIterator (fallible iteration)<a class="headerlink" href="#fallibleiterator-fallible-iteration" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Syntax</strong>: <code>for item in stream?:</code></li>
+<li><strong>Hooks</strong>:<ul>
+<li><code>__iter__(self) -&gt; Self</code></li>
+<li><code>__next__(mut self) -&gt; Result[Option[T], E]</code></li>
+</ul>
+</li>
+<li><strong>Trait</strong>: <code>FallibleIterator[T, E]</code></li>
+</ul>
+<p>Import the trait when defining a custom fallible source or using it in a generic bound:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.derives.collection</span><span class="w"> </span><span class="kn">import</span> <span class="nc">FallibleIterator</span>
+</code></pre></div>
+<p>A poll has three distinct outcomes:</p>
+<table>
+<thead>
+<tr>
+<th>Result</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Ok(Some(item))</code></td>
+<td>Yield one item.</td>
+</tr>
+<tr>
+<td><code>Ok(None)</code></td>
+<td>End normally.</td>
+</tr>
+<tr>
+<td><code>Err(error)</code></td>
+<td>Stop the current loop or terminal with a typed polling error.</td>
+</tr>
+</tbody>
+</table>
+<p>The loop-header <code>?</code> is required because the source can fail while the loop asks for its next item. It propagates the first polling error through the enclosing function's existing <code>Result</code> return type. It does not retry, discard, or turn errors into ordinary exhaustion.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">Row</span><span class="p">:</span>
+    <span class="nb">id</span><span class="p">:</span> <span class="nb">int</span>
+
+
+<span class="k">enum</span> <span class="nc">ReadError</span><span class="p">:</span>
+    <span class="nc">Source</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
+
+
+<span class="k">model</span> <span class="nc">RowStream</span> <span class="k">with</span> <span class="nc">FallibleIterator</span><span class="p">[</span><span class="nc">Row</span><span class="p">,</span> <span class="nc">ReadError</span><span class="p">]:</span>
+    <span class="n">rows</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nc">Row</span><span class="p">]</span>
+    <span class="nb">index</span><span class="p">:</span> <span class="nb">int</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__next__</span><span class="p">(</span><span class="k">mut</span> <span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kt">Option</span><span class="p">[</span><span class="nc">Row</span><span class="p">],</span> <span class="nc">ReadError</span><span class="p">]:</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="nb">index</span> <span class="o">&gt;=</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">rows</span><span class="p">):</span>
+            <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="kc">None</span><span class="p">)</span>
+        <span class="n">row</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">rows</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="nb">index</span><span class="p">]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="nb">index</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="nb">Some</span><span class="p">(</span><span class="n">row</span><span class="p">))</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">process</span><span class="p">(</span><span class="n">row</span><span class="p">:</span> <span class="nc">Row</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="nb">println</span><span class="p">(</span><span class="n">row</span><span class="o">.</span><span class="n">id</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">consume</span><span class="p">[</span><span class="nc">Rows</span> <span class="k">with</span> <span class="nc">FallibleIterator</span><span class="p">[</span><span class="nc">Row</span><span class="p">,</span> <span class="nc">ReadError</span><span class="p">]](</span><span class="n">rows</span><span class="p">:</span> <span class="nc">Rows</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nc">ReadError</span><span class="p">]:</span>
+    <span class="k">mut</span> <span class="nb">count</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">rows</span><span class="o">?</span><span class="p">:</span>
+        <span class="n">process</span><span class="p">(</span><span class="n">row</span><span class="p">)</span>
+        <span class="nb">count</span> <span class="o">+=</span> <span class="mi">1</span>
+    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="nb">count</span><span class="p">)</span>
+</code></pre></div>
+<p>Stream creation and stream polling are separate failure boundaries. Unwrap a setup <code>Result</code> before starting a fallible loop:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="ne">ImportError</span><span class="p">:</span>
+    <span class="nc">Open</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
+    <span class="nc">Read</span><span class="p">(</span><span class="nc">ReadError</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">open_rows</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">RowStream</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+    <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;opening </span><span class="si">{</span><span class="n">path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="nc">RowStream</span><span class="p">(</span><span class="n">rows</span><span class="o">=</span><span class="p">[],</span> <span class="nb">index</span><span class="o">=</span><span class="mi">0</span><span class="p">))</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">import_row</span><span class="p">(</span><span class="n">row</span><span class="p">:</span> <span class="nc">Row</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="nb">println</span><span class="p">(</span><span class="n">row</span><span class="o">.</span><span class="n">id</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">import_path</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="ne">ImportError</span><span class="p">]:</span>
+    <span class="n">stream</span> <span class="o">=</span> <span class="n">open_rows</span><span class="p">(</span><span class="n">path</span><span class="p">)</span><span class="o">.</span><span class="nb">map_err</span><span class="p">(</span><span class="ne">ImportError</span><span class="o">.</span><span class="nc">Open</span><span class="p">)</span><span class="o">?</span>
+
+    <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">stream</span><span class="o">.</span><span class="nb">map_err</span><span class="p">(</span><span class="ne">ImportError</span><span class="o">.</span><span class="nc">Read</span><span class="p">)</span><span class="o">?</span><span class="p">:</span>
+        <span class="n">import_row</span><span class="p">(</span><span class="n">row</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="kc">None</span><span class="p">)</span>
+</code></pre></div>
+<p>The combined spelling <code>for row in open_rows(path)?:</code> is rejected when <code>open_rows</code> returns a <code>Result</code> containing a fallible iterator. A <code>Result</code> containing an ordinary iterable keeps its established one-time unwrapping behavior.</p>
+<h3 id="lazy-adapters">Lazy adapters<a class="headerlink" href="#lazy-adapters" title="Permanent link">&para;</a></h3>
+<p>Every adapter constructs without polling, preserves successful item order, and forwards ordinary exhaustion. Generic adapters never poll again merely because the source emitted an error.</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Result</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>.map(f)</code></td>
+<td><code>FallibleIterator[U, E]</code></td>
+<td>Transforms each successful item once.</td>
+</tr>
+<tr>
+<td><code>.filter(predicate)</code></td>
+<td><code>FallibleIterator[T, E]</code></td>
+<td>Polls until an item passes, the source ends, or the source fails.</td>
+</tr>
+<tr>
+<td><code>.flat_map(f)</code></td>
+<td><code>FallibleIterator[U, E]</code></td>
+<td>Expands each item into a <code>list[U]</code> and yields that list before polling the source again.</td>
+</tr>
+<tr>
+<td><code>.take(n)</code></td>
+<td><code>FallibleIterator[T, E]</code></td>
+<td>Yields at most <code>n</code> successful items; a non-positive limit does not poll the source.</td>
+</tr>
+<tr>
+<td><code>.inspect(f)</code></td>
+<td><code>FallibleIterator[T, E]</code></td>
+<td>Observes successful items without changing them.</td>
+</tr>
+<tr>
+<td><code>.map_err(f)</code></td>
+<td><code>FallibleIterator[T, F]</code></td>
+<td>Transforms emitted errors without changing items or exhaustion.</td>
+</tr>
+<tr>
+<td><code>.inspect_err(f)</code></td>
+<td><code>FallibleIterator[T, E]</code></td>
+<td>Observes emitted errors without changing them.</td>
+</tr>
+</tbody>
+</table>
+<p>Mapped item, mapped error, flattened item, and fold-accumulator types must support <code>Clone</code> under the current value-semantics contract.</p>
+<p>Adapter callbacks may be ordinary functions, capturing closures, enum variant constructors with a compatible signature, or models that adopt the corresponding <code>Callable1</code> / <code>Callable2</code> trait.</p>
+<p>This complete example defines its application types and callbacks instead of relying on ambient names:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">Record</span><span class="p">:</span>
+    <span class="nb">id</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">active</span><span class="p">:</span> <span class="nb">bool</span>
+
+
+<span class="k">model</span> <span class="nc">Page</span><span class="p">:</span>
+    <span class="n">records</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nc">Record</span><span class="p">]</span>
+
+
+<span class="k">enum</span> <span class="nc">SyncError</span><span class="p">:</span>
+    <span class="nc">Fetch</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
+    <span class="nc">Store</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">page_records</span><span class="p">(</span><span class="n">page</span><span class="p">:</span> <span class="nc">Page</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nc">Record</span><span class="p">]:</span>
+    <span class="k">return</span> <span class="n">page</span><span class="o">.</span><span class="n">records</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">is_relevant</span><span class="p">(</span><span class="n">record</span><span class="p">:</span> <span class="nc">Record</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">record</span><span class="o">.</span><span class="n">active</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">record_seen</span><span class="p">(</span><span class="n">record</span><span class="p">:</span> <span class="nc">Record</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;received </span><span class="si">{</span><span class="n">record</span><span class="o">.</span><span class="n">id</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">store</span><span class="p">(</span><span class="n">record</span><span class="p">:</span> <span class="nc">Record</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+    <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;stored </span><span class="si">{</span><span class="n">record</span><span class="o">.</span><span class="n">id</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="kc">None</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">sync_records</span><span class="p">[</span><span class="nc">Pages</span> <span class="k">with</span> <span class="nc">FallibleIterator</span><span class="p">[</span><span class="nc">Page</span><span class="p">,</span> <span class="nb">str</span><span class="p">]](</span><span class="n">pages</span><span class="p">:</span> <span class="nc">Pages</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nc">SyncError</span><span class="p">]:</span>
+    <span class="k">mut</span> <span class="n">stored</span> <span class="o">=</span> <span class="mi">0</span>
+
+    <span class="k">for</span> <span class="n">record</span> <span class="ow">in</span> <span class="n">pages</span><span class="o">.</span><span class="nb">flat_map</span><span class="p">(</span><span class="n">page_records</span><span class="p">)</span><span class="o">.</span><span class="nb">filter</span><span class="p">(</span><span class="n">is_relevant</span><span class="p">)</span><span class="o">.</span><span class="nb">inspect</span><span class="p">(</span><span class="n">record_seen</span><span class="p">)</span><span class="o">.</span><span class="nb">map_err</span><span class="p">(</span><span class="nc">SyncError</span><span class="o">.</span><span class="nc">Fetch</span><span class="p">)</span><span class="o">?</span><span class="p">:</span>
+        <span class="n">store</span><span class="p">(</span><span class="n">record</span><span class="p">)</span><span class="o">.</span><span class="nb">map_err</span><span class="p">(</span><span class="nc">SyncError</span><span class="o">.</span><span class="nc">Store</span><span class="p">)</span><span class="o">?</span>
+        <span class="n">stored</span> <span class="o">+=</span> <span class="mi">1</span>
+
+    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">stored</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="fallible-terminals">Fallible terminals<a class="headerlink" href="#fallible-terminals" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Result</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>.collect()</code></td>
+<td><code>Result[list[T], E]</code></td>
+<td>Returns all successful items in order or the first source error; a partial list is not returned.</td>
+</tr>
+<tr>
+<td><code>.fold(initial, f)</code></td>
+<td><code>Result[U, E]</code></td>
+<td>Accumulates successful items in order or returns the first source error.</td>
+</tr>
+</tbody>
+</table>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">collect_records</span><span class="p">[</span><span class="nc">Pages</span> <span class="k">with</span> <span class="nc">FallibleIterator</span><span class="p">[</span><span class="nc">Page</span><span class="p">,</span> <span class="nb">str</span><span class="p">]](</span><span class="n">pages</span><span class="p">:</span> <span class="nc">Pages</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="nc">Record</span><span class="p">],</span> <span class="nc">SyncError</span><span class="p">]:</span>
+    <span class="k">return</span> <span class="n">pages</span><span class="o">.</span><span class="nb">flat_map</span><span class="p">(</span><span class="n">page_records</span><span class="p">)</span><span class="o">.</span><span class="nb">filter</span><span class="p">(</span><span class="n">is_relevant</span><span class="p">)</span><span class="o">.</span><span class="nb">map_err</span><span class="p">(</span><span class="nc">SyncError</span><span class="o">.</span><span class="nc">Fetch</span><span class="p">)</span><span class="o">.</span><span class="nb">collect</span><span class="p">()</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">add_record_count</span><span class="p">(</span><span class="nb">count</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">page</span><span class="p">:</span> <span class="nc">Page</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">return</span> <span class="nb">count</span> <span class="o">+</span> <span class="nb">len</span><span class="p">(</span><span class="n">page</span><span class="o">.</span><span class="n">records</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">count_records</span><span class="p">[</span><span class="nc">Pages</span> <span class="k">with</span> <span class="nc">FallibleIterator</span><span class="p">[</span><span class="nc">Page</span><span class="p">,</span> <span class="nb">str</span><span class="p">]](</span><span class="n">pages</span><span class="p">:</span> <span class="nc">Pages</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nc">SyncError</span><span class="p">]:</span>
+    <span class="k">return</span> <span class="n">pages</span><span class="o">.</span><span class="nb">map_err</span><span class="p">(</span><span class="nc">SyncError</span><span class="o">.</span><span class="nc">Fetch</span><span class="p">)</span><span class="o">.</span><span class="nb">fold</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">add_record_count</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="retry-is-explicit-and-source-owned">Retry is explicit and source-owned<a class="headerlink" href="#retry-is-explicit-and-source-owned" title="Permanent link">&para;</a></h3>
+<p><code>FallibleIterator</code> has no generic retry adapter. Repeating a failed poll is safe only when the source knows whether its cursor advanced, whether the operation is idempotent, which errors are transient, and how attempts and backoff are counted.</p>
+<p>A remote paginator that supports retry should therefore accept an explicit application or domain policy. Its own <code>__next__</code> implementation keeps the logical cursor unchanged while retrying, advances it only after a successful page, and emits one final error when the policy declines another attempt. <code>inspect_err</code>, <code>map_err</code>, <code>collect</code>, <code>fold</code>, and <code>for ...?:</code> outside that source observe only the final emitted error. Instrumentation for individual attempts belongs inside the paginator or policy.</p>
+<p>The following design sketch is application code, not a shipped <code>std.http</code> API. The transport and wait callbacks make every effect visible, while the paginator alone owns cursor safety:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">FetchError</span><span class="p">:</span>
+    <span class="n">detail</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">transient</span><span class="p">:</span> <span class="nb">bool</span>
+
+
+<span class="k">model</span> <span class="nc">RetryPolicy</span><span class="p">:</span>
+    <span class="n">max_attempts</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">backoff_ms</span><span class="p">:</span> <span class="nb">int</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">should_retry</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">error</span><span class="p">:</span> <span class="nc">FetchError</span><span class="p">,</span> <span class="n">attempt</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">error</span><span class="o">.</span><span class="n">transient</span> <span class="ow">and</span> <span class="n">attempt</span> <span class="o">&lt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">max_attempts</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">delay_ms</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">attempt</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">backoff_ms</span> <span class="o">*</span> <span class="n">attempt</span>
+
+
+<span class="k">model</span> <span class="nc">RemotePage</span><span class="p">:</span>
+    <span class="n">records</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nc">Record</span><span class="p">]</span>
+    <span class="n">next_cursor</span><span class="p">:</span> <span class="kt">Option</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+
+
+<span class="k">model</span> <span class="nc">RetryingPages</span> <span class="k">with</span> <span class="nc">FallibleIterator</span><span class="p">[</span><span class="nc">RemotePage</span><span class="p">,</span> <span class="nc">FetchError</span><span class="p">]:</span>
+    <span class="n">cursor</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">done</span><span class="p">:</span> <span class="nb">bool</span>
+    <span class="n">retry</span><span class="p">:</span> <span class="nc">RetryPolicy</span>
+    <span class="n">fetch</span><span class="p">:</span> <span class="p">(</span><span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">RemotePage</span><span class="p">,</span> <span class="nc">FetchError</span><span class="p">]</span>
+    <span class="n">wait</span><span class="p">:</span> <span class="p">(</span><span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__next__</span><span class="p">(</span><span class="k">mut</span> <span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kt">Option</span><span class="p">[</span><span class="nc">RemotePage</span><span class="p">],</span> <span class="nc">FetchError</span><span class="p">]:</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">done</span><span class="p">:</span>
+            <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="kc">None</span><span class="p">)</span>
+
+        <span class="k">mut</span> <span class="n">attempt</span> <span class="o">=</span> <span class="mi">1</span>
+        <span class="k">while</span> <span class="k">true</span><span class="p">:</span>
+            <span class="n">request_page</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">fetch</span>
+            <span class="k">match</span> <span class="n">request_page</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">cursor</span><span class="p">):</span>
+                <span class="nb">Ok</span><span class="p">(</span><span class="n">page</span><span class="p">)</span> <span class="o">=&gt;</span>
+                    <span class="k">match</span> <span class="n">page</span><span class="o">.</span><span class="n">next_cursor</span><span class="p">:</span>
+                        <span class="nb">Some</span><span class="p">(</span><span class="n">next_cursor</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">cursor</span> <span class="o">=</span> <span class="n">next_cursor</span>
+                        <span class="kc">None</span> <span class="o">=&gt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">done</span> <span class="o">=</span> <span class="k">true</span>
+                    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="nb">Some</span><span class="p">(</span><span class="n">page</span><span class="p">))</span>
+                <span class="nb">Err</span><span class="p">(</span><span class="n">error</span><span class="p">)</span> <span class="o">=&gt;</span>
+                    <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">retry</span><span class="o">.</span><span class="n">should_retry</span><span class="p">(</span><span class="n">error</span><span class="p">,</span> <span class="n">attempt</span><span class="p">):</span>
+                        <span class="k">return</span> <span class="nb">Err</span><span class="p">(</span><span class="n">error</span><span class="p">)</span>
+                    <span class="n">wait_before_retry</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">wait</span>
+                    <span class="n">wait_before_retry</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">retry</span><span class="o">.</span><span class="n">delay_ms</span><span class="p">(</span><span class="n">attempt</span><span class="p">))</span>
+                    <span class="n">attempt</span> <span class="o">+=</span> <span class="mi">1</span>
+</code></pre></div>
+<p>No retry is magical here. A failed call leaves <code>self.cursor</code> untouched. The policy classifies retryable failures and limits attempts, the injected <code>wait</code> callback owns backoff, and only a successful page advances or closes the cursor. If the policy declines, <code>__next__</code> emits the final <code>FetchError</code>; outer combinators and <code>for ...?:</code> observe exactly that one error.</p>
 <h2 id="bool-truthiness">Bool (truthiness)<a class="headerlink" href="#bool-truthiness" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Syntax</strong>: <code>if x:</code> / <code>while x:</code></li>
