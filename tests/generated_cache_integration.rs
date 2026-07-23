@@ -2,10 +2,11 @@
 
 use std::collections::BTreeSet;
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::{Arc, Barrier};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 mod support;
 
@@ -234,6 +235,38 @@ fn active_cache_identity(incan_home: &Path) -> Result<Option<String>, Box<dyn st
     }))
 }
 
+fn write_blocking_rustc_wrapper(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    fs::write(
+        path,
+        r#"#!/bin/sh
+set -eu
+case "${CARGO_TARGET_DIR:-}" in
+  "$INCAN_CACHE_TEST_MANAGED_ROOT"/*)
+    : > "$INCAN_CACHE_TEST_RUSTC_READY"
+    while [ ! -e "$INCAN_CACHE_TEST_RUSTC_RELEASE" ]; do
+      sleep 0.05
+    done
+    ;;
+esac
+exec "$@"
+"#,
+    )?;
+    let mut permissions = fs::metadata(path)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions)?;
+    Ok(())
+}
+
+struct RustcReleaseGuard {
+    path: PathBuf,
+}
+
+impl Drop for RustcReleaseGuard {
+    fn drop(&mut self) {
+        let _ = fs::write(&self.path, b"release\n");
+    }
+}
+
 #[test]
 fn managed_cache_reuses_offline_across_projects_and_cleans_interrupted_entry() -> Result<(), Box<dyn std::error::Error>>
 {
@@ -402,68 +435,6 @@ fn managed_cache_reuses_offline_across_projects_and_cleans_interrupted_entry() -
     assert!(!first_root.join("target/.cargo-target").exists());
     assert!(!second_root.join("target/.cargo-target").exists());
 
-    let third_root = fixture.path().join("third");
-    let fourth_root = fixture.path().join("fourth");
-    write_dependency_project(&third_root)?;
-    write_dependency_project(&fourth_root)?;
-    fs::write(
-        fourth_root.join("src/main.incn"),
-        "from rust::serde_json import Value\n\ndef cache_json(value: Value) -> Value:\n  return value\n\ndef cache_variant() -> int:\n  return 4\n\ndef main() -> None:\n  pass\n",
-    )?;
-    let concurrent_home = fixture.path().join("concurrent-incan-home");
-    let start_barrier = Arc::new(Barrier::new(3));
-    let third_home = concurrent_home.clone();
-    let third_start = Arc::clone(&start_barrier);
-    let third = std::thread::spawn(move || {
-        third_start.wait();
-        let mut command = incan_command(&third_root, &third_home);
-        command.args(["build", "src/main.incn", "--offline"]);
-        run_checked(command, "concurrent third build")
-            .map(|_| ())
-            .map_err(|error| error.to_string())
-    });
-    let fourth_home = concurrent_home.clone();
-    let fourth_start = Arc::clone(&start_barrier);
-    let fourth = std::thread::spawn(move || {
-        fourth_start.wait();
-        let mut command = incan_command(&fourth_root, &fourth_home);
-        command.args(["build", "src/main.incn", "--offline"]);
-        run_checked(command, "concurrent fourth build")
-            .map(|_| ())
-            .map_err(|error| error.to_string())
-    });
-    start_barrier.wait();
-    let mut active_identity = None;
-    for _ in 0..100 {
-        active_identity = active_cache_identity(&concurrent_home)?;
-        if active_identity.is_some() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    let active_identity = active_identity.ok_or("concurrent builds never exposed an active cache lease")?;
-    let mut prune = incan_command(fixture.path(), &concurrent_home);
-    prune.args(["cache", "prune", "--identity", &active_identity, "--format", "json"]);
-    let prune_output = run_checked(prune, "active-domain prune")?;
-    let prune_report = serde_json::from_slice::<serde_json::Value>(&prune_output.stdout)?;
-    assert_eq!(
-        prune_report
-            .get("skipped_active_entries")
-            .and_then(serde_json::Value::as_array)
-            .and_then(|entries| entries.first())
-            .and_then(serde_json::Value::as_str),
-        Some(active_identity.as_str())
-    );
-    match third.join() {
-        Ok(result) => result?,
-        Err(_) => return Err("third cache build panicked".into()),
-    }
-    match fourth.join() {
-        Ok(result) => result?,
-        Err(_) => return Err("fourth cache build panicked".into()),
-    }
-    assert_eq!(cache_entry_count_for_profile(&concurrent_home, "release")?, 1);
-
     let invalidated_root = fixture.path().join("invalidated");
     write_dependency_project(&invalidated_root)?;
     let before_invalidation = cache_entry_count_for_profile(&incan_home, "release")?;
@@ -534,6 +505,119 @@ fn managed_cache_reuses_offline_across_projects_and_cleans_interrupted_entry() -
     ]);
     run_checked(prune, "interrupted-entry cleanup")?;
     assert!(!interrupted.exists());
+    Ok(())
+}
+
+#[test]
+fn active_cache_domain_cannot_be_pruned_during_concurrent_builds() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = tempfile::tempdir()?;
+    let first_root = fixture.path().join("first");
+    let second_root = fixture.path().join("second");
+    write_dependency_project(&first_root)?;
+    write_dependency_project(&second_root)?;
+    fs::write(
+        second_root.join("src/main.incn"),
+        "from rust::serde_json import Value\n\ndef cache_json(value: Value) -> Value:\n  return value\n\ndef cache_variant() -> int:\n  return 2\n\ndef main() -> None:\n  pass\n",
+    )?;
+
+    let provider_prewarm_home = fixture.path().join("provider-prewarm-home");
+    let mut provider_prewarm = incan_command(&first_root, &provider_prewarm_home);
+    provider_prewarm.args(["check", "src/main.incn"]);
+    run_checked(provider_prewarm, "provider prewarm before concurrent builds")?;
+
+    let incan_home = fixture.path().join("incan-home");
+    let managed_root = incan_home.join("cache/generated-cargo/v1");
+    let rustc_wrapper = fixture.path().join("blocking-rustc-wrapper.sh");
+    let rustc_ready = fixture.path().join("blocking-rustc-ready");
+    let rustc_release = fixture.path().join("blocking-rustc-release");
+    write_blocking_rustc_wrapper(&rustc_wrapper)?;
+    let release_guard = RustcReleaseGuard {
+        path: rustc_release.clone(),
+    };
+
+    let start_barrier = Arc::new(Barrier::new(3));
+    let first_home = incan_home.clone();
+    let first_start = Arc::clone(&start_barrier);
+    let first_wrapper = rustc_wrapper.clone();
+    let first_managed_root = managed_root.clone();
+    let first_ready = rustc_ready.clone();
+    let first_release = rustc_release.clone();
+    let first = std::thread::spawn(move || {
+        first_start.wait();
+        let mut command = incan_command(&first_root, &first_home);
+        command
+            .args(["build", "src/main.incn", "--offline"])
+            .env("RUSTC_WRAPPER", first_wrapper)
+            .env("INCAN_CACHE_TEST_MANAGED_ROOT", first_managed_root)
+            .env("INCAN_CACHE_TEST_RUSTC_READY", first_ready)
+            .env("INCAN_CACHE_TEST_RUSTC_RELEASE", first_release);
+        run_checked(command, "concurrent first build")
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    });
+
+    let second_home = incan_home.clone();
+    let second_start = Arc::clone(&start_barrier);
+    let second_wrapper = rustc_wrapper;
+    let second_managed_root = managed_root;
+    let second_ready = rustc_ready.clone();
+    let second_release = rustc_release;
+    let second = std::thread::spawn(move || {
+        second_start.wait();
+        let mut command = incan_command(&second_root, &second_home);
+        command
+            .args(["build", "src/main.incn", "--offline"])
+            .env("RUSTC_WRAPPER", second_wrapper)
+            .env("INCAN_CACHE_TEST_MANAGED_ROOT", second_managed_root)
+            .env("INCAN_CACHE_TEST_RUSTC_READY", second_ready)
+            .env("INCAN_CACHE_TEST_RUSTC_RELEASE", second_release);
+        run_checked(command, "concurrent second build")
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    });
+
+    start_barrier.wait();
+    let observation = (|| -> Result<(String, serde_json::Value), Box<dyn std::error::Error>> {
+        let deadline = Instant::now() + Duration::from_secs(120);
+        while !rustc_ready.is_file() {
+            if first.is_finished() && second.is_finished() {
+                return Err("concurrent builds completed before entering the blocked managed-Cargo phase".into());
+            }
+            if Instant::now() >= deadline {
+                return Err(
+                    "concurrent builds did not enter the blocked managed-Cargo phase within 120 seconds".into(),
+                );
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let active_identity = active_cache_identity(&incan_home)?
+            .ok_or("blocked managed-Cargo build did not expose its active cache lease")?;
+        let mut prune = incan_command(fixture.path(), &incan_home);
+        prune.args(["cache", "prune", "--identity", &active_identity, "--format", "json"]);
+        let prune_output = run_checked(prune, "active-domain prune")?;
+        let prune_report = serde_json::from_slice::<serde_json::Value>(&prune_output.stdout)?;
+        Ok((active_identity, prune_report))
+    })();
+
+    drop(release_guard);
+    match first.join() {
+        Ok(result) => result?,
+        Err(_) => return Err("first cache build panicked".into()),
+    }
+    match second.join() {
+        Ok(result) => result?,
+        Err(_) => return Err("second cache build panicked".into()),
+    }
+    let (active_identity, prune_report) = observation?;
+    assert_eq!(
+        prune_report
+            .get("skipped_active_entries")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|entries| entries.first())
+            .and_then(serde_json::Value::as_str),
+        Some(active_identity.as_str())
+    );
+    assert_eq!(cache_entry_count_for_profile(&incan_home, "release")?, 1);
     Ok(())
 }
 
