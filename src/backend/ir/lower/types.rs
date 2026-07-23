@@ -1257,12 +1257,13 @@ mod tests {
             lowering.active_trait_default_value_type_path("ReaderChunks"),
             Some(canonical_path)
         );
-        lowering.scopes.last_mut().expect("root lowering scope").insert(
+        lowering.define_local_binding(
             "ReaderChunks".to_string(),
             IrType::Function {
                 params: vec![IrType::Int],
                 ret: Box::new(IrType::Int),
             },
+            false,
         );
         assert_eq!(lowering.active_trait_default_value_type_path("ReaderChunks"), None);
     }

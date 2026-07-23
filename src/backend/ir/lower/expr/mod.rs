@@ -1911,8 +1911,7 @@ mod tests {
         let lowering = AstLowering::new();
         let receiver = TypedExpr::new(IrExprKind::Unit, IrType::Unknown);
         let clone_trait = builtin_traits::as_str(TraitId::Clone);
-        let expected_trait_path =
-            trait_bounds::incan_to_rust(clone_trait).expect("missing registered native trait path");
+        assert_eq!(trait_bounds::incan_to_rust(clone_trait), Some(clone_trait));
         let dispatch = lowering.lower_resolved_method_dispatch(
             ResolvedMethodDispatch::Trait {
                 trait_name: clone_trait.to_string(),
@@ -1925,7 +1924,7 @@ mod tests {
 
         assert!(matches!(
             dispatch,
-            IrMethodDispatch::Trait { trait_path, .. } if trait_path == expected_trait_path
+            IrMethodDispatch::Trait { trait_path, .. } if trait_path == clone_trait
         ));
     }
 
