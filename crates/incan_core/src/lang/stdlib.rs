@@ -60,12 +60,17 @@ pub enum StdlibJsonTraitId {
     Deserialize,
 }
 
+const STDLIB_JSON_SERIALIZE_TRAIT_METHODS: &[&str] = &["to_json"];
+const STDLIB_JSON_DESERIALIZE_TRAIT_METHODS: &[&str] = &["from_json"];
+
 const STDLIB_JSON_SERIALIZE_TRAIT_NAMES: &[&str] = &[
     "Serialize",
     "JsonSerialize",
     "json.Serialize",
     "std.serde.json.Serialize",
 ];
+
+const STDLIB_JSON_CANONICAL_TRAIT_NAMES: &[&str] = &["std.serde.json.Serialize", "std.serde.json.Deserialize"];
 
 const STDLIB_JSON_DESERIALIZE_TRAIT_NAMES: &[&str] = &[
     "Deserialize",
@@ -98,6 +103,15 @@ pub fn stdlib_json_trait_id(name: &str) -> Option<StdlibJsonTraitId> {
     }
 }
 
+/// Return the canonical method set for one compiler-known stdlib JSON protocol.
+#[must_use]
+pub const fn stdlib_json_trait_method_names(id: StdlibJsonTraitId) -> &'static [&'static str] {
+    match id {
+        StdlibJsonTraitId::Serialize => STDLIB_JSON_SERIALIZE_TRAIT_METHODS,
+        StdlibJsonTraitId::Deserialize => STDLIB_JSON_DESERIALIZE_TRAIT_METHODS,
+    }
+}
+
 /// Return whether `segments` names the `std.serde.json` trait module.
 #[must_use]
 pub fn is_stdlib_json_trait_module_path(segments: &[String]) -> bool {
@@ -125,6 +139,12 @@ pub fn stdlib_json_trait_scope_import_id(name: &str) -> Option<StdlibJsonTraitId
         "json.Deserialize" | "std.serde.json.Deserialize" => Some(StdlibJsonTraitId::Deserialize),
         _ => None,
     }
+}
+
+/// Return whether `name` is a fully qualified source path for a stdlib JSON protocol trait.
+#[must_use]
+pub fn is_canonical_stdlib_json_trait_name(name: &str) -> bool {
+    STDLIB_JSON_CANONICAL_TRAIT_NAMES.contains(&name)
 }
 
 /// Return whether `name` refers to the stdlib JSON serialization trait.

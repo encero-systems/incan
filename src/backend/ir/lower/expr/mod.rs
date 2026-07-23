@@ -35,9 +35,94 @@ use incan_core::lang::surface::result_methods::ResultMethodId;
 use incan_core::lang::surface::types::{self as surface_types, SurfaceTypeId, TASK_JOIN_ERROR_TYPE_NAME};
 use incan_core::lang::traits::{self as builtin_traits, TraitId};
 use incan_core::lang::types::collections::{self as collection_types, CollectionTypeId};
+use incan_core::lang::{stdlib, trait_bounds};
 use incan_semantics_core::SurfaceExprLoweringAction;
 
 impl AstLowering {
+    /// Lower backend-neutral trait ownership into the Rust-visible dispatch path used by the current backend.
+    pub(super) fn lower_resolved_method_dispatch(
+        &self,
+        dispatch: ResolvedMethodDispatch,
+        receiver: &TypedExpr,
+    ) -> IrMethodDispatch {
+        match dispatch {
+            ResolvedMethodDispatch::Trait {
+                trait_name,
+                module_path,
+                type_args,
+                receiver_is_mutable,
+            } => {
+                let stdlib_module = module_path
+                    .as_deref()
+                    .filter(|segments| segments.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT));
+                let source_json_module = stdlib_module.filter(|segments| {
+                    stdlib::is_stdlib_json_trait_module_path(segments)
+                        && stdlib::stdlib_json_trait_id(&trait_name).is_some()
+                });
+                let trait_path = if let Some(segments) = source_json_module {
+                    self.lower_stdlib_trait_dispatch_path(segments, &trait_name, receiver)
+                } else if stdlib::stdlib_json_trait_scope_import_id(&trait_name).is_some() {
+                    if stdlib::is_canonical_stdlib_json_trait_name(&trait_name) {
+                        let canonical_module = vec![
+                            stdlib::STDLIB_ROOT.to_string(),
+                            stdlib::STDLIB_SERDE.to_string(),
+                            stdlib::STDLIB_JSON.to_string(),
+                        ];
+                        let short_name = trait_name.rsplit('.').next().unwrap_or(&trait_name);
+                        self.lower_stdlib_trait_dispatch_path(&canonical_module, short_name, receiver)
+                    } else {
+                        trait_name.replace('.', "::")
+                    }
+                } else if stdlib::stdlib_json_trait_id(&trait_name).is_some() {
+                    trait_name
+                } else if let Some(rust_path) = trait_bounds::incan_to_rust(&trait_name) {
+                    rust_path.to_string()
+                } else if let Some(segments) = stdlib_module {
+                    self.lower_stdlib_trait_dispatch_path(segments, &trait_name, receiver)
+                } else {
+                    trait_name
+                };
+                IrMethodDispatch::Trait {
+                    trait_path,
+                    type_args: type_args
+                        .iter()
+                        .map(|ty| self.lower_resolved_method_type_arg(ty))
+                        .collect(),
+                    receiver_is_mutable,
+                }
+            }
+        }
+    }
+
+    /// Resolve one source-owned stdlib trait through the provider, public package, or provider-local facade that owns
+    /// the receiver at the current compilation boundary.
+    fn lower_stdlib_trait_dispatch_path(&self, segments: &[String], trait_name: &str, receiver: &TypedExpr) -> String {
+        let module = segments.iter().skip(1).cloned().collect::<Vec<_>>().join("::");
+        let trait_name = trait_name
+            .rsplit(['.', ':'])
+            .find(|segment| !segment.is_empty())
+            .unwrap_or(trait_name);
+        if self.sdk_provider_build {
+            return format!("crate::{}::{module}::{trait_name}", stdlib::INCAN_STD_NAMESPACE);
+        }
+        if let Some(library) = self.public_library_for_method_receiver(receiver) {
+            return format!("{library}::{}::{module}::{trait_name}", stdlib::INCAN_STD_NAMESPACE);
+        }
+        match self
+            .provider_plan
+            .as_deref()
+            .and_then(|plan| plan.active_sdk_provider_for_module(segments))
+            .and_then(|provider| provider.artifact.as_ref())
+        {
+            Some(artifact) => format!(
+                "{}::{}::{module}::{trait_name}",
+                artifact.dependency_key,
+                stdlib::INCAN_STD_NAMESPACE
+            ),
+            None => format!("crate::{}::{module}::{trait_name}", stdlib::INCAN_STD_NAMESPACE),
+        }
+    }
+
     /// Return the public dependency owner for a method receiver when lowering can prove one.
     fn public_library_for_method_receiver(&self, receiver: &TypedExpr) -> Option<String> {
         match &receiver.kind {
@@ -45,6 +130,9 @@ impl AstLowering {
                 canonical_path: Some(path),
                 ..
             } => Self::public_library_from_canonical_path(path),
+            IrExprKind::MethodCall { receiver, .. } | IrExprKind::KnownMethodCall { receiver, .. } => {
+                self.public_library_for_method_receiver(receiver)
+            }
             IrExprKind::InteropCoerce { expr, .. } => self.public_library_for_method_receiver(expr),
             _ => self.public_library_for_nominal_receiver_type(&receiver.ty),
         }
@@ -748,7 +836,7 @@ impl AstLowering {
                     access: VarAccess::Borrow,
                     ref_kind: VarRefKind::Value,
                 },
-                IrType::Unknown,
+                self.lookup_var("self"),
             ),
 
             // ---- Binary operations ----
@@ -1070,12 +1158,7 @@ impl AstLowering {
                     .type_info
                     .as_ref()
                     .and_then(|info| info.resolved_method_call(expr_span).cloned())
-                    .map(|resolved| match resolved.dispatch {
-                        ResolvedMethodDispatch::Trait { trait_path, type_args } => IrMethodDispatch::Trait {
-                            trait_path,
-                            type_args: type_args.iter().map(|ty| self.lower_resolved_type(ty)).collect(),
-                        },
-                    })
+                    .map(|resolved| self.lower_resolved_method_dispatch(resolved.dispatch, &receiver))
                     .or_else(|| {
                         self.type_info
                             .as_ref()
@@ -1101,18 +1184,24 @@ impl AstLowering {
                         },
                         expr_ty,
                     )
-                } else if let Some(kind) = MethodKind::for_receiver(&receiver.ty, &method_name).or_else(|| {
-                    if self.receiver_adopts_iterator_protocol(&receiver.ty) {
-                        MethodKind::for_iterator_method_name(&method_name)
-                    } else if matches!(
-                        MethodKind::for_result_method_name(&method_name),
-                        Some(MethodKind::Result(ResultMethodId::Inspect | ResultMethodId::InspectErr))
-                    ) {
-                        MethodKind::for_result_method_name(&method_name)
-                    } else {
-                        None
-                    }
-                }) {
+                } else if let Some(kind) = dispatch
+                    .is_none()
+                    .then(|| {
+                        MethodKind::for_receiver(&receiver.ty, &method_name).or_else(|| {
+                            if self.receiver_adopts_iterator_protocol(&receiver.ty) {
+                                MethodKind::for_iterator_method_name(&method_name)
+                            } else if matches!(
+                                MethodKind::for_result_method_name(&method_name),
+                                Some(MethodKind::Result(ResultMethodId::Inspect | ResultMethodId::InspectErr))
+                            ) {
+                                MethodKind::for_result_method_name(&method_name)
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                    .flatten()
+                {
                     (
                         IrExprKind::KnownMethodCall {
                             receiver: Box::new(receiver),
@@ -1207,12 +1296,7 @@ impl AstLowering {
                         .type_info
                         .as_ref()
                         .and_then(|info| info.resolved_method_call(expr_span).cloned())
-                        .map(|resolved| match resolved.dispatch {
-                            ResolvedMethodDispatch::Trait { trait_path, type_args } => IrMethodDispatch::Trait {
-                                trait_path,
-                                type_args: type_args.iter().map(|ty| self.lower_resolved_type(ty)).collect(),
-                            },
-                        });
+                        .map(|resolved| self.lower_resolved_method_dispatch(resolved.dispatch, &obj));
                     let result_ty = self
                         .type_info
                         .as_ref()
@@ -1492,11 +1576,16 @@ impl AstLowering {
                 let body_ir = body_ir_result?;
                 let ret_ty = body_ir.ty.clone();
                 let param_tys: Vec<IrType> = param_pairs.iter().map(|(_, t)| t.clone()).collect();
+                let annotate_param_types = self
+                    .type_info
+                    .as_ref()
+                    .is_some_and(|info| info.is_source_callable_closure(expr_span));
                 (
                     IrExprKind::Closure {
                         params: param_pairs,
                         body: Box::new(body_ir),
                         captures: vec![],
+                        annotate_param_types,
                     },
                     IrType::Function {
                         params: param_tys,
@@ -1709,6 +1798,7 @@ impl AstLowering {
                         params: closure_params.clone(),
                         body: Box::new(body),
                         captures: vec![],
+                        annotate_param_types: false,
                     },
                     IrType::Function {
                         params: closure_params.into_iter().map(|(_, ty)| ty).collect(),
@@ -1729,5 +1819,181 @@ fn numeric_resize_policy(method: &str) -> Option<NumericResizePolicy> {
         "wrapping_resize" => Some(NumericResizePolicy::Wrapping),
         "saturating_resize" => Some(NumericResizePolicy::Saturating),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A trait inherited through a compiled package must be addressed through that linked package's canonical stdlib
+    /// re-export, not through a transitive provider crate that the consumer does not link directly.
+    #[test]
+    fn imported_method_chain_dispatches_trait_through_public_library() {
+        let lowering = AstLowering::new();
+        let package_call = TypedExpr::new(
+            IrExprKind::Call {
+                func: Box::new(TypedExpr::new(IrExprKind::Unit, IrType::Unknown)),
+                type_args: Vec::new(),
+                args: Vec::new(),
+                callable_signature: None,
+                canonical_path: Some(vec![
+                    "pub".to_string(),
+                    "fallible_streams".to_string(),
+                    "numbers".to_string(),
+                ]),
+            },
+            IrType::Struct("fallible_streams::NumberStream".to_string()),
+        );
+        let method_chain = TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(package_call),
+                method: "map".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: Vec::new(),
+                callable_signature: None,
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            IrType::Unknown,
+        );
+        let dispatch = lowering.lower_resolved_method_dispatch(
+            ResolvedMethodDispatch::Trait {
+                trait_name: "FallibleIterator".to_string(),
+                module_path: Some(vec!["std".to_string(), "derives".to_string(), "collection".to_string()]),
+                type_args: vec![
+                    crate::frontend::symbols::ResolvedType::Int,
+                    crate::frontend::symbols::ResolvedType::Str,
+                ],
+                receiver_is_mutable: false,
+            },
+            &method_chain,
+        );
+
+        assert!(matches!(
+            dispatch,
+            IrMethodDispatch::Trait { trait_path, .. }
+                if trait_path
+                    == "fallible_streams::__incan_std::derives::collection::FallibleIterator"
+        ));
+    }
+
+    /// Compiled provider source must use its crate-local compatibility facade rather than a sibling provider crate that
+    /// may be reachable only transitively through the selected component graph.
+    #[test]
+    fn sdk_provider_dispatches_std_trait_through_local_facade() {
+        let mut lowering = AstLowering::new();
+        lowering.set_sdk_provider_build(true);
+        let receiver = TypedExpr::new(IrExprKind::Unit, IrType::Unknown);
+        let dispatch = lowering.lower_resolved_method_dispatch(
+            ResolvedMethodDispatch::Trait {
+                trait_name: "FallibleIterator".to_string(),
+                module_path: Some(vec!["std".to_string(), "derives".to_string(), "collection".to_string()]),
+                type_args: vec![
+                    crate::frontend::symbols::ResolvedType::Int,
+                    crate::frontend::symbols::ResolvedType::Str,
+                ],
+                receiver_is_mutable: false,
+            },
+            &receiver,
+        );
+
+        assert!(matches!(
+            dispatch,
+            IrMethodDispatch::Trait { trait_path, .. }
+                if trait_path == "crate::__incan_std::derives::collection::FallibleIterator"
+        ));
+    }
+
+    /// Rust-native traits keep their backend mapping even when semantic resolution records a stdlib source owner.
+    #[test]
+    fn rust_native_trait_dispatch_keeps_native_method_lookup() {
+        let lowering = AstLowering::new();
+        let receiver = TypedExpr::new(IrExprKind::Unit, IrType::Unknown);
+        let clone_trait = builtin_traits::as_str(TraitId::Clone);
+        let expected_trait_path =
+            trait_bounds::incan_to_rust(clone_trait).expect("missing registered native trait path");
+        let dispatch = lowering.lower_resolved_method_dispatch(
+            ResolvedMethodDispatch::Trait {
+                trait_name: clone_trait.to_string(),
+                module_path: Some(vec!["std".to_string(), "derives".to_string(), "copying".to_string()]),
+                type_args: Vec::new(),
+                receiver_is_mutable: false,
+            },
+            &receiver,
+        );
+
+        assert!(matches!(
+            dispatch,
+            IrMethodDispatch::Trait { trait_path, .. } if trait_path == expected_trait_path
+        ));
+    }
+
+    /// A source-owned JSON protocol shadows the same-named Rust serde derive when semantic resolution records its
+    /// canonical stdlib owner.
+    #[test]
+    fn stdlib_json_trait_owner_precedes_native_serde_mapping() {
+        let lowering = AstLowering::new();
+        let receiver = TypedExpr::new(IrExprKind::Unit, IrType::Unknown);
+        for trait_name in ["Serialize", "json.Serialize"] {
+            let dispatch = lowering.lower_resolved_method_dispatch(
+                ResolvedMethodDispatch::Trait {
+                    trait_name: trait_name.to_string(),
+                    module_path: Some(vec!["std".to_string(), "serde".to_string(), "json".to_string()]),
+                    type_args: Vec::new(),
+                    receiver_is_mutable: false,
+                },
+                &receiver,
+            );
+
+            assert!(matches!(
+                dispatch,
+                IrMethodDispatch::Trait { trait_path, .. }
+                    if trait_path == "crate::__incan_std::serde::json::Serialize"
+            ));
+        }
+    }
+
+    /// Imported source JSON traits can lose their module hint after adoption, but their protocol methods must still
+    /// dispatch through the imported source binding rather than Rust serde's derive trait.
+    #[test]
+    fn unqualified_stdlib_json_trait_precedes_native_serde_mapping() {
+        let lowering = AstLowering::new();
+        let receiver = TypedExpr::new(IrExprKind::Unit, IrType::Unknown);
+        let dispatch = lowering.lower_resolved_method_dispatch(
+            ResolvedMethodDispatch::Trait {
+                trait_name: "Serialize".to_string(),
+                module_path: None,
+                type_args: Vec::new(),
+                receiver_is_mutable: false,
+            },
+            &receiver,
+        );
+
+        assert!(matches!(
+            dispatch,
+            IrMethodDispatch::Trait { trait_path, .. } if trait_path == "Serialize"
+        ));
+    }
+
+    /// Qualified stdlib JSON protocols retain source method lookup rather than being mistaken for Rust serde traits.
+    #[test]
+    fn stdlib_json_trait_dispatch_keeps_source_protocol_lookup() {
+        let lowering = AstLowering::new();
+        let receiver = TypedExpr::new(IrExprKind::Unit, IrType::Unknown);
+        let dispatch = lowering.lower_resolved_method_dispatch(
+            ResolvedMethodDispatch::Trait {
+                trait_name: "json.Serialize".to_string(),
+                module_path: None,
+                type_args: Vec::new(),
+                receiver_is_mutable: false,
+            },
+            &receiver,
+        );
+
+        assert!(matches!(
+            dispatch,
+            IrMethodDispatch::Trait { trait_path, .. } if trait_path == "json::Serialize"
+        ));
     }
 }

@@ -615,6 +615,8 @@ impl AstLowering {
 
                 if let Some(enum_ty) = self.enum_names.get(name) {
                     enum_ty.clone()
+                } else if let Some(path) = self.active_trait_default_type_path(n) {
+                    IrType::Struct(path.join("::"))
                 } else {
                     IrType::Struct(name.clone())
                 }
@@ -801,11 +803,70 @@ impl AstLowering {
             },
             ResolvedType::TypeToken(inner) => IrType::TypeToken(Box::new(self.lower_resolved_type(inner))),
             ResolvedType::Tuple(items) => IrType::Tuple(items.iter().map(|t| self.lower_resolved_type(t)).collect()),
-            ResolvedType::TypeVar(name) => IrType::Generic(name.clone()),
+            ResolvedType::TypeVar(name) => self
+                .active_trait_type_substitution(name)
+                .unwrap_or_else(|| IrType::Generic(name.clone())),
             ResolvedType::SelfType => IrType::SelfType,
             ResolvedType::RustPath(path) => IrType::Struct(path.clone()),
             ResolvedType::CallSiteInfer => IrType::Unknown,
             ResolvedType::Unknown => IrType::Unknown,
+        }
+    }
+
+    /// Lower a semantic trait argument while recovering compiled SDK-provider ownership for nominal types.
+    ///
+    /// A method chain can carry a provider-owned type without retaining the source import that introduced it. The
+    /// checked provider API graph is therefore the canonical fallback for unqualified nominal arguments at this
+    /// backend boundary. Ordinary type lowering remains unchanged because declarations and local annotations still
+    /// rely on lexical imports.
+    pub(super) fn lower_resolved_method_type_arg(&self, ty: &ResolvedType) -> IrType {
+        self.qualify_sdk_provider_method_type(self.lower_resolved_type(ty))
+    }
+
+    /// Recursively qualify nominal provider types inside one lowered method-dispatch argument.
+    fn qualify_sdk_provider_method_type(&self, ty: IrType) -> IrType {
+        match ty {
+            IrType::Struct(name) => self
+                .sdk_provider_path_for_type(&name)
+                .map(IrType::Struct)
+                .unwrap_or(IrType::Struct(name)),
+            IrType::NamedGeneric(name, args) => {
+                let name = self.sdk_provider_path_for_type(&name).unwrap_or(name);
+                IrType::NamedGeneric(
+                    name,
+                    args.into_iter()
+                        .map(|arg| self.qualify_sdk_provider_method_type(arg))
+                        .collect(),
+                )
+            }
+            IrType::List(inner) => IrType::List(Box::new(self.qualify_sdk_provider_method_type(*inner))),
+            IrType::Dict(key, value) => IrType::Dict(
+                Box::new(self.qualify_sdk_provider_method_type(*key)),
+                Box::new(self.qualify_sdk_provider_method_type(*value)),
+            ),
+            IrType::Set(inner) => IrType::Set(Box::new(self.qualify_sdk_provider_method_type(*inner))),
+            IrType::Tuple(items) => IrType::Tuple(
+                items
+                    .into_iter()
+                    .map(|item| self.qualify_sdk_provider_method_type(item))
+                    .collect(),
+            ),
+            IrType::Option(inner) => IrType::Option(Box::new(self.qualify_sdk_provider_method_type(*inner))),
+            IrType::Result(ok, err) => IrType::Result(
+                Box::new(self.qualify_sdk_provider_method_type(*ok)),
+                Box::new(self.qualify_sdk_provider_method_type(*err)),
+            ),
+            IrType::Function { params, ret } => IrType::Function {
+                params: params
+                    .into_iter()
+                    .map(|param| self.qualify_sdk_provider_method_type(param))
+                    .collect(),
+                ret: Box::new(self.qualify_sdk_provider_method_type(*ret)),
+            },
+            IrType::Ref(inner) => IrType::Ref(Box::new(self.qualify_sdk_provider_method_type(*inner))),
+            IrType::RefMut(inner) => IrType::RefMut(Box::new(self.qualify_sdk_provider_method_type(*inner))),
+            IrType::TypeToken(inner) => IrType::TypeToken(Box::new(self.qualify_sdk_provider_method_type(*inner))),
+            other => other,
         }
     }
 
@@ -848,6 +909,10 @@ impl AstLowering {
             ast::Type::Qualified(segments) => IrType::Struct(segments.join("::")),
             ast::Type::Simple(name) => {
                 let n = name.as_str();
+
+                if let Some(concrete) = self.active_trait_type_substitution(n) {
+                    return concrete;
+                }
 
                 if type_param_names.is_some_and(|params| params.contains(n)) {
                     return IrType::Generic(name.clone());
@@ -934,7 +999,11 @@ impl AstLowering {
                         lowered_params,
                     ),
                     GenericBaseKind::Other if base == IR_UNION_TYPE_NAME => union_ir_type(lowered_params),
-                    GenericBaseKind::Other => IrType::NamedGeneric(base.clone(), lowered_params),
+                    GenericBaseKind::Other => IrType::NamedGeneric(
+                        self.active_trait_default_type_path(base)
+                            .map_or_else(|| base.clone(), |path| path.join("::")),
+                        lowered_params,
+                    ),
                 }
             }
             ast::Type::Function(params, ret) => IrType::Function {
@@ -1133,8 +1202,70 @@ impl AstLowering {
 mod tests {
     use super::{AstLowering, CollectionTypeId, collections};
     use crate::backend::ir::types::IrType;
+    use crate::frontend::ast;
     use crate::frontend::symbols::ResolvedType;
     use crate::frontend::typechecker::canonical_public_library_type_name;
+
+    /// Imported trait defaults are expanded in the adopter's module, but their annotations still name types from the
+    /// trait's defining module. Preserve that type identity without applying the same name rule to value expressions.
+    #[test]
+    fn lower_trait_default_annotation_uses_defining_module_type_path() {
+        let mut lowering = AstLowering::new();
+        lowering
+            .active_trait_default_type_paths
+            .push(std::collections::HashMap::from([(
+                "ReaderChunks".to_string(),
+                vec![
+                    "crate".to_string(),
+                    "__incan_std".to_string(),
+                    "io".to_string(),
+                    "ReaderChunks".to_string(),
+                ],
+            )]));
+        let annotation = ast::Type::Generic(
+            "ReaderChunks".to_string(),
+            vec![ast::Spanned::new(ast::Type::SelfType, ast::Span::default())],
+        );
+
+        assert_eq!(
+            lowering.lower_type(&annotation),
+            IrType::NamedGeneric(
+                "crate::__incan_std::io::ReaderChunks".to_string(),
+                vec![IrType::SelfType]
+            )
+        );
+    }
+
+    /// Imported default bodies keep their defining-module type namespace unless a local value shadows that name.
+    #[test]
+    fn lower_trait_default_constructor_respects_active_local_binding() {
+        let mut lowering = AstLowering::new();
+        let canonical_path = vec![
+            "crate".to_string(),
+            "__incan_std".to_string(),
+            "io".to_string(),
+            "ReaderChunks".to_string(),
+        ];
+        lowering
+            .active_trait_default_type_paths
+            .push(std::collections::HashMap::from([(
+                "ReaderChunks".to_string(),
+                canonical_path.clone(),
+            )]));
+
+        assert_eq!(
+            lowering.active_trait_default_value_type_path("ReaderChunks"),
+            Some(canonical_path)
+        );
+        lowering.scopes.last_mut().expect("root lowering scope").insert(
+            "ReaderChunks".to_string(),
+            IrType::Function {
+                params: vec![IrType::Int],
+                ret: Box::new(IrType::Int),
+            },
+        );
+        assert_eq!(lowering.active_trait_default_value_type_path("ReaderChunks"), None);
+    }
 
     /// Regression for #892: checker-owned public-library keys lower to provider-qualified Rust nominal paths.
     #[test]

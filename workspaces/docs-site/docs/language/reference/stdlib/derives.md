@@ -20,7 +20,7 @@ Import from the specific derive submodule:
 from std.derives.comparison import Eq, Ord, Hash
 from std.derives.copying import Clone, Copy, Default
 from std.derives.string import Debug, Display
-from std.derives.collection import Contains, Bool, Len, Iterable, Iterator
+from std.derives.collection import Contains, Bool, Len, Iterable, Iterator, FallibleIterator
 ```
 
 ## Surface model
@@ -71,5 +71,6 @@ Provides collection-protocol traits for custom types, including:
 - `Len`
 - `Iterable[T]`
 - `Iterator[T]`
+- `FallibleIterator[T, E]`
 
-Use these when you want a custom type to participate in collection-style APIs through explicit trait adoption. `Bool` is available, but prefer explicit checks for `Option`, `Result`, emptiness, and named boolean state when that is the behavior you mean.
+Use these when you want a custom type to participate in collection-style APIs through explicit trait adoption. `FallibleIterator[T, E]` is the single-pass protocol for sources whose next poll can return an item, ordinary exhaustion, or a typed error; consume it with `for item in stream?:` or its fallible terminals. `Bool` is available, but prefer explicit checks for `Option`, `Result`, emptiness, and named boolean state when that is the behavior you mean.

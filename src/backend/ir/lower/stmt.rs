@@ -1261,16 +1261,22 @@ impl AstLowering {
 
             ast::Statement::For(f) => {
                 // Lower iterable before entering loop scope
-                let iterable = self.lower_expr_spanned(&f.iter)?;
+                let protocol_iteration = self
+                    .type_info
+                    .as_ref()
+                    .and_then(|info| info.protocol_iteration(f.iter.span).cloned());
+                let fallible_protocol = protocol_iteration
+                    .as_ref()
+                    .and_then(|protocol| protocol.fallible_error_type.as_ref());
+                let iterable = match (&f.iter.node, fallible_protocol) {
+                    (ast::Expr::Try(inner), Some(_)) => self.lower_expr_spanned(inner)?,
+                    _ => self.lower_expr_spanned(&f.iter)?,
+                };
 
                 // Push a new scope for the for-loop body
                 self.push_scope();
 
                 // Infer loop variable type from iterable and add to scope
-                let protocol_iteration = self
-                    .type_info
-                    .as_ref()
-                    .and_then(|info| info.protocol_iteration(f.iter.span).cloned());
                 let loop_var_ty = if let Some(protocol) = &protocol_iteration {
                     self.lower_resolved_type(&protocol.item_type)
                 } else {
@@ -1293,11 +1299,14 @@ impl AstLowering {
                     let iterator_ty = self.lower_resolved_type(&protocol.iterator_type);
                     let option_item_ty = IrType::Option(Box::new(loop_var_ty));
                     let iter_name = format!("__incan_iter_{}_{}", stmt_span.start, stmt_span.end);
+                    let iter_dispatch = protocol
+                        .iter_dispatch
+                        .map(|dispatch| self.lower_resolved_method_dispatch(dispatch, &iterable));
                     let iter_value = TypedExpr::new(
                         IrExprKind::MethodCall {
                             receiver: Box::new(iterable),
                             method: protocol.iter_method,
-                            dispatch: None,
+                            dispatch: iter_dispatch,
                             type_args: Vec::new(),
                             args: Vec::new(),
                             callable_signature: self.callable_signature_for_call_span(f.iter.span),
@@ -1313,18 +1322,34 @@ impl AstLowering {
                         },
                         iterator_ty,
                     );
-                    let next_value = TypedExpr::new(
+                    let next_dispatch = protocol
+                        .next_dispatch
+                        .map(|dispatch| self.lower_resolved_method_dispatch(dispatch, &iter_var));
+                    let next_ty = if let Some(error_ty) = &protocol.fallible_error_type {
+                        IrType::Result(
+                            Box::new(option_item_ty.clone()),
+                            Box::new(self.lower_resolved_type(error_ty)),
+                        )
+                    } else {
+                        option_item_ty.clone()
+                    };
+                    let next_call = TypedExpr::new(
                         IrExprKind::MethodCall {
                             receiver: Box::new(iter_var),
                             method: protocol.next_method,
-                            dispatch: None,
+                            dispatch: next_dispatch,
                             type_args: Vec::new(),
                             args: Vec::new(),
                             callable_signature: None,
                             arg_policy: MethodCallArgPolicy::Default,
                         },
-                        option_item_ty.clone(),
+                        next_ty,
                     );
+                    let next_value = if protocol.fallible_error_type.is_some() {
+                        TypedExpr::new(IrExprKind::Try(Box::new(next_call)), option_item_ty.clone())
+                    } else {
+                        next_call
+                    };
                     let some_pattern = IrPattern::Enum {
                         name: "Option".to_string(),
                         variant: constructors::as_str(ConstructorId::Some).to_string(),

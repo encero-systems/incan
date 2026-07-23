@@ -8,11 +8,11 @@ use super::super::AstLowering;
 use crate::frontend::ast::{self, Spanned};
 use crate::frontend::decorator_resolution;
 use incan_core::interop::is_rust_capability_bound;
-use incan_core::lang::conventions;
+use incan_core::lang::callables;
 use incan_core::lang::decorators::{self, DecoratorId};
 use incan_core::lang::derives::{self, DeriveId};
+use incan_core::lang::keywords::{self, KeywordId};
 use incan_core::lang::trait_bounds;
-use incan_core::lang::types::numerics::{self, NumericTypeId};
 
 const SERDE_SERIALIZE_DERIVE: &str = "serde::Serialize";
 const SERDE_DESERIALIZE_DERIVE: &str = "serde::Deserialize";
@@ -42,7 +42,11 @@ impl AstLowering {
     ///
     /// RFC 023: Incan trait names (e.g., `Eq`) are mapped to their Rust equivalents (e.g., `PartialEq`).
     /// Inferred bounds from body scanning are added later during emission.
-    pub(in crate::backend::ir::lower) fn lower_type_params(ast_params: &[ast::TypeParam]) -> Vec<IrTypeParam> {
+    pub(in crate::backend::ir::lower) fn lower_type_params(&self, ast_params: &[ast::TypeParam]) -> Vec<IrTypeParam> {
+        let type_param_names = ast_params
+            .iter()
+            .map(|param| param.name.as_str())
+            .collect::<HashSet<_>>();
         let mut lowered: Vec<IrTypeParam> = Vec::new();
         for tp in ast_params {
             // RFC 041 capability shorthand support:
@@ -70,80 +74,21 @@ impl AstLowering {
                 }
             }
 
-            lowered.push(Self::lower_type_param(tp));
+            lowered.push(self.lower_type_param(tp, &type_param_names));
         }
         lowered
     }
 
     /// Lower a single AST type parameter to its IR representation.
-    fn lower_type_param(tp: &ast::TypeParam) -> IrTypeParam {
-        let bounds = tp.bounds.iter().map(Self::lower_trait_bound).collect();
+    fn lower_type_param(&self, tp: &ast::TypeParam, type_param_names: &HashSet<&str>) -> IrTypeParam {
+        let bounds = tp
+            .bounds
+            .iter()
+            .map(|bound| self.lower_trait_bound(bound, type_param_names))
+            .collect();
         IrTypeParam {
             name: tp.name.clone(),
             bounds,
-        }
-    }
-
-    /// Lower a type that appears inside a generic trait bound.
-    ///
-    /// Uses the same `incan_core` registries as [`AstLowering::lower_type_with_type_params`] for primitive name
-    /// resolution so the two stay in sync when new primitive types are added.
-    fn lower_bound_type(ty: &ast::Type) -> IrType {
-        match ty {
-            ast::Type::Qualified(segments) => IrType::Struct(segments.join("::")),
-            ast::Type::Simple(name) => {
-                let n = name.as_str();
-                if n == conventions::NONE_TYPE_NAME || n == conventions::UNIT_TYPE_NAME {
-                    return IrType::Unit;
-                }
-                if let Some(id) = numerics::from_str(n) {
-                    return match n {
-                        "int" => IrType::Int,
-                        "float" => IrType::Float,
-                        "bool" => IrType::Bool,
-                        _ => match id {
-                            NumericTypeId::Bool => IrType::Bool,
-                            _ => IrType::Numeric(id),
-                        },
-                    };
-                }
-                if n == "str" {
-                    return IrType::String;
-                }
-                IrType::Generic(name.clone())
-            }
-            ast::Type::ConstrainedPrimitive(name, _) => {
-                let n = name.as_str();
-                if let Some(id) = numerics::from_str(n) {
-                    return match n {
-                        "int" => IrType::Int,
-                        "float" => IrType::Float,
-                        "bool" => IrType::Bool,
-                        _ => match id {
-                            NumericTypeId::Bool => IrType::Bool,
-                            _ => IrType::Numeric(id),
-                        },
-                    };
-                }
-                IrType::Generic(name.clone())
-            }
-            ast::Type::Generic(base, args) => {
-                let lowered_args = args.iter().map(|arg| Self::lower_bound_type(&arg.node)).collect();
-                IrType::NamedGeneric(base.clone(), lowered_args)
-            }
-            ast::Type::Function(params, ret) => IrType::Function {
-                params: params.iter().map(|param| Self::lower_bound_type(&param.node)).collect(),
-                ret: Box::new(Self::lower_bound_type(&ret.node)),
-            },
-            ast::Type::Ref(inner) => IrType::Ref(Box::new(Self::lower_bound_type(&inner.node))),
-            ast::Type::RefMut(inner) => IrType::RefMut(Box::new(Self::lower_bound_type(&inner.node))),
-            ast::Type::Unit => IrType::Unit,
-            ast::Type::Tuple(items) => {
-                IrType::Tuple(items.iter().map(|item| Self::lower_bound_type(&item.node)).collect())
-            }
-            ast::Type::SelfType => IrType::SelfType,
-            ast::Type::IntLiteral(_) => IrType::Unknown,
-            ast::Type::Infer => IrType::Unknown,
         }
     }
 
@@ -151,14 +96,34 @@ impl AstLowering {
     ///
     /// Uses the `incan_core::lang::trait_bounds` registry to resolve known Incan names to their Rust trait paths (e.g.,
     /// Incan `Eq` → Rust `PartialEq`). Unknown names are passed through as-is, allowing user-defined trait bounds.
-    fn lower_trait_bound(bound: &ast::TraitBound) -> IrTraitBound {
+    fn lower_trait_bound(&self, bound: &ast::TraitBound, type_param_names: &HashSet<&str>) -> IrTraitBound {
+        let (module_path, source_name) = self.canonical_trait_identity(&bound.name);
+        let callable = module_path
+            .as_deref()
+            .filter(|path| callables::module_path_matches(path))
+            .and(source_name.as_deref())
+            .and_then(callables::from_str);
+        if let Some(callable) = callable {
+            let arity = callables::info_for(callable).arity;
+            if bound.type_args.len() == arity + 1 {
+                let types = bound
+                    .type_args
+                    .iter()
+                    .map(|arg| self.lower_type_with_type_params(&arg.node, Some(type_param_names)))
+                    .collect::<Vec<_>>();
+                let trait_path = self
+                    .active_trait_default_type_path(&bound.name)
+                    .map_or_else(|| bound.name.clone(), |path| path.join("::"));
+                return IrTraitBound::source_callable(trait_path, types);
+            }
+        }
         let trait_path = trait_bounds::incan_to_rust(&bound.name)
             .map(str::to_string)
             .unwrap_or_else(|| bound.name.clone());
         let type_args = bound
             .type_args
             .iter()
-            .map(|arg| Self::lower_bound_type(&arg.node))
+            .map(|arg| self.lower_type_with_type_params(&arg.node, Some(type_param_names)))
             .collect();
         IrTraitBound::with_type_args_classified(trait_path, type_args)
     }
@@ -367,7 +332,11 @@ impl AstLowering {
                     return Some(rust_path.join("::"));
                 }
                 let resolved = self.resolve_derive_path(name);
-                if resolved.first().is_some_and(|segment| segment == "rust") && resolved.len() >= 2 {
+                if resolved
+                    .first()
+                    .is_some_and(|segment| segment == keywords::as_str(KeywordId::Rust))
+                    && resolved.len() >= 2
+                {
                     return Some(resolved[1..].join("::"));
                 }
                 Some(name.clone())
@@ -689,5 +658,67 @@ impl AstLowering {
             ast::Type::IntLiteral(value) => value.repr.clone(),
             ast::Type::Infer => "_".to_string(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::ir::decl::IrTraitBoundOrigin;
+
+    fn callable_bound(name: &str) -> ast::TraitBound {
+        ast::TraitBound {
+            name: name.to_string(),
+            type_args: vec![
+                Spanned::new(ast::Type::Simple("T".to_string()), ast::Span::default()),
+                Spanned::new(ast::Type::Simple("U".to_string()), ast::Span::default()),
+            ],
+        }
+    }
+
+    #[test]
+    fn source_callable_lowering_requires_canonical_std_trait_owner() {
+        let mut lowering = AstLowering::new();
+        let type_params = HashSet::from(["T", "U"]);
+
+        let local = lowering.lower_trait_bound(&callable_bound("Callable1"), &type_params);
+        assert_eq!(local.origin, IrTraitBoundOrigin::Standard);
+        assert_eq!(local.trait_path, "Callable1");
+
+        lowering.import_aliases.insert(
+            "Callable1".to_string(),
+            vec![
+                "std".to_string(),
+                "traits".to_string(),
+                "callable".to_string(),
+                "Callable1".to_string(),
+            ],
+        );
+        let canonical = lowering.lower_trait_bound(&callable_bound("Callable1"), &type_params);
+        assert_eq!(canonical.origin, IrTraitBoundOrigin::SourceCallable);
+        assert_eq!(canonical.trait_path, "Callable1");
+        assert_eq!(
+            canonical.type_args,
+            vec![IrType::Generic("T".to_string()), IrType::Generic("U".to_string())]
+        );
+        assert!(canonical.assoc_types.is_empty());
+
+        lowering.import_aliases.clear();
+        lowering.active_trait_default_type_paths.push(HashMap::from([(
+            "Callable1".to_string(),
+            vec![
+                "crate".to_string(),
+                "__incan_std".to_string(),
+                "traits".to_string(),
+                "callable".to_string(),
+                "Callable1".to_string(),
+            ],
+        )]));
+        let expanded_default = lowering.lower_trait_bound(&callable_bound("Callable1"), &type_params);
+        assert_eq!(expanded_default.origin, IrTraitBoundOrigin::SourceCallable);
+        assert_eq!(
+            expanded_default.trait_path,
+            "crate::__incan_std::traits::callable::Callable1"
+        );
     }
 }

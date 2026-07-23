@@ -114,7 +114,7 @@ fn main() {
         }),
     );
     let _ = println!(
-        "{}", Config { host : "localhost".to_string(), port : 8080, debug : true }
-        .to_json()
+        "{}", json::Serialize::to_json(& Config { host : "localhost".to_string(), port :
+        8080, debug : true },)
     );
 }

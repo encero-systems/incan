@@ -157,7 +157,7 @@ impl AstLowering {
             ast::Declaration::TypeAlias(a) => IrDeclKind::TypeAlias {
                 visibility: self.map_type_visibility(a.visibility),
                 name: a.name.clone(),
-                type_params: Self::lower_type_params(&a.type_params),
+                type_params: self.lower_type_params(&a.type_params),
                 ty: self.lower_type(&a.target.node),
                 is_rusttype: false,
                 interop_edges: Vec::new(),
@@ -184,7 +184,7 @@ impl AstLowering {
                     return Ok(IrDecl::new(IrDeclKind::TypeAlias {
                         visibility: Self::map_visibility(n.visibility),
                         name: n.name.clone(),
-                        type_params: Self::lower_type_params(&n.type_params),
+                        type_params: self.lower_type_params(&n.type_params),
                         ty: self.lower_type(&n.underlying.node),
                         is_rusttype: true,
                         interop_edges,

@@ -834,7 +834,9 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                     self.scan_expr(&arm.body);
                 }
             }
-            IrExprKind::Closure { params, body, captures } => {
+            IrExprKind::Closure {
+                params, body, captures, ..
+            } => {
                 for (_, ty) in params {
                     self.scan_type(ty);
                 }

@@ -1057,6 +1057,7 @@ fn collect_backend_clone_bounds_in_expr(
             args,
             arg_policy,
             callable_signature,
+            dispatch,
             ..
         } => {
             let callable_signature = callable_signature.as_ref();
@@ -1066,7 +1067,8 @@ fn collect_backend_clone_bounds_in_expr(
                     RegularMethodArgumentContext {
                         arg_policy: *arg_policy,
                         receiver_ref_kind: receiver_ref_kind(receiver),
-                        has_incan_method_signature: callable_signature.is_some(),
+                        has_incan_method_signature: matches!(arg_policy, MethodCallArgPolicy::SourceOwned)
+                            || matches!(dispatch, Some(super::expr::IrMethodDispatch::Trait { .. })),
                         is_incan_owned_nominal_receiver: clone_context.is_incan_owned_nominal_receiver(&receiver.ty),
                         is_rusttype_alias_receiver: clone_context.is_rusttype_alias_receiver(&receiver.ty),
                         preserves_lookup_arg_shape: matches!(arg_policy, MethodCallArgPolicy::PreserveShape),
@@ -3311,7 +3313,7 @@ mod tests {
     }
 
     #[test]
-    fn backend_clone_bounds_use_incan_policy_for_methods_with_signatures() -> Result<(), Box<dyn std::error::Error>> {
+    fn backend_clone_bounds_use_incan_policy_for_source_owned_methods() -> Result<(), Box<dyn std::error::Error>> {
         let mut func = function("send", vec![IrTypeParam::bare("T")]);
         func.body = vec![IrStmt::new(IrStmtKind::Expr(TypedExpr::new(
             IrExprKind::MethodCall {
@@ -3349,7 +3351,7 @@ mod tests {
                     }],
                     return_type: IrType::Unit,
                 }),
-                arg_policy: MethodCallArgPolicy::Default,
+                arg_policy: MethodCallArgPolicy::SourceOwned,
             },
             IrType::Unit,
         )))];
@@ -3370,7 +3372,7 @@ mod tests {
         };
         assert!(
             func.type_params[0].bounds.contains(&IrTraitBound::simple(tb::CLONE)),
-            "Incan method signatures should keep clone-bound inference aligned with emission, got {:?}",
+            "source-owned method boundaries should keep clone-bound inference aligned with emission, got {:?}",
             func.type_params[0].bounds
         );
         Ok(())

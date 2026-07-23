@@ -414,7 +414,7 @@ impl TelemetryValue {
                 return text;
             }
             None => {
-                return self.to_json();
+                return crate::__incan_std::serde::json::Serialize::to_json(self);
             }
         };
     }

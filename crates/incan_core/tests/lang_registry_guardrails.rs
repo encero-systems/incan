@@ -277,7 +277,7 @@ fn traits_spellings_unique_and_resolvable() {
 fn magic_methods_spellings_unique_and_resolvable() {
     assert_registry_round_trip(RegistryRoundTrip {
         label: "magic method",
-        expected_len: 7,
+        expected_len: 9,
         items: magic_methods::MAGIC_METHODS,
         id_of: |info| info.id,
         canonical_of: |info| info.canonical,

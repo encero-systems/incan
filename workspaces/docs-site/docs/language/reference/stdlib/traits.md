@@ -112,6 +112,8 @@ Provides traits for callable objects with fixed arity:
 - `Callable1[A, R]`
 - `Callable2[A, B, R]`
 
+These traits can also be used as generic bounds that accept matching named functions and capturing closures. See [Callable objects](../stdlib_traits/callable.md) for the distinction between nominal callable capabilities and ordinary function types.
+
 ### `std.traits.prelude`
 
 Re-exports the common `std.traits.*` families so you can import one module instead of each trait family separately.

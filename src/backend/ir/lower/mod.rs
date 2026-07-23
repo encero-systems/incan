@@ -100,6 +100,12 @@ pub struct AstLowering {
     pub(super) static_binding_scopes: Vec<std::collections::HashSet<String>>,
     /// Scope chain for local callable signatures that carry default expressions not representable in [`IrType`].
     pub(super) local_callable_signature_scopes: Vec<HashMap<String, Option<FunctionSignature>>>,
+    /// Scope chain for local values whose generic type parameter adopts a canonical source `CallableN` trait.
+    ///
+    /// Typechecker facts normally select `__call__`. Imported trait defaults are lowered from their source AST inside
+    /// an adopter module and have no adopter-owned expression spans, so their nominal callable parameters need this
+    /// source-derived fallback.
+    pub(super) nominal_callable_scopes: Vec<HashMap<String, FunctionSignature>>,
     /// Callable signatures rehydrated while lowering local partial expressions, keyed by source span.
     pub(super) partial_expr_signatures: HashMap<(usize, usize), FunctionSignature>,
     /// Track declared structs/models/classes for constructor detection
@@ -116,14 +122,33 @@ pub struct AstLowering {
     pub(super) trait_decls: HashMap<String, ast::TraitDecl>,
     /// Canonical helper paths needed when expanding default methods from imported traits.
     pub(super) trait_default_function_paths: HashMap<String, HashMap<String, Vec<String>>>,
+    /// Canonical defining-module type paths used by imported trait defaults.
+    ///
+    /// Unlike value calls, type annotations live in a distinct namespace. Keeping this map scoped to expansion of one
+    /// imported default lets signatures such as `ReaderChunks[Self]` retain their source identity without interpreting
+    /// same-named value expressions as constructors.
+    pub(super) trait_default_type_paths: HashMap<String, HashMap<String, Vec<String>>>,
     /// Active default-method helper paths while lowering one expanded trait default body.
     pub(super) active_trait_default_function_paths: Vec<HashMap<String, Vec<String>>>,
+    /// Active defining-module type paths while lowering one expanded trait default body.
+    pub(super) active_trait_default_type_paths: Vec<HashMap<String, Vec<String>>>,
+    /// Concrete trait arguments active while expanding a source default method into an adopter impl.
+    ///
+    /// Trait defaults are lowered in the adopter's context rather than emitted as Rust trait defaults because Incan
+    /// permits them to access adopter fields. This stack keeps every annotation and typechecker-owned expression fact
+    /// specialized to the concrete `with Trait[...]` arguments during that expansion.
+    pub(super) active_trait_type_substitutions: Vec<HashMap<String, IrType>>,
     /// Concrete nominal types that explicitly adopt the stdlib Iterator protocol.
     pub(super) iterator_adopter_names: HashSet<String>,
     /// Optional typechecker output used to drive lowering (avoid heuristics).
     pub(super) type_info: Option<TypeCheckInfo>,
     /// Shared provider and feature projection used to rehydrate compiled dependency metadata.
     pub(super) provider_plan: Option<Arc<ProviderPlan>>,
+    /// Whether this lowering pass emits one compiled SDK-provider artifact.
+    ///
+    /// Provider source addresses stdlib contracts through its crate-local `__incan_std` facade. Ordinary consumers
+    /// instead address the selected linked provider artifact.
+    pub(super) sdk_provider_build: bool,
     /// Newtype construction plans used by calls and generated bridges.
     ///
     /// Production lowering consumes typechecker-approved plans. Direct AST-lowering tests may use the conservative
@@ -265,6 +290,7 @@ impl AstLowering {
             scopes: vec![HashMap::new()],
             static_binding_scopes: vec![HashSet::new()],
             local_callable_signature_scopes: vec![HashMap::new()],
+            nominal_callable_scopes: vec![HashMap::new()],
             partial_expr_signatures: HashMap::new(),
             struct_names: HashMap::new(),
             enum_names: HashMap::new(),
@@ -273,10 +299,14 @@ impl AstLowering {
             trait_methods: HashMap::new(),
             trait_decls: HashMap::new(),
             trait_default_function_paths: HashMap::new(),
+            trait_default_type_paths: HashMap::new(),
             active_trait_default_function_paths: Vec::new(),
+            active_trait_default_type_paths: Vec::new(),
+            active_trait_type_substitutions: Vec::new(),
             iterator_adopter_names: HashSet::new(),
             type_info: None,
             provider_plan: None,
+            sdk_provider_build: false,
             newtype_construction: HashMap::new(),
             current_impl_type: None,
             current_classmethod_constructor: None,
@@ -319,6 +349,11 @@ impl AstLowering {
     /// Provide the immutable provider plan for metadata-backed lowering.
     pub fn set_provider_plan(&mut self, plan: Option<Arc<ProviderPlan>>) {
         self.provider_plan = plan;
+    }
+
+    /// Select crate-local stdlib dispatch paths while compiling an SDK-provider artifact.
+    pub fn set_sdk_provider_build(&mut self, enabled: bool) {
+        self.sdk_provider_build = enabled;
     }
 
     /// Lower one typechecker-resolved callable surface into IR parameters, attaching an already-planned default
@@ -461,6 +496,33 @@ impl AstLowering {
             .iter()
             .rev()
             .find_map(|paths| paths.get(name).cloned())
+    }
+
+    /// Return the defining-module path for a type annotation in the currently-expanded trait default.
+    pub(super) fn active_trait_default_type_path(&self, name: &str) -> Option<Vec<String>> {
+        self.active_trait_default_type_paths
+            .iter()
+            .rev()
+            .find_map(|paths| paths.get(name).cloned())
+    }
+
+    /// Resolve an unqualified type constructor in an imported trait default against its defining module.
+    ///
+    /// Default bodies are lowered inside the adopter, so the adopter's type namespace must not replace a type owned by
+    /// the defining trait module. Active local bindings still win exactly as they do in the original source body.
+    pub(super) fn active_trait_default_value_type_path(&self, name: &str) -> Option<Vec<String>> {
+        if self.scopes.iter().rev().any(|scope| scope.contains_key(name)) {
+            return None;
+        }
+        self.active_trait_default_type_path(name)
+    }
+
+    /// Return the concrete adopter type for one type variable in the currently-expanded trait default.
+    pub(super) fn active_trait_type_substitution(&self, name: &str) -> Option<IrType> {
+        self.active_trait_type_substitutions
+            .iter()
+            .rev()
+            .find_map(|substitutions| substitutions.get(name).cloned())
     }
 
     /// Extract generated validation constraints from a newtype underlying annotation.
@@ -1025,6 +1087,7 @@ impl AstLowering {
         self.scopes.push(HashMap::new());
         self.static_binding_scopes.push(HashSet::new());
         self.local_callable_signature_scopes.push(HashMap::new());
+        self.nominal_callable_scopes.push(HashMap::new());
     }
 
     /// Leave the current lowering scope and discard scoped local binding metadata.
@@ -1032,6 +1095,7 @@ impl AstLowering {
         let _ = self.scopes.pop();
         let _ = self.static_binding_scopes.pop();
         let _ = self.local_callable_signature_scopes.pop();
+        let _ = self.nominal_callable_scopes.pop();
     }
 
     pub(super) fn define_local_binding(&mut self, name: String, ty: IrType, is_static_binding: bool) {
@@ -1065,6 +1129,27 @@ impl AstLowering {
             .iter()
             .rev()
             .find_map(|scope| scope.get(name).map(|signature| signature.as_ref().cloned()))?
+    }
+
+    /// Associate a local value with nominal `CallableN` dispatch in the current scope.
+    pub(super) fn define_nominal_callable(&mut self, name: String, signature: FunctionSignature) {
+        if let Some(scope) = self.nominal_callable_scopes.last_mut() {
+            scope.insert(name, signature);
+        }
+    }
+
+    /// Resolve nominal callable dispatch while respecting ordinary local shadowing.
+    pub(super) fn lookup_nominal_callable(&self, name: &str) -> Option<FunctionSignature> {
+        self.scopes
+            .iter()
+            .zip(&self.nominal_callable_scopes)
+            .rev()
+            .find_map(|(bindings, callables)| {
+                bindings
+                    .contains_key(name)
+                    .then(|| callables.get(name).cloned())
+                    .flatten()
+            })
     }
 
     /// Return the callable signature recorded while lowering a local partial expression.
@@ -1483,7 +1568,7 @@ impl AstLowering {
                     .and_then(|info| info.declarations.newtype_construction.get(&n.name));
                 let plan = if let Some(checked) = checked {
                     super::IrNewtypeConstructionPlan {
-                        type_params: Self::lower_type_params(&n.type_params),
+                        type_params: self.lower_type_params(&n.type_params),
                         underlying: self.lower_resolved_type(&checked.underlying),
                         checked_constructor: checked.checked_constructor.clone(),
                         constraints: checked.constraints.clone(),
@@ -1502,7 +1587,7 @@ impl AstLowering {
                             | IrType::Generic(_)
                     );
                     super::IrNewtypeConstructionPlan {
-                        type_params: Self::lower_type_params(&n.type_params),
+                        type_params: self.lower_type_params(&n.type_params),
                         underlying,
                         checked_constructor: Self::select_newtype_checked_ctor(n),
                         constraints: Self::newtype_constraints_from_ast(&n.underlying.node),
@@ -2739,12 +2824,41 @@ impl AstLowering {
                     .map(|method| method.node.name.clone())
                     .collect();
                 let default_function_paths = Self::stdlib_trait_default_function_paths(&module.segments, &item.name);
+                let mut type_module_path = module.segments.clone();
+                if type_module_path.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT) {
+                    type_module_path[0] = stdlib::INCAN_STD_NAMESPACE.to_string();
+                }
+                let default_type_paths = self
+                    .stdlib_cache
+                    .list_types(&module.segments)
+                    .into_iter()
+                    .map(|(type_name, _)| {
+                        let mut path = vec!["crate".to_string()];
+                        path.extend(type_module_path.iter().cloned());
+                        path.push(type_name.clone());
+                        (type_name, path)
+                    })
+                    .collect::<HashMap<_, _>>();
+                let mut default_type_paths = default_type_paths;
+                for (local_name, mut path) in self
+                    .stdlib_cache
+                    .lookup_trait_type_import_paths(&module.segments, &item.name)
+                {
+                    if path.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT) {
+                        path[0] = stdlib::INCAN_STD_NAMESPACE.to_string();
+                    }
+                    path.insert(0, "crate".to_string());
+                    default_type_paths.entry(local_name).or_insert(path);
+                }
                 self.trait_methods.entry(local_name.clone()).or_insert(method_names);
                 if !default_function_paths.is_empty() {
                     self.trait_default_function_paths
                         .entry(local_name.clone())
                         .or_insert(default_function_paths);
                 }
+                self.trait_default_type_paths
+                    .entry(local_name.clone())
+                    .or_insert(default_type_paths);
                 self.trait_decls.entry(local_name).or_insert(trait_decl);
             }
         }

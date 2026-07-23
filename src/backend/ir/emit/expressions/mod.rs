@@ -56,8 +56,8 @@ use std::sync::LazyLock;
 
 use super::super::decl::IrInteropAdapterKind;
 use super::super::expr::{
-    CollectionMethodKind, IrDictEntry, IrExprKind, IrInteropCoercionKind, IrListEntry, Literal as IrLiteral,
-    MethodKind, NumericResizePolicy, TypedExpr, UnaryOp, VarRefKind,
+    CollectionMethodKind, IrDictEntry, IrExprKind, IrInteropCoercionKind, IrListEntry, IrMethodDispatch,
+    Literal as IrLiteral, MethodKind, NumericResizePolicy, TypedExpr, UnaryOp, VarRefKind,
 };
 use super::super::types::IrType;
 use super::{EmitError, IrEmitter};
@@ -90,6 +90,17 @@ pub(in crate::backend::ir::emit) fn method_kind_uses_mutable_receiver(kind: &Met
                 | CollectionMethodKind::Reserve
                 | CollectionMethodKind::ReserveExact
         )
+    )
+}
+
+/// Return whether frontend semantic method resolution selected a trait method with `mut self`.
+pub(in crate::backend::ir::emit) fn method_dispatch_uses_mutable_receiver(dispatch: Option<&IrMethodDispatch>) -> bool {
+    matches!(
+        dispatch,
+        Some(IrMethodDispatch::Trait {
+            receiver_is_mutable: true,
+            ..
+        })
     )
 }
 
@@ -1312,13 +1323,16 @@ impl<'a> IrEmitter<'a> {
                 params,
                 body,
                 captures: _,
+                annotate_param_types,
             } => {
                 let param_tokens: Vec<TokenStream> = params
                     .iter()
                     .map(|(pname, pty)| {
                         let n = Self::rust_ident(pname);
-                        if matches!(pty, IrType::RustDisplay(_)) {
+                        if *annotate_param_types || matches!(pty, IrType::RustDisplay(_)) {
+                            let previous = self.qualify_internal_canonical_paths.replace(true);
                             let ty = self.emit_type(pty);
+                            self.qualify_internal_canonical_paths.replace(previous);
                             quote! { #n: #ty }
                         } else {
                             quote! { #n }
@@ -1512,8 +1526,8 @@ impl<'a> IrEmitter<'a> {
 mod tests {
     use super::*;
     use crate::backend::ir::expr::{
-        CollectionMethodKind, IrCallArg, IrCallArgKind, IteratorMethodKind, MethodCallArgPolicy, MethodKind, VarAccess,
-        VarRefKind,
+        CollectionMethodKind, IrCallArg, IrCallArgKind, IrMethodDispatch, IteratorMethodKind, MethodCallArgPolicy,
+        MethodKind, VarAccess, VarRefKind,
     };
     use crate::backend::ir::{FunctionParam, FunctionRegistry, FunctionSignature, Mutability};
     use incan_core::lang::traits::{self as core_traits, TraitId};
@@ -3835,6 +3849,53 @@ mod tests {
             "unexpected batch emission: {batch_rendered}"
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn source_trait_take_dispatch_preserves_incan_int_argument() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let expr = TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "stream".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Struct("Stream".to_string()),
+                )),
+                method: "take".to_string(),
+                dispatch: Some(IrMethodDispatch::Trait {
+                    trait_path: "crate::__incan_std::derives::collection::FallibleIterator".to_string(),
+                    type_args: vec![IrType::Int, IrType::String],
+                    receiver_is_mutable: false,
+                }),
+                type_args: Vec::new(),
+                args: vec![IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: TypedExpr::new(IrExprKind::Int(3), IrType::Int),
+                }],
+                callable_signature: None,
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            IrType::Unknown,
+        );
+
+        let rendered = emitter
+            .emit_expr(&expr)
+            .map_err(|error| format!("expected successful source trait emission, got {error:?}"))?
+            .to_string();
+        assert!(
+            rendered.contains("take (& stream , 3)"),
+            "unexpected source trait take emission: {rendered}"
+        );
+        assert!(
+            !rendered.contains("u64 :: try_from"),
+            "source trait method arguments must follow their declared Incan signature: {rendered}"
+        );
         Ok(())
     }
 

@@ -1850,6 +1850,11 @@ mod tests {
                 && entry.name == "Compiled providers, SDK components, and package features"
                 && entry.rfc == "RFC 114"
         }));
+        assert!(entries.iter().any(|entry| {
+            entry.id == "FallibleIteration"
+                && entry.name == "Fallible iteration and combinators"
+                && entry.rfc == "RFC 115"
+        }));
 
         let output_dir = tempfile::tempdir()?;
         let output = output_dir.path().join("feature_inventory.md");
@@ -1858,6 +1863,7 @@ mod tests {
         assert!(rendered.contains("`std.registry` typed declaration catalogues"));
         assert!(rendered.contains("Workspace and multi-package projects"));
         assert!(rendered.contains("Compiled providers, SDK components, and package features"));
+        assert!(rendered.contains("Fallible iteration and combinators"));
         assert!(rendered.contains("crates/incan_stdlib/stdlib/capabilities.incn"));
         Ok(())
     }

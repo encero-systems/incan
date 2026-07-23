@@ -8,7 +8,7 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
 use incan_core::lang::{
-    conventions,
+    callables, conventions,
     traits::{self as core_traits, TraitId},
 };
 
@@ -22,6 +22,80 @@ use super::super::{EmitError, IrEmitter};
 use super::{ZEN_TEXT, join_path_tokens};
 
 impl<'a> IrEmitter<'a> {
+    /// Emit the native-function bridge owned by a canonical `std.traits.callable.CallableN` declaration.
+    ///
+    /// The source trait remains the public generic contract. This local blanket implementation makes Rust function
+    /// items and closures satisfy that same nominal contract, while Incan models continue to use their ordinary
+    /// source-generated trait impls. Lowering records the canonical declaration role so generated provider crate paths
+    /// cannot erase the public `std` namespace identity.
+    fn emit_source_callable_blanket_impl(&self, trait_decl: &super::super::super::decl::IrTrait) -> TokenStream {
+        let Some(callable) = trait_decl.source_callable else {
+            return quote! {};
+        };
+        let arity = callables::info_for(callable).arity;
+        if trait_decl.type_params.len() != arity + 1 {
+            return quote! {};
+        }
+
+        let trait_name = Self::rust_ident(&trait_decl.name);
+        let type_params = trait_decl
+            .type_params
+            .iter()
+            .map(|param| Self::rust_ident(&param.name))
+            .collect::<Vec<_>>();
+        let callable_params = type_params[..arity].to_vec();
+        let return_type = type_params[arity].clone();
+        let callback_type = format_ident!("__IncanCallable");
+        let argument_names = (0..arity)
+            .map(|index| format_ident!("__incan_arg_{index}"))
+            .collect::<Vec<_>>();
+
+        quote! {
+            impl<#(#type_params,)* #callback_type> #trait_name<#(#type_params),*> for #callback_type
+            where
+                #callback_type: Fn(#(#callable_params),*) -> #return_type,
+            {
+                fn __call__(&self, #(#argument_names: #callable_params),*) -> #return_type {
+                    (self)(#(#argument_names),*)
+                }
+            }
+        }
+    }
+
+    /// Emit one method return type with a Rust precise-capture list for source-level trait returns.
+    ///
+    /// An Incan method returning a trait lowers to Rust return-position `impl Trait`. Without `use<...>`, Rust can
+    /// conservatively capture the receiver borrow even when the hidden adapter owns `self.clone()`, which makes
+    /// ordinary chains such as `stream.map(...).filter(...)` borrow a temporary. The capture list names all generic
+    /// parameters in scope while deliberately excluding the receiver lifetime.
+    fn emit_method_return_type(
+        &self,
+        return_type: &IrType,
+        method_type_params: &[super::super::super::decl::IrTypeParam],
+    ) -> TokenStream {
+        let emitted = self.emit_type(return_type);
+        if !matches!(return_type, IrType::ImplTrait(_)) {
+            return emitted;
+        }
+        let Some((owner_is_trait, owner_type_params)) = self.current_method_owner_type_params.borrow().clone() else {
+            return emitted;
+        };
+        let mut capture_names = Vec::new();
+        if owner_is_trait {
+            capture_names.push("Self".to_string());
+        }
+        for name in owner_type_params
+            .into_iter()
+            .chain(method_type_params.iter().map(|param| param.name.clone()))
+        {
+            if !capture_names.contains(&name) {
+                capture_names.push(name);
+            }
+        }
+        let captures = capture_names.iter().map(|name| Self::rust_ident(name));
+        quote! { #emitted + use<#(#captures),*> }
+    }
+
     /// Rewrite expression type metadata for borrowed adapter parameters throughout a statement.
     fn rewrite_borrowed_param_types_in_stmt(stmt: &mut IrStmt, borrowed: &HashMap<String, IrType>) {
         match &mut stmt.kind {
@@ -423,7 +497,7 @@ impl<'a> IrEmitter<'a> {
         self.emit_method(&helper).map(Some)
     }
 
-    /// Rust trait methods that return `Self` from an associated function position need `where Self: Sized`.
+    /// Rust trait methods that mention `Self` in their return type may require `where Self: Sized`.
     ///
     /// Walk the emitted return type recursively so wrappers like `Result<Self, E>` or function types preserve the same
     /// constraint.
@@ -812,7 +886,7 @@ impl<'a> IrEmitter<'a> {
         let ret = match &func.return_type {
             IrType::Unit => quote! {},
             ty => {
-                let t = self.emit_type(ty);
+                let t = self.emit_method_return_type(ty, &func.type_params);
                 quote! { -> #t }
             }
         };
@@ -974,6 +1048,10 @@ impl<'a> IrEmitter<'a> {
         let iterator_trait_name = core_traits::as_str(TraitId::Iterator);
         let iterator_trait = format_ident!("{iterator_trait_name}");
         let sum_trait = format_ident!("{}", core_traits::as_str(TraitId::Sum));
+        let previous_method_owner_type_params = self.current_method_owner_type_params.replace(Some((
+            true,
+            trait_decl.type_params.iter().map(|param| param.name.clone()).collect(),
+        )));
         let methods: Vec<TokenStream> = trait_decl
             .methods
             .iter()
@@ -983,6 +1061,8 @@ impl<'a> IrEmitter<'a> {
                 self.emit_trait_method_with_where(m, iterator_sum_bound)
             })
             .collect::<Result<_, _>>()?;
+        self.current_method_owner_type_params
+            .replace(previous_method_owner_type_params);
 
         // RFC 023 / RFC 042: trait-level generics and direct supertrait bounds.
         let generics = self.emit_type_params(&trait_decl.type_params);
@@ -1010,6 +1090,7 @@ impl<'a> IrEmitter<'a> {
         } else {
             quote! {}
         };
+        let source_callable_blanket = self.emit_source_callable_blanket_impl(trait_decl);
 
         // Note: trait items are emitted as `pub trait` regardless of Incan visibility so generated single-file crates
         // keep stdlib and user traits addressable at crate root (matches pre–RFC-042 emission).
@@ -1019,6 +1100,7 @@ impl<'a> IrEmitter<'a> {
                 #(#methods)*
             }
             #iterator_mut_forwarding
+            #source_callable_blanket
         })
     }
 
@@ -1064,16 +1146,15 @@ impl<'a> IrEmitter<'a> {
         let ret = match &func.return_type {
             IrType::Unit => quote! {},
             ty => {
-                let t = self.emit_type(ty);
+                let t = self.emit_method_return_type(ty, &func.type_params);
                 quote! { -> #t }
             }
         };
 
         // RFC 023: emit generic type parameters with trait bounds.
         let generics = self.emit_type_params(&func.type_params);
-        let has_self_receiver = func.params.iter().any(|param| param.is_self);
         let mut where_bounds = Vec::new();
-        if !has_self_receiver && Self::trait_method_return_mentions_self(&func.return_type) {
+        if Self::trait_method_return_mentions_self(&func.return_type) {
             where_bounds.push(quote! { Self: Sized });
         }
         if let Some(extra_where_bound) = extra_where_bound {
@@ -1551,7 +1632,9 @@ impl<'a> IrEmitter<'a> {
                     Self::collect_expr_used_names(&arm.body, param_names, &arm_shadowed, used_names);
                 }
             }
-            IrExprKind::Closure { params, body, captures } => {
+            IrExprKind::Closure {
+                params, body, captures, ..
+            } => {
                 for capture in captures {
                     Self::note_param_use(capture, param_names, shadowed_names, used_names);
                 }
@@ -1602,5 +1685,59 @@ impl<'a> IrEmitter<'a> {
             | IrExprKind::SerdeToJson
             | IrExprKind::SerdeFromJson(_) => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::ir::FunctionRegistry;
+    use crate::backend::ir::decl::{IrTrait, IrTypeParam, Visibility};
+
+    #[test]
+    fn canonical_source_callable_emits_native_function_blanket_impl() {
+        let registry = FunctionRegistry::new();
+        let mut emitter = IrEmitter::new(&registry);
+        emitter.set_current_source_module_path(Some(vec![
+            "std".to_string(),
+            "traits".to_string(),
+            "callable".to_string(),
+        ]));
+        let trait_decl = IrTrait {
+            name: "Callable1".to_string(),
+            source_callable: Some(callables::CallableTraitId::Callable1),
+            docstring: None,
+            type_params: vec![IrTypeParam::bare("A"), IrTypeParam::bare("R")],
+            supertraits: Vec::new(),
+            methods: Vec::new(),
+            visibility: Visibility::Public,
+        };
+
+        let emitted = emitter.emit_source_callable_blanket_impl(&trait_decl).to_string();
+        let compact = emitted.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+        assert!(
+            compact.contains("impl<A,R,__IncanCallable>Callable1<A,R>for__IncanCallable")
+                && compact.contains("__IncanCallable:Fn(A)->R")
+                && compact.contains("(self)(__incan_arg_0)"),
+            "canonical Callable1 must bridge native functions and closures: {emitted}"
+        );
+    }
+
+    #[test]
+    fn same_named_user_callable_trait_does_not_emit_native_blanket_impl() {
+        let registry = FunctionRegistry::new();
+        let mut emitter = IrEmitter::new(&registry);
+        emitter.set_current_source_module_path(Some(vec!["app".to_string()]));
+        let trait_decl = IrTrait {
+            name: "Callable1".to_string(),
+            source_callable: None,
+            docstring: None,
+            type_params: vec![IrTypeParam::bare("A"), IrTypeParam::bare("R")],
+            supertraits: Vec::new(),
+            methods: Vec::new(),
+            visibility: Visibility::Public,
+        };
+
+        assert!(emitter.emit_source_callable_blanket_impl(&trait_decl).is_empty());
     }
 }

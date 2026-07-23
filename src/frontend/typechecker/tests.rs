@@ -8311,6 +8311,24 @@ class Bad with Inc:
 }
 
 #[test]
+fn test_trait_required_method_allows_nested_self_return_for_generic_model() {
+    let source = r#"
+model Wrapper[T]:
+  value: T
+
+trait Wraps:
+  def wrap(self) -> Wrapper[Self]: ...
+
+model Reader[T] with Wraps:
+  value: T
+
+  def wrap(self) -> Wrapper[Reader[T]]:
+    return Wrapper(value=self)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
 fn test_trait_conformance_allows_inherited_members() {
     let source = r#"
 @requires(name: str)
@@ -11585,6 +11603,22 @@ def f(x: Traffic) -> None:
 }
 
 #[test]
+fn test_enum_variant_constructor_is_a_first_class_callable() {
+    let source = r#"
+enum StreamError:
+  Fetch(str)
+
+def apply_error[E](detail: str, constructor: (str) -> E) -> E:
+  return constructor(detail)
+
+def build_error() -> StreamError:
+  return apply_error("unavailable", StreamError.Fetch)
+"#;
+
+    assert_check_ok(source);
+}
+
+#[test]
 fn test_match_qualified_incan_enum_variant_resolves_against_scrutinee() {
     let source = r#"
 pub enum ConformanceRel:
@@ -14528,6 +14562,384 @@ def main() -> None:
 }
 
 #[test]
+fn test_fallible_iteration_protocol_propagates_next_errors() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+model ChunkStream:
+  def __iter__(self) -> ChunkStream:
+    return self
+
+  def __next__(self) -> Result[Option[int], str]:
+    return Ok(None)
+
+def main() -> Result[None, str]:
+  for chunk in ChunkStream()?:
+    seen = chunk
+  return Ok(None)
+"#;
+
+    assert_check_ok(source);
+    Ok(())
+}
+
+#[test]
+fn test_fallible_iteration_protocol_accepts_trait_typed_receiver() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait FallibleStream[T, E]:
+  def __iter__(self) -> Self:
+    return self
+
+  def __next__(self) -> Result[Option[T], E]: ...
+
+model ChunkStream with FallibleStream[int, str]:
+  def __next__(self) -> Result[Option[int], str]:
+    return Ok(None)
+
+def chunks() -> FallibleStream[int, str]:
+  return ChunkStream()
+
+def main() -> Result[None, str]:
+  for chunk in chunks()?:
+    seen = chunk
+  return Ok(None)
+"#;
+
+    assert_check_ok(source);
+    Ok(())
+}
+
+#[test]
+fn test_source_callable_bound_accepts_capturing_closure_and_rejects_wrong_signature() -> Result<(), Vec<CompileError>> {
+    let accepted = r#"
+from std.traits.callable import Callable1
+
+model Failure:
+  kind: str
+
+def apply[Mapper with (Clone, Callable1[Failure, str])](mapper: Mapper, value: Failure) -> str:
+  return mapper(value)
+
+def main() -> str:
+  prefix = "item"
+  return apply((error) => f"{prefix}:{error.kind}", Failure(kind="read"))
+"#;
+    assert_check_ok(accepted);
+
+    let rejected = r#"
+from std.traits.callable import Callable1
+
+def apply[Mapper with Callable1[int, str]](mapper: Mapper, value: int) -> str:
+  return mapper(value)
+
+def wrong(value: str) -> str:
+  return value
+
+def main() -> str:
+  return apply(wrong, 3)
+"#;
+    let errors = check_str_err(rejected, "Callable1 must enforce its declared input signature");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("requires 'Callable1[int, str]'")
+                && error.message.contains("(str) -> str")),
+        "expected callable signature mismatch, got {errors:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_source_callable_bound_records_typed_rust_closure_boundary() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+from std.traits.callable import Callable1
+
+model Failure:
+  kind: str
+
+def apply[Mapper with Callable1[Failure, str]](mapper: Mapper, value: Failure) -> str:
+  return mapper(value)
+
+def main() -> str:
+  prefix = "item"
+  return apply((error) => f"{prefix}:{error.kind}", Failure(kind="read"))
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+
+    let closure = r#"(error) => f"{prefix}:{error.kind}""#;
+    let start = source.find(closure).expect("fixture must contain closure");
+    assert!(
+        checker
+            .type_info()
+            .is_source_callable_closure(Span::new(start, start + closure.len())),
+        "the frontend must preserve that Callable1 supplied the closure parameter type"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_source_callable_generic_invocation_records_nominal_hook_dispatch() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+from std.traits.callable import Callable1
+
+def apply[Mapper with Callable1[int, str]](mapper: Mapper, value: int) -> str:
+  return mapper(value)
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+
+    assert!(
+        checker
+            .type_info()
+            .calls
+            .resolved_operator_calls
+            .values()
+            .any(|call| call.method == "__call__" && call.kind == ResolvedOperatorKind::Call),
+        "generic source callables must retain nominal __call__ dispatch: {:?}",
+        checker.type_info().calls.resolved_operator_calls
+    );
+    Ok(())
+}
+
+#[test]
+fn test_source_callable_bound_infers_return_type_from_nominal_adoption() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+from std.traits.callable import Callable1
+
+trait MapperHost:
+  def map[U, Mapper with Callable1[int, U]](self, mapper: Mapper) -> U: ...
+
+model Source with MapperHost:
+  def map[U, Mapper with Callable1[int, U]](self, mapper: Mapper) -> U:
+    return mapper(3)
+
+model Label with Callable1[int, str]:
+  def __call__(self, value: int) -> str:
+    return f"item:{value}"
+
+def main() -> None:
+  mapped = Source().map(Label())
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+
+    let expression = "Source().map(Label())";
+    let start = source
+        .find(expression)
+        .expect("fixture must contain nominal callable call");
+    let span = Span::new(start, start + expression.len());
+    assert_eq!(
+        checker.type_info().expr_type(span),
+        Some(&ResolvedType::Str),
+        "Callable1 adoption arguments must infer the method's open return type"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_trait_typed_receiver_contextualizes_callable_bound_with_concrete_owner_args() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+from std.traits.callable import Callable1
+
+model Failure:
+  kind: str
+
+trait ErrorStream[T, E]:
+  def map_err[F with Clone, Mapper with (Clone, Callable1[E, F])](self, mapper: Mapper) -> F: ...
+
+model Source with ErrorStream[int, Failure]:
+  def map_err[F with Clone, Mapper with (Clone, Callable1[Failure, F])](self, mapper: Mapper) -> F:
+    return mapper(Failure(kind="read"))
+
+def stream() -> ErrorStream[int, Failure]:
+  return Source()
+
+def main() -> str:
+  prefix = "io"
+  return stream().map_err((error) => f"{prefix}:{error.kind}")
+"#;
+
+    assert_check_ok(source);
+    Ok(())
+}
+
+#[test]
+fn test_fallible_iteration_rejects_combined_setup_and_polling_result() {
+    let source = r#"
+model ChunkStream:
+  def __iter__(self) -> ChunkStream:
+    return self
+
+  def __next__(self) -> Result[Option[int], str]:
+    return Ok(None)
+
+def open_stream() -> Result[ChunkStream, str]:
+  return Ok(ChunkStream())
+
+def main() -> Result[None, str]:
+  for chunk in open_stream()?:
+    seen = chunk
+  return Ok(None)
+"#;
+
+    let errors = check_str_err(
+        source,
+        "combined setup and polling failures should require an explicit local",
+    );
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("cannot unwrap a Result containing a fallible iterator in the same header")),
+        "expected setup-versus-polling diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn test_fallible_loop_header_preserves_result_of_ordinary_iterable() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+def load_values() -> Result[list[int], str]:
+  return Ok([1, 2])
+
+def main() -> Result[None, str]:
+  for value in load_values()?:
+    seen = value
+  return Ok(None)
+"#;
+
+    assert_check_ok(source);
+    Ok(())
+}
+
+#[test]
+fn test_fallible_iteration_requires_loop_header_marker() {
+    let source = r#"
+model ChunkStream:
+  def __iter__(self) -> ChunkStream:
+    return self
+
+  def __next__(self) -> Result[Option[int], str]:
+    return Ok(None)
+
+def main() -> None:
+  for chunk in ChunkStream():
+    seen = chunk
+"#;
+
+    let errors = check_str_err(
+        source,
+        "fallible iteration without the header marker should be rejected",
+    );
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("expected 'Option[_]', found 'Result[Option[int], str]'")),
+        "expected ordinary-loop protocol mismatch, got {errors:?}"
+    );
+}
+
+#[test]
+fn test_fallible_loop_header_marker_rejects_ordinary_iterable() {
+    let source = r#"
+def main() -> Result[None, str]:
+  for value in [1, 2]?:
+    seen = value
+  return Ok(None)
+"#;
+
+    let errors = check_str_err(source, "the fallible header marker should reject an ordinary iterable");
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("expected 'fallible iterator with __iter__() and __next__() -> Result[Option[_], _]'")),
+        "expected fallible-loop protocol diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn test_trait_typed_mutable_terminal_records_receiver_mutability() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait FallibleStream[T, E]:
+  def collect(mut self) -> Result[list[T], E]: ...
+
+model NumberStream with FallibleStream[int, str]:
+  def collect(mut self) -> Result[list[int], str]:
+    return Ok([])
+
+def stream() -> FallibleStream[int, str]:
+  return NumberStream()
+
+def main() -> None:
+  values = stream()
+  _ = values.collect()
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+
+    assert!(
+        checker
+            .type_info()
+            .calls
+            .resolved_method_calls
+            .values()
+            .any(|call| matches!(
+                call.dispatch,
+                ResolvedMethodDispatch::Trait {
+                    receiver_is_mutable: true,
+                    ..
+                }
+            )),
+        "expected mut-self trait dispatch, got {:?}",
+        checker.type_info().calls.resolved_method_calls
+    );
+    Ok(())
+}
+
+#[test]
+fn test_same_trait_adapter_chain_preserves_defining_module_dispatch() {
+    let receiver_span = Span::new(10, 20);
+    let call_span = Span::new(10, 30);
+    let mut info = TypeCheckInfo::default();
+    info.record_resolved_method_call(
+        receiver_span,
+        "map",
+        ResolvedMethodDispatch::Trait {
+            trait_name: "Stream".to_string(),
+            module_path: Some(vec!["streams".to_string()]),
+            type_args: vec![ResolvedType::Int, ResolvedType::Str],
+            receiver_is_mutable: false,
+        },
+    );
+    info.record_resolved_method_call(
+        call_span,
+        "map_err",
+        ResolvedMethodDispatch::Trait {
+            trait_name: "Stream".to_string(),
+            module_path: None,
+            type_args: vec![ResolvedType::Int, ResolvedType::Str],
+            receiver_is_mutable: false,
+        },
+    );
+
+    info.inherit_same_trait_method_module(receiver_span, call_span);
+
+    assert!(matches!(
+        info.resolved_method_call(call_span).map(|call| &call.dispatch),
+        Some(ResolvedMethodDispatch::Trait {
+            trait_name,
+            module_path: Some(module_path),
+            ..
+        }) if trait_name == "Stream" && module_path == &["streams".to_string()]
+    ));
+}
+
+#[test]
 fn test_rfc068_explicit_trait_adoption_supplies_protocol_hook() -> Result<(), Vec<CompileError>> {
     let source = r#"
 trait Sized:
@@ -16629,8 +17041,14 @@ def read_object(data: JsonValue) -> Option[JsonValue]:
             .resolved_method_calls
             .values()
             .any(|call| match &call.dispatch {
-                ResolvedMethodDispatch::Trait { trait_path, .. } =>
-                    trait_path == "crate::__incan_std::traits::indexing::Index",
+                ResolvedMethodDispatch::Trait {
+                    trait_name,
+                    module_path,
+                    ..
+                } =>
+                    trait_name == "Index"
+                        && module_path.as_deref()
+                            == Some(&["std".to_string(), "traits".to_string(), "indexing".to_string()]),
             }),
         "expected JsonValue indexing to preserve std.traits.indexing.Index dispatch, got {:?}",
         checker.type_info().calls.resolved_method_calls

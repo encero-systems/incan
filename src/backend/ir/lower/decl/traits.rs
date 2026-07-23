@@ -2,9 +2,11 @@
 
 use std::collections::HashSet;
 
-use incan_core::lang::trait_bounds;
+use incan_core::lang::magic_methods::{self, MagicMethodId};
+use incan_core::lang::surface::methods::iterator_methods::{self, IteratorMethodId};
 use incan_core::lang::traits as core_traits;
 use incan_core::lang::traits::TraitId;
+use incan_core::lang::{callables, stdlib, trait_bounds};
 
 use super::super::super::Mutability;
 use super::super::super::decl::{FunctionParam, IrFunction, IrTrait, Visibility};
@@ -16,6 +18,26 @@ use crate::frontend::ast;
 use crate::frontend::symbols::ResolvedType;
 
 impl AstLowering {
+    /// Resolve a trait declaration to the canonical source callable role owned by `std.traits.callable`.
+    ///
+    /// SDK component projects compile the contents of the public `std` namespace as crate-local module paths. Restore
+    /// that public mount only for the trusted provider-build boundary so a user package named `traits.callable` cannot
+    /// acquire compiler-managed callable behavior.
+    fn source_callable_trait(&self, trait_name: &str) -> Option<callables::CallableTraitId> {
+        let mut module_path = self
+            .current_source_module_name
+            .as_deref()?
+            .split('.')
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        if self.sdk_provider_build && module_path.first().is_none_or(|segment| segment != stdlib::STDLIB_ROOT) {
+            module_path.insert(0, stdlib::STDLIB_ROOT.to_string());
+        }
+        callables::module_path_matches(&module_path)
+            .then(|| callables::from_str(trait_name))
+            .flatten()
+    }
+
     /// Map a supertrait name and resolved type arguments to IR for Rust trait bounds (RFC 042).
     fn lower_supertrait_from_resolved(&self, trait_name: &str, type_args: &[ResolvedType]) -> (String, Vec<IrType>) {
         let path = trait_bounds::incan_to_rust(trait_name)
@@ -56,7 +78,10 @@ impl AstLowering {
         let mut methods: Vec<IrFunction> = trait_methods
             .iter()
             .map(|m| {
-                if t.name == core_traits::as_str(TraitId::Iterator) && m.node.name == "sum" && m.node.body.is_some() {
+                if t.name == core_traits::as_str(TraitId::Iterator)
+                    && m.node.name == iterator_methods::as_str(IteratorMethodId::Sum)
+                    && m.node.body.is_some()
+                {
                     let mut method = self.lower_method_with_type_params(&m.node, Some(&type_param_names))?;
                     method.visibility = Visibility::Private;
                     return Ok(method);
@@ -127,7 +152,7 @@ impl AstLowering {
 
                 self.pop_scope();
 
-                let mut all_type_params = Self::lower_type_params(&m.node.type_params);
+                let mut all_type_params = self.lower_type_params(&m.node.type_params);
                 all_type_params.extend(hidden_type_params);
 
                 Ok(IrFunction {
@@ -147,7 +172,10 @@ impl AstLowering {
             })
             .collect::<Result<Vec<_>, LoweringError>>()?;
         if t.name == core_traits::as_str(TraitId::Iterator) {
-            methods.retain(|method| matches!(method.name.as_str(), "__next__" | "sum"));
+            methods.retain(|method| {
+                method.name == magic_methods::as_str(MagicMethodId::Next)
+                    || method.name == iterator_methods::as_str(IteratorMethodId::Sum)
+            });
         }
 
         for property in &t.properties {
@@ -172,11 +200,35 @@ impl AstLowering {
 
         Ok(IrTrait {
             name: t.name.clone(),
+            source_callable: self.source_callable_trait(&t.name),
             docstring: t.docstring.clone(),
-            type_params: Self::lower_type_params(&t.type_params),
+            type_params: self.lower_type_params(&t.type_params),
             supertraits,
             methods,
             visibility: Self::map_visibility(t.visibility),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sdk_provider_callable_module_retains_public_std_identity() {
+        let mut lowering = AstLowering::new();
+        lowering.set_current_source_module_name(Some("traits.callable".to_string()));
+        lowering.set_sdk_provider_build(true);
+        assert_eq!(
+            lowering.source_callable_trait("Callable1"),
+            Some(callables::CallableTraitId::Callable1)
+        );
+
+        lowering.set_sdk_provider_build(false);
+        assert_eq!(
+            lowering.source_callable_trait("Callable1"),
+            None,
+            "ordinary packages must not acquire compiler callable behavior from a same-named module"
+        );
     }
 }

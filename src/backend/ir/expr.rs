@@ -95,6 +95,8 @@ pub enum MethodCallArgPolicy {
     /// Use the emitter's default receiver-based conversion behavior.
     #[default]
     Default,
+    /// Apply Incan value semantics for a compiler-resolved source-owned method boundary.
+    SourceOwned,
     /// Preserve Rust method-call lookup shape for borrow-sensitive APIs such as `HashMap::get`.
     PreserveShape,
 }
@@ -312,6 +314,9 @@ pub enum IrExprKind {
         params: Vec<(String, IrType)>,
         body: Box<IrExpr>,
         captures: Vec<String>,
+        /// Emit the frontend-resolved parameter types because a source `CallableN` bound does not provide Rust closure
+        /// parameter inference.
+        annotate_param_types: bool,
     },
 
     // Block expression (sequence of statements with optional trailing expr)
@@ -699,8 +704,12 @@ impl BuiltinFn {
 /// Backend dispatch target selected by frontend method resolution.
 #[derive(Debug, Clone, PartialEq)]
 pub enum IrMethodDispatch {
-    /// Emit a fully-qualified trait method call.
-    Trait { trait_path: String, type_args: Vec<IrType> },
+    /// Preserve the selected trait owner and, when required, emit a fully-qualified trait method call.
+    Trait {
+        trait_path: String,
+        type_args: Vec<IrType>,
+        receiver_is_mutable: bool,
+    },
     /// Keep the emitted call as regular Rust method lookup while retaining this extension-trait import binding.
     RustExtensionTraitImport { binding: String },
 }

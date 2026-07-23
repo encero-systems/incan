@@ -115,9 +115,10 @@ pub fn regular_method_argument_use_site<'a>(
     callee_param: Option<&'a FunctionParam>,
 ) -> ValueUseSite<'a> {
     let target_ty = callee_param.map(|param| &param.ty);
-    if context.receiver_ref_kind != Some(VarRefKind::ExternalRustName)
-        && (context.has_incan_method_signature
-            || (context.is_incan_owned_nominal_receiver && !context.is_rusttype_alias_receiver))
+    if matches!(context.arg_policy, MethodCallArgPolicy::SourceOwned)
+        || (context.receiver_ref_kind != Some(VarRefKind::ExternalRustName)
+            && (context.has_incan_method_signature
+                || (context.is_incan_owned_nominal_receiver && !context.is_rusttype_alias_receiver)))
     {
         ValueUseSite::IncanCallArg {
             target_ty,

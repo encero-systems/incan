@@ -44,6 +44,15 @@ These stdlib traits model "objects that can be called" like `obj()`, `obj(x)`, `
 - **Callable2[A, B, R]**
     - Hook: `__call__(self, a: A, b: B) -> R`
 
-The `__call__` method is the implementation hook. Explicit `CallableN` adoption gives generic bounds and diagnostics a named capability; function type annotations should continue to use arrow types or the `Callable[Params, R]` sugar above.
+The `__call__` method is the implementation hook. A generic `CallableN` bound accepts named functions, capturing closures, and models that explicitly adopt the matching trait, so one API can accept both native function values and domain-owned callable objects:
+
+```incan
+from std.traits.callable import Callable1
+
+def apply[Mapper with Callable1[int, str]](mapper: Mapper, value: int) -> str:
+    return mapper(value)
+```
+
+Use explicit `CallableN` adoption when a model owns callable behavior. Function-typed fields and parameters that do not need a nominal generic capability should continue to use arrow types or the `Callable[Params, R]` sugar above.
 
 --8<-- "_snippets/rfcs_refs.md"

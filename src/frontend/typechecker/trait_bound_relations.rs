@@ -7,6 +7,7 @@ use crate::frontend::resolved_type_subst::substitute_resolved_type;
 use crate::frontend::symbols::{ResolvedType, TypeBoundInfo, TypeInfo};
 use crate::frontend::typechecker::helpers::collection_type_id;
 use incan_core::interop::is_rust_capability_bound;
+use incan_core::lang::callables;
 use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::trait_capabilities::{
     self, TraitCapabilityId, TraitCapabilityInfo, TraitCapabilityType, TraitCapabilityTypeArg,
@@ -53,6 +54,9 @@ impl TypeChecker {
                 .map(|arg| substitute_resolved_type(arg, bindings));
             return self.type_satisfies_awaitable_bound(ty, expected_output.as_ref());
         }
+        if let Some(satisfies) = self.function_type_satisfies_callable_bound(ty, bound, bindings) {
+            return satisfies;
+        }
         if let Some(capability) = self.temporary_trait_capability_for_bound_info(bound, bindings)
             && let Some(satisfies) = self.temporary_trait_capability_supports_type(capability, ty)
         {
@@ -76,6 +80,50 @@ impl TypeChecker {
             return self.type_satisfies_explicit_bound(ty, &bound.name);
         }
         self.type_satisfies_nominal_trait_bound_with_args(ty, &bound.name, &expected_args)
+    }
+
+    /// Match a function or closure value against the exact `std.traits.callable.CallableN` signature.
+    fn function_type_satisfies_callable_bound(
+        &self,
+        ty: &ResolvedType,
+        bound: &TypeBoundInfo,
+        bindings: &HashMap<String, ResolvedType>,
+    ) -> Option<bool> {
+        let callable = self.callable_trait_for_bound(bound)?;
+        let ResolvedType::Function(params, return_type) = ty else {
+            return None;
+        };
+        let arity = callables::info_for(callable).arity;
+        if params.len() != arity || bound.type_args.len() != arity + 1 {
+            return Some(false);
+        }
+        let expected = bound
+            .type_args
+            .iter()
+            .map(|arg| substitute_resolved_type(arg, bindings))
+            .collect::<Vec<_>>();
+        let params_match = params
+            .iter()
+            .zip(&expected[..arity])
+            .all(|(actual, expected)| self.types_compatible(&actual.ty, expected));
+        Some(params_match && self.types_compatible(return_type, &expected[arity]))
+    }
+
+    /// Resolve a checked bound to the canonical source callable trait registry.
+    pub(in crate::frontend::typechecker) fn callable_trait_for_bound(
+        &self,
+        bound: &TypeBoundInfo,
+    ) -> Option<callables::CallableTraitId> {
+        if let Some(module_path) = &bound.module_path {
+            if !callables::module_path_matches(module_path) {
+                return None;
+            }
+            return callables::from_str(Self::type_bound_source_name(bound));
+        }
+        let (module_path, trait_name) = self.resolve_bound_trait_path(&bound.name)?;
+        callables::module_path_matches(&module_path)
+            .then(|| callables::from_str(&trait_name))
+            .flatten()
     }
 
     /// Best-effort check whether a concrete type satisfies an explicit generic bound.
@@ -139,12 +187,16 @@ impl TypeChecker {
             ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) | ResolvedType::TypeToken(inner) => {
                 self.type_satisfies_explicit_bound(inner, bound)
             }
-            ResolvedType::Function(_, _) | ResolvedType::SelfType => false,
+            // Incan closures lower as non-`move` Rust `Fn` values. Their captures are borrowed, so the callable value
+            // itself is cloneable even when a borrowed referent is not. This lets source-owned lazy adapters retain a
+            // callback under ordinary Incan value semantics without reducing the API to Rust function pointers.
+            ResolvedType::Function(_, _) => bound == derives::as_str(DeriveId::Clone),
+            ResolvedType::SelfType => false,
         }
     }
 
     /// Return the active generic placeholder name represented by `ty`.
-    fn active_type_param_name<'a>(&self, ty: &'a ResolvedType) -> Option<&'a str> {
+    pub(in crate::frontend::typechecker) fn active_type_param_name<'a>(&self, ty: &'a ResolvedType) -> Option<&'a str> {
         let name = match ty {
             ResolvedType::TypeVar(name) | ResolvedType::Named(name) => name,
             _ => return None,

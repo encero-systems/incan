@@ -7,6 +7,8 @@ use crate::lang::registry::{LangItemInfo, RFC, RfcId, Since, Stability};
 pub enum MagicMethodId {
     Eq,
     Str,
+    Iter,
+    Next,
     ClassName,
     Fields,
     FieldValue,
@@ -34,6 +36,22 @@ pub const MAGIC_METHODS: &[MagicMethodInfo] = &[
         "String conversion.",
         RFC::_000,
         Since(0, 1),
+    ),
+    info(
+        MagicMethodId::Iter,
+        "__iter__",
+        &[],
+        "Return the iteration state used by a for loop.",
+        RFC::_068,
+        Since(0, 3),
+    ),
+    info(
+        MagicMethodId::Next,
+        "__next__",
+        &[],
+        "Poll the next ordinary or fallible iteration item.",
+        RFC::_068,
+        Since(0, 3),
     ),
     info(
         MagicMethodId::ClassName,
@@ -104,11 +122,13 @@ pub fn info_for(id: MagicMethodId) -> MagicMethodInfo {
     match id {
         MagicMethodId::Eq => MAGIC_METHODS[0],
         MagicMethodId::Str => MAGIC_METHODS[1],
-        MagicMethodId::ClassName => MAGIC_METHODS[2],
-        MagicMethodId::Fields => MAGIC_METHODS[3],
-        MagicMethodId::FieldValue => MAGIC_METHODS[4],
-        MagicMethodId::FieldItems => MAGIC_METHODS[5],
-        MagicMethodId::Slice => MAGIC_METHODS[6],
+        MagicMethodId::Iter => MAGIC_METHODS[2],
+        MagicMethodId::Next => MAGIC_METHODS[3],
+        MagicMethodId::ClassName => MAGIC_METHODS[4],
+        MagicMethodId::Fields => MAGIC_METHODS[5],
+        MagicMethodId::FieldValue => MAGIC_METHODS[6],
+        MagicMethodId::FieldItems => MAGIC_METHODS[7],
+        MagicMethodId::Slice => MAGIC_METHODS[8],
     }
 }
 

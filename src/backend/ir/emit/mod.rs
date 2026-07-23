@@ -386,6 +386,10 @@ pub struct IrEmitter<'a> {
     struct_derives: std::collections::HashMap<String, Vec<String>>,
     /// Current function's return type (for applying conversions in return statements)
     current_function_return_type: RefCell<Option<IrType>>,
+    /// Generic parameters in scope around an emitted method and whether the owner is a trait declaration.
+    ///
+    /// Rust precise-capture lists for return-position `impl Trait` must mention every surrounding type parameter.
+    current_method_owner_type_params: RefCell<Option<(bool, Vec<String>)>>,
     /// Functions imported from external Rust crates
     external_rust_functions: std::collections::HashSet<String>,
     /// Enum variant field typing lookup: (EnumName, VariantName) -> VariantFields
@@ -543,6 +547,7 @@ impl<'a> IrEmitter<'a> {
             canonical_function_registry: None,
             struct_derives: std::collections::HashMap::new(),
             current_function_return_type: RefCell::new(None),
+            current_method_owner_type_params: RefCell::new(None),
             external_rust_functions: std::collections::HashSet::new(),
             enum_variant_fields: std::collections::HashMap::new(),
             enum_variant_aliases: std::collections::HashMap::new(),

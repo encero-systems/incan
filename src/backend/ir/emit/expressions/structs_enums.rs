@@ -44,7 +44,7 @@ impl<'a> IrEmitter<'a> {
             return Ok(quote! { #n(None::<#inner_tokens>) });
         }
 
-        let n = Self::rust_ident(name);
+        let n = self.emit_type(&IrType::Struct(name.to_string()));
         let all_named = fields.iter().all(|(fname, _)| !fname.is_empty());
 
         if !all_named && !fields.is_empty() {
