@@ -17,7 +17,7 @@ Example:
 
     @route("/users", methods=[POST])
     async def create_user(body: Json[CreateUser]) -> Json[User]:
-        user = User(id=1, name=body.value.name)
+        user = User(id=1, name=body.name)
         return Json(user)
 """
 rust.module("incan_web_macros")

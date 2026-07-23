@@ -1597,9 +1597,16 @@ dependencies = [
 name = "incan_web_macros"
 version = "0.5.0-dev.27"
 dependencies = [
+ "axum",
+ "incan_stdlib",
+ "inventory",
  "proc-macro2",
  "quote",
+ "serde",
+ "serde_json",
  "syn",
+ "tokio",
+ "tower 0.5.3",
 ]
 
 [[package]]
