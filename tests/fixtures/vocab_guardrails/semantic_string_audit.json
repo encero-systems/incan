@@ -176,27 +176,15 @@
     },
     {
       "path": "src/backend/ir/lower/decl/helpers.rs",
-      "category": "primitive, derive, and Rust namespace lowering compatibility",
-      "expected_count": 10,
-      "expected_fingerprint": "0xb30118abb73ddcee"
-    },
-    {
-      "path": "src/backend/ir/lower/decl/methods.rs",
-      "category": "callable, JSON, and iterator method lowering compatibility",
-      "expected_count": 4,
-      "expected_fingerprint": "0xbcf2d12b24fabc65"
+      "category": "serde derive lowering compatibility",
+      "expected_count": 2,
+      "expected_fingerprint": "0x7ca9fe0193f302ed"
     },
     {
       "path": "src/backend/ir/lower/decl/mod.rs",
       "category": "derive and checked registry lowering compatibility",
       "expected_count": 3,
       "expected_fingerprint": "0xcfe26b0d4677ee08"
-    },
-    {
-      "path": "src/backend/ir/lower/decl/traits.rs",
-      "category": "iterator trait method lowering compatibility",
-      "expected_count": 2,
-      "expected_fingerprint": "0x5aba6acff170507f"
     },
     {
       "path": "src/backend/ir/lower/expr/calls.rs",
@@ -237,8 +225,8 @@
     {
       "path": "src/backend/ir/reference_shape.rs",
       "category": "central Rust reference-shape compatibility",
-      "expected_count": 1,
-      "expected_fingerprint": "0x22d77392903f6589"
+      "expected_count": 2,
+      "expected_fingerprint": "0xf934bef846cdc242"
     },
     {
       "path": "src/backend/ir/trait_bound_inference.rs",
@@ -273,8 +261,8 @@
     {
       "path": "src/frontend/typechecker/check_expr/access.rs",
       "category": "method/type access and checked registry boundary classification",
-      "expected_count": 52,
-      "expected_fingerprint": "0x9c35a66ff95fa1ef"
+      "expected_count": 44,
+      "expected_fingerprint": "0x4ded05fcef1fc13b"
     },
     {
       "path": "src/frontend/typechecker/check_expr/basics.rs",

@@ -26,6 +26,10 @@ impl<'a> IrEmitter<'a> {
         // RFC 023: emit generic type parameters with trait bounds (declaration) and bare names (type positions).
         let generics = self.emit_type_params(&impl_block.type_params);
         let generics_bare = self.emit_type_params_bare(&impl_block.type_params);
+        let previous_method_owner_type_params = self.current_method_owner_type_params.replace(Some((
+            false,
+            impl_block.type_params.iter().map(|param| param.name.clone()).collect(),
+        )));
 
         let mut regular_methods = Vec::new();
         let mut borrowed_observer_methods = Vec::new();
@@ -250,6 +254,8 @@ impl<'a> IrEmitter<'a> {
             }
         };
 
+        self.current_method_owner_type_params
+            .replace(previous_method_owner_type_params);
         Ok(quote! {
             #main_impl
             #borrowed_observer_impl

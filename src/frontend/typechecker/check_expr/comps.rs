@@ -11,6 +11,45 @@ use crate::frontend::typechecker::helpers::{dict_ty, generator_ty, list_ty};
 use super::TypeChecker;
 
 impl TypeChecker {
+    /// Return whether contextual callable output still contains a method-level type variable to infer.
+    fn closure_output_needs_inference(ty: &ResolvedType) -> bool {
+        match ty {
+            ResolvedType::TypeVar(_) => true,
+            ResolvedType::Generic(_, args) | ResolvedType::Tuple(args) => {
+                args.iter().any(Self::closure_output_needs_inference)
+            }
+            ResolvedType::Function(params, output) => {
+                params
+                    .iter()
+                    .any(|param| Self::closure_output_needs_inference(&param.ty))
+                    || Self::closure_output_needs_inference(output)
+            }
+            ResolvedType::FrozenList(inner)
+            | ResolvedType::FrozenSet(inner)
+            | ResolvedType::TypeToken(inner)
+            | ResolvedType::Ref(inner)
+            | ResolvedType::RefMut(inner) => Self::closure_output_needs_inference(inner),
+            ResolvedType::FrozenDict(key, value) => {
+                Self::closure_output_needs_inference(key) || Self::closure_output_needs_inference(value)
+            }
+            ResolvedType::Never
+            | ResolvedType::Int
+            | ResolvedType::Float
+            | ResolvedType::Numeric(_)
+            | ResolvedType::Bool
+            | ResolvedType::Str
+            | ResolvedType::Bytes
+            | ResolvedType::FrozenStr
+            | ResolvedType::FrozenBytes
+            | ResolvedType::Unit
+            | ResolvedType::Named(_)
+            | ResolvedType::SelfType
+            | ResolvedType::RustPath(_)
+            | ResolvedType::CallSiteInfer
+            | ResolvedType::Unknown => false,
+        }
+    }
+
     /// Type-check a generator expression and return `Generator[T]`.
     pub(in crate::frontend::typechecker::check_expr) fn check_generator_expr(
         &mut self,
@@ -180,6 +219,11 @@ impl TypeChecker {
         self.in_async_body = prev_in_async_body;
         self.symbols.exit_scope();
 
-        ResolvedType::Function(param_types, Box::new(expected_ret.clone()))
+        let resolved_return = if Self::closure_output_needs_inference(expected_ret) {
+            return_ty
+        } else {
+            expected_ret.clone()
+        };
+        ResolvedType::Function(param_types, Box::new(resolved_return))
     }
 }

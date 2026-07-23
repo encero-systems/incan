@@ -77,7 +77,7 @@ impl json::Deserialize for Payload {
     }
 }
 fn encode<T: json::Serialize>(value: T) -> String {
-    return value.to_json();
+    return crate::__incan_std::serde::json::Serialize::to_json(&value);
 }
 fn main() {
     std::panic::set_hook(

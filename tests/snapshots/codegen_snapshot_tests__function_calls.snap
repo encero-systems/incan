@@ -43,7 +43,7 @@ fn test_function_calls() {
     let _result: String = incan_stdlib::strings::str_strip(
         &incan_stdlib::strings::str_upper(&"hello world"),
     );
-    let numbers: Vec<i64> = vec![1, 2, 3];
+    let mut numbers: Vec<i64> = vec![1, 2, 3];
     let _ = numbers.push(4);
     let _popped: i64 = incan_stdlib::collections::__private::list_pop(&mut numbers);
     let _data: std::collections::HashMap<String, i64> = [

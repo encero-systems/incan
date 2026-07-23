@@ -11,7 +11,9 @@ pub trait Collection<T> {
     fn first(&self) -> T;
 }
 pub trait OrderedCollection<T>: Collection<T> {
-    fn sorted(&self) -> Self;
+    fn sorted(&self) -> Self
+    where
+        Self: Sized;
 }
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct BoxedValue<T> {
@@ -61,7 +63,10 @@ impl<T: Clone> BoxedValue<T> {
     }
 }
 impl<T: Clone> OrderedCollection<T> for BoxedValue<T> {
-    fn sorted(&self) -> Self {
+    fn sorted(&self) -> Self
+    where
+        Self: Sized,
+    {
         return self.clone();
     }
 }

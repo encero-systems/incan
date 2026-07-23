@@ -2,6 +2,7 @@ from rust::std::cell import RefCell
 from rust::std::io import Cursor, Read, Seek, SeekFrom, Write
 from rust::std::rc import Rc
 from rust::byteorder @ "1" import BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt
+from std.derives.collection import FallibleIterator
 from std.traits.error import Error
 
 
@@ -62,12 +63,51 @@ pub trait BinaryReader:
     """
     Trait-backed byte reads from a binary stream.
 
-    Implementors expose bounded byte reads that advance their cursor. A zero-length successful read marks EOF for
-    consumers such as `std.hash.reader_digest`.
+    Implementors expose bounded byte reads that advance their cursor. `chunks(size)` turns the empty read used by
+    lower-level readers into ordinary iterator exhaustion, so callers do not repeat EOF checks.
     """
 
     def read_bytes(self, size: int) -> Result[bytes, IoError]: ...
 
+    def chunks(self, chunk_size: int) -> ReaderChunks[Self]:
+        """
+        Return a bounded, fallible stream of non-empty byte chunks.
+
+        Consume the stream with `for chunk in reader.chunks(size)?:`. EOF is `Ok(None)` rather than an empty byte
+        value. A size less than or equal to zero returns `IoError(kind="invalid_input", ...)` from the first poll.
+        """
+        return ReaderChunks[Self](reader=self, chunk_size=chunk_size)
+
+
+pub model ReaderChunks[R with BinaryReader] with FallibleIterator[bytes, IoError]:
+    """
+    Incan-authored bounded chunk stream for one binary reader.
+
+    The reader remains owned by the stream while it advances. Each successful item is non-empty; EOF is ordinary
+    exhaustion, and reader errors keep their original typed `IoError` payload.
+    """
+    reader: R
+    chunk_size: int
+
+    def __next__(mut self) -> Result[Option[bytes], IoError]:
+        """
+        Read and classify one bounded chunk.
+
+        A non-positive size is rejected before any reader call. Empty successful reads are EOF and therefore never
+        become yielded chunks.
+        """
+        if self.chunk_size <= 0:
+            return Err(IoError(
+                kind="invalid_input",
+                detail="chunk_size must be greater than zero",
+                operation="read_chunks",
+            ))
+        match self.reader.read_bytes(self.chunk_size):
+            Ok(chunk) =>
+                if len(chunk) == 0:
+                    return Ok(None)
+                return Ok(Some(chunk))
+            Err(error) => return Err(error)
 
 pub trait BinaryWrite[T]:
     """

@@ -535,12 +535,13 @@ impl ProviderPlan {
             .filter(|provider| self.participation(provider) == ProviderParticipation::Used)
     }
 
-    /// Return the minimal compiled SDK provider set that generated Cargo projects must link directly.
+    /// Return the compiled SDK provider set that generated Cargo projects must link directly.
     ///
-    /// A semantically used provider can already be supplied through another used provider's checked artifact graph.
-    /// Keep that dependency transitive instead of adding the same provider crate to the consumer manifest twice.
+    /// Every semantically used provider is a direct root because generated Rust names its owning crate explicitly;
+    /// Rust does not place transitive dependencies in the consumer's extern prelude. Compiled project dependencies can
+    /// also expose source-owned trait defaults whose checked signatures name a private SDK provider without a direct
+    /// consumer import, so their frozen private implementation edges are compiler projection roots as well.
     pub fn sdk_link_roots(&self) -> Vec<&ProviderRecord> {
-        let used = self.used_sdk_records().collect::<Vec<_>>();
         let provider_by_dependency_key = self
             .active_sdk_records()
             .filter_map(|provider| {
@@ -550,35 +551,25 @@ impl ProviderPlan {
                     .map(|artifact| (artifact.dependency_key.as_str(), provider.identity.stable_key()))
             })
             .collect::<BTreeMap<_, _>>();
-        let mut supplied_transitively = BTreeSet::new();
-        let mut pending = used
-            .iter()
+        let compiler_projection_roots = self
+            .active_records()
+            .filter(|provider| matches!(provider.authority, NamespaceAuthority::ProjectDependency { .. }))
+            .filter_map(|provider| provider.manifest.as_deref())
+            .flat_map(|manifest| &manifest.contract_metadata.provider.provider_dependencies)
+            .filter(|dependency| dependency.kind == ProviderDependencyKind::PrivateImplementation)
+            .filter_map(|dependency| {
+                provider_by_dependency_key
+                    .get(dependency.dependency_key.as_str())
+                    .cloned()
+            })
+            .collect::<BTreeSet<_>>();
+        let mut selected = self
+            .used_sdk_records()
             .map(|provider| provider.identity.stable_key())
-            .collect::<Vec<_>>();
-        let mut traversed = BTreeSet::new();
-
-        while let Some(provider_key) = pending.pop() {
-            if !traversed.insert(provider_key.clone()) {
-                continue;
-            }
-            let Some(provider) = self.records.get(&provider_key) else {
-                continue;
-            };
-            let Some(manifest) = provider.manifest.as_deref() else {
-                continue;
-            };
-            for dependency in &manifest.contract_metadata.provider.provider_dependencies {
-                let Some(dependency_provider_key) = provider_by_dependency_key.get(dependency.dependency_key.as_str())
-                else {
-                    continue;
-                };
-                supplied_transitively.insert(dependency_provider_key.clone());
-                pending.push(dependency_provider_key.clone());
-            }
-        }
-
-        used.into_iter()
-            .filter(|provider| !supplied_transitively.contains(&provider.identity.stable_key()))
+            .collect::<BTreeSet<_>>();
+        selected.extend(compiler_projection_roots.iter().cloned());
+        self.active_sdk_records()
+            .filter(|provider| selected.contains(&provider.identity.stable_key()))
             .collect()
     }
 
@@ -1534,6 +1525,64 @@ mod tests {
     }
 
     #[test]
+    fn sdk_link_roots_keep_each_semantic_owner_direct() -> TestResult {
+        let mut core = record(
+            "stdlib-core",
+            NamespaceAuthority::SdkReserved,
+            &[&["std", "derives", "collection"]],
+            true,
+            true,
+        );
+        core.artifact = Some(LibraryArtifactMetadata::from_crate_root(
+            "stdlib_core",
+            "stdlib-core",
+            Path::new("/sdk/stdlib-core"),
+        ));
+        let mut system = record(
+            "stdlib-system",
+            NamespaceAuthority::SdkReserved,
+            &[&["std", "io"]],
+            true,
+            true,
+        );
+        system.artifact = Some(LibraryArtifactMetadata::from_crate_root(
+            "stdlib_system",
+            "stdlib-system",
+            Path::new("/sdk/stdlib-system"),
+        ));
+        Arc::get_mut(system.manifest.as_mut().ok_or("missing system manifest")?)
+            .ok_or("system manifest unexpectedly shared")?
+            .contract_metadata
+            .provider
+            .provider_dependencies
+            .push(ProviderDependencyMetadata {
+                kind: ProviderDependencyKind::PrivateImplementation,
+                dependency_key: "stdlib_core".to_string(),
+                provider_name: core.identity.name.clone(),
+                provider_version: core.identity.version.clone(),
+                artifact_digest: core.identity.digest.clone(),
+                relative_artifact_path: "../stdlib-core".to_string(),
+                requested_features: BTreeSet::new(),
+                default_features: false,
+                optional: false,
+            });
+        let plan = ProviderPlan::new(
+            LibraryManifestIndex::default(),
+            vec![core, system],
+            [path(&["std", "derives", "collection"]), path(&["std", "io"])],
+        )?;
+
+        assert_eq!(
+            plan.sdk_link_roots()
+                .iter()
+                .map(|provider| provider.identity.name.as_str())
+                .collect::<Vec<_>>(),
+            ["stdlib-core", "stdlib-system"]
+        );
+        Ok(())
+    }
+
+    #[test]
     fn source_bootstrap_grants_only_catalog_selected_std_roots() {
         let plan = ProviderPlan::default().with_bootstrap_sdk_namespace_roots(["io".to_string(), "fs".to_string()]);
 
@@ -1707,6 +1756,14 @@ mod tests {
         );
         assert_eq!(rebindings[0].provider_name, "incan_stdlib_codecs");
         assert_eq!(plan.sdk_artifact_projections().len(), 1);
+        assert_eq!(
+            plan.sdk_link_roots()
+                .iter()
+                .map(|provider| provider.identity.name.as_str())
+                .collect::<Vec<_>>(),
+            ["incan_stdlib_codecs"],
+            "a compiled dependency's private SDK edge must remain directly linkable for compiler-projected paths"
+        );
         Ok(())
     }
 

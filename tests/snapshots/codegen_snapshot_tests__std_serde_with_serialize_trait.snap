@@ -84,5 +84,5 @@ fn main() {
             }
         }),
     );
-    return Payload { value: 1 }.to_json();
+    return crate::__incan_std::serde::json::Serialize::to_json(&Payload { value: 1 });
 }

@@ -145,6 +145,42 @@ def import_user(path: Path, users: list[User]) -> Result[User, ImportError]:
 
 The `?` is visible in the body, and the fallibility is visible in the return type. There is no hidden exception path.
 
+## Propagate failures while iterating
+
+Some operations can fail each time a loop requests another item. `FallibleIterator[T, E]` keeps that polling error separate from ordinary exhaustion. Put `?` on the loop header to propagate the first polling error:
+
+```incan
+from std.fs import Path
+from std.io import BinaryReader, IoError
+
+@derive(Clone)
+enum ImportError:
+    Read(IoError)
+
+
+def count_bytes[R with BinaryReader](reader: R) -> Result[int, ImportError]:
+    mut total = 0
+
+    for chunk in reader.chunks(8192).map_err(ImportError.Read)?:
+        total += len(chunk)
+
+    return Ok(total)
+```
+
+The loop sees only non-empty chunks. `Ok(None)` ends it normally; `Err(IoError)` is converted by `map_err` and propagated by the trailing `?`. The adapter is lazy, so it maps errors produced by future polls rather than an error that already exists.
+
+Opening a stream can fail once, while reading from it can fail on every poll. Keep those phases visible by unwrapping setup before the loop:
+
+```incan
+def count_path(path: Path) -> Result[int, ImportError]:
+    reader = path.open("rb", -1, None, None, None).map_err(ImportError.Read)?
+    return count_bytes(reader)
+```
+
+In `count_path`, the first `?` handles setup. The `?` inside `count_bytes` handles polling. A single `for item in open_stream()?:` header is rejected when the setup result contains a fallible iterator because it would hide those two different failure boundaries.
+
+Fallible streams also support lazy `map`, `filter`, `flat_map`, `take`, `inspect`, `map_err`, and `inspect_err` adapters. Use `collect` or `fold` when you want one final `Result` instead of a loop. Retry is not automatic: the source must own retry because only it knows whether a failed poll advanced state or can safely be repeated.
+
 ## Compose `Result` with combinators
 
 Use `Result` combinators when the code is transforming one branch of a result rather than making a multi-branch decision. The six standard methods are Rust-shaped and keep the same names in Incan: `map`, `map_err`, `and_then`, `or_else`, `inspect`, and `inspect_err`.
@@ -277,6 +313,7 @@ Ask these in order:
 4. Is the current function the right place to decide? If yes, `match`; if no, `?`.
 5. Is this a public boundary? Convert low-level errors into the caller-facing error type.
 6. Is the code only transforming, chaining, recovering, or observing one `Result` branch? Use a Result combinator.
+7. Can fetching each next item fail? Use `FallibleIterator` and make polling propagation visible with `for item in stream?:`.
 
 ## Try it
 
@@ -285,9 +322,11 @@ Ask these in order:
 3. Write `def describe_age(name: str, ages: dict[str, int]) -> str` that handles `None` locally.
 4. Write `def require_age(name: str, ages: dict[str, int]) -> Result[int, str]` that converts `None` into `Err(...)`.
 5. Rewrite a nested `match` over `Result[int, str]` using `map`, `map_err`, or `and_then`.
+6. Rewrite a manual `read_bytes` / empty-chunk loop using `reader.chunks(size)` and map its `IoError` into an application error.
 
 ## What to learn next
 
 - Core concepts: [Error handling](../explanation/error_handling.md)
 - Recipes: [Error handling recipes](../how-to/error_handling_recipes.md)
 - File APIs with `Result`: [File I/O](../how-to/file_io.md)
+- Fallible iterator hooks, adapters, and terminals: [Collection protocols](../reference/stdlib_traits/collection_protocols.md#fallibleiterator-fallible-iteration)

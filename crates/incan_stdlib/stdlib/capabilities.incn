@@ -162,13 +162,20 @@ static static_storage: RegistryEntry[CapabilityId, CapabilityDescriptor] = capab
         references=static_storage_references,
     ),
 )
-const first_class_functions_forms: FrozenList[str] = ["handler: Callable[int, str] = label", "callbacks = [on_success, on_error]"]
+const first_class_functions_forms: FrozenList[str] = [
+    "handler: Callable[int, str] = label",
+    "callbacks = [on_success, on_error]",
+    "Mapper with Callable1[int, str]",
+]
 const first_class_functions_references: FrozenList[CapabilityReference] = [CapabilityReference(
     label="Functions and calls",
     path="functions.md",
-), CapabilityReference(label="Derives and traits", path="derives_and_traits.md"), CapabilityReference(
+), CapabilityReference(label="Callable objects", path="stdlib_traits/callable.md"), CapabilityReference(
     label="Release 0.2",
     path="../../release_notes/0_2.md",
+), CapabilityReference(
+    label="Release 0.5",
+    path="../../release_notes/0_5.md",
 )]
 static first_class_functions: RegistryEntry[CapabilityId, CapabilityDescriptor] = capabilities.entry(
     key=CapabilityId("FirstClassFunctions"),
@@ -181,7 +188,7 @@ static first_class_functions: RegistryEntry[CapabilityId, CapabilityDescriptor] 
         rfc="RFC 035",
         stability=CapabilityStability.Stable,
         activation="None.",
-        summary="Named functions can be passed, stored, and typed with `Callable[...]` or function type syntax.",
+        summary="Named functions and closures can be passed, stored, typed, and accepted through `CallableN` bounds.",
         canonical_forms=first_class_functions_forms,
         prefer_over="Closures or wrappers whose only job is to pass through an existing named function.",
         references=first_class_functions_references,
@@ -669,6 +676,38 @@ static iterator_adapters: RegistryEntry[CapabilityId, CapabilityDescriptor] = ca
         references=iterator_adapters_references,
     ),
 )
+const fallible_iteration_forms: FrozenList[str] = [
+    "for item in stream?:",
+    "stream.map(transform).map_err(to_domain_error)",
+    "stream.collect()?",
+]
+const fallible_iteration_references: FrozenList[CapabilityReference] = [CapabilityReference(
+    label="Collection protocols",
+    path="stdlib_traits/collection_protocols.md",
+), CapabilityReference(label="std.io", path="stdlib/io.md"), CapabilityReference(
+    label="Fallible and infallible paths",
+    path="../tutorials/fallible_and_infallible_paths.md",
+), CapabilityReference(
+    label="Release 0.5",
+    path="../../release_notes/0_5.md",
+)]
+static fallible_iteration: RegistryEntry[CapabilityId, CapabilityDescriptor] = capabilities.entry(
+    key=CapabilityId("FallibleIteration"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=CapabilityDescriptor(
+        id=CapabilityId("FallibleIteration"),
+        name="Fallible iteration and combinators",
+        category=CapabilityCategory.Stdlib,
+        since="0.5",
+        rfc="RFC 115",
+        stability=CapabilityStability.Stable,
+        activation="Import `FallibleIterator` from `std.derives.collection` or use a standard fallible stream.",
+        summary="Fallible streams separate exhaustion from typed poll errors and support lazy pipelines.",
+        canonical_forms=fallible_iteration_forms,
+        prefer_over="Hand-written polling loops that duplicate item, exhaustion, and error routing for each source.",
+        references=fallible_iteration_references,
+    ),
+)
 const result_combinators_forms: FrozenList[str] = ["result.map(transform)", "result.and_then(validate)", "result.inspect(log_success)"]
 const result_combinators_references: FrozenList[CapabilityReference] = [CapabilityReference(
     label="std.result",
@@ -907,7 +946,11 @@ static std_fs: RegistryEntry[CapabilityId, CapabilityDescriptor] = capabilities.
         references=std_fs_references,
     ),
 )
-const std_io_forms: FrozenList[str] = ["from std.io import BytesIO, Endian", "stream.write(value, Endian.Little)"]
+const std_io_forms: FrozenList[str] = [
+    "from std.io import BytesIO, Endian",
+    "stream.write(value, Endian.Little)",
+    "for chunk in stream.chunks(65536)?:",
+]
 const std_io_references: FrozenList[CapabilityReference] = [CapabilityReference(label="std.io", path="stdlib/io.md"), CapabilityReference(
     label="Release 0.3",
     path="../../release_notes/0_3.md",
@@ -923,7 +966,7 @@ static std_io: RegistryEntry[CapabilityId, CapabilityDescriptor] = capabilities.
         rfc="RFC 056",
         stability=CapabilityStability.Stable,
         activation="Import from `std.io`.",
-        summary="Binary stream APIs cover `BytesIO`, endian-aware reads/writes, cursor helpers, delimiter operations, and buffer extraction.",
+        summary="Binary streams cover endian-aware I/O, cursors, delimiters, fallible chunks, and buffer extraction.",
         canonical_forms=std_io_forms,
         prefer_over="Byte-twiddling helpers with unclear endian or cursor semantics.",
         references=std_io_references,

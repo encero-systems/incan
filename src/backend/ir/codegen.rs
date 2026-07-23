@@ -40,7 +40,7 @@ use crate::frontend::module::canonicalize_source_module_segments;
 use crate::frontend::typechecker::TypeCheckInfo;
 use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
 use crate::library_manifest::LibraryManifest;
-use crate::provider::ProviderPlan;
+use crate::provider::{ProviderPlan, SDK_PROVIDER_BUILD_ENV};
 use incan_core::lang::stdlib;
 
 use super::emit::CallableNameResolution;
@@ -708,6 +708,7 @@ impl<'a> IrCodegen<'a> {
     fn configure_lowering(&self, lowering: &mut AstLowering) {
         lowering.set_stdlib_cache(self.stdlib_cache.clone());
         lowering.set_provider_plan(self.provider_plan.clone());
+        lowering.set_sdk_provider_build(env::var_os(SDK_PROVIDER_BUILD_ENV).is_some());
         lowering.set_registry_package_identity(self.registry_package_identity.clone());
     }
 
@@ -3662,6 +3663,15 @@ def main() -> None:
         assert!(
             io_code.contains("fn source(&self) -> Option<String>"),
             "expected imported Error.source default method to expand into IoError impl; got:\n{io_code}"
+        );
+        assert!(
+            io_code.contains("MapFn: Clone + crate::__incan_std::traits::callable::Callable1<Vec<u8>, U>")
+                && io_code.contains("Folder: Clone + crate::__incan_std::traits::callable::Callable2<U, Vec<u8>, U>"),
+            "imported FallibleIterator defaults must retain callable bounds from their defining module; got:\n{io_code}"
+        );
+        assert!(
+            io_code.contains("f.__call__(acc.clone(), item.clone())"),
+            "imported FallibleIterator defaults must retain nominal Callable2 dispatch; got:\n{io_code}"
         );
         Ok(())
     }

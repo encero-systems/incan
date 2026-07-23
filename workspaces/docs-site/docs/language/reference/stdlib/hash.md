@@ -60,7 +60,7 @@ Integer finalizers are intentionally absent from cryptographic namespaces. Use d
 | `reader_hash_u64(input: BinaryReader, algorithm: str, chunk_size: int = 65536)` | `Result[u64, HashError]` | Stream any `std.io.BinaryReader` through a 64-bit non-cryptographic hash. |
 | `reader_hash_u128(input: BinaryReader, algorithm: str, chunk_size: int = 65536)` | `Result[u128, HashError]` | Stream any `std.io.BinaryReader` through a 128-bit non-cryptographic hash. |
 
-`chunk_size` must be positive. A successful zero-length reader read marks EOF for reader helpers.
+`chunk_size` must be positive. Reader helpers consume `BinaryReader.chunks(chunk_size)`, whose successful zero-length read marks EOF rather than hashing an empty chunk.
 
 ## Errors
 

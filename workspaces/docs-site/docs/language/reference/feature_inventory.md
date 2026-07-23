@@ -22,7 +22,7 @@ Use it when deciding whether code should use an existing Incan surface before ad
 | Rust interop boundary | Interop | 0.2 | Declare Rust dependencies in `incan.toml`; import through `rust` / `rust::` paths. | `from rust import uuid`<br>`from rust::std::time import Instant`<br>`type UserId = rusttype i64` | Incan can import Rust crates, bind Rust paths, declare `rusttype` wrappers, and model explicit interop edges. | Custom Rust backend modules used when ordinary Rust imports or wrappers are sufficient. | [Rust interop](../how-to/rust_interop.md), [Rust types for Python developers](../how-to/rust_types_for_python_devs.md), [Release 0.2](../../release_notes/0_2.md) |
 | Incan libraries and `pub::` imports | Libraries | 0.2 | Build libraries with `incan build --lib`; consume dependencies through `pub::` imports. | `from pub::mylib import my_function`<br>`pub from session import Session` | Projects can publish public API manifests and downstream projects can import those public symbols. | Copying source files between projects or relying on private module paths. | [Imports and modules](imports_and_modules.md), [Release 0.2](../../release_notes/0_2.md) |
 | Module static storage | Syntax | 0.2 | None. | `static hits: int = 0`<br>`pub static registry: dict[str, int] = {}` | `static` declares live module-owned runtime storage, distinct from deeply immutable `const` values. | Module-level mutable state hidden behind ad hoc helper functions. | [Static storage](static_storage.md), [Module state](../how-to/module_state.md), [Release 0.2](../../release_notes/0_2.md) |
-| First-class function references | TypeSystem | 0.2 | None. | `handler: Callable[int, str] = label`<br>`callbacks = [on_success, on_error]` | Named functions can be passed, stored, and typed with `Callable[...]` or function type syntax. | Closures or wrappers whose only job is to pass through an existing named function. | [Functions and calls](functions.md), [Derives and traits](derives_and_traits.md), [Release 0.2](../../release_notes/0_2.md) |
+| First-class function references | TypeSystem | 0.2 | None. | `handler: Callable[int, str] = label`<br>`callbacks = [on_success, on_error]`<br>`Mapper with Callable1[int, str]` | Named functions and closures can be passed, stored, typed, and accepted through `CallableN` bounds. | Closures or wrappers whose only job is to pass through an existing named function. | [Functions and calls](functions.md), [Callable objects](stdlib_traits/callable.md), [Release 0.2](../../release_notes/0_2.md), [Release 0.5](../../release_notes/0_5.md) |
 | Explicit call-site generics | TypeSystem | 0.2 | None. | `decode_rows[Order, _](path)`<br>`session.read_csv[Order](path)` | Direct function and method calls can spell type arguments when inference needs help. | Adding throwaway typed locals or duplicate helper functions only to steer inference. | [Derives and traits](derives_and_traits.md#call-site-type-arguments), [Why call-site type arguments exist](../explanation/call_site_type_arguments.md), [Release 0.2](../../release_notes/0_2.md) |
 | Abstract traits and supertraits | TypeSystem | 0.2 | None. | `trait OrderedCollection[T] with Collection[T]:`<br>`def first(values: Collection[int]) -> int:` | Trait names are abstract annotation types, and traits can adopt supertraits with `with`. | Hidden generic bounds or duplicated method requirements when a trait annotation names the concept. | [Derives and traits](derives_and_traits.md#traits-authoring), [Derives and traits explained](../explanation/derives_and_traits.md) |
 | Source-defined derives and trait contracts | TypeSystem | 0.2 | Import the relevant `std.derives.*`, `std.traits.*`, or derivable module. | `@derive(json)`<br>`model Row with Serialize:`<br>`T with Clone` | Derive and trait surfaces are authored as named stdlib capability contracts rather than compiler folklore. | Backend-only helper shims or comments that claim derive behavior without source-visible contracts. | [Derives and traits](derives_and_traits.md), [std.derives](stdlib/derives.md), [std.traits](stdlib/traits.md) |
@@ -43,6 +43,7 @@ Use it when deciding whether code should use an existing Incan surface before ad
 | User-defined decorators | Syntax | 0.3 | None for user-defined decorators; compiler-owned decorators keep their documented imports. | `@logged`<br>`@registered("catalog.ref")`<br>`func.__name__`<br>`@registered[(str) -> ColumnExpr]("catalog.ref")` | Decorators are ordinary callable values applied to functions and methods, including generic decorator factories that infer or accept the decorated function type and decorator helpers that expose `func.__name__`. | Boilerplate wrapper declarations around every function that needs the same callable transform. | [Language reference](language.md#decorators), [Derives and traits](derives_and_traits.md), [Release 0.3](../../release_notes/0_3.md) |
 | Generators | Syntax | 0.3 | None. | `def numbers() -> Generator[int]:`<br>`yield value`<br>`(x * 2 for x in values)` | `yield`-based functions and generator expressions produce lazy `Generator[T]` values. | Eager list construction when callers only need lazy iteration. | [Generators](generators.md), [Generators how-to](../how-to/generators.md), [Release 0.3](../../release_notes/0_3.md) |
 | Iterator adapters and terminal consumers | Stdlib | 0.3 | Use iterator values. | `values.iter().map(parse).filter(valid).collect()`<br>`items.enumerate().take(10)`<br>`numbers.fold(0, add)` | Iterator pipelines expose lazy adapters and explicit terminal consumers. | Manual loop accumulators for ordinary map/filter/fold pipeline shapes. | [Collection protocols](stdlib_traits/collection_protocols.md), [Release 0.3](../../release_notes/0_3.md) |
+| Fallible iteration and combinators | Stdlib | 0.5 | Import `FallibleIterator` from `std.derives.collection` or use a standard fallible stream. | `for item in stream?:`<br>`stream.map(transform).map_err(to_domain_error)`<br>`stream.collect()?` | Fallible streams separate exhaustion from typed poll errors and support lazy pipelines. | Hand-written polling loops that duplicate item, exhaustion, and error routing for each source. | [Collection protocols](stdlib_traits/collection_protocols.md), [std.io](stdlib/io.md), [Fallible and infallible paths](../tutorials/fallible_and_infallible_paths.md), [Release 0.5](../../release_notes/0_5.md) |
 | `Result[T, E]` combinators | Stdlib | 0.3 | Use `Result[T, E]` values. | `result.map(transform)`<br>`result.and_then(validate)`<br>`result.inspect(log_success)` | `Result` values support branch-local transforms, fallible chaining, recovery, and inspection taps. | Nested matches that only rewrap `Ok` / `Err` around one transformed branch. | [std.result](stdlib/result.md), [Fallible and infallible paths](../tutorials/fallible_and_infallible_paths.md), [Release 0.3](../../release_notes/0_3.md) |
 | Protocol hooks for core syntax | TypeSystem | 0.3 | Define compatible dunder hooks and adopt/document the corresponding trait vocabulary where useful. | `def __len__(self) -> int:`<br>`def __iter__(self) -> Iterator[T]:`<br>`def __call__(self, value: T) -> U:` | User-defined types can participate in truthiness, length, membership, iteration, indexing, assignment, and calls. | Special-casing custom types in caller code instead of giving the type the expected protocol. | [Traits as language hooks](../explanation/traits_as_language_hooks.md), [Collection protocols](stdlib_traits/collection_protocols.md), [Operators](stdlib_traits/operators.md) |
 | Rust trait adoption from Incan | Interop | 0.3 | Import the Rust trait metadata and adopt with `with TraitName`. | `type UserId = rusttype i64 with Display:`<br>`def fmt(self, f: Formatter) for Display -> Result[None, FmtError]:`<br>`type Output for Add[int] = UserId` | Newtype and rusttype declarations can author Rust trait impls with Incan adoption syntax. | Writing Rust-shaped `impl Trait for Type` concepts in comments or custom backend code. | [Rust interop](../how-to/rust_interop.md), [Derives and traits](derives_and_traits.md), [Release 0.3](../../release_notes/0_3.md) |
@@ -53,7 +54,7 @@ Use it when deciding whether code should use an existing Incan surface before ad
 | `std.collections` specialized containers | Stdlib | 0.3 | Import from `std.collections`. | `from std.collections import Deque, Counter, PriorityQueue`<br>`queue = Deque[int]()` | Specialized containers cover deque, counter, default dict, ordered/sorted maps and sets, chain maps, and priority queues. | Encoding specialized container behavior in plain `list`, `dict`, or `set` plus ad hoc helpers. | [std.collections](stdlib/collections.md), [Choosing collections](../how-to/choosing_collections.md), [Release 0.3](../../release_notes/0_3.md) |
 | `std.graph` directed graph types | Stdlib | 0.3 | Import from `std.graph`. | `from std.graph import DiGraph, Dag`<br>`graph = DiGraph[Task]()` | Graph types provide stable node/edge ids, DAG invariants, adjacency queries, traversal, and topological ordering. | Hand-rolled adjacency maps for ordinary dependency, plan, or workflow graphs. | [std.graph](stdlib/graph.md), [Release 0.3](../../release_notes/0_3.md) |
 | `std.fs` filesystem APIs | Stdlib | 0.3 | Import from `std.fs` or submodules such as `std.fs.path`. | `from std.fs import Path`<br>`Path("data").join("orders.csv")` | Path-centric filesystem APIs cover paths, files, metadata, traversal, globbing, copy/move/delete, durability syncs, and crash-safe publication through same-filesystem replacement, directory synchronization, and advisory locks. | One-off Rust filesystem wrappers for ordinary path and file work. | [std.fs](stdlib/fs.md), [File IO](../how-to/file_io.md), [RFC 055](../../RFCs/closed/implemented/055_std_fs.md), [RFC 112](../../RFCs/closed/implemented/112_crash_safe_publication_and_file_coordination.md), [Release 0.5](../../release_notes/0_5.md) |
-| `std.io` in-memory binary streams | Stdlib | 0.3 | Import from `std.io`. | `from std.io import BytesIO, Endian`<br>`stream.write(value, Endian.Little)` | Binary stream APIs cover `BytesIO`, endian-aware reads/writes, cursor helpers, delimiter operations, and buffer extraction. | Byte-twiddling helpers with unclear endian or cursor semantics. | [std.io](stdlib/io.md), [Release 0.3](../../release_notes/0_3.md) |
+| `std.io` in-memory binary streams | Stdlib | 0.3 | Import from `std.io`. | `from std.io import BytesIO, Endian`<br>`stream.write(value, Endian.Little)`<br>`for chunk in stream.chunks(65536)?:` | Binary streams cover endian-aware I/O, cursors, delimiters, fallible chunks, and buffer extraction. | Byte-twiddling helpers with unclear endian or cursor semantics. | [std.io](stdlib/io.md), [Release 0.3](../../release_notes/0_3.md) |
 | `std.regex` safe-default regular expressions | Stdlib | 0.3 | Import from `std.regex`. | `from std.regex import Regex`<br>`regex = Regex(r"\w+")?`<br>`regex.find_iter(text)` | `std.regex` provides compiled regular expressions, match spans, captures, splitting, and replacement through the predictable stdlib regex engine. | Ad hoc string scans or direct Rust regex interop when the safe default stdlib engine is sufficient. | [std.regex](stdlib/regex.md), [Regular expressions](../how-to/regular_expressions.md), [RFC 059](../../RFCs/closed/implemented/059_std_regex.md), [Release 0.3](../../release_notes/0_3.md) |
 | `std.uuid` UUID values | Stdlib | 0.3 | Import from `std.uuid`. | `from std.uuid import UUID`<br>`UUID.parse("550e8400-e29b-41d4-a716-446655440000")?`<br>`UUID.v7()?` | `std.uuid` provides RFC 9562 UUID parsing, formatting, generation, byte and integer conversion, version inspection, and standard namespace constants. | Loose UUID strings, byte arrays, or project-local UUID wrappers when UUID semantics belong in the type. | [std.uuid](stdlib/uuid.md), [Working with UUIDs](../how-to/working_with_uuids.md), [RFC 060](../../RFCs/closed/implemented/060_std_uuid.md), [Release 0.3](../../release_notes/0_3.md) |
 | `std.compression` codec workflows | Stdlib | 0.3 | Import from `std.compression` or one of its codec namespaces. | `from std.compression import gzip, decompress_auto`<br>`gzip.compress(payload)?`<br>`zstd.decompress_stream(source, target)?` | `std.compression` provides codec-explicit compression and decompression for byte payloads, streams, and file handles, with explicit decompression autodetection. | Backend-crate compression wrappers, implicit codec guesses, or ad hoc byte transforms for standard compression formats. | [std.compression](stdlib/compression.md), [Compress and decompress data](../how-to/compression.md), [RFC 061](../../RFCs/closed/implemented/061_std_compression.md), [Release 0.3](../../release_notes/0_3.md) |
@@ -168,14 +169,15 @@ Canonical forms:
 - **Stability:** `Stable`
 - **Activation:** None.
 - **Use instead of:** Closures or wrappers whose only job is to pass through an existing named function.
-- **References:** [Functions and calls](functions.md), [Derives and traits](derives_and_traits.md), [Release 0.2](../../release_notes/0_2.md)
+- **References:** [Functions and calls](functions.md), [Callable objects](stdlib_traits/callable.md), [Release 0.2](../../release_notes/0_2.md), [Release 0.5](../../release_notes/0_5.md)
 
-Named functions can be passed, stored, and typed with `Callable[...]` or function type syntax.
+Named functions and closures can be passed, stored, typed, and accepted through `CallableN` bounds.
 
 Canonical forms:
 
 - `handler: Callable[int, str] = label`
 - `callbacks = [on_success, on_error]`
+- `Mapper with Callable1[int, str]`
 
 ### Explicit call-site generics
 
@@ -550,6 +552,25 @@ Canonical forms:
 - `items.enumerate().take(10)`
 - `numbers.fold(0, add)`
 
+### Fallible iteration and combinators
+
+- **Id:** `FallibleIteration`
+- **Category:** `Stdlib`
+- **Since:** `0.5`
+- **RFC:** `RFC 115`
+- **Stability:** `Stable`
+- **Activation:** Import `FallibleIterator` from `std.derives.collection` or use a standard fallible stream.
+- **Use instead of:** Hand-written polling loops that duplicate item, exhaustion, and error routing for each source.
+- **References:** [Collection protocols](stdlib_traits/collection_protocols.md), [std.io](stdlib/io.md), [Fallible and infallible paths](../tutorials/fallible_and_infallible_paths.md), [Release 0.5](../../release_notes/0_5.md)
+
+Fallible streams separate exhaustion from typed poll errors and support lazy pipelines.
+
+Canonical forms:
+
+- `for item in stream?:`
+- `stream.map(transform).map_err(to_domain_error)`
+- `stream.collect()?`
+
 ### `Result[T, E]` combinators
 
 - **Id:** `ResultCombinators`
@@ -749,12 +770,13 @@ Canonical forms:
 - **Use instead of:** Byte-twiddling helpers with unclear endian or cursor semantics.
 - **References:** [std.io](stdlib/io.md), [Release 0.3](../../release_notes/0_3.md)
 
-Binary stream APIs cover `BytesIO`, endian-aware reads/writes, cursor helpers, delimiter operations, and buffer extraction.
+Binary streams cover endian-aware I/O, cursors, delimiters, fallible chunks, and buffer extraction.
 
 Canonical forms:
 
 - `from std.io import BytesIO, Endian`
 - `stream.write(value, Endian.Little)`
+- `for chunk in stream.chunks(65536)?:`
 
 ### `std.regex` safe-default regular expressions
 

@@ -402,6 +402,18 @@ mod tests {
     }
 
     #[test]
+    fn test_format_source_preserves_fallible_loop_adapter_chain() -> Result<(), FormatError> {
+        let source = r#"def consume(stream: FallibleIterator[int, str]) -> Result[None, str]:
+    for value in stream.map(double).map_err(normalize_error)?:
+        println(value)
+    return Ok(None)
+"#;
+
+        assert_eq!(format_source(source)?, source);
+        Ok(())
+    }
+
+    #[test]
     fn test_format_source_preserves_field_and_index_augmented_assignment() -> Result<(), FormatError> {
         let source = r#"model Counter:
     value: int

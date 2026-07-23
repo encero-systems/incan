@@ -44,6 +44,7 @@ struct MethodCallArgEmission<'sig, 'site> {
     base_use_site: ValueUseSite<'site>,
     result_target_ty: Option<&'site IrType>,
     infer_unresolved_generic_args: bool,
+    preserve_incan_int_count: bool,
 }
 
 /// Return the trait path used for type-level reflection.
@@ -53,6 +54,15 @@ fn type_reflection_trait_path(method: &str) -> Option<&'static str> {
         Some(magic_methods::MagicMethodId::Fields) => Some(tb::INCAN_TYPE_FIELD_METADATA),
         _ => None,
     }
+}
+
+/// Return whether semantic resolution supplied an explicit trait owner suitable for UFCS emission.
+///
+/// Qualified source traits may live in source-materialized `crate::__incan_std` modules or linked provider crates. In
+/// either case UFCS avoids depending on an incidental Rust `use Trait` in the consumer module. Bare local trait names
+/// retain method syntax because their declaration is already in the module's lexical scope.
+fn trait_dispatch_requires_ufcs(trait_path: &str) -> bool {
+    trait_path.contains("::")
 }
 
 /// Compute common receiver setup for method emission.
@@ -509,6 +519,8 @@ impl<'a> IrEmitter<'a> {
                 if idx == 0
                     && method == "take"
                     && matches!(arg.ty, IrType::Int)
+                    && !has_incan_receiver_signature
+                    && !context.preserve_incan_int_count
                     && !Self::is_generator_receiver(receiver)
                 {
                     emitted = quote! {
@@ -1018,9 +1030,11 @@ impl<'a> IrEmitter<'a> {
                 IrExprKind::Var { ref_kind, .. } => Some(*ref_kind),
                 _ => None,
             };
-            let has_incan_method_signature = self
-                .method_signature_for_receiver(&rewritten_receiver.ty, method)
-                .is_some();
+            let has_incan_method_signature = matches!(arg_policy, MethodCallArgPolicy::SourceOwned)
+                || matches!(dispatch, Some(IrMethodDispatch::Trait { .. }))
+                || self
+                    .method_signature_for_receiver(&rewritten_receiver.ty, method)
+                    .is_some();
             let preserve_lookup_arg_shape = matches!(arg_policy, MethodCallArgPolicy::PreserveShape)
                 || rust_collection_family_for_ir_type(&rewritten_receiver.ty)
                     .is_some_and(|family| family.preserves_lookup_arg_shape(method));
@@ -1179,13 +1193,18 @@ impl<'a> IrEmitter<'a> {
                         base_use_site: use_site,
                         result_target_ty,
                         infer_unresolved_generic_args: type_args.is_empty(),
+                        preserve_incan_int_count: false,
                     },
                 )?;
                 return Ok(quote! { #type_path::#m (#(#arg_tokens),*) });
             }
         }
 
-        if let Some(IrMethodDispatch::Trait { trait_path, type_args }) = dispatch {
+        if let Some(IrMethodDispatch::Trait {
+            trait_path, type_args, ..
+        }) = dispatch
+            && trait_dispatch_requires_ufcs(trait_path)
+        {
             let path_tokens: Vec<TokenStream> = trait_path
                 .split("::")
                 .map(|segment| {
@@ -1220,9 +1239,17 @@ impl<'a> IrEmitter<'a> {
                     base_use_site: use_site,
                     result_target_ty,
                     infer_unresolved_generic_args: false,
+                    preserve_incan_int_count: true,
                 },
             )?;
-            return Ok(quote! { #trait_tokens::#m(&#r, #(#arg_tokens),*) });
+            let receiver_borrow = if expr_has_rust_reference_shape(receiver) {
+                quote! { #r }
+            } else if super::method_dispatch_uses_mutable_receiver(dispatch) {
+                quote! { &mut #r }
+            } else {
+                quote! { &#r }
+            };
+            return Ok(quote! { #trait_tokens::#m(#receiver_borrow, #(#arg_tokens),*) });
         }
 
         // Regular method call
@@ -1238,7 +1265,9 @@ impl<'a> IrEmitter<'a> {
             IrExprKind::Var { ref_kind, .. } => Some(*ref_kind),
             _ => None,
         };
-        let has_incan_method_signature = self.method_signature_for_receiver(&receiver.ty, method).is_some();
+        let has_incan_method_signature = matches!(arg_policy, MethodCallArgPolicy::SourceOwned)
+            || matches!(dispatch, Some(IrMethodDispatch::Trait { .. }))
+            || self.method_signature_for_receiver(&receiver.ty, method).is_some();
         let preserve_lookup_arg_shape = matches!(arg_policy, MethodCallArgPolicy::PreserveShape)
             || rust_collection_family_for_ir_type(&receiver.ty)
                 .is_some_and(|family| family.preserves_lookup_arg_shape(method));
@@ -1264,6 +1293,7 @@ impl<'a> IrEmitter<'a> {
                 base_use_site: use_site,
                 result_target_ty,
                 infer_unresolved_generic_args: type_args.is_empty(),
+                preserve_incan_int_count: matches!(dispatch, Some(IrMethodDispatch::Trait { trait_path, .. }) if !trait_dispatch_requires_ufcs(trait_path)),
             },
         )?;
         Ok(quote! { #r.#m #method_turbofish (#(#arg_tokens),*) })

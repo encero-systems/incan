@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use crate::frontend::symbols::{CallableParam, MethodInfo, PropertyInfo, ResolvedType};
+use crate::frontend::symbols::{CallableParam, MethodInfo, PropertyInfo, ResolvedType, TypeBoundInfo};
 
 /// Build a substitution map from declared type parameter names to concrete (or still-generic) arguments.
 ///
@@ -89,7 +89,28 @@ pub(crate) fn substitute_method_info(info: &MethodInfo, map: &HashMap<String, Re
     MethodInfo {
         type_params: info.type_params.clone(),
         type_param_bounds: info.type_param_bounds.clone(),
-        type_param_bound_details: info.type_param_bound_details.clone(),
+        type_param_bound_details: info
+            .type_param_bound_details
+            .iter()
+            .map(|(type_param, bounds)| {
+                (
+                    type_param.clone(),
+                    bounds
+                        .iter()
+                        .map(|bound| TypeBoundInfo {
+                            name: bound.name.clone(),
+                            source_name: bound.source_name.clone(),
+                            type_args: bound
+                                .type_args
+                                .iter()
+                                .map(|ty| substitute_resolved_type(ty, map))
+                                .collect(),
+                            module_path: bound.module_path.clone(),
+                        })
+                        .collect(),
+                )
+            })
+            .collect(),
         trait_target: info.trait_target.clone(),
         receiver: info.receiver,
         params: info
@@ -106,5 +127,49 @@ pub(crate) fn substitute_method_info(info: &MethodInfo, map: &HashMap<String, Re
         is_async: info.is_async,
         has_body: info.has_body,
         alias_of: info.alias_of.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn method_substitution_rewrites_generic_bound_arguments() {
+        let mut type_param_bound_details = HashMap::new();
+        type_param_bound_details.insert(
+            "Mapper".to_string(),
+            vec![TypeBoundInfo {
+                name: "Callable1".to_string(),
+                source_name: Some("Callable1".to_string()),
+                type_args: vec![
+                    ResolvedType::TypeVar("E".to_string()),
+                    ResolvedType::TypeVar("F".to_string()),
+                ],
+                module_path: Some(vec!["std".to_string(), "traits".to_string(), "callable".to_string()]),
+            }],
+        );
+        let method = MethodInfo {
+            type_params: vec!["F".to_string(), "Mapper".to_string()],
+            type_param_bounds: HashMap::new(),
+            type_param_bound_details,
+            trait_target: None,
+            receiver: None,
+            params: Vec::new(),
+            return_type: ResolvedType::TypeVar("F".to_string()),
+            is_async: false,
+            has_body: true,
+            alias_of: None,
+        };
+        let substitutions = HashMap::from([("E".to_string(), ResolvedType::Named("IoError".to_string()))]);
+
+        let substituted = substitute_method_info(&method, &substitutions);
+        assert_eq!(
+            substituted.type_param_bound_details["Mapper"][0].type_args,
+            vec![
+                ResolvedType::Named("IoError".to_string()),
+                ResolvedType::TypeVar("F".to_string())
+            ]
+        );
     }
 }

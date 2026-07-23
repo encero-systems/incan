@@ -531,6 +531,18 @@ pub fn incompatible_error_type(expected: &str, found: &str, span: Span) -> Compi
     .with_hint("Use map_err to convert the error type, or add a From implementation")
 }
 
+/// Build the diagnostic for combining setup unwrapping and fallible polling in one loop header.
+pub fn result_wrapped_fallible_iterator_requires_local(span: Span) -> CompileError {
+    CompileError::type_error(
+        "A fallible loop cannot unwrap a Result containing a fallible iterator in the same header".to_string(),
+        span,
+    )
+    .with_note(
+        "The outer Result represents a one-time setup failure; the iterator Result represents a failure from each poll",
+    )
+    .with_hint("Unwrap setup first with `stream = open_stream()?`, then use `for item in stream?:`")
+}
+
 /// Build the diagnostic for using `try` in a function that does not return `Result`.
 pub fn try_without_result_return(span: Span) -> CompileError {
     CompileError::type_error(

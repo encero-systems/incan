@@ -18,6 +18,7 @@ use ::byteorder::BigEndian;
 use ::byteorder::LittleEndian;
 use ::byteorder::ReadBytesExt;
 use ::byteorder::WriteBytesExt;
+pub use crate::__incan_std::derives::collection::FallibleIterator;
 pub use crate::__incan_std::traits::error::Error;
 /// Binary I/O failure.
 ///
@@ -230,10 +231,284 @@ pub trait BinaryRead<T> {
 }
 /// Trait-backed byte reads from a binary stream.
 ///
-/// Implementors expose bounded byte reads that advance their cursor. A zero-length successful read marks EOF for
-/// consumers such as `std.hash.reader_digest`.
+/// Implementors expose bounded byte reads that advance their cursor. `chunks(size)` turns the empty read used by
+/// lower-level readers into ordinary iterator exhaustion, so callers do not repeat EOF checks.
 pub trait BinaryReader {
     fn read_bytes(&self, size: i64) -> Result<Vec<u8>, IoError>;
+    fn chunks(&self, chunk_size: i64) -> ReaderChunks<Self>
+    where
+        Self: Sized;
+}
+/// Incan-authored bounded chunk stream for one binary reader.
+///
+/// The reader remains owned by the stream while it advances. Each successful item is non-empty; EOF is ordinary
+/// exhaustion, and reader errors keep their original typed `IoError` payload.
+#[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
+pub struct ReaderChunks<R: BinaryReader> {
+    pub reader: R,
+    pub chunk_size: i64,
+}
+impl<R: BinaryReader> incan_stdlib::reflection::HasClassName for ReaderChunks<R> {
+    fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl<R: BinaryReader> incan_stdlib::reflection::HasTypeClassName for ReaderChunks<R> {
+    fn __class_name__() -> &'static str {
+        "ReaderChunks"
+    }
+}
+impl<R: BinaryReader> incan_stdlib::reflection::HasFieldMetadata for ReaderChunks<R> {
+    fn __fields__(
+        &self,
+    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl<R: BinaryReader> incan_stdlib::reflection::HasTypeFieldMetadata
+for ReaderChunks<R> {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
+        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 2] = [
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("reader"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("reader"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("R"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("chunk_size"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("chunk_size"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+        ];
+        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
+}
+impl<R: BinaryReader> ReaderChunks<R> {
+    /// Read and classify one bounded chunk.
+    ///
+    /// A non-positive size is rejected before any reader call. Empty successful reads are EOF and therefore never
+    /// become yielded chunks.
+    pub fn __next__(&mut self) -> Result<Option<Vec<u8>>, IoError> {
+        let _ = "\n        Read and classify one bounded chunk.\n\n        A non-positive size is rejected before any reader call. Empty successful reads are EOF and therefore never\n        become yielded chunks.\n        ";
+        if self.chunk_size <= 0 {
+            return Err::<
+                Option<Vec<u8>>,
+                IoError,
+            >(IoError {
+                kind: "invalid_input".to_string(),
+                detail: "chunk_size must be greater than zero".to_string(),
+                operation: "read_chunks".to_string(),
+                position: -1,
+                path: None::<_>,
+            });
+        }
+        let _ = match self.reader.read_bytes(self.chunk_size) {
+            Ok(chunk) => {
+                if ::std::convert::identity(chunk.len() as i64) == 0 {
+                    return Ok::<Option<Vec<u8>>, IoError>(None::<_>);
+                }
+                return Ok::<Option<Vec<u8>>, IoError>(Some(chunk));
+            }
+            Err(error) => {
+                return Err::<Option<Vec<u8>>, IoError>(error);
+            }
+        };
+    }
+    /// Returns field metadata for this type.
+    pub fn __fields__(
+        &self,
+    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 2] = [
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("reader"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("reader"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("R"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("chunk_size"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("chunk_size"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+        ];
+        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
+}
+impl<R: BinaryReader + Clone> FallibleIterator<Vec<u8>, IoError> for ReaderChunks<R> {
+    fn __iter__(&self) -> Self
+    where
+        Self: Sized,
+    {
+        let _ = "\n        Return this stream as its own iteration state.\n\n        Fallible streams are single-pass, so iterating does not clone or rewind them.\n        ";
+        return self.clone();
+    }
+    fn __next__(&mut self) -> Result<Option<Vec<u8>>, IoError> {
+        let _ = "\n        Read and classify one bounded chunk.\n\n        A non-positive size is rejected before any reader call. Empty successful reads are EOF and therefore never\n        become yielded chunks.\n        ";
+        if self.chunk_size <= 0 {
+            return Err::<
+                Option<Vec<u8>>,
+                IoError,
+            >(IoError {
+                kind: "invalid_input".to_string(),
+                detail: "chunk_size must be greater than zero".to_string(),
+                operation: "read_chunks".to_string(),
+                position: -1,
+                path: None::<_>,
+            });
+        }
+        let _ = match self.reader.read_bytes(self.chunk_size) {
+            Ok(chunk) => {
+                if ::std::convert::identity(chunk.len() as i64) == 0 {
+                    return Ok::<Option<Vec<u8>>, IoError>(None::<_>);
+                }
+                return Ok::<Option<Vec<u8>>, IoError>(Some(chunk));
+            }
+            Err(error) => {
+                return Err::<Option<Vec<u8>>, IoError>(error);
+            }
+        };
+    }
+    fn map<
+        U: Clone,
+        MapFn: Clone + crate::__incan_std::traits::callable::Callable1<Vec<u8>, U>,
+    >(&self, f: MapFn) -> impl FallibleIterator<U, IoError> + use<R, U, MapFn> {
+        let _ = "\n        Lazily transform each successful item while preserving source failures.\n\n        `f` runs exactly once for each yielded source item. It does not run at construction, on exhaustion, or on an\n        error. The mapped type must support `Clone` under Incan's current value-semantics contract.\n        ";
+        return crate::__incan_std::derives::collection::MapFallibleIterator {
+            source: self.clone(),
+            f: f,
+            input_marker: None::<_>,
+            output_marker: None::<_>,
+            error_marker: None::<_>,
+        };
+    }
+    fn filter<
+        Predicate: Clone + crate::__incan_std::traits::callable::Callable1<Vec<u8>, bool>,
+    >(
+        &self,
+        f: Predicate,
+    ) -> impl FallibleIterator<Vec<u8>, IoError> + use<R, Predicate> {
+        let _ = "\n        Lazily keep successful items for which `f(item)` returns `true`.\n\n        The predicate runs once for each successful source item until exhaustion or error. Rejected items are consumed;\n        errors pass through without invoking the predicate.\n        ";
+        return crate::__incan_std::derives::collection::FilterFallibleIterator {
+            source: self.clone(),
+            f: f,
+            item_marker: None::<_>,
+            error_marker: None::<_>,
+        };
+    }
+    fn flat_map<
+        U: Clone,
+        Expand: Clone + crate::__incan_std::traits::callable::Callable1<Vec<u8>, Vec<U>>,
+    >(&self, f: Expand) -> impl FallibleIterator<U, IoError> + use<R, U, Expand> {
+        let _ = "\n        Lazily expand each successful item into a list and flatten it.\n\n        `f` runs once per successful source item. Every returned list is exhausted in order before the source is polled\n        again. The flattened type must support `Clone` under the current value-semantics contract.\n        ";
+        return crate::__incan_std::derives::collection::FlatMapFallibleIterator {
+            source: self.clone(),
+            f: f,
+            current: vec![],
+            index: 0,
+            input_marker: None::<_>,
+            error_marker: None::<_>,
+        };
+    }
+    fn take(&self, n: i64) -> impl FallibleIterator<Vec<u8>, IoError> + use<R> {
+        let _ = "\n        Lazily yield at most `n` successful items without retrying failures.\n\n        A non-positive count produces immediate exhaustion without polling the source. Errors encountered before the\n        limit pass through unchanged.\n        ";
+        return crate::__incan_std::derives::collection::TakeFallibleIterator {
+            source: self.clone(),
+            remaining: n,
+            item_marker: None::<_>,
+            error_marker: None::<_>,
+        };
+    }
+    fn inspect<
+        Observer: Clone + crate::__incan_std::traits::callable::Callable1<Vec<u8>, ()>,
+    >(&self, f: Observer) -> impl FallibleIterator<Vec<u8>, IoError> + use<R, Observer> {
+        let _ = "\n        Lazily observe each successful item without changing it.\n\n        The observer runs exactly once before each successful item is yielded. It does not run for exhaustion or\n        errors.\n        ";
+        return crate::__incan_std::derives::collection::InspectFallibleIterator {
+            source: self.clone(),
+            f: f,
+            item_marker: None::<_>,
+            error_marker: None::<_>,
+        };
+    }
+    fn map_err<
+        F: Clone,
+        ErrorMap: Clone + crate::__incan_std::traits::callable::Callable1<IoError, F>,
+    >(&self, f: ErrorMap) -> impl FallibleIterator<Vec<u8>, F> + use<R, F, ErrorMap> {
+        let _ = "\n        Lazily transform each emitted source error while preserving items and exhaustion.\n\n        `f` runs exactly once for each error that escapes the source. It does not retry the failed poll or observe\n        successful items. The mapped error type must support `Clone` under the current value-semantics contract.\n        ";
+        return crate::__incan_std::derives::collection::MapErrFallibleIterator {
+            source: self.clone(),
+            f: f,
+            item_marker: None::<_>,
+            source_error_marker: None::<_>,
+            mapped_error_marker: None::<_>,
+        };
+    }
+    fn inspect_err<
+        ErrorObserver: Clone
+            + crate::__incan_std::traits::callable::Callable1<IoError, ()>,
+    >(
+        &self,
+        f: ErrorObserver,
+    ) -> impl FallibleIterator<Vec<u8>, IoError> + use<R, ErrorObserver> {
+        let _ = "\n        Lazily observe each emitted source error without changing it.\n\n        The observer runs exactly once for each escaping error. Successful items and ordinary exhaustion pass through\n        without invoking it.\n        ";
+        return crate::__incan_std::derives::collection::InspectErrFallibleIterator {
+            source: self.clone(),
+            f: f,
+            item_marker: None::<_>,
+            error_marker: None::<_>,
+        };
+    }
+    fn collect(&mut self) -> Result<Vec<Vec<u8>>, IoError> {
+        let _ = "\n        Consume successful items into a list or return the first source error.\n\n        Items retain source order. A failure discards the partial list and returns only the error; ordinary exhaustion\n        returns every collected item in `Ok`.\n        ";
+        let mut items: Vec<Vec<u8>> = vec![];
+        loop {
+            let _ = match self.__next__() {
+                Ok(Some(item)) => items.push(item.clone()),
+                Ok(None) => {
+                    return Ok::<Vec<Vec<u8>>, IoError>(items);
+                }
+                Err(error) => {
+                    return Err::<Vec<Vec<u8>>, IoError>(error);
+                }
+            };
+        }
+    }
+    fn fold<
+        U: Clone,
+        Folder: Clone + crate::__incan_std::traits::callable::Callable2<U, Vec<u8>, U>,
+    >(&mut self, init: U, f: Folder) -> Result<U, IoError> {
+        let _ = "\n        Consume successful items into an accumulator or return the first source error.\n\n        `f` runs once per successful item in source order, beginning with `init`. It does not run for the failing poll.\n        The accumulator type must support `Clone` under the current value-semantics contract.\n        ";
+        let mut acc = init;
+        loop {
+            let _ = match self.__next__() {
+                Ok(Some(item)) => {
+                    acc = f.__call__(acc.clone(), item.clone());
+                }
+                Ok(None) => {
+                    return Ok::<U, IoError>(acc);
+                }
+                Err(error) => {
+                    return Err::<U, IoError>(error);
+                }
+            };
+        }
+    }
 }
 /// Trait-backed typed binary writes to a byte stream.
 ///
@@ -745,6 +1020,16 @@ impl BinaryReader for _BytesIO {
     fn read_bytes(&self, size: i64) -> Result<Vec<u8>, IoError> {
         let _ = "\n        Read up to `size` bytes through the `BinaryReader` trait surface.\n        ";
         return self.read(size);
+    }
+    fn chunks(&self, chunk_size: i64) -> ReaderChunks<Self>
+    where
+        Self: Sized,
+    {
+        let _ = "\n        Return a bounded, fallible stream of non-empty byte chunks.\n\n        Consume the stream with `for chunk in reader.chunks(size)?:`. EOF is `Ok(None)` rather than an empty byte\n        value. A size less than or equal to zero returns `IoError(kind=\"invalid_input\", ...)` from the first poll.\n        ";
+        return ReaderChunks {
+            reader: self.clone(),
+            chunk_size: chunk_size,
+        };
     }
 }
 impl BinaryRead<u8> for _BytesIO {

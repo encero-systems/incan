@@ -653,6 +653,75 @@ impl AstLowering {
         Some(Self::sdk_provider_rust_dependency_key(provider))
     }
 
+    /// Return the canonical Rust path for a uniquely-owned SDK-provider nominal type.
+    ///
+    /// Checked provider API metadata owns both the nominal declaration and its source module. Method-dispatch type
+    /// arguments can outlive the import expression that introduced them, so lowering must recover that identity from
+    /// the provider graph instead of emitting an unqualified short name. Local declarations always win, and an
+    /// ambiguous provider graph deliberately produces no path.
+    pub(in crate::backend::ir::lower) fn sdk_provider_path_for_type(&self, type_name: &str) -> Option<String> {
+        if self.struct_names.contains_key(type_name)
+            || self.enum_names.contains_key(type_name)
+            || self.class_decls.contains_key(type_name)
+            || self.trait_decls.contains_key(type_name)
+            || self.newtype_construction.contains_key(type_name)
+            || self.source_type_alias_targets.contains_key(type_name)
+        {
+            return None;
+        }
+
+        let mut matches = self
+            .provider_plan
+            .as_deref()?
+            .active_sdk_records()
+            .flat_map(|provider| {
+                provider
+                    .manifest
+                    .as_deref()
+                    .and_then(|manifest| manifest.contract_metadata.api.as_ref())
+                    .into_iter()
+                    .flat_map(move |api| {
+                        api.modules.iter().filter_map(move |module| {
+                            let declares_type = module.declarations.iter().any(|declaration| {
+                                matches!(declaration, ApiDeclaration::Model(model) if model.name == type_name)
+                                    || matches!(declaration, ApiDeclaration::Class(class) if class.name == type_name)
+                                    || matches!(declaration, ApiDeclaration::Enum(enum_) if enum_.name == type_name)
+                                    || matches!(declaration, ApiDeclaration::Newtype(newtype) if newtype.name == type_name)
+                            });
+                            declares_type.then(|| {
+                                (
+                                    Self::sdk_provider_rust_dependency_key(provider),
+                                    module.module_path.clone(),
+                                )
+                            })
+                        })
+                    })
+            })
+            .collect::<Vec<_>>();
+        matches.sort();
+        matches.dedup();
+        let [(provider_crate, module_path)] = matches.as_slice() else {
+            return None;
+        };
+
+        let source_module = module_path
+            .iter()
+            .skip_while(|segment| segment.as_str() == stdlib::STDLIB_ROOT)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("::");
+        let owner = if self.sdk_provider_build {
+            format!("crate::{}", stdlib::INCAN_STD_NAMESPACE)
+        } else {
+            format!("{provider_crate}::{}", stdlib::INCAN_STD_NAMESPACE)
+        };
+        Some(if source_module.is_empty() {
+            format!("{owner}::{type_name}")
+        } else {
+            format!("{owner}::{source_module}::{type_name}")
+        })
+    }
+
     /// Resolve a compiled-stdlib method signature from a typed receiver, including artifact-owned defaults.
     ///
     /// Calls on local values such as `path.open("rb")` no longer retain the import expression that introduced
@@ -2472,6 +2541,10 @@ impl AstLowering {
         // Check if this is a struct/model/class constructor call
         if let ast::Expr::Ident(name) = &f.node {
             let constructor_name = self.symbol_aliases.get(name).cloned().unwrap_or_else(|| name.clone());
+            if let Some(type_path) = self.active_trait_default_value_type_path(name) {
+                let canonical_name = type_path.join("::");
+                return self.lower_constructor_call(&canonical_name, type_args, args, call_span);
+            }
             if stdlib::is_graph_constructor_type(&constructor_name) && args.is_empty() {
                 let lowered_type_args = self.lower_call_site_type_args(call_span, type_args);
                 let receiver_ty = if lowered_type_args.is_empty() {
@@ -2689,9 +2762,27 @@ impl AstLowering {
                     type_args: Vec::new(),
                     args: args_ir,
                     callable_signature: self.callable_signature_for_call_span(call_span),
-                    arg_policy: MethodCallArgPolicy::Default,
+                    arg_policy: MethodCallArgPolicy::SourceOwned,
                 },
                 ret_ty,
+            ));
+        }
+        if imported_callee_path.is_none()
+            && let ast::Expr::Ident(name) = &f.node
+            && let Some(signature) = self.lookup_nominal_callable(name)
+        {
+            let return_type = signature.return_type.clone();
+            return Ok((
+                IrExprKind::MethodCall {
+                    receiver: Box::new(func),
+                    method: "__call__".to_string(),
+                    dispatch: None,
+                    type_args: Vec::new(),
+                    args: args_ir,
+                    callable_signature: Some(signature),
+                    arg_policy: MethodCallArgPolicy::SourceOwned,
+                },
+                return_type,
             ));
         }
         let call_site_signature = self.callable_signature_for_call_span(call_span);
@@ -3192,7 +3283,7 @@ mod tests {
     use crate::backend::ir::stmt::IrStmtKind;
     use crate::backend::ir::types::IrType;
     use crate::frontend::api_metadata::{
-        ApiDeclaration, ApiFunction, CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadata,
+        ApiDeclaration, ApiFunction, ApiModel, CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadata,
         CheckedApiMetadataPackage, SourceAnchor, SourceSpan,
     };
     use crate::frontend::ast::{
@@ -3243,6 +3334,54 @@ mod tests {
             return_type: TypeRef::Named { name: ret.to_string() },
             is_async: false,
         }
+    }
+
+    /// Method-dispatch arguments retain the defining SDK module even after their import expression has disappeared.
+    #[test]
+    fn method_type_arg_uses_unique_sdk_provider_nominal_path() {
+        let mut manifest = LibraryManifest::new("incan-stdlib-system", "0.5.0");
+        manifest.contract_metadata.provider = CompiledProviderMetadata {
+            namespace_claims: vec![ProviderModuleClaim {
+                module_path: vec!["std".to_string(), "io".to_string()],
+                required_features: BTreeSet::new(),
+            }],
+            ..CompiledProviderMetadata::default()
+        };
+        manifest.contract_metadata.api = Some(CheckedApiMetadataPackage {
+            schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+            package: None,
+            modules: vec![CheckedApiMetadata {
+                schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+                module_path: vec!["std".to_string(), "io".to_string()],
+                declarations: vec![ApiDeclaration::Model(ApiModel {
+                    name: "IoError".to_string(),
+                    anchor: SourceAnchor {
+                        id: "std.io.IoError".to_string(),
+                        span: SourceSpan { start: 0, end: 0 },
+                    },
+                    docstring: None,
+                    docstring_sections: None,
+                    decorators: Vec::new(),
+                    type_params: Vec::new(),
+                    traits: Vec::new(),
+                    trait_adoptions: Vec::new(),
+                    derives: Vec::new(),
+                    fields: Vec::new(),
+                    methods: Vec::new(),
+                })],
+            }],
+        });
+        let mut lowering = AstLowering::new();
+        lowering.set_provider_plan(Some(Arc::new(ProviderPlan::for_in_memory_sdk_manifest(
+            LibraryManifestIndex::default(),
+            manifest,
+        ))));
+        lowering.set_sdk_provider_build(true);
+
+        assert_eq!(
+            lowering.lower_resolved_method_type_arg(&ResolvedType::Named("IoError".to_string())),
+            IrType::Struct("crate::__incan_std::io::IoError".to_string())
+        );
     }
 
     #[test]

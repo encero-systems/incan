@@ -4039,9 +4039,187 @@ def main() -> None:
                 "run",
                 "-c",
                 r#"
-from std.io import BytesIO, Endian, IoError
+from std.derives.collection import FallibleIterator
+from std.io import BinaryReader, BytesIO, Endian, IoError
+from std.traits.callable import Callable1, Callable2
+
+model NumberStream with FallibleIterator[int, str]:
+    items: list[int]
+    index: int
+    fail_at: Option[int]
+
+    def __next__(mut self) -> Result[Option[int], str]:
+        match self.fail_at:
+            Some(index) =>
+                if self.index == index:
+                    return Err("boom")
+            None => pass
+        if self.index >= len(self.items):
+            return Ok(None)
+        item = self.items[self.index]
+        self.index += 1
+        return Ok(Some(item))
+
+def double(value: int) -> int:
+    return value * 2
+
+def is_even(value: int) -> bool:
+    return value % 2 == 0
+
+def expand(value: int) -> list[int]:
+    return [value, value + 10]
+
+def expand_empty(value: int) -> list[int]:
+    return []
+
+def observe_item(value: int) -> None:
+    println(f"seen:{value}")
+
+def observe_error(error: str) -> None:
+    println(f"source-error:{error}")
+
+def prefix_error(error: str) -> str:
+    return f"mapped:{error}"
+
+def add(left: int, right: int) -> int:
+    return left + right
+
+@derive(Clone)
+model Multiplier with Callable1[int, int]:
+    factor: int
+
+    def __call__(self, value: int) -> int:
+        return value * self.factor
+
+@derive(Clone)
+model ScaledAdd with Callable2[int, int, int]:
+    factor: int
+
+    def __call__(self, left: int, right: int) -> int:
+        return left + right * self.factor
+
+model TracingStream with FallibleIterator[int, str]:
+    items: list[int]
+    index: int
+    fail_at: Option[int]
+
+    def __next__(mut self) -> Result[Option[int], str]:
+        println(f"poll:{self.index}")
+        match self.fail_at:
+            Some(index) =>
+                if self.index == index:
+                    return Err("trace-boom")
+            None => pass
+        if self.index >= len(self.items):
+            return Ok(None)
+        item = self.items[self.index]
+        self.index += 1
+        return Ok(Some(item))
+
+def trace_map(value: int) -> int:
+    println(f"map-callback:{value}")
+    return value * 2
+
+def trace_filter(value: int) -> bool:
+    println(f"filter-callback:{value}")
+    return true
+
+def trace_expand(value: int) -> list[int]:
+    println(f"flat-map-callback:{value}")
+    return [value, value + 10]
+
+def trace_inspect(value: int) -> None:
+    println(f"inspect-callback:{value}")
+
+def trace_inspect_error(error: str) -> None:
+    println(f"inspect-error-callback:{error}")
+
+def trace_map_error(error: str) -> str:
+    println(f"map-error-callback:{error}")
+    return f"mapped:{error}"
+
+def exercise_fallible_adapters() -> None:
+    traced = TracingStream(items=[1, 2], index=0, fail_at=Some(2)).map(trace_map).filter(trace_filter).flat_map(trace_expand).take(10).inspect(trace_inspect).inspect_err(trace_inspect_error).map_err(trace_map_error)
+    println("pipeline:constructed")
+    match traced.collect():
+        Ok(_) => println("bad")
+        Err(error) => println(f"pipeline-error:{error}")
+
+    match NumberStream(items=[1, 2, 3], index=0, fail_at=None).map(double).collect():
+        Ok(values) => println(f"map:{values[0]}:{values[1]}:{values[2]}")
+        Err(error) => println(error)
+
+    match NumberStream(items=[1, 2], index=0, fail_at=None).map(Multiplier(factor=3)).collect():
+        Ok(values) => println(f"model-map:{values[0]}:{values[1]}")
+        Err(error) => println(error)
+
+    offset = 4
+    match NumberStream(items=[1, 2], index=0, fail_at=None).map((value) => value + offset).collect():
+        Ok(values) => println(f"closure-map:{values[0]}:{values[1]}")
+        Err(error) => println(error)
+
+    match NumberStream(items=[1, 2, 3, 4], index=0, fail_at=None).filter(is_even).collect():
+        Ok(values) => println(f"filter:{values[0]}:{values[1]}")
+        Err(error) => println(error)
+
+    match NumberStream(items=[1, 2], index=0, fail_at=None).flat_map(expand).collect():
+        Ok(values) => println(f"flat:{values[0]}:{values[1]}:{values[2]}:{values[3]}")
+        Err(error) => println(error)
+
+    match NumberStream(items=[1, 2], index=0, fail_at=None).flat_map(expand_empty).collect():
+        Ok(values) => println(f"flat-empty:{len(values)}")
+        Err(error) => println(error)
+
+    match NumberStream(items=[1, 2], index=0, fail_at=Some(1)).take(1).collect():
+        Ok(values) => println(f"take:{values[0]}")
+        Err(error) => println(error)
+
+    match NumberStream(items=[3, 4], index=0, fail_at=None).inspect(observe_item).collect():
+        Ok(values) => println(f"inspect:{len(values)}")
+        Err(error) => println(error)
+
+    errors = NumberStream(items=[7, 8], index=0, fail_at=Some(1)).inspect_err(observe_error).map_err(prefix_error)
+    match errors.collect():
+        Ok(_) => println("bad")
+        Err(error) => println(f"error:{error}")
+
+    match NumberStream(items=[1, 2, 3], index=0, fail_at=None).fold(0, add):
+        Ok(value) => println(f"fold:{value}")
+        Err(error) => println(error)
+
+    match NumberStream(items=[1, 2, 3], index=0, fail_at=None).fold(0, ScaledAdd(factor=2)):
+        Ok(value) => println(f"model-fold:{value}")
+        Err(error) => println(error)
+
+    match NumberStream(items=[4, 5], index=0, fail_at=Some(1)).inspect(observe_item).fold(0, add):
+        Ok(_) => println("bad")
+        Err(error) => println(f"fold-error:{error}")
+
+    println("take-zero:start")
+    match TracingStream(items=[9], index=0, fail_at=Some(0)).take(0).collect():
+        Ok(values) => println(f"take-zero:{len(values)}")
+        Err(error) => println(error)
+    println("take-zero:end")
+
+model FailingReader with BinaryReader:
+    def read_bytes(self, size: int) -> Result[bytes, IoError]:
+        return Err(IoError(kind="other", detail="read failed", operation="read_bytes"))
+
+def propagate_reader_error() -> Result[None, IoError]:
+    for _ in FailingReader().chunks(2)?:
+        pass
+    return Ok(None)
+
+def error_kind(err: IoError) -> str:
+    return err.kind
+
+def map_reader_error() -> Result[None, str]:
+    for _ in FailingReader().chunks(2).map_err(error_kind)?:
+        pass
+    return Ok(None)
 
 def run() -> Result[None, IoError]:
+    exercise_fallible_adapters()
     buf = BytesIO(b"abc\0rest")
     first = buf.read(2)?
     println(len(first))
@@ -4057,6 +4235,20 @@ def run() -> Result[None, IoError]:
     match buf.read_exact(1):
         Ok(_) => println("bad")
         Err(err) => println(err.kind)
+
+    for chunk in BytesIO(b"abcde").chunks(2)?:
+        println(len(chunk))
+    for _ in BytesIO(b"").chunks(2)?:
+        println("bad")
+    match FailingReader().chunks(0).__next__():
+        Ok(_) => println("bad")
+        Err(err) => println(err.kind)
+    match propagate_reader_error():
+        Ok(_) => println("bad")
+        Err(err) => println(err.kind)
+    match map_reader_error():
+        Ok(_) => println("bad")
+        Err(kind) => println(kind)
 
     out = BytesIO()
     u32_value: u32 = 258
@@ -4094,6 +4286,10 @@ def main() -> None:
 "#,
             ])
             .env("CARGO_NET_OFFLINE", "true")
+            .env(
+                "INCAN_STDLIB",
+                format!("{}/crates/incan_stdlib/stdlib", env!("CARGO_MANIFEST_DIR")),
+            )
             .output()?;
         assert!(
             output.status.success(),
@@ -4107,6 +4303,42 @@ def main() -> None:
         assert_eq!(
             lines,
             vec![
+                "pipeline:constructed",
+                "poll:0",
+                "map-callback:1",
+                "filter-callback:2",
+                "flat-map-callback:2",
+                "inspect-callback:2",
+                "inspect-callback:12",
+                "poll:1",
+                "map-callback:2",
+                "filter-callback:4",
+                "flat-map-callback:4",
+                "inspect-callback:4",
+                "inspect-callback:14",
+                "poll:2",
+                "inspect-error-callback:trace-boom",
+                "map-error-callback:trace-boom",
+                "pipeline-error:mapped:trace-boom",
+                "map:2:4:6",
+                "model-map:3:6",
+                "closure-map:5:6",
+                "filter:2:4",
+                "flat:1:11:2:12",
+                "flat-empty:0",
+                "take:1",
+                "seen:3",
+                "seen:4",
+                "inspect:2",
+                "source-error:boom",
+                "error:mapped:boom",
+                "fold:6",
+                "model-fold:12",
+                "seen:4",
+                "fold-error:boom",
+                "take-zero:start",
+                "take-zero:0",
+                "take-zero:end",
                 "2",
                 "2",
                 "4",
@@ -4114,6 +4346,12 @@ def main() -> None:
                 "4",
                 "0",
                 "unexpected_eof",
+                "2",
+                "2",
+                "1",
+                "invalid_input",
+                "other",
+                "other",
                 "30",
                 "258",
                 "-2",

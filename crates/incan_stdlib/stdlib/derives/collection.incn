@@ -1,14 +1,18 @@
 """
-Collection-related traits: Bool, Len, Contains, Iterable, Iterator
+Collection-related traits: Bool, Len, Contains, Iterable, Iterator, FallibleIterator
 These traits enable Python-like collection behavior for custom types.
 
-`Iterable[T]` names values that can create an iterator. `Iterator[T]` names
-single-pass values that produce items through `__next__`. The adapter defaults
-below are ordinary Incan implementations so custom iterator types inherit the
-same lazy pipeline surface as built-in iterators.
+`Iterable[T]` names values that can create an iterator. `Iterator[T]` names single-pass values that produce items
+through `__next__`. The adapter defaults below are ordinary Incan implementations so custom iterator types inherit
+the same lazy pipeline surface as built-in iterators.
+
+`FallibleIterator[T, E]` is the parallel protocol for single-pass sources whose next poll can fail. A fallible loop
+spells `for item in stream?:`; the trailing `?` propagates `E` from each `__next__` poll while ordinary exhaustion
+remains `Ok(None)`.
 """
 
 from rust::incan_stdlib::errors import raise_value_error
+from std.traits.callable import Callable1, Callable2
 
 
 pub trait Contains[T]:
@@ -84,7 +88,7 @@ pub trait Len:
     Len trait - Enables len() builtin for custom types
     Python equivalent: __len__
     
-    ⚠️ Note: Len cannot be auto-derived — you must implement __len__ manually because the compiler can't know what 
+    ⚠️ Note: Len cannot be auto-derived — you must implement __len__ manually because the compiler can't know
     "length" means for your type.
     
     Examples:
@@ -383,6 +387,160 @@ pub trait Iterator[T]:
         return T.sum(self)
 
 
+pub trait FallibleIterator[T, E]:
+    """
+    Single-pass iteration that can fail while fetching the next item.
+
+    `__next__` returns `Ok(Some(item))` for a value, `Ok(None)` for ordinary exhaustion, and `Err(error)` for a
+    source failure. Consume the protocol with `for item in stream?:` from a function that returns `Result` with a
+    compatible error type.
+    """
+    def __iter__(self) -> Self:
+        """
+        Return this stream as its own iteration state.
+
+        Fallible streams are single-pass, so iterating does not clone or rewind them.
+        """
+        return self
+
+    def __next__(mut self) -> Result[Option[T], E]:
+        """
+        Return the next item, ordinary exhaustion, or a source error.
+        """
+        ...
+
+    def map[U with Clone, MapFn with (Clone, Callable1[T, U])](self, f: MapFn) -> FallibleIterator[U, E]:
+        """
+        Lazily transform each successful item while preserving source failures.
+
+        `f` runs exactly once for each yielded source item. It does not run at construction, on exhaustion, or on an
+        error. The mapped type must support `Clone` under Incan's current value-semantics contract.
+        """
+        return MapFallibleIterator[T, E, Self, U, MapFn](
+            source=self,
+            f=f,
+            input_marker=None,
+            output_marker=None,
+            error_marker=None,
+        )
+
+    def filter[Predicate with (Clone, Callable1[T, bool])](self, f: Predicate) -> FallibleIterator[T, E]:
+        """
+        Lazily keep successful items for which `f(item)` returns `true`.
+
+        The predicate runs once for each successful source item until exhaustion or error. Rejected items are consumed;
+        errors pass through without invoking the predicate.
+        """
+        return FilterFallibleIterator[T, E, Self, Predicate](
+            source=self,
+            f=f,
+            item_marker=None,
+            error_marker=None,
+        )
+
+    def flat_map[U with Clone, Expand with (Clone, Callable1[T, list[U]])](
+        self,
+        f: Expand,
+    ) -> FallibleIterator[U, E]:
+        """
+        Lazily expand each successful item into a list and flatten it.
+
+        `f` runs once per successful source item. Every returned list is exhausted in order before the source is polled
+        again. The flattened type must support `Clone` under the current value-semantics contract.
+        """
+        return FlatMapFallibleIterator[T, E, Self, U, Expand](
+            source=self,
+            f=f,
+            current=[],
+            index=0,
+            input_marker=None,
+            error_marker=None,
+        )
+
+    def take(self, n: int) -> FallibleIterator[T, E]:
+        """
+        Lazily yield at most `n` successful items without retrying failures.
+
+        A non-positive count produces immediate exhaustion without polling the source. Errors encountered before the
+        limit pass through unchanged.
+        """
+        return TakeFallibleIterator[T, E, Self](source=self, remaining=n, item_marker=None, error_marker=None)
+
+    def inspect[Observer with (Clone, Callable1[T, None])](self, f: Observer) -> FallibleIterator[T, E]:
+        """
+        Lazily observe each successful item without changing it.
+
+        The observer runs exactly once before each successful item is yielded. It does not run for exhaustion or
+        errors.
+        """
+        return InspectFallibleIterator[T, E, Self, Observer](
+            source=self,
+            f=f,
+            item_marker=None,
+            error_marker=None,
+        )
+
+    def map_err[F with Clone, ErrorMap with (Clone, Callable1[E, F])](self, f: ErrorMap) -> FallibleIterator[T, F]:
+        """
+        Lazily transform each emitted source error while preserving items and exhaustion.
+
+        `f` runs exactly once for each error that escapes the source. It does not retry the failed poll or observe
+        successful items. The mapped error type must support `Clone` under the current value-semantics contract.
+        """
+        return MapErrFallibleIterator[T, E, Self, F, ErrorMap](
+            source=self,
+            f=f,
+            item_marker=None,
+            source_error_marker=None,
+            mapped_error_marker=None,
+        )
+
+    def inspect_err[ErrorObserver with (Clone, Callable1[E, None])](
+        self,
+        f: ErrorObserver,
+    ) -> FallibleIterator[T, E]:
+        """
+        Lazily observe each emitted source error without changing it.
+
+        The observer runs exactly once for each escaping error. Successful items and ordinary exhaustion pass through
+        without invoking it.
+        """
+        return InspectErrFallibleIterator[T, E, Self, ErrorObserver](
+            source=self,
+            f=f,
+            item_marker=None,
+            error_marker=None,
+        )
+
+    def collect(mut self) -> Result[list[T], E]:
+        """
+        Consume successful items into a list or return the first source error.
+
+        Items retain source order. A failure discards the partial list and returns only the error; ordinary exhaustion
+        returns every collected item in `Ok`.
+        """
+        mut items: list[T] = []
+        while true:
+            match self.__next__():
+                Ok(Some(item)) => items.append(item)
+                Ok(None) => return Ok(items)
+                Err(error) => return Err(error)
+
+    def fold[U with Clone, Folder with (Clone, Callable2[U, T, U])](mut self, init: U, f: Folder) -> Result[U, E]:
+        """
+        Consume successful items into an accumulator or return the first source error.
+
+        `f` runs once per successful item in source order, beginning with `init`. It does not run for the failing poll.
+        The accumulator type must support `Clone` under the current value-semantics contract.
+        """
+        mut acc = init
+        while true:
+            match self.__next__():
+                Ok(Some(item)) =>
+                    acc = f(acc, item)
+                Ok(None) => return Ok(acc)
+                Err(error) => return Err(error)
+
 pub trait Sum[T]:
     """
     Sum trait - Names the capability to produce a value from summing iterator items.
@@ -424,6 +582,221 @@ pub model ListIterator[T with Clone] with Iterator[T]:
         self.index += 1
         return Some(item)
 
+
+pub model MapFallibleIterator[
+    T,
+    E,
+    Source with FallibleIterator[T, E],
+    Output,
+    StoredMapFn with (Clone, Callable1[T, Output]),
+] with FallibleIterator[Output, E]:
+    """
+    Lazy state for `FallibleIterator.map()`.
+
+    Marker fields preserve otherwise field-free item, output, and error parameters in generated metadata. They have no
+    runtime control role; polling behavior is owned by `source` and `f`.
+    """
+    source: Source
+    f: StoredMapFn
+    input_marker: Option[T] = None
+    output_marker: Option[Output] = None
+    error_marker: Option[E] = None
+
+    def __next__(mut self) -> Result[Option[Output], E]:
+        """
+        Pull one source item and return its mapped value, exhaustion, or error.
+        """
+        match self.source.__next__():
+            Ok(Some(item)) =>
+                map_item = self.f
+                return Ok(Some(map_item(item)))
+            Ok(None) => return Ok(None)
+            Err(error) => return Err(error)
+
+
+pub model FilterFallibleIterator[
+    T,
+    E,
+    Source with FallibleIterator[T, E],
+    StoredPredicate with (Clone, Callable1[T, bool]),
+] with FallibleIterator[T, E]:
+    """
+    Lazy state for `FallibleIterator.filter()`.
+
+    Marker fields preserve the item and error types in generated metadata and are never inspected while polling.
+    """
+    source: Source
+    f: StoredPredicate
+    item_marker: Option[T] = None
+    error_marker: Option[E] = None
+
+    def __next__(mut self) -> Result[Option[T], E]:
+        """
+        Return the next accepted item, ordinary exhaustion, or source error.
+        """
+        while true:
+            match self.source.__next__():
+                Ok(Some(item)) =>
+                    predicate = self.f
+                    if predicate(item):
+                        return Ok(Some(item))
+                Ok(None) => return Ok(None)
+                Err(error) => return Err(error)
+
+
+pub model FlatMapFallibleIterator[
+    T,
+    E,
+    Source with FallibleIterator[T, E],
+    Output,
+    StoredExpand with (Clone, Callable1[T, list[Output]]),
+] with FallibleIterator[Output, E]:
+    """
+    Lazy state for `FallibleIterator.flat_map()`.
+
+    `current` and `index` retain the active expanded list between polls. The marker fields preserve otherwise field-free
+    input and error parameters in generated metadata and have no runtime control role.
+    """
+    source: Source
+    f: StoredExpand
+    current: list[Output]
+    index: int
+    input_marker: Option[T] = None
+    error_marker: Option[E] = None
+
+    def __next__(mut self) -> Result[Option[Output], E]:
+        """
+        Yield the current nested list before requesting another source item.
+        """
+        while true:
+            if self.index < len(self.current):
+                item = self.current[self.index]
+                self.index += 1
+                return Ok(Some(item))
+            match self.source.__next__():
+                Ok(Some(item)) =>
+                    expand = self.f
+                    self.current = expand(item)
+                    self.index = 0
+                Ok(None) => return Ok(None)
+                Err(error) => return Err(error)
+
+
+pub model TakeFallibleIterator[T, E, Source with FallibleIterator[T, E]] with FallibleIterator[T, E]:
+    """
+    Lazy state for `FallibleIterator.take()`.
+
+    `remaining` counts successful items still allowed. The marker fields preserve otherwise field-free generic types in
+    generated metadata and are not part of the polling decision.
+    """
+    source: Source
+    remaining: int
+    item_marker: Option[T] = None
+    error_marker: Option[E] = None
+
+    def __next__(mut self) -> Result[Option[T], E]:
+        """
+        Yield one item while the remaining count is positive.
+        """
+        if self.remaining <= 0:
+            return Ok(None)
+        match self.source.__next__():
+            Ok(Some(item)) =>
+                self.remaining -= 1
+                return Ok(Some(item))
+            Ok(None) => return Ok(None)
+            Err(error) => return Err(error)
+
+
+pub model InspectFallibleIterator[
+    T,
+    E,
+    Source with FallibleIterator[T, E],
+    StoredObserver with (Clone, Callable1[T, None]),
+] with FallibleIterator[T, E]:
+    """
+    Lazy state for `FallibleIterator.inspect()`.
+
+    Marker fields preserve the item and error types in generated metadata and are never inspected while polling.
+    """
+    source: Source
+    f: StoredObserver
+    item_marker: Option[T] = None
+    error_marker: Option[E] = None
+
+    def __next__(mut self) -> Result[Option[T], E]:
+        """
+        Observe and return one successful item, or forward exhaustion or error.
+        """
+        match self.source.__next__():
+            Ok(Some(item)) =>
+                observe = self.f
+                observe(item)
+                return Ok(Some(item))
+            Ok(None) => return Ok(None)
+            Err(error) => return Err(error)
+
+
+pub model MapErrFallibleIterator[
+    T,
+    E,
+    Source with FallibleIterator[T, E],
+    MappedError,
+    StoredErrorMap with (Clone, Callable1[E, MappedError]),
+] with FallibleIterator[T, MappedError]:
+    """
+    Lazy `FallibleIterator.map_err()` adapter.
+
+    Successful items and ordinary exhaustion pass through unchanged. The mapper runs only when the wrapped source
+    returns an error.
+
+    Marker fields preserve item, source-error, and mapped-error types in generated metadata and are never inspected
+    while polling.
+    """
+    source: Source
+    f: StoredErrorMap
+    item_marker: Option[T] = None
+    source_error_marker: Option[E] = None
+    mapped_error_marker: Option[MappedError] = None
+
+    def __next__(mut self) -> Result[Option[T], MappedError]:
+        """
+        Pull one item, exhaustion marker, or mapped source failure.
+        """
+        match self.source.__next__():
+            Ok(next) => return Ok(next)
+            Err(error) =>
+                map_error = self.f
+                return Err(map_error(error))
+
+
+pub model InspectErrFallibleIterator[
+    T,
+    E,
+    Source with FallibleIterator[T, E],
+    StoredErrorObserver with (Clone, Callable1[E, None]),
+] with FallibleIterator[T, E]:
+    """
+    Lazy state for `FallibleIterator.inspect_err()`.
+
+    Marker fields preserve the successful item and error types in generated metadata and are never inspected while
+    polling.
+    """
+    source: Source
+    f: StoredErrorObserver
+    item_marker: Option[T] = None
+    error_marker: Option[E] = None
+
+    def __next__(mut self) -> Result[Option[T], E]:
+        """
+        Observe and return one source error, or forward an item or exhaustion.
+        """
+        match self.source.__next__():
+            Ok(next) => return Ok(next)
+            Err(error) =>
+                observe = self.f
+                observe(error)
+                return Err(error)
 
 pub model MapIterator[T, Source with Iterator[T], U] with Iterator[U]:
     """
