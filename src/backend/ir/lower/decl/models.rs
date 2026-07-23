@@ -59,7 +59,7 @@ impl AstLowering {
             fields,
             derives,
             visibility: self.map_type_visibility(m.visibility),
-            type_params: Self::lower_type_params(&m.type_params),
+            type_params: self.lower_type_params(&m.type_params),
             derive_rust_modules,
             lint_allows: self.extract_rust_lint_allows(&m.decorators),
         })

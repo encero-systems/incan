@@ -216,6 +216,100 @@ main = "src/main.incn"
 }
 
 #[test]
+fn build_typed_web_extractors_and_scalar_captures_issue867() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "typed_web_extractors", "")?;
+    fs::write(
+        &main_path,
+        r#"import api::routes
+from std.web import App
+
+def main() -> None:
+  App.run(host="127.0.0.1", port=0)
+"#,
+    )?;
+    let api_dir = tmp.path().join("src/api");
+    fs::create_dir_all(&api_dir)?;
+    fs::write(
+        api_dir.join("routes.incn"),
+        r#"from std.web import route, Json, Query, Path, GET, POST
+from std.serde import json
+import std.async
+
+@derive(json)
+model Search:
+  q: str
+
+@derive(json)
+model Update:
+  name: str
+
+@derive(json)
+model Reply:
+  value: str
+
+@route("/search", methods=[GET])
+async def search(query: Query[Search]) -> Json[Reply]:
+  return Json(Reply(value=query.q))
+
+@route("/json", methods=[POST])
+async def create(body: Json[Update]) -> Json[Reply]:
+  return Json(Reply(value=body.name))
+
+@route("/typed/{id}", methods=[GET])
+async def typed_path(_: Path[int]) -> Json[Reply]:
+  return Json(Reply(value="typed"))
+
+@route("/scalar/{id}", methods=[GET])
+async def scalar_path(id: int) -> Json[Reply]:
+  return Json(Reply(value=f"{id}"))
+
+@route("/multi/{year}/{month}", methods=[GET])
+async def multiple_paths(year: int, month: int) -> Json[Reply]:
+  return Json(Reply(value=f"{year}-{month}"))
+
+@route("/mixed/{id}", methods=[POST])
+async def mixed(id: int, _query: Query[Search], _body: Json[Update]) -> Json[Reply]:
+  return Json(Reply(value=f"{id}"))
+
+@route("/methods", methods=[GET, POST])
+async def multiple_methods() -> Json[Reply]:
+  return Json(Reply(value="methods"))
+"#,
+    )?;
+
+    let output = run_incan(
+        tmp.path(),
+        &["build", main_path.to_string_lossy().as_ref(), "--offline"],
+    )?;
+    assert_success(&output, "typed web extractor build");
+
+    let generated_root = tmp.path().join("target/incan/typed_web_extractors/src");
+    let generated_main = fs::read_to_string(generated_root.join("main.rs"))?;
+    let generated_routes = fs::read_to_string(generated_root.join("api/routes.rs"))?;
+    let generated = format!("{generated_main}\n{generated_routes}");
+    let compact_generated = generated
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    assert!(
+        generated.contains("\"/typed/{id}\""),
+        "generated route must retain Axum 0.8 capture syntax"
+    );
+    assert!(
+        compact_generated.contains("Query<Search>") && compact_generated.contains("Json<Update>"),
+        "generated typed request extractors must retain their concrete types"
+    );
+    assert!(
+        generated.contains("\"/multi/{year}/{month}\"")
+            && !compact_generated.contains("Query<_>")
+            && !compact_generated.contains("Json<_>"),
+        "generated multiple captures must retain Axum 0.8 syntax without inferred item signatures"
+    );
+    Ok(())
+}
+
+#[test]
 fn run_synchronous_result_main_issue843() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "synchronous_result_main", "")?;
@@ -698,9 +792,18 @@ fn compiled_sdk_providers_replace_consumer_fs_source_closure() -> Result<(), Box
     let main_path = write_minimal_project(tmp.path(), "compiled_sdk_provider_glob", "")?;
     fs::write(
         &main_path,
-        r#"from std.fs.glob import matches
+        r#"from std.fs import IoError
+from std.fs.glob import matches
 from std.fs.locking import try_exclusive
 from std.fs.path import Path
+
+
+def read_chunks(target: Path) -> Result[None, IoError]:
+  input = target.open("rb", -1, None, None, None)?
+  for chunk in input.chunks(4)?:
+    assert len(chunk) > 0
+  return Ok(None)
+
 
 def main() -> None:
   payload = b"artifact"
@@ -712,6 +815,9 @@ def main() -> None:
     Ok(data) => assert data == payload
     Err(_) => pass
   match try_exclusive("target/compiled-stdlib-artifact.bin"):
+    Ok(_) => pass
+    Err(_) => pass
+  match read_chunks(target):
     Ok(_) => pass
     Err(_) => pass
   println(matches("routes/users.incn", "routes/*.incn"))
@@ -727,8 +833,9 @@ def main() -> None:
     let cargo_toml = fs::read_to_string(output_dir.join("Cargo.toml"))?;
     assert!(
         cargo_toml.contains("[dependencies.incan_stdlib_system]")
-            && !cargo_toml.contains("[dependencies.incan_stdlib_core]"),
-        "consumer must link only the directly used compiled SDK provider; component dependencies remain transitive:\n\
+            && cargo_toml.contains("[dependencies.incan_stdlib_core]"),
+        "consumer must directly link every semantic SDK owner named by generated Rust; the std.io fallible stream \
+         protocol is core-owned:\n\
          {cargo_toml}"
     );
     assert!(
@@ -785,6 +892,147 @@ def main() -> None:
         &["check", main_path.to_str().ok_or("main path was not valid UTF-8")?],
     )?;
     assert_success(&output, "incan check with compiled stdlib facade metadata");
+    Ok(())
+}
+
+#[test]
+fn fallible_iterator_adapters_compile_in_test_batch() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    write_minimal_project(tmp.path(), "fallible_iterator_test_batch", "")?;
+    let tests_dir = tmp.path().join("tests");
+    fs::create_dir_all(&tests_dir)?;
+    fs::write(
+        tests_dir.join("test_fallible_iterator.incn"),
+        r#"from std.derives.collection import FallibleIterator
+from std.testing import assert_eq, assert_true
+
+model NumberStream with FallibleIterator[int, str]:
+    values: list[int]
+    index: int
+
+    def __next__(mut self) -> Result[Option[int], str]:
+        if self.index >= len(self.values):
+            return Ok(None)
+        value = self.values[self.index]
+        self.index += 1
+        return Ok(Some(value))
+
+
+def double(value: int) -> int:
+    return value * 2
+
+
+def test_fallible_adapter_batch() -> None:
+    match NumberStream(values=[1, 2], index=0).map(double).collect():
+        Ok(values) =>
+            assert_eq(len(values), 2)
+            assert_eq(values[0], 2)
+            assert_eq(values[1], 4)
+        Err(error) => assert_true(false, error)
+"#,
+    )?;
+
+    let output = run_incan(tmp.path(), &["test", "tests"])?;
+    assert_success(&output, "incan test batch with FallibleIterator adapters");
+    Ok(())
+}
+
+#[test]
+fn fallible_iterator_defaults_cross_compiled_package_boundary() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let producer_root = tmp.path().join("fallible_streams");
+    let producer_src = producer_root.join("src");
+    fs::create_dir_all(&producer_src)?;
+    fs::write(
+        producer_root.join("incan.toml"),
+        "[project]\nname = \"fallible_streams\"\nversion = \"0.1.0\"\n",
+    )?;
+    fs::write(
+        producer_src.join("streams.incn"),
+        r#"from std.derives.collection import FallibleIterator
+
+@derive(Clone)
+pub enum StreamError:
+    Fetch(str)
+
+
+pub model NumberStream with FallibleIterator[int, str]:
+    values: list[int]
+    index: int
+
+    def __next__(mut self) -> Result[Option[int], str]:
+        if self.index >= len(self.values):
+            return Ok(None)
+        value = self.values[self.index]
+        self.index += 1
+        return Ok(Some(value))
+
+
+pub def numbers() -> NumberStream:
+    return NumberStream(values=[1, 2, 3], index=0)
+"#,
+    )?;
+    fs::write(
+        producer_src.join("facade.incn"),
+        "pub from streams import NumberStream, StreamError, numbers\n",
+    )?;
+    fs::write(
+        producer_src.join("lib.incn"),
+        "pub from facade import NumberStream, StreamError, numbers\n",
+    )?;
+    let producer_build = run_incan(&producer_root, &["build", "--lib"])?;
+    assert_success(
+        &producer_build,
+        "producer build --lib for fallible iterator package boundary",
+    );
+
+    let consumer_root = tmp.path().join("fallible_consumer");
+    let consumer_main = write_minimal_project(
+        &consumer_root,
+        "fallible_consumer",
+        r#"
+[dependencies]
+fallible_streams = { path = "../fallible_streams" }
+"#,
+    )?;
+    fs::write(consumer_root.join("sample.bin"), b"abcde")?;
+    fs::write(
+        &consumer_main,
+        r#"from pub::fallible_streams import StreamError, numbers
+from std.fs import IoError, Path
+
+
+def double(value: int) -> int:
+    return value * 2
+
+
+def read_file_chunks() -> Result[None, IoError]:
+    input = Path("sample.bin").open("rb", -1, None, None, None)?
+    for chunk in input.chunks(2)?:
+        println(f"chunk:{len(chunk)}")
+    return Ok(None)
+
+
+def main() -> None:
+    match numbers().map(double).map_err(StreamError.Fetch).collect():
+        Ok(values) => println(f"values:{values[0]}:{values[1]}:{values[2]}")
+        Err(StreamError.Fetch(detail)) => println(f"error:{detail}")
+    match read_file_chunks():
+        Ok(_) => pass
+        Err(error) => println(error.message())
+"#,
+    )?;
+    let consumer_run = run_incan(&consumer_root, &["run"])?;
+    assert_success(
+        &consumer_run,
+        "compiled package consumer with fallible defaults and File.chunks",
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&consumer_run.stdout)
+            .lines()
+            .collect::<Vec<_>>(),
+        vec!["values:2:4:6", "chunk:2", "chunk:2", "chunk:1"]
+    );
     Ok(())
 }
 

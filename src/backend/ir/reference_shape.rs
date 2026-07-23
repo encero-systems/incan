@@ -17,6 +17,9 @@ pub fn type_has_rust_reference_shape(ty: &IrType) -> bool {
 
 /// Return whether an expression already emits a Rust reference-shaped value despite carrying an owned Incan surface
 /// type in IR.
+///
+/// Method receivers named `self` are represented by the enclosing Rust method's `&self` or `&mut self` parameter even
+/// though their source-level nominal type remains owned in IR.
 #[must_use]
 pub fn expr_has_rust_reference_shape(expr: &IrExpr) -> bool {
     if type_has_rust_reference_shape(&expr.ty) {
@@ -24,10 +27,10 @@ pub fn expr_has_rust_reference_shape(expr: &IrExpr) -> bool {
     }
     matches!(
         &expr.kind,
-        IrExprKind::MethodCall {
-            method,
-            args,
-            ..
-        } if args.is_empty() && matches!(method.as_str(), "as_slice" | "as_str")
+        IrExprKind::Var { name, .. } if name == "self"
+    ) || matches!(
+        &expr.kind,
+        IrExprKind::MethodCall { method, args, .. }
+            if args.is_empty() && matches!(method.as_str(), "as_slice" | "as_str")
     )
 }

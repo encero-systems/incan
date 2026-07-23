@@ -26,7 +26,9 @@ incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 /// println(user1.name)  # Still "Alice"
 /// ```
 pub trait Clone {
-    fn clone(&self) -> Self;
+    fn clone(&self) -> Self
+    where
+        Self: Sized;
 }
 /// Copy trait - Enables implicit copying (marker trait)
 ///

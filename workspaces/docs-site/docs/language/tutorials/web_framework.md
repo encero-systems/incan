@@ -76,6 +76,17 @@ async def get_posts(year: int, month: int) -> Json[list[Post]]:
     return Json(fetch_posts(year, month))
 ```
 
+Use a scalar parameter when the handler body needs the captured value. A route may instead declare an unused typed `Path[T]` extractor with the wildcard pattern when only Axum's extraction and rejection behavior is required:
+
+```incan
+from std.web import route, Json, Path
+import std.async
+
+@route("/health/{probe}")
+async def health_probe(_: Path[str]) -> Json[Health]:
+    return Json(Health(ok=True))
+```
+
 ### HTTP Methods
 
 Specify allowed methods with the `methods` parameter. Handlers can be registered for multiple HTTP methods by passing multiple entries. Import the method constants from the web prelude (e.g. `GET`, `POST`). Supported methods are `GET`, `POST`, `PUT`, `DELETE`, and `PATCH`.
@@ -297,8 +308,9 @@ async def list_items() -> Json[list[Item]]:
 @route("/api/items", methods=[POST])
 async def create_item(body: Json[Item]) -> Json[Item]:
     """Create a new item."""
-    items.append(body.value)
-    return Json(body.value)
+    item = Item(id=body.id, name=body.name, price=body.price)
+    items.append(item)
+    return Json(item)
 
 
 @route("/api/items/{id}", methods=[GET])

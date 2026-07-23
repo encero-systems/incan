@@ -13,10 +13,11 @@
 
 use crate::frontend::ast::*;
 use crate::frontend::diagnostics::errors;
-use crate::frontend::symbols::{ResolvedType, TypeInfo};
-use crate::frontend::typechecker::{ProtocolIterationInfo, ResolvedOperatorKind};
+use crate::frontend::symbols::{ResolvedType, TypeBoundInfo, TypeInfo};
+use crate::frontend::typechecker::{ProtocolIterationInfo, ResolvedMethodDispatch, ResolvedOperatorKind};
 use crate::numeric_adapters::{numeric_op_from_ast, numeric_ty_from_resolved, pow_exponent_kind_from_ast};
 use incan_core::lang::derives::{self, DeriveId};
+use incan_core::lang::magic_methods::{self, MagicMethodId};
 use incan_core::{NumericTy, result_numeric_type};
 
 use super::TypeChecker;
@@ -59,6 +60,39 @@ fn non_negative_integer_literal(expr: &Spanned<Expr>) -> bool {
         Expr::Literal(Literal::Int(_)) => true,
         Expr::Paren(inner) => non_negative_integer_literal(inner),
         _ => false,
+    }
+}
+
+/// Fully resolved hook pair for one structural iteration protocol.
+struct ResolvedIterationHooks {
+    iterator_type: ResolvedType,
+    next_type: ResolvedType,
+    iter_dispatch: Option<ResolvedMethodDispatch>,
+    next_dispatch: Option<ResolvedMethodDispatch>,
+}
+
+/// Preserve a trait's defining module when synthetic protocol-hook resolution follows a source trait call.
+fn inherit_same_trait_dispatch_module(
+    prior: Option<&ResolvedMethodDispatch>,
+    current: &mut Option<ResolvedMethodDispatch>,
+) {
+    let (
+        Some(ResolvedMethodDispatch::Trait {
+            trait_name: prior_trait,
+            module_path: Some(prior_module),
+            ..
+        }),
+        Some(ResolvedMethodDispatch::Trait {
+            trait_name,
+            module_path,
+            ..
+        }),
+    ) = (prior, current.as_mut())
+    else {
+        return;
+    };
+    if module_path.is_none() && trait_name == prior_trait {
+        *module_path = Some(prior_module.clone());
     }
 }
 
@@ -777,27 +811,11 @@ impl TypeChecker {
         receiver_ty: &ResolvedType,
         span: Span,
     ) -> Option<ResolvedType> {
-        let iter_method = "__iter__";
-        let next_method = "__next__";
-        let args: Vec<CallArg> = Vec::new();
-        let arg_types: Vec<ResolvedType> = Vec::new();
-        let iterator_ty = match self.resolve_operator_dunder(receiver_ty, iter_method, &args, &arg_types, span, None) {
-            Some(iterator_ty) => iterator_ty,
-            None => {
-                self.errors
-                    .push(errors::missing_method(&receiver_ty.to_string(), iter_method, span));
-                return None;
-            }
-        };
-
-        let next_ret = match self.resolve_operator_dunder(&iterator_ty, next_method, &args, &arg_types, span, None) {
-            Some(next_ret) => next_ret,
-            None => {
-                self.errors
-                    .push(errors::missing_method(&iterator_ty.to_string(), next_method, span));
-                return None;
-            }
-        };
+        let iter_method = magic_methods::as_str(MagicMethodId::Iter);
+        let next_method = magic_methods::as_str(MagicMethodId::Next);
+        let hooks = self.resolve_iteration_protocol_hooks(receiver_ty, span, span)?;
+        let iterator_ty = hooks.iterator_type;
+        let next_ret = hooks.next_type;
 
         let Some(item_ty) = next_ret.option_inner_type().cloned() else {
             self.errors
@@ -812,9 +830,226 @@ impl TypeChecker {
                 iterator_type: iterator_ty,
                 next_method: next_method.to_string(),
                 item_type: item_ty.clone(),
+                iter_dispatch: hooks.iter_dispatch,
+                next_dispatch: hooks.next_dispatch,
+                fallible_error_type: None,
             },
         );
         Some(item_ty)
+    }
+
+    /// Resolve `for item in iterable?` through `__iter__(self)` and a fallible `__next__() -> Result[Option[T], E]`
+    /// protocol.
+    pub(in crate::frontend::typechecker) fn resolve_fallible_iteration_protocol(
+        &mut self,
+        receiver_ty: &ResolvedType,
+        receiver_span: Span,
+        protocol_span: Span,
+    ) -> Option<ResolvedType> {
+        let iter_method = magic_methods::as_str(MagicMethodId::Iter);
+        let next_method = magic_methods::as_str(MagicMethodId::Next);
+        let hooks = self.resolve_iteration_protocol_hooks(receiver_ty, receiver_span, protocol_span)?;
+        let iterator_ty = hooks.iterator_type;
+        let next_ret = hooks.next_type;
+
+        let Some(item_ty) = next_ret
+            .result_ok_type()
+            .and_then(ResolvedType::option_inner_type)
+            .cloned()
+        else {
+            self.errors.push(errors::type_mismatch(
+                "Result[Option[_], _]",
+                &next_ret.to_string(),
+                protocol_span,
+            ));
+            return Some(ResolvedType::Unknown);
+        };
+        let Some(error_ty) = next_ret.result_err_type().cloned() else {
+            return Some(ResolvedType::Unknown);
+        };
+
+        match self.current_return_error_type.clone() {
+            Some(expected_error) if !self.types_compatible(&error_ty, &expected_error) => {
+                self.errors.push(errors::incompatible_error_type(
+                    &expected_error.to_string(),
+                    &error_ty.to_string(),
+                    protocol_span,
+                ));
+            }
+            None => self.errors.push(errors::try_without_result_return(protocol_span)),
+            _ => {}
+        }
+
+        self.type_info.record_protocol_iteration(
+            protocol_span,
+            ProtocolIterationInfo {
+                iter_method: iter_method.to_string(),
+                iterator_type: iterator_ty,
+                next_method: next_method.to_string(),
+                item_type: item_ty.clone(),
+                iter_dispatch: hooks.iter_dispatch,
+                next_dispatch: hooks.next_dispatch,
+                fallible_error_type: Some(error_ty),
+            },
+        );
+        Some(item_ty)
+    }
+
+    /// Probe the fallible iteration shape while rolling back diagnostics and semantic artifacts.
+    pub(in crate::frontend::typechecker) fn probe_fallible_iteration_protocol(
+        &mut self,
+        receiver_ty: &ResolvedType,
+        span: Span,
+    ) -> bool {
+        if !self.is_user_operator_receiver(receiver_ty) {
+            return false;
+        }
+
+        let baseline_errors = self.errors.clone();
+        let baseline_warnings = self.warnings.clone();
+        let baseline_type_info = self.type_info.clone();
+        let baseline_consumed_iterator_bindings = self.consumed_iterator_bindings.clone();
+        let result = self
+            .resolve_iteration_protocol_hooks(receiver_ty, span, span)
+            .is_some_and(|hooks| {
+                hooks
+                    .next_type
+                    .result_ok_type()
+                    .and_then(ResolvedType::option_inner_type)
+                    .is_some()
+                    && hooks.next_type.result_err_type().is_some()
+            });
+        self.errors = baseline_errors;
+        self.warnings = baseline_warnings;
+        self.type_info = baseline_type_info;
+        self.consumed_iterator_bindings = baseline_consumed_iterator_bindings;
+        result
+    }
+
+    /// Resolve the shared `__iter__` and `__next__` hook pair for one custom iteration route.
+    fn resolve_iteration_protocol_hooks(
+        &mut self,
+        receiver_ty: &ResolvedType,
+        receiver_span: Span,
+        protocol_span: Span,
+    ) -> Option<ResolvedIterationHooks> {
+        let args: Vec<CallArg> = Vec::new();
+        let arg_types: Vec<ResolvedType> = Vec::new();
+        let iter_method = magic_methods::as_str(MagicMethodId::Iter);
+        let next_method = magic_methods::as_str(MagicMethodId::Next);
+        let receiver_dispatch = self
+            .type_info
+            .resolved_method_call(receiver_span)
+            .map(|call| call.dispatch.clone());
+        let iterator_ty = match self.resolve_protocol_operator_dunder(
+            receiver_ty,
+            iter_method,
+            &args,
+            &arg_types,
+            protocol_span,
+            receiver_dispatch.as_ref(),
+        ) {
+            Some(iterator_ty) => iterator_ty,
+            None => {
+                self.errors.push(errors::missing_method(
+                    &receiver_ty.to_string(),
+                    iter_method,
+                    protocol_span,
+                ));
+                return None;
+            }
+        };
+        let mut iter_dispatch = self
+            .type_info
+            .resolved_method_call(protocol_span)
+            .filter(|call| call.method == iter_method)
+            .map(|call| call.dispatch.clone());
+        inherit_same_trait_dispatch_module(receiver_dispatch.as_ref(), &mut iter_dispatch);
+        let next_ret = match self.resolve_protocol_operator_dunder(
+            &iterator_ty,
+            next_method,
+            &args,
+            &arg_types,
+            protocol_span,
+            iter_dispatch.as_ref(),
+        ) {
+            Some(next_ret) => next_ret,
+            None => {
+                self.errors.push(errors::missing_method(
+                    &iterator_ty.to_string(),
+                    next_method,
+                    protocol_span,
+                ));
+                return None;
+            }
+        };
+        let mut next_dispatch = self
+            .type_info
+            .resolved_method_call(protocol_span)
+            .filter(|call| call.method == next_method)
+            .map(|call| call.dispatch.clone());
+        inherit_same_trait_dispatch_module(iter_dispatch.as_ref(), &mut next_dispatch);
+        Some(ResolvedIterationHooks {
+            iterator_type: iterator_ty,
+            next_type: next_ret,
+            iter_dispatch,
+            next_dispatch,
+        })
+    }
+
+    /// Resolve a synthetic protocol hook, retaining the exact trait provenance selected by the source expression.
+    ///
+    /// A source method can return its owning trait without making that trait name directly visible to the consumer.
+    /// Ordinary operator lookup therefore has no unqualified trait symbol to consult. The source call's recorded
+    /// dispatch remains authoritative: use its canonical module only when the returned receiver is that same trait.
+    fn resolve_protocol_operator_dunder(
+        &mut self,
+        receiver_ty: &ResolvedType,
+        method: &str,
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+        span: Span,
+        source_dispatch: Option<&ResolvedMethodDispatch>,
+    ) -> Option<ResolvedType> {
+        if let Some(resolved) = self.resolve_operator_dunder(receiver_ty, method, args, arg_types, span, None) {
+            return Some(resolved);
+        }
+
+        let (receiver_name, receiver_args) = match receiver_ty {
+            ResolvedType::Named(name) => (name, Vec::new()),
+            ResolvedType::Generic(name, type_args) => (name, type_args.clone()),
+            _ => return None,
+        };
+        let Some(ResolvedMethodDispatch::Trait {
+            trait_name,
+            module_path: Some(module_path),
+            ..
+        }) = source_dispatch
+        else {
+            return None;
+        };
+        if receiver_name != trait_name {
+            return None;
+        }
+
+        let adoption = TypeBoundInfo {
+            name: trait_name.clone(),
+            source_name: None,
+            type_args: receiver_args,
+            module_path: Some(module_path.clone()),
+        };
+        self.resolve_named_method(
+            &std::collections::HashMap::new(),
+            None,
+            Some(std::slice::from_ref(&adoption)),
+            method,
+            &[],
+            args,
+            arg_types,
+            span,
+            receiver_ty,
+            None,
+        )
     }
 
     /// Resolve a user-defined index assignment (`base[index] = value`) through `__setitem__`, if available.
@@ -880,43 +1115,65 @@ impl TypeChecker {
         span: Span,
         expected_return_ty: Option<&ResolvedType>,
     ) -> Option<ResolvedType> {
+        if self.is_generic_placeholder_type(receiver_ty) {
+            let placeholder_name = self.generic_placeholder_name(receiver_ty)?.to_string();
+            return self.resolve_generic_placeholder_method(
+                &placeholder_name,
+                method,
+                &[],
+                args,
+                arg_types,
+                span,
+                receiver_ty,
+                expected_return_ty,
+            );
+        }
         match receiver_ty {
             ResolvedType::Generic(type_name, _type_args) => {
-                let type_info = self.lookup_semantic_type_info(type_name).cloned()?;
-                self.resolve_operator_dunder_on_type_info(
-                    &type_info,
-                    method,
-                    args,
-                    arg_types,
-                    span,
-                    receiver_ty,
-                    expected_return_ty,
-                )
+                if let Some(type_info) = self.lookup_semantic_type_info(type_name).cloned() {
+                    self.resolve_operator_dunder_on_type_info(
+                        &type_info,
+                        method,
+                        args,
+                        arg_types,
+                        span,
+                        receiver_ty,
+                        expected_return_ty,
+                    )
+                } else {
+                    self.resolve_trait_receiver_method(
+                        receiver_ty,
+                        method,
+                        &[],
+                        args,
+                        arg_types,
+                        span,
+                        expected_return_ty,
+                    )
+                }
             }
             ResolvedType::Named(type_name) => {
-                let type_info = self.lookup_semantic_type_info(type_name).cloned()?;
-                self.resolve_operator_dunder_on_type_info(
-                    &type_info,
-                    method,
-                    args,
-                    arg_types,
-                    span,
-                    receiver_ty,
-                    expected_return_ty,
-                )
-            }
-            _ if self.is_generic_placeholder_type(receiver_ty) => {
-                let placeholder_name = self.generic_placeholder_name(receiver_ty)?.to_string();
-                self.resolve_generic_placeholder_method(
-                    &placeholder_name,
-                    method,
-                    &[],
-                    args,
-                    arg_types,
-                    span,
-                    receiver_ty,
-                    expected_return_ty,
-                )
+                if let Some(type_info) = self.lookup_semantic_type_info(type_name).cloned() {
+                    self.resolve_operator_dunder_on_type_info(
+                        &type_info,
+                        method,
+                        args,
+                        arg_types,
+                        span,
+                        receiver_ty,
+                        expected_return_ty,
+                    )
+                } else {
+                    self.resolve_trait_receiver_method(
+                        receiver_ty,
+                        method,
+                        &[],
+                        args,
+                        arg_types,
+                        span,
+                        expected_return_ty,
+                    )
+                }
             }
             _ => None,
         }
@@ -1001,12 +1258,17 @@ impl TypeChecker {
 
     /// Return whether a type can participate in user-defined operator dispatch.
     pub(in crate::frontend::typechecker) fn is_user_operator_receiver(&self, ty: &ResolvedType) -> bool {
+        if self.is_generic_placeholder_type(ty) {
+            return true;
+        }
         match ty {
-            ResolvedType::Generic(name, _) | ResolvedType::Named(name) => matches!(
-                self.lookup_semantic_type_info(name),
-                Some(TypeInfo::Class(_) | TypeInfo::Model(_) | TypeInfo::Enum(_) | TypeInfo::Newtype(_))
-            ),
-            _ => self.is_generic_placeholder_type(ty),
+            ResolvedType::Generic(name, _) | ResolvedType::Named(name) => {
+                matches!(
+                    self.lookup_semantic_type_info(name),
+                    Some(TypeInfo::Class(_) | TypeInfo::Model(_) | TypeInfo::Enum(_) | TypeInfo::Newtype(_))
+                ) || self.lookup_semantic_trait_info(name).is_some()
+            }
+            _ => false,
         }
     }
 

@@ -94,7 +94,7 @@ impl std::str::FromStr for HttpStatus {
     }
 }
 pub fn key_bytes<T: OrdinalKey>(value: T) -> Vec<u8> {
-    return value.ordinal_bytes();
+    return crate::__incan_std::collections::OrdinalKey::ordinal_bytes(&value);
 }
 pub fn key_encoding<T: OrdinalKey>(_: T) -> String {
     return T::ordinal_encoding();

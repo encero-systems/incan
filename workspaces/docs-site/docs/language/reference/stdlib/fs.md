@@ -135,6 +135,7 @@ See [Publish a file without exposing partial contents](../../how-to/file_io.md#p
 | ------------------------------------- | ------------------------ | --------------------------------------------------------------- |
 | `file.read(size: int)`                | `Result[str, IoError]`   | Read text from the current cursor.                              |
 | `file.read_bytes(size: int)`          | `Result[bytes, IoError]` | Read at most `size` bytes, or the rest when `size` is negative. |
+| `file.chunks(size: int)`              | `ReaderChunks[File]`     | Lazily read bounded byte chunks through `BinaryReader`.         |
 | `file.read_exact(size: int)`          | `Result[bytes, IoError]` | Read exactly `size` bytes or fail.                              |
 | `file.write(data: str)`               | `Result[int, IoError]`   | Write text and return characters accepted.                      |
 | `file.write_bytes(data: bytes)`       | `Result[int, IoError]`   | Write bytes and return bytes accepted.                          |
@@ -145,6 +146,8 @@ See [Publish a file without exposing partial contents](../../how-to/file_io.md#p
 | `file.sync_data()`                    | `Result[None, IoError]`  | Request data persistence.                                       |
 
 Successful writes do not imply crash-safe persistence. Call `sync()` or `sync_data()` when durability matters.
+
+`File` implements `std.io.BinaryReader`, so `chunks(size)` uses the same fallible iteration and combinator surface as `BytesIO.chunks(size)`. See [std.io](io.md#fallible-chunk-streams) for polling, exhaustion, error, and adapter behavior.
 
 ## OpenOptions
 

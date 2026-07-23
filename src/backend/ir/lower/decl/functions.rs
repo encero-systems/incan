@@ -441,7 +441,7 @@ impl AstLowering {
         let rust_attributes = self.extract_passthrough_attributes(&f.decorators);
         let lint_allows = self.extract_rust_lint_allows(&f.decorators);
 
-        let mut all_type_params = Self::lower_type_params(&f.type_params);
+        let mut all_type_params = self.lower_type_params(&f.type_params);
         all_type_params.extend(hidden_type_params);
         let mut callable_name_type_params = Vec::new();
         collect_generic_callable_name_type_params_from_stmts(&body, &mut callable_name_type_params);

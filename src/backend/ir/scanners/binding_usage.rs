@@ -179,7 +179,9 @@ pub(crate) fn expr_uses_binding_name(expr: &IrExpr, binding_name: &str) -> bool 
                 .any(|arm| expr_uses_binding_name(&arm.awaitable, binding_name))
                 || binding != binding_name && arms.iter().any(|arm| expr_uses_binding_name(&arm.body, binding_name))
         }
-        IrExprKind::Closure { params, body, captures } => {
+        IrExprKind::Closure {
+            params, body, captures, ..
+        } => {
             captures.iter().any(|capture| capture == binding_name)
                 || !params.iter().any(|(name, _)| name == binding_name) && expr_uses_binding_name(body, binding_name)
         }

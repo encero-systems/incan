@@ -1,10 +1,11 @@
 //! Generic call-site inference, monomorph recording, and explicit bound validation.
 
 use super::TypeChecker;
-use crate::frontend::ast::{CallArg, Span, Spanned, Type};
+use crate::frontend::ast::{CallArg, ParamKind, Span, Spanned, Type};
 use crate::frontend::diagnostics::errors;
 use crate::frontend::resolved_type_subst::{substitute_resolved_type, type_param_subst_map_call_site};
 use crate::frontend::symbols::{CallableParam, FunctionInfo, MethodInfo, ResolvedType, TypeInfo};
+use incan_core::lang::callables;
 
 impl TypeChecker {
     /// Validate generic function call type arguments, contextual return bindings, value arguments, and explicit
@@ -40,17 +41,25 @@ impl TypeChecker {
             self.infer_type_param_bindings(&info.return_type, expected, &mut seeded_type_bindings);
         }
         let params_with_explicit = Self::substitute_callable_params(&info.params, &seeded_type_bindings);
-        let arg_types = self.check_call_arg_types_for_params(args, &params_with_explicit);
+        let contextual_params = self.contextualize_source_callable_params(
+            &params_with_explicit,
+            args,
+            &info.type_param_bound_details,
+            &seeded_type_bindings,
+        );
+        let arg_types = self.check_call_arg_types_for_params(args, &contextual_params);
         let mut type_bindings = seeded_type_bindings;
+        self.seed_contextual_callable_type_param_bindings(&params_with_explicit, args, &arg_types, &mut type_bindings);
         self.validate_callable_arg_bindings(
             func_name,
-            &params_with_explicit,
+            &contextual_params,
             args,
             &arg_types,
             &mut type_bindings,
             call_span,
         );
-        let resolved_params = Self::substitute_callable_params(&params_with_explicit, &type_bindings);
+        self.infer_type_param_bindings_from_source_callables(&info.type_param_bound_details, &mut type_bindings);
+        let resolved_params = Self::substitute_callable_params(&contextual_params, &type_bindings);
         self.type_info
             .record_call_site_callable_params(call_span, &resolved_params);
         self.emit_explicit_bound_errors(
@@ -232,10 +241,25 @@ impl TypeChecker {
             self.infer_type_param_bindings(&return_type, expected, &mut type_bindings);
         }
         let params = Self::substitute_callable_params(&params, &type_bindings);
+        let contextual_params = self.contextualize_source_callable_params(
+            &params,
+            args,
+            &method_info.type_param_bound_details,
+            &type_bindings,
+        );
         let return_type = substitute_resolved_type(&return_type, &type_bindings);
-        let arg_types = self.check_call_arg_types_for_params(args, &params);
-        self.validate_callable_arg_bindings(method, &params, args, &arg_types, &mut type_bindings, call_site_span);
-        let resolved_params = Self::substitute_callable_params(&params, &type_bindings);
+        let arg_types = self.check_call_arg_types_for_params(args, &contextual_params);
+        self.seed_contextual_callable_type_param_bindings(&params, args, &arg_types, &mut type_bindings);
+        self.validate_callable_arg_bindings(
+            method,
+            &contextual_params,
+            args,
+            &arg_types,
+            &mut type_bindings,
+            call_site_span,
+        );
+        self.infer_type_param_bindings_from_source_callables(&method_info.type_param_bound_details, &mut type_bindings);
+        let resolved_params = Self::substitute_callable_params(&contextual_params, &type_bindings);
         self.type_info
             .record_call_site_callable_params_exact(call_site_span, &resolved_params);
         if method_info.is_async {
@@ -262,6 +286,203 @@ impl TypeChecker {
         }
 
         substitute_resolved_type(&return_type, &type_bindings)
+    }
+
+    /// Project a generic `CallableN` bound into the contextual function type used to check a callback argument.
+    fn contextualize_source_callable_params(
+        &mut self,
+        params: &[CallableParam],
+        args: &[CallArg],
+        bound_details: &std::collections::HashMap<String, Vec<crate::frontend::symbols::TypeBoundInfo>>,
+        bindings: &std::collections::HashMap<String, ResolvedType>,
+    ) -> Vec<CallableParam> {
+        let closure_params = Self::closure_argument_param_indexes(args, params);
+        params
+            .iter()
+            .enumerate()
+            .map(|(index, param)| {
+                let generic_name = match &param.ty {
+                    ResolvedType::TypeVar(name) | ResolvedType::Named(name) => Some(name.as_str()),
+                    _ => None,
+                };
+                let ty = if let Some(span) = closure_params.get(&index) {
+                    if let Some(signature) = generic_name
+                        .and_then(|name| self.source_callable_signature_for_param(name, bound_details, bindings))
+                    {
+                        self.type_info.record_source_callable_closure(*span);
+                        signature
+                    } else {
+                        param.ty.clone()
+                    }
+                } else {
+                    param.ty.clone()
+                };
+                CallableParam {
+                    name: param.name.clone(),
+                    ty,
+                    kind: param.kind,
+                    has_default: param.has_default,
+                }
+            })
+            .collect()
+    }
+
+    /// Map direct closure arguments to their bound normal parameter indexes.
+    fn closure_argument_param_indexes(
+        args: &[CallArg],
+        params: &[CallableParam],
+    ) -> std::collections::HashMap<usize, Span> {
+        let normal_indexes = params
+            .iter()
+            .enumerate()
+            .filter_map(|(index, param)| (param.kind == ParamKind::Normal).then_some(index))
+            .collect::<Vec<_>>();
+        let mut positional_index = 0usize;
+        let mut closure_params = std::collections::HashMap::new();
+        for arg in args {
+            match arg {
+                CallArg::Positional(expr) => {
+                    if matches!(expr.node, crate::frontend::ast::Expr::Closure(_, _))
+                        && let Some(param_index) = normal_indexes.get(positional_index)
+                    {
+                        closure_params.insert(*param_index, expr.span);
+                    }
+                    positional_index += 1;
+                }
+                CallArg::Named(name, expr) if matches!(expr.node, crate::frontend::ast::Expr::Closure(_, _)) => {
+                    if let Some((index, _)) = params
+                        .iter()
+                        .enumerate()
+                        .find(|(_, param)| param.name() == Some(name.as_str()))
+                    {
+                        closure_params.insert(index, expr.span);
+                    }
+                }
+                CallArg::Named(_, _) | CallArg::PositionalUnpack(_) | CallArg::KeywordUnpack(_) => {}
+            }
+        }
+        closure_params
+    }
+
+    /// Bind a contextualized callback's owning type parameter to the concrete closure type inferred for the argument.
+    fn seed_contextual_callable_type_param_bindings(
+        &self,
+        params: &[CallableParam],
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+        bindings: &mut std::collections::HashMap<String, ResolvedType>,
+    ) {
+        let normal_params = params
+            .iter()
+            .filter(|param| param.kind == ParamKind::Normal)
+            .collect::<Vec<_>>();
+        let mut positional_index = 0usize;
+        for (arg, arg_type) in args.iter().zip(arg_types) {
+            let param = match arg {
+                CallArg::Positional(_) => {
+                    let param = normal_params.get(positional_index).copied();
+                    positional_index += 1;
+                    param
+                }
+                CallArg::Named(name, _) => normal_params
+                    .iter()
+                    .find(|param| param.name() == Some(name.as_str()))
+                    .copied(),
+                CallArg::PositionalUnpack(_) | CallArg::KeywordUnpack(_) => None,
+            };
+            let Some(param) = param else {
+                continue;
+            };
+            if matches!(Self::call_arg_expr(arg).node, crate::frontend::ast::Expr::Closure(_, _))
+                && let ResolvedType::TypeVar(name) | ResolvedType::Named(name) = &param.ty
+            {
+                bindings.insert(name.clone(), arg_type.clone());
+            }
+        }
+    }
+
+    /// Resolve one type parameter's canonical `CallableN[Args..., Return]` bound to a function signature.
+    fn source_callable_signature_for_param(
+        &self,
+        type_param: &str,
+        bound_details: &std::collections::HashMap<String, Vec<crate::frontend::symbols::TypeBoundInfo>>,
+        bindings: &std::collections::HashMap<String, ResolvedType>,
+    ) -> Option<ResolvedType> {
+        let bound = bound_details
+            .get(type_param)?
+            .iter()
+            .find(|bound| self.callable_trait_for_bound(bound).is_some())?;
+        let callable = self.callable_trait_for_bound(bound)?;
+        let arity = callables::info_for(callable).arity;
+        if bound.type_args.len() != arity + 1 {
+            return None;
+        }
+        let resolved = bound
+            .type_args
+            .iter()
+            .map(|ty| substitute_resolved_type(ty, bindings))
+            .collect::<Vec<_>>();
+        let params = resolved[..arity]
+            .iter()
+            .enumerate()
+            .map(|(index, ty)| CallableParam::named(format!("arg{index}"), ty.clone(), ParamKind::Normal))
+            .collect();
+        Some(ResolvedType::Function(params, Box::new(resolved[arity].clone())))
+    }
+
+    /// Return the concrete callable signature arguments represented by one function or nominal callable object.
+    fn source_callable_signature_args(
+        &self,
+        actual: &ResolvedType,
+        bound: &crate::frontend::symbols::TypeBoundInfo,
+    ) -> Option<Vec<ResolvedType>> {
+        let callable = self.callable_trait_for_bound(bound)?;
+        let arity = callables::info_for(callable).arity;
+        let args = match actual {
+            ResolvedType::Function(params, return_type) if params.len() == arity => params
+                .iter()
+                .map(|param| param.ty.clone())
+                .chain(std::iter::once(return_type.as_ref().clone()))
+                .collect(),
+            ResolvedType::Named(type_name) => self.instantiated_trait_args_for_type(type_name, &[], &bound.name)?,
+            ResolvedType::Generic(type_name, type_args) => {
+                self.instantiated_trait_args_for_type(type_name, type_args, &bound.name)?
+            }
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => {
+                return self.source_callable_signature_args(inner, bound);
+            }
+            _ => return None,
+        };
+        (args.len() == arity + 1).then_some(args)
+    }
+
+    /// Infer still-open generic arguments from a function value or nominal callable object and its `CallableN` bound.
+    fn infer_type_param_bindings_from_source_callables(
+        &self,
+        bound_details: &std::collections::HashMap<String, Vec<crate::frontend::symbols::TypeBoundInfo>>,
+        bindings: &mut std::collections::HashMap<String, ResolvedType>,
+    ) {
+        for (type_param, bounds) in bound_details {
+            let Some(actual) = bindings.get(type_param).cloned() else {
+                continue;
+            };
+            let Some(bound) = bounds
+                .iter()
+                .find(|bound| self.callable_trait_for_bound(bound).is_some())
+            else {
+                continue;
+            };
+            let Some(callable_args) = self.source_callable_signature_args(&actual, bound) else {
+                continue;
+            };
+            if bound.type_args.len() != callable_args.len() {
+                continue;
+            }
+            for (expected, actual) in bound.type_args.iter().zip(callable_args.iter()) {
+                let expected = substitute_resolved_type(expected, bindings);
+                self.infer_type_param_bindings(&expected, actual, bindings);
+            }
+        }
     }
 
     /// Infer concrete type bindings for generic type parameters from a parameter/argument type pair.

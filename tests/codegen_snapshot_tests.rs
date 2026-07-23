@@ -1212,6 +1212,292 @@ def main() -> None:
 }
 
 #[test]
+fn test_fallible_iteration_protocol_propagates_next_errors_codegen() {
+    let source = r#"
+model ChunkStream:
+  def __iter__(self) -> ChunkStream:
+    return self
+
+  def __next__(self) -> Result[Option[int], str]:
+    return Ok(None)
+
+def main() -> Result[None, str]:
+  for chunk in ChunkStream()?:
+    seen = chunk
+  return Ok(None)
+"#;
+    let rust_code = generate_rust(source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+
+    assert!(
+        compact.contains(".__next__()?"),
+        "expected fallible for-loop lowering to propagate each __next__ error; generated:\n{rust_code}"
+    );
+}
+
+#[test]
+fn test_fallible_iteration_protocol_lowers_trait_typed_receiver_codegen() {
+    let source = r#"
+trait FallibleStream[T, E]:
+  def __iter__(self) -> Self:
+    return self
+
+  def __next__(self) -> Result[Option[T], E]: ...
+
+model ChunkStream with FallibleStream[int, str]:
+  def __next__(self) -> Result[Option[int], str]:
+    return Ok(None)
+
+def chunks() -> FallibleStream[int, str]:
+  return ChunkStream()
+
+def main() -> Result[None, str]:
+  for chunk in chunks()?:
+    seen = chunk
+  return Ok(None)
+"#;
+    let rust_code = generate_rust(source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+
+    assert!(
+        compact.contains(".__next__()?"),
+        "expected trait-typed fallible loop lowering to propagate each __next__ error; generated:\n{rust_code}"
+    );
+}
+
+#[test]
+fn test_source_callable_bound_preserves_nominal_trait_with_native_callable_blanket_codegen() {
+    let source = r#"
+from std.traits.callable import Callable1
+
+def apply[Mapper with (Clone, Callable1[int, str])](mapper: Mapper, value: int) -> str:
+  return mapper(value)
+
+@derive(Clone)
+model Prefixer with Callable1[int, str]:
+  prefix: str
+
+  def __call__(self, value: int) -> str:
+    return f"{self.prefix}:{value}"
+
+def main() -> str:
+  prefix = "item"
+  closure_value = apply((value) => f"{prefix}:{value}", 3)
+  return f"{closure_value}:{apply(Prefixer(prefix="model"), 4)}"
+"#;
+    let rust_code = generate_rust(source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+
+    assert!(
+        compact.contains("Mapper:Clone+Callable1<i64,String>"),
+        "source Callable1 bounds must remain nominal in generated Rust:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("mapper.__call__(value)") && !compact.contains("Mapper:Clone+Fn(i64)->String"),
+        "generic source callables must dispatch through their nominal hook:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("apply(|value:i64|"),
+        "a direct closure checked through Callable1 must retain its resolved parameter type in Rust:\n{rust_code}"
+    );
+}
+
+#[test]
+fn test_std_fallible_loop_preserves_qualified_trait_dispatch_codegen() {
+    let source = r#"
+from std.derives.collection import FallibleIterator
+
+model NumberStream with FallibleIterator[int, str]:
+  def __next__(mut self) -> Result[Option[int], str]:
+    return Ok(None)
+
+def main() -> Result[None, str]:
+  for value in NumberStream()?:
+    println(value)
+  return Ok(None)
+"#;
+    let rust_code = generate_rust(source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+
+    for method in ["__iter__", "__next__"] {
+        let expected = format!("FallibleIterator::<i64,String,>::{method}");
+        assert!(
+            compact.contains(&expected),
+            "stdlib fallible-loop hook {method} must retain qualified trait dispatch; generated:\n{rust_code}"
+        );
+    }
+}
+
+#[test]
+fn test_std_fallible_adapter_loop_inherits_qualified_trait_dispatch_codegen() {
+    let source = r#"
+from std.io import BinaryReader
+
+pub def consume[R with BinaryReader](reader: R) -> Result[None, str]:
+  prefix = "read failed: "
+  for chunk in reader.chunks(16).map_err((error) => f"{prefix}{error.detail}")?:
+    println(len(chunk))
+  return Ok(None)
+"#;
+    let rust_code = generate_rust(source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+
+    for method in ["__iter__", "__next__"] {
+        assert!(
+            compact.contains(&format!("FallibleIterator::<Vec<u8>,String,>::{method}")),
+            "a fallible adapter loop must retain qualified {method} dispatch from the source trait call:\n{rust_code}"
+        );
+    }
+}
+
+#[test]
+fn test_fallible_iterator_adapter_chain_codegen() {
+    let source = r#"
+trait FallibleStream[T, E]:
+  def __next__(mut self) -> Result[Option[T], E]: ...
+
+  def map[U with Clone](self, f: (T) -> U) -> FallibleStream[U, E]:
+    return MappedStream[T, E, Self, U](source=self, f=f)
+
+  def collect(mut self) -> Result[list[T], E]:
+    mut items: list[T] = []
+    while true:
+      match self.__next__():
+        Ok(Some(item)) => items.append(item)
+        Ok(None) => return Ok(items)
+        Err(error) => return Err(error)
+
+  def take(self, count: int) -> FallibleStream[T, E]:
+    return self
+
+  def inspect(self, f: (T) -> None) -> FallibleStream[T, E]:
+    return self
+
+  def inspect_err(self, f: (E) -> None) -> FallibleStream[T, E]:
+    return self
+
+  def map_err[F with Clone](self, f: (E) -> F) -> FallibleStream[T, F]:
+    return ErrorMappedStream[T, E, Self, F](source=self, f=f, item_marker=None)
+
+model NumberStream with FallibleStream[int, str]:
+  items: list[int]
+  index: int
+
+  def __next__(mut self) -> Result[Option[int], str]:
+    if self.index >= len(self.items):
+      return Ok(None)
+    item = self.items[self.index]
+    self.index += 1
+    return Ok(Some(item))
+
+model MappedStream[T, E, Source with FallibleStream[T, E], Output] with FallibleStream[Output, E]:
+  source: Source
+  f: (T) -> Output
+  error_marker: Option[E] = None
+
+  def __next__(mut self) -> Result[Option[Output], E]:
+    match self.source.__next__():
+      Ok(Some(item)) =>
+        transform = self.f
+        return Ok(Some(transform(item)))
+      Ok(None) => return Ok(None)
+      Err(error) => return Err(error)
+
+model ErrorMappedStream[T, E, Source with FallibleStream[T, E], MappedError] with FallibleStream[T, MappedError]:
+  source: Source
+  f: (E) -> MappedError
+  item_marker: Option[T] = None
+
+  def __next__(mut self) -> Result[Option[T], MappedError]:
+    match self.source.__next__():
+      Ok(next) => return Ok(next)
+      Err(error) =>
+        transform = self.f
+        return Err(transform(error))
+
+def double(value: int) -> int:
+  return value * 2
+
+def observe_value(value: int) -> None:
+  pass
+
+def observe_error(error: str) -> None:
+  pass
+
+def main() -> None:
+  pipeline = NumberStream(items=[1, 2], index=0).map(double).take(1).inspect(observe_value).inspect_err(observe_error)
+  match pipeline.collect():
+    Ok(values) => println(len(values))
+    Err(error) => println(error)
+
+  stream = NumberStream(items=[3], index=0).map(double)
+  match stream.collect():
+    Ok(values) => println(len(values))
+    Err(error) => println(error)
+
+  errors = NumberStream(items=[], index=0).map_err((error) => f"mapped:{error}")
+  match errors.collect():
+    Ok(values) => println(len(values))
+    Err(error) => println(error)
+"#;
+    let rust_code = generate_rust(source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+
+    assert!(
+        compact.contains(".map(")
+            && compact.contains(".take(1).inspect(observe_value).inspect_err(observe_error)")
+            && compact.contains(".map_err(|error|"),
+        "expected fallible adapter chain to remain source-owned; generated:\n{rust_code}"
+    );
+    assert!(
+        !compact.contains("u64::try_from") && !compact.contains("__incan_std::result::inspect"),
+        "semantic trait dispatch must win over same-name Iterator and Result helpers; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("letmutstream=") && compact.contains("stream.collect()"),
+        "a selected mut-self trait terminal must make its local receiver mutable; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("implFallibleStream<U,String>+use<U>"),
+        "opaque adapter returns must exclude the receiver lifetime through precise captures; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("fnmap<U:Clone>(&self,f:fn(i64)->U)->implFallibleStream<U,String>"),
+        "expected trait default types to specialize to the adopter arguments; generated:\n{rust_code}"
+    );
+}
+
+#[test]
+fn test_qualified_fallible_terminal_uses_mutable_ufcs_receiver() {
+    let source = r#"
+from std.derives.collection import FallibleIterator
+
+model NumberStream with FallibleIterator[int, str]:
+  items: list[int]
+  index: int
+
+  def __next__(mut self) -> Result[Option[int], str]:
+    if self.index >= len(self.items):
+      return Ok(None)
+    item = self.items[self.index]
+    self.index += 1
+    return Ok(Some(item))
+
+def main() -> None:
+  match NumberStream(items=[1], index=0).collect():
+    Ok(values) => println(len(values))
+    Err(error) => println(error)
+"#;
+    let rust_code = generate_rust(source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+
+    assert!(
+        compact.contains("FallibleIterator::<i64,String,>::collect(&mut"),
+        "a qualified mut-self trait terminal must receive a mutable UFCS borrow; generated:\n{rust_code}"
+    );
+}
+
+#[test]
 fn test_mixed_numeric_codegen() {
     let source = load_test_file("mixed_numeric");
     let rust_code = generate_rust(&source);
@@ -2950,6 +3236,18 @@ fn test_std_derives_collection_compiled_codegen() {
         panic!("Failed to read stdlib source file: {}", path);
     };
     let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.contains("StoredMapFn: Clone + Callable1<T, Output>"),
+        "fallible adapter storage must retain the nominal source callable bound:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("fn filter<Predicate: Clone + Callable1<Output, bool>>"),
+        "expanded fallible defaults must substitute the adapter's adopted item type:\n{rust_code}"
+    );
+    assert!(
+        !rust_code.contains("list<"),
+        "collection types inside callable bounds must use their canonical Rust representation:\n{rust_code}"
+    );
     insta::assert_snapshot!("std_derives_collection_compiled", rust_code);
 }
 
@@ -3205,6 +3503,33 @@ def main() -> None:
     assert!(
         !compact.contains("implSerializeforPayload{fndisplay_text"),
         "ordinary methods must not be emitted into the Serialize trait impl; generated:\n{rust_code}"
+    );
+}
+
+#[test]
+fn test_qualified_source_trait_dispatch_does_not_double_borrow_self() {
+    let source = r#"
+from std.serde import json
+
+@derive(json)
+model Payload:
+  value: int
+
+  def encode(self) -> str:
+    return self.to_json()
+
+def main() -> str:
+  return Payload(value=1).encode()
+"#;
+    let rust_code = generate_rust(source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("Serialize::to_json(self)"),
+        "expected qualified source-trait dispatch to reuse the method's borrowed self receiver; generated:\n{rust_code}"
+    );
+    assert!(
+        !compact.contains("Serialize::to_json(&self)"),
+        "qualified source-trait dispatch must not borrow an already borrowed self receiver; generated:\n{rust_code}"
     );
 }
 

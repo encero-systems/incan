@@ -12,8 +12,10 @@ use super::super::TraitImplLoweringInput;
 use super::super::errors::LoweringError;
 use crate::frontend::ast::{self, Spanned};
 use crate::frontend::symbols::ResolvedType;
+use incan_core::lang::callables;
 use incan_core::lang::decorators::{self, DecoratorId};
 use incan_core::lang::keywords::{self, KeywordId};
+use incan_core::lang::magic_methods::{self, MagicMethodId};
 use incan_core::lang::traits as core_traits;
 use incan_core::lang::traits::TraitId;
 
@@ -330,7 +332,7 @@ impl AstLowering {
 
         Ok(IrImpl {
             target_type: type_name.to_string(),
-            type_params: Self::lower_type_params(type_params),
+            type_params: self.lower_type_params(type_params),
             trait_name: None,
             trait_module_path: None,
             trait_source_name: None,
@@ -341,7 +343,10 @@ impl AstLowering {
     }
 
     /// Resolve a visible trait spelling to its canonical source identity.
-    fn canonical_trait_identity(&self, visible_name: &str) -> (Option<Vec<String>>, Option<String>) {
+    pub(in crate::backend::ir::lower) fn canonical_trait_identity(
+        &self,
+        visible_name: &str,
+    ) -> (Option<Vec<String>>, Option<String>) {
         if let Some(path) = self.import_aliases.get(visible_name)
             && let Some((source_name, module_path)) = path.split_last()
         {
@@ -351,6 +356,16 @@ impl AstLowering {
             && let Some(module_path) = self.import_aliases.get(module_name)
         {
             return (Some(module_path.clone()), Some(source_name.to_string()));
+        }
+        if let Some(path) = self.active_trait_default_type_path(visible_name)
+            && path.len() >= 4
+            && path[0] == keywords::as_str(KeywordId::Crate)
+            && path[1] == incan_core::lang::stdlib::INCAN_STD_NAMESPACE
+            && let Some((source_name, module_path)) = path.split_last()
+        {
+            let mut canonical_module = vec![incan_core::lang::stdlib::STDLIB_ROOT.to_string()];
+            canonical_module.extend(module_path.iter().skip(2).cloned());
+            return (Some(canonical_module), Some(source_name.clone()));
         }
         let module_path = self.current_source_module_name.as_ref().map(|name| {
             name.split('.')
@@ -746,7 +761,10 @@ impl AstLowering {
     /// generated impl body. At this matching boundary it denotes the same owner as the concrete trait target.
     fn trait_impl_type_matches(expected: &IrType, actual: &IrType) -> bool {
         match (expected, actual) {
-            (_, IrType::SelfType) => true,
+            // At trait-implementation matching boundaries, `Self` on either side names the adopting nominal type.
+            // The typechecker has already checked the concrete signature; this only decides whether lowering keeps
+            // the concrete body instead of expanding the trait declaration's default body.
+            (IrType::SelfType, _) | (_, IrType::SelfType) => true,
             (IrType::List(expected), IrType::List(actual))
             | (IrType::Set(expected), IrType::Set(actual))
             | (IrType::Option(expected), IrType::Option(actual))
@@ -823,14 +841,13 @@ impl AstLowering {
         if let Some(trait_id) = core_traits::from_str(short_name) {
             return core_traits::method_names(trait_id);
         }
-        if matches!(short_name, "Callable0" | "Callable1" | "Callable2") {
-            &["__call__"]
+        if callables::from_str(short_name).is_some() {
+            callables::METHOD_NAMES
         } else {
             match incan_core::lang::stdlib::stdlib_json_trait_id(trait_name)
                 .or_else(|| incan_core::lang::stdlib::stdlib_json_trait_id(short_name))
             {
-                Some(incan_core::lang::stdlib::StdlibJsonTraitId::Serialize) => &["to_json"],
-                Some(incan_core::lang::stdlib::StdlibJsonTraitId::Deserialize) => &["from_json"],
+                Some(id) => incan_core::lang::stdlib::stdlib_json_trait_method_names(id),
                 None => &[],
             }
         }
@@ -846,13 +863,9 @@ impl AstLowering {
             .rsplit(['.', ':'])
             .find(|segment| !segment.is_empty())
             .unwrap_or(trait_name);
-        match incan_core::lang::stdlib::stdlib_json_trait_id(trait_name)
+        incan_core::lang::stdlib::stdlib_json_trait_id(trait_name)
             .or_else(|| incan_core::lang::stdlib::stdlib_json_trait_id(short_name))
-        {
-            Some(incan_core::lang::stdlib::StdlibJsonTraitId::Serialize) => method_name == "to_json",
-            Some(incan_core::lang::stdlib::StdlibJsonTraitId::Deserialize) => method_name == "from_json",
-            None => false,
-        }
+            .is_some_and(|id| incan_core::lang::stdlib::stdlib_json_trait_method_names(id).contains(&method_name))
     }
 
     /// Return whether a method is safe to emit into an imported trait impl when the trait declaration is missing.
@@ -1028,7 +1041,7 @@ impl AstLowering {
                 }
                 return Ok(IrImpl {
                     target_type: type_name.to_string(),
-                    type_params: Self::lower_type_params(type_params),
+                    type_params: self.lower_type_params(type_params),
                     trait_name: Some(trait_name.to_string()),
                     trait_module_path: trait_module_path.clone(),
                     trait_source_name: trait_source_name.clone(),
@@ -1041,7 +1054,7 @@ impl AstLowering {
             let trait_properties = trait_decl.properties;
             let mut trait_methods = trait_decl.methods;
             if trait_name == core_traits::as_str(TraitId::Iterator) {
-                trait_methods.retain(|method| method.node.name == "__next__");
+                trait_methods.retain(|method| method.node.name == magic_methods::as_str(MagicMethodId::Next));
             }
 
             let mut methods: Vec<IrFunction> = Vec::new();
@@ -1113,11 +1126,26 @@ impl AstLowering {
                 // Otherwise, expand a default method body into the impl (RFC 000: defaults may assume adopter fields).
                 if trait_method.node.body.is_some() {
                     let helper_paths = self.trait_default_function_paths.get(trait_name).cloned();
+                    let type_paths = self.trait_default_type_paths.get(trait_name).cloned();
                     let has_helper_paths = helper_paths.is_some();
+                    let has_type_paths = type_paths.is_some();
                     if let Some(helper_paths) = helper_paths {
                         self.active_trait_default_function_paths.push(helper_paths);
                     }
+                    if let Some(type_paths) = type_paths {
+                        self.active_trait_default_type_paths.push(type_paths);
+                    }
+                    let substitutions = trait_type_params
+                        .iter()
+                        .map(|param| param.name.clone())
+                        .zip(trait_type_args.iter().cloned())
+                        .collect();
+                    self.active_trait_type_substitutions.push(substitutions);
                     let lowered = self.lower_impl_method_for_trait(&trait_method.node, Some(&type_param_names));
+                    self.active_trait_type_substitutions.pop();
+                    if has_type_paths {
+                        self.active_trait_default_type_paths.pop();
+                    }
                     if has_helper_paths {
                         self.active_trait_default_function_paths.pop();
                     }
@@ -1142,7 +1170,7 @@ impl AstLowering {
 
             Ok(IrImpl {
                 target_type: type_name.to_string(),
-                type_params: Self::lower_type_params(type_params),
+                type_params: self.lower_type_params(type_params),
                 trait_name: Some(trait_name.to_string()),
                 trait_module_path,
                 trait_source_name,
@@ -1153,6 +1181,55 @@ impl AstLowering {
         })();
         self.current_impl_type = prev;
         lowered_result
+    }
+
+    /// Lower one concrete impl method while preserving owner and method type parameters.
+    fn source_callable_type_param_signatures(
+        &self,
+        type_params: &[ast::TypeParam],
+        visible_type_params: &HashSet<&str>,
+    ) -> HashMap<String, FunctionSignature> {
+        type_params
+            .iter()
+            .filter_map(|type_param| {
+                type_param.bounds.iter().find_map(|bound| {
+                    let (module_path, source_name) = self.canonical_trait_identity(&bound.name);
+                    let callable = module_path
+                        .as_deref()
+                        .filter(|path| callables::module_path_matches(path))
+                        .and(source_name.as_deref())
+                        .and_then(callables::from_str)?;
+                    let arity = callables::info_for(callable).arity;
+                    if bound.type_args.len() != arity + 1 {
+                        return None;
+                    }
+                    let lowered = bound
+                        .type_args
+                        .iter()
+                        .map(|arg| self.lower_type_with_type_params(&arg.node, Some(visible_type_params)))
+                        .collect::<Vec<_>>();
+                    let (return_type, params) = lowered.split_last()?;
+                    Some((
+                        type_param.name.clone(),
+                        FunctionSignature {
+                            params: params
+                                .iter()
+                                .enumerate()
+                                .map(|(index, ty)| FunctionParam {
+                                    name: format!("__incan_arg_{index}"),
+                                    ty: ty.clone(),
+                                    mutability: Mutability::Immutable,
+                                    is_self: false,
+                                    kind: ast::ParamKind::Normal,
+                                    default: None,
+                                })
+                                .collect(),
+                            return_type: return_type.clone(),
+                        },
+                    ))
+                })
+            })
+            .collect()
     }
 
     /// Lower one concrete impl method while preserving owner and method type parameters.
@@ -1174,6 +1251,8 @@ impl AstLowering {
         };
         let mut hidden_type_params = Vec::new();
         let mut hidden_counter = 0usize;
+        let nominal_callable_types =
+            self.source_callable_type_param_signatures(&m.type_params, &combined_type_param_names);
 
         // Handle receiver (self) parameter
         let mut params = Vec::new();
@@ -1189,6 +1268,11 @@ impl AstLowering {
                 kind: ast::ParamKind::Normal,
                 default: None,
             });
+            let concrete_self = self
+                .current_impl_type
+                .as_ref()
+                .map_or(IrType::SelfType, |name| IrType::Struct(name.clone()));
+            self.define_local_binding("self".to_string(), concrete_self, false);
         }
 
         // Add regular parameters
@@ -1219,18 +1303,41 @@ impl AstLowering {
             .collect::<Result<_, LoweringError>>()?;
         params.extend(other_params);
 
+        for (source_param, lowered_param) in m.params.iter().zip(params.iter().filter(|param| !param.is_self)) {
+            let binding_type = if source_param.node.is_mut {
+                IrType::RefMut(Box::new(lowered_param.ty.clone()))
+            } else {
+                lowered_param.ty.clone()
+            };
+            self.define_local_binding(source_param.node.name.clone(), binding_type, false);
+            if let ast::Type::Simple(type_name) = &source_param.node.ty.node
+                && let Some(signature) = nominal_callable_types.get(type_name)
+            {
+                self.define_nominal_callable(source_param.node.name.clone(), signature.clone());
+            }
+        }
+
         let return_type = self.lower_callable_return_type(&m.return_type.node, Some(&combined_type_param_names));
-        let body = if let Some(ref body_stmts) = m.body {
-            self.lower_statements(body_stmts)?
+        self.push_callable_param_scope(&params);
+        let body_result = if let Some(ref body_stmts) = m.body {
+            self.lower_statements(body_stmts)
         } else {
-            vec![]
+            Ok(vec![])
+        };
+        self.pop_callable_param_scope();
+        let body = match body_result {
+            Ok(body) => body,
+            Err(error) => {
+                self.pop_scope();
+                return Err(error);
+            }
         };
 
         // RFC 023: detect @rust.extern decorator to mark this method as externally-backed.
         let is_extern = Self::has_rust_extern_decorator(&m.decorators);
         let rust_attributes = self.extract_passthrough_attributes(&m.decorators);
         let lint_allows = self.extract_rust_lint_allows(&m.decorators);
-        let mut all_type_params = Self::lower_type_params(&m.type_params);
+        let mut all_type_params = self.lower_type_params(&m.type_params);
         all_type_params.extend(hidden_type_params);
 
         self.pop_scope();
@@ -1288,7 +1395,7 @@ impl AstLowering {
 
         Ok(IrImpl {
             target_type: type_name.to_string(),
-            type_params: Self::lower_type_params(type_params),
+            type_params: self.lower_type_params(type_params),
             trait_name: None,
             trait_module_path: None,
             trait_source_name: None,
@@ -1321,7 +1428,7 @@ impl AstLowering {
 
         Ok(IrImpl {
             target_type: type_name.to_string(),
-            type_params: Self::lower_type_params(type_params),
+            type_params: self.lower_type_params(type_params),
             trait_name: None,
             trait_module_path: None,
             trait_source_name: None,
@@ -1491,7 +1598,7 @@ impl AstLowering {
         let is_extern = Self::has_rust_extern_decorator(&m.decorators);
         let rust_attributes = self.extract_passthrough_attributes(&m.decorators);
         let lint_allows = self.extract_rust_lint_allows(&m.decorators);
-        let mut all_type_params = Self::lower_type_params(&m.type_params);
+        let mut all_type_params = self.lower_type_params(&m.type_params);
         all_type_params.extend(hidden_type_params);
 
         Ok(IrFunction {

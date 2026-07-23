@@ -41,6 +41,15 @@ struct MethodCandidate {
     dispatch: Option<crate::frontend::typechecker::ResolvedMethodDispatch>,
 }
 
+struct SourceMethodPrepass<'a> {
+    method: &'a str,
+    type_args: &'a [Spanned<Type>],
+    args: &'a [CallArg],
+    span: Span,
+    receiver_ty: &'a ResolvedType,
+    expected_return_ty: Option<&'a ResolvedType>,
+}
+
 struct ValueEnumGeneratedCall<'a> {
     enum_name: &'a str,
     value_enum: &'a ValueEnumInfo,
@@ -1028,56 +1037,23 @@ impl TypeChecker {
         }
     }
 
-    /// Return backend dispatch metadata for stdlib trait calls that must lower to explicit UFCS paths.
-    fn explicit_trait_dispatch_for_backend(
-        &self,
-        trait_name: &str,
-        type_args: Vec<ResolvedType>,
-        origin_module_path: Option<&[String]>,
-    ) -> Option<crate::frontend::typechecker::ResolvedMethodDispatch> {
-        let module_path = origin_module_path
-            .map(<[String]>::to_vec)
-            .or_else(|| self.stdlib_cache.loaded_trait_module_path(trait_name))?;
-        let is_std_io_binary_trait = module_path.len() == 2
-            && module_path[0] == "std"
-            && module_path[1] == "io"
-            && matches!(trait_name, "BinaryRead" | "BinaryWrite");
-        let is_std_traits_indexing_trait = module_path.len() == 3
-            && module_path[0] == "std"
-            && module_path[1] == "traits"
-            && module_path[2] == "indexing"
-            && trait_name == "Index";
-        (is_std_io_binary_trait || is_std_traits_indexing_trait)
-            .then(|| self.resolved_trait_dispatch(trait_name, type_args, Some(&module_path)))
-    }
-
-    /// Build a backend trait-dispatch record using the originating stdlib module when it is known.
+    /// Preserve the selected trait owner and receiver contract for downstream lowering.
     fn resolved_trait_dispatch(
         &self,
         trait_name: &str,
         type_args: Vec<ResolvedType>,
         origin_module_path: Option<&[String]>,
+        receiver_is_mutable: bool,
     ) -> crate::frontend::typechecker::ResolvedMethodDispatch {
-        let trait_path = self
-            .stdlib_trait_module_path_for_backend(trait_name, origin_module_path)
-            .filter(|segments| segments.first().is_some_and(|segment| segment == "std"))
-            .map(|segments| {
-                let module_path = segments.into_iter().skip(1).collect::<Vec<_>>().join("::");
-                format!("crate::__incan_std::{module_path}::{trait_name}")
-            })
-            .unwrap_or_else(|| trait_name.to_string());
-        crate::frontend::typechecker::ResolvedMethodDispatch::Trait { trait_path, type_args }
-    }
-
-    /// Return the stdlib module path that should qualify an emitted trait path.
-    fn stdlib_trait_module_path_for_backend(
-        &self,
-        trait_name: &str,
-        origin_module_path: Option<&[String]>,
-    ) -> Option<Vec<String>> {
-        origin_module_path
+        let module_path = origin_module_path
             .map(<[String]>::to_vec)
-            .or_else(|| self.stdlib_cache.loaded_trait_module_path(trait_name))
+            .or_else(|| self.stdlib_cache.loaded_trait_module_path(trait_name));
+        crate::frontend::typechecker::ResolvedMethodDispatch::Trait {
+            trait_name: trait_name.to_string(),
+            module_path,
+            type_args,
+            receiver_is_mutable,
+        }
     }
 
     /// Return whether an expression names an enum type rather than an enum value.
@@ -1505,12 +1481,36 @@ impl TypeChecker {
                 info.ty.clone()
             }
             TypeInfo::Enum(enum_info) => {
-                if enum_info.variants.contains(&field.to_string()) || enum_info.variant_aliases.contains_key(field) {
-                    return Some(if let Some(args) = type_args {
+                let canonical_variant = enum_info
+                    .variant_aliases
+                    .get(field)
+                    .map(String::as_str)
+                    .unwrap_or(field);
+                if enum_info.variants.iter().any(|variant| variant == canonical_variant) {
+                    let enum_ty = if let Some(args) = type_args {
                         ResolvedType::Generic(type_name.to_string(), args.to_vec())
                     } else {
                         ResolvedType::Named(type_name.to_string())
-                    });
+                    };
+                    let mut fields = enum_info
+                        .variant_fields
+                        .get(canonical_variant)
+                        .cloned()
+                        .unwrap_or_default();
+                    if let Some(args) = type_args {
+                        let substitutions = type_param_subst_map(&enum_info.type_params, args);
+                        fields = fields
+                            .into_iter()
+                            .map(|field_ty| substitute_resolved_type(&field_ty, &substitutions))
+                            .collect();
+                    }
+                    if fields.is_empty() {
+                        return Some(enum_ty);
+                    }
+                    return Some(ResolvedType::Function(
+                        fields.into_iter().map(CallableParam::positional).collect(),
+                        Box::new(enum_ty),
+                    ));
                 }
                 if field == "from_value"
                     && let Some(value_enum) = &enum_info.value_enum
@@ -2135,15 +2135,20 @@ impl TypeChecker {
         receiver: &ResolvedType,
     ) -> crate::frontend::typechecker::ResolvedMethodDispatch {
         match dispatch {
-            crate::frontend::typechecker::ResolvedMethodDispatch::Trait { trait_path, type_args } => {
-                crate::frontend::typechecker::ResolvedMethodDispatch::Trait {
-                    trait_path,
-                    type_args: type_args
-                        .into_iter()
-                        .map(|ty| self.substitute_self_in_resolved_type(ty, receiver))
-                        .collect(),
-                }
-            }
+            crate::frontend::typechecker::ResolvedMethodDispatch::Trait {
+                trait_name,
+                module_path,
+                type_args,
+                receiver_is_mutable,
+            } => crate::frontend::typechecker::ResolvedMethodDispatch::Trait {
+                trait_name,
+                module_path,
+                type_args: type_args
+                    .into_iter()
+                    .map(|ty| self.substitute_self_in_resolved_type(ty, receiver))
+                    .collect(),
+                receiver_is_mutable,
+            },
         }
     }
 
@@ -2218,11 +2223,12 @@ impl TypeChecker {
                                 && self.method_sigs_compatible(&info, &entry.info)
                                 && self.method_sigs_compatible(&entry.info, &info)
                         })
-                        .and_then(|entry| {
-                            self.explicit_trait_dispatch_for_backend(
+                        .map(|entry| {
+                            self.resolved_trait_dispatch(
                                 &entry.origin_trait,
                                 entry.origin_type_args.clone(),
                                 entry.origin_module_path.as_deref(),
+                                entry.info.receiver == Some(Receiver::Mutable),
                             )
                         });
                     MethodCandidate { info, dispatch }
@@ -2255,14 +2261,15 @@ impl TypeChecker {
             let mut candidates = Vec::new();
             for adoption in trait_adoptions {
                 if let Some(entry) = self.trait_method_entry_resolved_for_adoption(adoption, method, call_site_span) {
-                    let dispatch = self.explicit_trait_dispatch_for_backend(
+                    let dispatch = self.resolved_trait_dispatch(
                         &entry.origin_trait,
                         entry.origin_type_args.clone(),
                         entry.origin_module_path.as_deref(),
+                        entry.info.receiver == Some(Receiver::Mutable),
                     );
                     candidates.push(MethodCandidate {
                         info: entry.info,
-                        dispatch,
+                        dispatch: Some(dispatch),
                     });
                 }
             }
@@ -2389,6 +2396,14 @@ impl TypeChecker {
             ResolvedType::Named(name) | ResolvedType::Generic(name, _) => name,
             _ => return None,
         };
+        let call = SourceMethodPrepass {
+            method,
+            type_args,
+            args,
+            span,
+            receiver_ty: base_ty,
+            expected_return_ty,
+        };
         let type_info = self.lookup_semantic_type_info(type_name).cloned().or_else(|| {
             if type_name == "Logger" {
                 self.stdlib_cache
@@ -2396,76 +2411,62 @@ impl TypeChecker {
             } else {
                 None
             }
-        })?;
+        });
+        let Some(type_info) = type_info else {
+            self.lookup_semantic_trait_info(type_name)?;
+            let trait_args = match base_ty {
+                ResolvedType::Generic(_, args) => args.clone(),
+                _ => Vec::new(),
+            };
+            let adoption = TypeBoundInfo {
+                name: type_name.clone(),
+                source_name: None,
+                type_args: trait_args,
+                module_path: None,
+            };
+            return self
+                .resolve_unambiguous_adopted_trait_method_without_arg_prepass(std::slice::from_ref(&adoption), &call);
+        };
         match type_info {
             TypeInfo::Model(model) => {
-                let method_info = match model.method_overloads.get(method) {
-                    Some(overloads) if overloads.len() == 1 => overloads[0].clone(),
-                    Some(_) => return None,
-                    None => model.methods.get(method)?.clone(),
-                };
-                Some(self.check_generic_method_call(
-                    method,
-                    method_info,
-                    type_args,
-                    args,
-                    &[],
-                    span,
-                    base_ty,
-                    expected_return_ty,
-                ))
+                let trait_adoptions = self.trait_adoptions_for_type_methods(&model.trait_adoptions, &model.derives);
+                self.resolve_source_owner_method_without_arg_prepass(
+                    &model.methods,
+                    &model.method_overloads,
+                    &trait_adoptions,
+                    &call,
+                )
             }
             TypeInfo::Class(class) => {
-                let method_info = match class.method_overloads.get(method) {
-                    Some(overloads) if overloads.len() == 1 => overloads[0].clone(),
-                    Some(_) => return None,
-                    None => class.methods.get(method)?.clone(),
-                };
-                Some(self.check_generic_method_call(
-                    method,
-                    method_info,
-                    type_args,
-                    args,
-                    &[],
-                    span,
-                    base_ty,
-                    expected_return_ty,
-                ))
+                let trait_adoptions = self.trait_adoptions_for_type_methods(&class.trait_adoptions, &class.derives);
+                self.resolve_source_owner_method_without_arg_prepass(
+                    &class.methods,
+                    &class.method_overloads,
+                    &trait_adoptions,
+                    &call,
+                )
             }
             TypeInfo::Enum(en) => {
-                let method_info = match en.method_overloads.get(method) {
-                    Some(overloads) if overloads.len() == 1 => overloads[0].clone(),
-                    Some(_) => return None,
-                    None => en.methods.get(method)?.clone(),
-                };
-                Some(self.check_generic_method_call(
-                    method,
-                    method_info,
-                    type_args,
-                    args,
-                    &[],
-                    span,
-                    base_ty,
-                    expected_return_ty,
-                ))
+                let trait_adoptions = self.trait_adoptions_for_type_methods(&en.trait_adoptions, &en.derives);
+                self.resolve_source_owner_method_without_arg_prepass(
+                    &en.methods,
+                    &en.method_overloads,
+                    &trait_adoptions,
+                    &call,
+                )
             }
             TypeInfo::Newtype(nt) => {
                 let resolved_method = self.resolve_newtype_method_name(&nt, method);
-                let method_info = match nt.method_overloads.get(resolved_method) {
-                    Some(overloads) if overloads.len() == 1 => overloads[0].clone(),
-                    Some(_) => return None,
-                    None => nt.methods.get(resolved_method)?.clone(),
+                let resolved_call = SourceMethodPrepass {
+                    method: resolved_method,
+                    ..call
                 };
-                let ret = self.check_generic_method_call(
-                    resolved_method,
-                    method_info,
-                    type_args,
-                    args,
-                    &[],
-                    span,
-                    base_ty,
-                    expected_return_ty,
-                );
+                let ret = self.resolve_source_owner_method_without_arg_prepass(
+                    &nt.methods,
+                    &nt.method_overloads,
+                    &nt.trait_adoptions,
+                    &resolved_call,
+                )?;
                 if nt.is_rusttype {
                     self.maybe_record_rusttype_return_coercion(&nt, resolved_method, &ret, span);
                 }
@@ -2473,6 +2474,76 @@ impl TypeChecker {
             }
             _ => None,
         }
+    }
+
+    /// Resolve one source owner's sole direct or adopted method with declared argument context.
+    fn resolve_source_owner_method_without_arg_prepass(
+        &mut self,
+        methods: &std::collections::HashMap<String, MethodInfo>,
+        method_overloads: &std::collections::HashMap<String, Vec<MethodInfo>>,
+        trait_adoptions: &[TypeBoundInfo],
+        call: &SourceMethodPrepass<'_>,
+    ) -> Option<ResolvedType> {
+        let method_info = if let Some(overloads) = method_overloads.get(call.method) {
+            if overloads.len() != 1 {
+                return None;
+            }
+            Some(overloads[0].clone())
+        } else {
+            methods.get(call.method).cloned()
+        };
+        let Some(method_info) = method_info else {
+            return self.resolve_unambiguous_adopted_trait_method_without_arg_prepass(trait_adoptions, call);
+        };
+
+        Some(self.check_generic_method_call(
+            call.method,
+            method_info,
+            call.type_args,
+            call.args,
+            &[],
+            call.span,
+            call.receiver_ty,
+            call.expected_return_ty,
+        ))
+    }
+
+    /// Resolve one adopted-trait method before checking callback-shaped arguments without their declared context.
+    fn resolve_unambiguous_adopted_trait_method_without_arg_prepass(
+        &mut self,
+        trait_adoptions: &[TypeBoundInfo],
+        call: &SourceMethodPrepass<'_>,
+    ) -> Option<ResolvedType> {
+        let mut candidates = trait_adoptions
+            .iter()
+            .filter_map(|adoption| self.trait_method_entry_resolved_for_adoption(adoption, call.method, call.span))
+            .collect::<Vec<_>>();
+        if candidates.len() != 1 {
+            return None;
+        }
+        let candidate = candidates.remove(0);
+        let dispatch = self.resolved_trait_dispatch(
+            &candidate.origin_trait,
+            candidate.origin_type_args.clone(),
+            candidate.origin_module_path.as_deref(),
+            candidate.info.receiver == Some(Receiver::Mutable),
+        );
+        let dispatch = self.method_dispatch_substituting_call_site_self(dispatch, call.receiver_ty);
+        self.type_info
+            .record_resolved_method_call(call.span, call.method, dispatch);
+        let (params, _) = self.method_types_substituting_call_site_self(&candidate.info, call.receiver_ty);
+        self.type_info
+            .record_call_site_callable_params_for_dispatch(call.span, &params);
+        Some(self.check_generic_method_call(
+            call.method,
+            candidate.info,
+            call.type_args,
+            call.args,
+            &[],
+            call.span,
+            call.receiver_ty,
+            call.expected_return_ty,
+        ))
     }
 
     /// Return a compatibility score for one method candidate.
@@ -2626,14 +2697,15 @@ impl TypeChecker {
         let mut candidates = Vec::new();
         for bound in &active_bounds {
             if let Some(entry) = self.trait_method_entry_resolved_for_adoption(bound, method, call_site_span) {
-                let dispatch = self.explicit_trait_dispatch_for_backend(
+                let dispatch = self.resolved_trait_dispatch(
                     &entry.origin_trait,
                     entry.origin_type_args.clone(),
                     entry.origin_module_path.as_deref(),
+                    entry.info.receiver == Some(Receiver::Mutable),
                 );
                 candidates.push(MethodCandidate {
                     info: entry.info,
-                    dispatch,
+                    dispatch: Some(dispatch),
                 });
             }
         }
@@ -2658,7 +2730,7 @@ impl TypeChecker {
     /// permissive external-generic path, because that would let root-trait values call methods declared only on
     /// narrower subtraits.
     #[allow(clippy::too_many_arguments)]
-    fn resolve_trait_receiver_method(
+    pub(in crate::frontend::typechecker) fn resolve_trait_receiver_method(
         &mut self,
         receiver_ty: &ResolvedType,
         method: &str,
@@ -3411,6 +3483,7 @@ impl TypeChecker {
             span,
             expected_return_ty,
         ) {
+            self.type_info.inherit_same_trait_method_module(base.span, span);
             return ret;
         }
 
@@ -3884,6 +3957,7 @@ impl TypeChecker {
                 span,
                 expected_return_ty,
             ) {
+                self.type_info.inherit_same_trait_method_module(base.span, span);
                 return ret;
             }
             self.errors

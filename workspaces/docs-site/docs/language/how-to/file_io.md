@@ -84,17 +84,14 @@ def copy_in_chunks(source: Path, target: Path) -> Result[None, IoError]:
     input = source.open("rb", -1, None, None, None)?
     output = target.open("wb", -1, None, None, None)?
 
-    loop:
-        chunk = input.read_bytes(8192)?
-        if len(chunk) == 0:
-            break
+    for chunk in input.chunks(8192)?:
         output.write_bytes(chunk)?
 
     output.sync_data()?
     return Ok(None)
 ```
 
-`sync_data()` requests durable file data. Use `sync()` when metadata durability matters too.
+The chunk stream yields only non-empty byte blocks and treats EOF as ordinary loop exhaustion. `sync_data()` requests durable file data; use `sync()` when metadata durability matters too.
 
 ## Read a Fixed Header
 

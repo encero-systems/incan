@@ -404,6 +404,8 @@ pub struct CallArtifacts {
     pub resolved_method_calls: HashMap<(usize, usize), ResolvedMethodCall>,
     /// Top-level overload callee emitted names selected by the typechecker, keyed by full call expression span.
     pub selected_function_emitted_names: HashMap<(usize, usize), String>,
+    /// Direct closures whose contextual parameter types came from a canonical source `CallableN` bound.
+    pub source_callable_closures: HashSet<(usize, usize)>,
 }
 
 /// Test-runner and fixture metadata extracted during typechecking.
@@ -469,16 +471,19 @@ pub struct ResolvedMethodCall {
     pub dispatch: ResolvedMethodDispatch,
 }
 
-/// Backend-relevant dispatch target for a resolved method call.
+/// Semantic dispatch target for a resolved method call.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ResolvedMethodDispatch {
-    /// Emit as a fully-qualified trait call, e.g. `Trait::<T>::method(&receiver, ...)`.
+    /// Preserve the selected trait owner and receiver contract for downstream lowering.
     Trait {
-        /// Rust-visible trait path. Local traits use their source name; imported stdlib traits use a fully-qualified
-        /// `crate::__incan_std::...` path so callers do not need to import implementation traits explicitly.
-        trait_path: String,
+        /// Source-level trait name selected by semantic resolution.
+        trait_name: String,
+        /// Canonical source module that owns the trait, when the import boundary supplies one.
+        module_path: Option<Vec<String>>,
         /// Concrete trait type arguments selected by overload resolution.
         type_args: Vec<ResolvedType>,
+        /// Whether the selected trait method declares `mut self`.
+        receiver_is_mutable: bool,
     },
 }
 
@@ -493,6 +498,12 @@ pub struct ProtocolIterationInfo {
     pub next_method: String,
     /// Element type unwrapped from `__next__() -> Option[T]`.
     pub item_type: ResolvedType,
+    /// Exact semantic dispatch selected for `__iter__`, when the hook belongs to an adopted trait.
+    pub iter_dispatch: Option<ResolvedMethodDispatch>,
+    /// Exact semantic dispatch selected for `__next__`, when the hook belongs to an adopted trait.
+    pub next_dispatch: Option<ResolvedMethodDispatch>,
+    /// Error type propagated by `for item in iterable?`, when this is a fallible iteration route.
+    pub fallible_error_type: Option<ResolvedType>,
 }
 
 /// Lowering metadata for one RFC 046 computed property read.
@@ -976,6 +987,16 @@ impl TypeCheckInfo {
             .map(Vec::as_slice)
     }
 
+    /// Return whether a canonical source `CallableN` bound supplied this closure's contextual parameter types.
+    pub fn is_source_callable_closure(&self, span: Span) -> bool {
+        self.calls.source_callable_closures.contains(&(span.start, span.end))
+    }
+
+    /// Preserve that a canonical source `CallableN` bound supplied this closure's parameter types.
+    pub(crate) fn record_source_callable_closure(&mut self, span: Span) {
+        self.calls.source_callable_closures.insert((span.start, span.end));
+    }
+
     /// Return the overloaded Rust emitted callee selected for one source call expression.
     pub fn selected_function_emitted_name(&self, span: Span) -> Option<&str> {
         self.calls
@@ -1067,6 +1088,44 @@ impl TypeCheckInfo {
                 dispatch,
             },
         );
+    }
+
+    /// Preserve a resolved trait's defining module across an adapter chain that returns the same trait.
+    ///
+    /// Source types record the exact trait they adopted, but a method return such as `Stream[U, E]` intentionally keeps
+    /// only its source spelling in [`ResolvedType`]. When the next call resolves that same trait, inherit the prior
+    /// call's canonical module instead of degrading backend dispatch to an unqualified Rust trait method.
+    pub(crate) fn inherit_same_trait_method_module(&mut self, receiver_span: Span, call_span: Span) {
+        let Some(ResolvedMethodCall {
+            dispatch:
+                ResolvedMethodDispatch::Trait {
+                    trait_name: receiver_trait,
+                    module_path: Some(receiver_module),
+                    ..
+                },
+            ..
+        }) = self.resolved_method_call(receiver_span).cloned()
+        else {
+            return;
+        };
+        let Some(ResolvedMethodCall {
+            dispatch:
+                ResolvedMethodDispatch::Trait {
+                    trait_name,
+                    module_path,
+                    ..
+                },
+            ..
+        }) = self
+            .calls
+            .resolved_method_calls
+            .get_mut(&(call_span.start, call_span.end))
+        else {
+            return;
+        };
+        if module_path.is_none() && *trait_name == receiver_trait {
+            *module_path = Some(receiver_module);
+        }
     }
 
     /// Record that a Rust method call requires a specific imported extension trait in generated Rust scope.

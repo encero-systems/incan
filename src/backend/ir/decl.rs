@@ -195,6 +195,11 @@ pub struct IrImportItem {
 #[derive(Debug, Clone)]
 pub struct IrTrait {
     pub name: String,
+    /// Compiler-recognised callable role established from the canonical source declaration identity during lowering.
+    ///
+    /// Keeping this semantic fact in IR prevents emission from rediscovering `std.traits.callable` through a generated
+    /// provider's crate-local module path, where the public `std` mount is intentionally absent.
+    pub source_callable: Option<incan_core::lang::callables::CallableTraitId>,
     /// Source docstring attached to the trait, when present.
     pub docstring: Option<String>,
     /// Generic parameters (`trait Foo[T]: ...`), including `with` bounds from the source (RFC 023 / RFC 042).
@@ -432,6 +437,12 @@ pub enum IrTraitBoundOrigin {
     Standard,
     /// Rust-native capability marker from `std.rust`.
     RustCapability,
+    /// Canonical source `CallableN` capability.
+    ///
+    /// The generated callable-trait declaration provides blanket implementations for native Rust functions and
+    /// closures. Keeping the nominal source trait in generic signatures also permits ordinary Incan models that adopt
+    /// `CallableN` to cross the same boundary without call-site rewriting.
+    SourceCallable,
 }
 
 impl IrTraitBound {
@@ -478,6 +489,16 @@ impl IrTraitBound {
             type_args,
             assoc_types: Vec::new(),
             origin,
+        }
+    }
+
+    /// Create a canonical source-callable bound with its complete `Args..., Return` type argument list.
+    pub fn source_callable(trait_path: impl Into<String>, type_args: Vec<IrType>) -> Self {
+        Self {
+            trait_path: trait_path.into(),
+            type_args,
+            assoc_types: Vec::new(),
+            origin: IrTraitBoundOrigin::SourceCallable,
         }
     }
 }

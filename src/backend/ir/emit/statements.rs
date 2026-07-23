@@ -19,7 +19,9 @@ use super::super::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use super::super::types::IrType;
 use super::super::types::Mutability;
 use super::{EmitError, IrEmitter};
-use crate::backend::ir::emit::expressions::{method_kind_uses_mutable_receiver, method_name_uses_mutable_receiver};
+use crate::backend::ir::emit::expressions::{
+    method_dispatch_uses_mutable_receiver, method_kind_uses_mutable_receiver, method_name_uses_mutable_receiver,
+};
 
 /// Get the root variable name of an expression.
 fn root_var_name(expr: &super::super::expr::IrExpr) -> Option<&str> {
@@ -67,10 +69,12 @@ fn expr_contains_mutation(expr: &super::super::expr::IrExpr, var: &str) -> bool 
             method,
             args,
             arg_policy,
+            dispatch,
             ..
         } => {
-            (!matches!(arg_policy, super::super::expr::MethodCallArgPolicy::PreserveShape)
+            ((!matches!(arg_policy, super::super::expr::MethodCallArgPolicy::PreserveShape)
                 && method_name_uses_mutable_receiver(method)
+                || method_dispatch_uses_mutable_receiver(dispatch.as_ref()))
                 && root_var_name(receiver).is_some_and(|name| name == var))
                 || expr_contains_mutation(receiver, var)
                 || args.iter().any(|arg| expr_contains_mutation(&arg.expr, var))
@@ -123,15 +127,22 @@ fn expr_contains_mutation(expr: &super::super::expr::IrExpr, var: &str) -> bool 
         IrExprKind::Race { arms, .. } => arms
             .iter()
             .any(|arm| expr_contains_mutation(&arm.awaitable, var) || expr_contains_mutation(&arm.body, var)),
-        IrExprKind::Match { arms, .. } => arms.iter().any(|arm| {
-            arm.bindings.iter().any(|binding| {
-                expr_contains_mutation(&binding.value, var)
-                    || binding
-                        .guard_value
+        IrExprKind::Match { scrutinee, arms } => {
+            expr_contains_mutation(scrutinee, var)
+                || arms.iter().any(|arm| {
+                    arm.bindings.iter().any(|binding| {
+                        expr_contains_mutation(&binding.value, var)
+                            || binding
+                                .guard_value
+                                .as_ref()
+                                .is_some_and(|guard_value| expr_contains_mutation(guard_value, var))
+                    }) || arm
+                        .guard
                         .as_ref()
-                        .is_some_and(|guard_value| expr_contains_mutation(guard_value, var))
-            }) || expr_contains_mutation(&arm.body, var)
-        }),
+                        .is_some_and(|guard| expr_contains_mutation(guard, var))
+                        || expr_contains_mutation(&arm.body, var)
+                })
+        }
         IrExprKind::ListComp {
             element,
             iterable,
@@ -165,6 +176,11 @@ fn expr_contains_mutation(expr: &super::super::expr::IrExpr, var: &str) -> bool 
                     IrGeneratorClause::If(condition) => expr_contains_mutation(condition, var),
                 })
         }
+        IrExprKind::Closure { body, .. } => expr_contains_mutation(body, var),
+        IrExprKind::Range { start, end, .. } => {
+            start.as_ref().is_some_and(|value| expr_contains_mutation(value, var))
+                || end.as_ref().is_some_and(|value| expr_contains_mutation(value, var))
+        }
         IrExprKind::Format { parts } => parts.iter().any(|part| match part {
             super::super::expr::FormatPart::Literal(_) => false,
             super::super::expr::FormatPart::Expr { expr, .. } => expr_contains_mutation(expr, var),
@@ -174,34 +190,52 @@ fn expr_contains_mutation(expr: &super::super::expr::IrExpr, var: &str) -> bool 
 }
 
 /// Check if a statement mutates a variable.
-fn stmt_mutates_var(stmt: &IrStmt, var: &str) -> bool {
+pub(in crate::backend::ir::emit) fn stmt_mutates_var(stmt: &IrStmt, var: &str) -> bool {
     match &stmt.kind {
-        IrStmtKind::Assign { target, .. } => target_mutates_var(target, var),
+        IrStmtKind::Let { value, .. } => expr_contains_mutation(value, var),
+        IrStmtKind::Assign { target, value } | IrStmtKind::CompoundAssign { target, value, .. } => {
+            target_mutates_var(target, var) || expr_contains_mutation(value, var)
+        }
+        IrStmtKind::Expr(expr) | IrStmtKind::Return(Some(expr)) | IrStmtKind::Yield(expr) => {
+            expr_contains_mutation(expr, var)
+        }
         IrStmtKind::If {
+            condition,
             then_branch,
             else_branch,
-            ..
         } => {
-            then_branch.iter().any(|s| stmt_mutates_var(s, var))
+            expr_contains_mutation(condition, var)
+                || then_branch.iter().any(|s| stmt_mutates_var(s, var))
                 || else_branch
                     .as_ref()
                     .is_some_and(|b| b.iter().any(|s| stmt_mutates_var(s, var)))
         }
-        IrStmtKind::While { body, .. } => body.iter().any(|s| stmt_mutates_var(s, var)),
-        IrStmtKind::For { body, .. } => body.iter().any(|s| stmt_mutates_var(s, var)),
+        IrStmtKind::While { condition, body, .. } => {
+            expr_contains_mutation(condition, var) || body.iter().any(|s| stmt_mutates_var(s, var))
+        }
+        IrStmtKind::For { iterable, body, .. } => {
+            expr_contains_mutation(iterable, var) || body.iter().any(|s| stmt_mutates_var(s, var))
+        }
         IrStmtKind::Loop { body, .. } => body.iter().any(|s| stmt_mutates_var(s, var)),
         IrStmtKind::Block(stmts) => stmts.iter().any(|s| stmt_mutates_var(s, var)),
-        IrStmtKind::Match { arms, .. } => arms.iter().any(|arm| {
-            arm.bindings.iter().any(|binding| {
-                expr_contains_mutation(&binding.value, var)
-                    || binding
-                        .guard_value
+        IrStmtKind::Match { scrutinee, arms } => {
+            expr_contains_mutation(scrutinee, var)
+                || arms.iter().any(|arm| {
+                    arm.bindings.iter().any(|binding| {
+                        expr_contains_mutation(&binding.value, var)
+                            || binding
+                                .guard_value
+                                .as_ref()
+                                .is_some_and(|guard_value| expr_contains_mutation(guard_value, var))
+                    }) || arm
+                        .guard
                         .as_ref()
-                        .is_some_and(|guard_value| expr_contains_mutation(guard_value, var))
-            }) || expr_contains_mutation(&arm.body, var)
-        }),
+                        .is_some_and(|guard| expr_contains_mutation(guard, var))
+                        || expr_contains_mutation(&arm.body, var)
+                })
+        }
         IrStmtKind::Break { label: _, value } => value.as_ref().is_some_and(|value| expr_contains_mutation(value, var)),
-        _ => false,
+        IrStmtKind::Return(None) | IrStmtKind::Continue(_) => false,
     }
 }
 

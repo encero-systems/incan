@@ -53,6 +53,8 @@ struct StdlibModuleData {
     functions: Vec<StdlibFunctionEntry>,
     traits: Vec<(String, TraitInfo)>,
     trait_declarations: Vec<(String, ast::TraitDecl)>,
+    /// Canonical source paths for imported types referenced by each trait declaration's defaults.
+    trait_type_import_paths: HashMap<String, HashMap<String, Vec<String>>>,
     types: Vec<(String, TypeInfo)>,
     type_docstrings: HashMap<String, String>,
     constants: Vec<(String, VariableInfo)>,
@@ -226,6 +228,24 @@ impl StdlibAstCache {
             .map(|(_, declaration)| declaration.clone())
     }
 
+    /// Return canonical source paths for types imported by a stdlib trait's defining module.
+    ///
+    /// Imported default methods are expanded in an adopter module. Their annotations and generic bounds must retain
+    /// the defining module's type imports rather than depending on unrelated imports in the adopter.
+    pub(crate) fn lookup_trait_type_import_paths(
+        &mut self,
+        module_path: &[String],
+        trait_name: &str,
+    ) -> HashMap<String, Vec<String>> {
+        self.ensure_loaded(module_path);
+        let key = module_path.join(".");
+        self.cache
+            .get(&key)
+            .and_then(|data| data.trait_type_import_paths.get(trait_name))
+            .cloned()
+            .unwrap_or_default()
+    }
+
     /// Return one cached snapshot of public declarations, signatures, and docs for LSP rendering.
     #[cfg(feature = "lsp")]
     pub(crate) fn lsp_metadata(&mut self, module_path: &[String]) -> StdlibModuleLspMetadata {
@@ -391,6 +411,11 @@ fn load_stdlib_module_data_unguarded(
     assign_function_overload_emitted_names(&mut functions);
     let mut traits = extract_trait_signatures(&program);
     let mut trait_declarations = extract_trait_declarations(&program);
+    let imported_type_paths = extract_stdlib_imported_type_paths(&program, loading);
+    let mut trait_type_import_paths = trait_declarations
+        .iter()
+        .map(|(name, _)| (name.clone(), imported_type_paths.clone()))
+        .collect();
     let mut types = extract_type_signatures(&program);
     let mut type_docstrings = extract_type_docstrings(&program);
     let mut constants = extract_const_signatures(&program);
@@ -407,6 +432,7 @@ fn load_stdlib_module_data_unguarded(
         functions: &mut functions,
         traits: &mut traits,
         trait_declarations: &mut trait_declarations,
+        trait_type_import_paths: &mut trait_type_import_paths,
         types: &mut types,
         type_docstrings: &mut type_docstrings,
         constants: &mut constants,
@@ -420,6 +446,7 @@ fn load_stdlib_module_data_unguarded(
         functions,
         traits,
         trait_declarations,
+        trait_type_import_paths,
         types,
         type_docstrings,
         constants,
@@ -434,6 +461,7 @@ struct ReexportMetadataTargets<'a> {
     functions: &'a mut Vec<StdlibFunctionEntry>,
     traits: &'a mut Vec<(String, TraitInfo)>,
     trait_declarations: &'a mut Vec<(String, ast::TraitDecl)>,
+    trait_type_import_paths: &'a mut HashMap<String, HashMap<String, Vec<String>>>,
     types: &'a mut Vec<(String, TypeInfo)>,
     type_docstrings: &'a mut HashMap<String, String>,
     constants: &'a mut Vec<(String, VariableInfo)>,
@@ -511,6 +539,12 @@ fn merge_reexported_metadata(
                 targets
                     .trait_declarations
                     .push((effective_name.to_string(), declaration.clone()));
+            }
+            if let Some(paths) = sub_data.trait_type_import_paths.get(&item.name) {
+                targets
+                    .trait_type_import_paths
+                    .entry(effective_name.to_string())
+                    .or_insert_with(|| paths.clone());
             }
 
             // Merge type signature.
@@ -873,12 +907,13 @@ fn supertrait_entry_from_trait_bound(
 /// Top-level `trait` declarations are extracted with their method signatures and `with` supertrait bounds. `@requires`
 /// decorators are not resolved (`requires` stays empty) since stdlib traits typically don't use them.
 fn extract_trait_signatures(program: &ast::Program) -> Vec<(String, TraitInfo)> {
+    let stdlib_imports = stdlib_import_aliases(program);
     let mut traits = Vec::new();
     for decl in &program.declarations {
         if let ast::Declaration::Trait(tr) = &decl.node {
             let tp_names: Vec<String> = tr.type_params.iter().map(|tp| tp.name.clone()).collect();
             let mut method_overloads =
-                extract_method_overloads_with_rust_imports(&tr.methods, &tp_names, &HashMap::new(), &HashMap::new());
+                extract_method_overloads_with_rust_imports(&tr.methods, &tp_names, &HashMap::new(), &stdlib_imports);
             let mut methods = methods_from_overloads(&method_overloads);
             let method_aliases = apply_method_aliases(&tr.method_aliases, &mut methods, &mut method_overloads);
             let supertraits: Vec<(String, Vec<ResolvedType>)> = tr
@@ -940,7 +975,7 @@ fn extract_type_signatures(program: &ast::Program) -> Vec<(String, TypeInfo)> {
                         type_params: tp_names.clone(),
                         traits: model.traits.iter().map(|bound| bound.node.name.clone()).collect(),
                         trait_adoptions: trait_adoption_infos_from_bounds(&model.traits, &tp_names, &stdlib_imports),
-                        derives: Vec::new(),
+                        derives: derive_names_from_decorators(&model.decorators),
                         fields: extract_field_signatures(&model.name, &model.fields, &tp_names, &rust_imports),
                         field_order: model.fields.iter().map(|field| field.node.name.clone()).collect(),
                         properties: std::collections::HashMap::new(),
@@ -967,7 +1002,7 @@ fn extract_type_signatures(program: &ast::Program) -> Vec<(String, TypeInfo)> {
                         extends: class.extends.clone(),
                         traits: class.traits.iter().map(|bound| bound.node.name.clone()).collect(),
                         trait_adoptions: trait_adoption_infos_from_bounds(&class.traits, &tp_names, &stdlib_imports),
-                        derives: Vec::new(),
+                        derives: derive_names_from_decorators(&class.decorators),
                         fields: extract_field_signatures(&class.name, &class.fields, &tp_names, &rust_imports),
                         field_defaults: Box::new(
                             class
@@ -1060,7 +1095,7 @@ fn extract_type_signatures(program: &ast::Program) -> Vec<(String, TypeInfo)> {
                             .map(|alias| (alias.node.name.clone(), alias.node.target.clone()))
                             .collect(),
                         value_enum: None,
-                        derives: Vec::new(),
+                        derives: derive_names_from_decorators(&en.decorators),
                         method_overloads,
                         methods,
                     }),
@@ -1732,6 +1767,47 @@ fn stdlib_import_aliases(program: &ast::Program) -> HashMap<String, Vec<String>>
     aliases
 }
 
+/// Collect canonical source paths for imported stdlib types and traits.
+///
+/// Value imports are excluded: this context is replayed only while lowering type annotations and generic bounds from
+/// an imported trait default. Re-exported types keep the source module spelling used by the defining module.
+fn extract_stdlib_imported_type_paths(
+    program: &ast::Program,
+    loading: &mut HashSet<String>,
+) -> HashMap<String, Vec<String>> {
+    let mut paths = HashMap::new();
+    for decl in &program.declarations {
+        let ast::Declaration::Import(import) = &decl.node else {
+            continue;
+        };
+        let ast::ImportKind::From { module, items } = &import.kind else {
+            continue;
+        };
+        if module
+            .segments
+            .first()
+            .is_none_or(|segment| segment != stdlib::STDLIB_ROOT)
+        {
+            continue;
+        }
+        let Some(imported) = load_stdlib_module_data_inner(&module.segments, loading) else {
+            continue;
+        };
+        for item in items {
+            let is_type = imported.types.iter().any(|(name, _)| name == &item.name)
+                || imported.traits.iter().any(|(name, _)| name == &item.name);
+            if !is_type {
+                continue;
+            }
+            let local_name = item.alias.as_deref().unwrap_or(&item.name);
+            let mut path = module.segments.clone();
+            path.push(item.name.clone());
+            paths.insert(local_name.to_string(), path);
+        }
+    }
+    paths
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2106,6 +2182,57 @@ pub enum Token with Convert[int], Convert[float]:
     }
 
     #[test]
+    fn extract_type_signatures_preserves_source_derives() -> Result<(), Box<dyn std::error::Error>> {
+        let source = r#"
+@derive(Clone)
+pub model Record:
+  value: int
+
+@derive(Clone)
+pub class Service:
+  value: int
+
+@derive(Clone)
+pub enum State:
+  Ready
+"#;
+        let tokens = crate::frontend::lexer::lex(source).map_err(|errs| std::io::Error::other(format!("{errs:?}")))?;
+        let program =
+            crate::frontend::parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("{errs:?}")))?;
+        let types = extract_type_signatures(&program);
+
+        for name in ["Record", "Service", "State"] {
+            let derives = types
+                .iter()
+                .find_map(|(candidate, info)| {
+                    if candidate != name {
+                        return None;
+                    }
+                    match info {
+                        TypeInfo::Model(info) => Some(info.derives.as_slice()),
+                        TypeInfo::Class(info) => Some(info.derives.as_slice()),
+                        TypeInfo::Enum(info) => Some(info.derives.as_slice()),
+                        TypeInfo::Newtype(_) | TypeInfo::Builtin | TypeInfo::TypeAlias => None,
+                    }
+                })
+                .ok_or_else(|| format!("missing {name} metadata"))?;
+            assert_eq!(derives, [core_traits::as_str(TraitId::Clone)]);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn stdlib_cache_preserves_hash_error_clone_derive() -> Result<(), Box<dyn std::error::Error>> {
+        let mut cache = StdlibAstCache::new();
+        let path = vec!["std".to_string(), "hash".to_string(), "_core".to_string()];
+        let Some(TypeInfo::Model(hash_error)) = cache.lookup_type(&path, "HashError") else {
+            return Err("missing std.hash._core.HashError metadata".into());
+        };
+        assert_eq!(hash_error.derives, [core_traits::as_str(TraitId::Clone)]);
+        Ok(())
+    }
+
+    #[test]
     fn test_cache_lookup() -> Result<(), Box<dyn std::error::Error>> {
         let mut cache = StdlibAstCache::new();
         let path = vec!["std".to_string(), "testing".to_string()];
@@ -2140,6 +2267,45 @@ pub enum Token with Convert[int], Convert[float]:
     }
 
     #[test]
+    fn trait_default_context_preserves_imported_callable_type_paths() -> Result<(), Box<dyn std::error::Error>> {
+        let callable_path = vec!["std".to_string(), "traits".to_string(), "callable".to_string()];
+        let callable = load_stdlib_module_data(&callable_path).ok_or("failed to load std.traits.callable")?;
+        assert!(callable.traits.iter().any(|(name, _)| name == "Callable1"));
+
+        let path = vec!["std".to_string(), "derives".to_string(), "collection".to_string()];
+        let collection = load_stdlib_module_data(&path).ok_or("failed to load std.derives.collection")?;
+        assert!(collection.traits.iter().any(|(name, _)| name == "FallibleIterator"));
+        assert!(
+            collection.trait_type_import_paths.contains_key("FallibleIterator"),
+            "missing FallibleIterator import context: {:?}",
+            collection.trait_type_import_paths
+        );
+
+        let mut cache = StdlibAstCache::new();
+        let imports = cache.lookup_trait_type_import_paths(&path, "FallibleIterator");
+
+        assert_eq!(
+            imports.get("Callable1"),
+            Some(&vec![
+                "std".to_string(),
+                "traits".to_string(),
+                "callable".to_string(),
+                "Callable1".to_string(),
+            ])
+        );
+        assert_eq!(
+            imports.get("Callable2"),
+            Some(&vec![
+                "std".to_string(),
+                "traits".to_string(),
+                "callable".to_string(),
+                "Callable2".to_string(),
+            ])
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_std_fs_path_lookup_uses_ast_cache_not_web_surface_type() -> Result<(), Box<dyn std::error::Error>> {
         let source = r#"
 from rust::std::path import PathBuf as RustPathBuf
@@ -2159,6 +2325,7 @@ pub type File = rusttype RustFile:
             functions: extract_function_entries(&program),
             traits: extract_trait_signatures(&program),
             trait_declarations: extract_trait_declarations(&program),
+            trait_type_import_paths: HashMap::new(),
             types: extract_type_signatures(&program),
             type_docstrings: extract_type_docstrings(&program),
             constants: extract_const_signatures(&program),
@@ -2449,6 +2616,7 @@ pub type File = rusttype RustFile:
             "Len",
             core_traits::as_str(TraitId::Iterable),
             core_traits::as_str(TraitId::Iterator),
+            "FallibleIterator",
             core_traits::as_str(TraitId::Sum),
         ] {
             assert!(
@@ -2467,6 +2635,28 @@ pub type File = rusttype RustFile:
         assert!(iterator_info.methods.contains_key("map"));
         assert!(iterator_info.methods.contains_key("flat_map"));
         assert!(iterator_info.methods.contains_key("sum"));
+
+        let fallible_info = module
+            .traits
+            .iter()
+            .find(|(name, _)| name == "FallibleIterator")
+            .ok_or("FallibleIterator not found")?
+            .1
+            .clone();
+        let map_err = fallible_info
+            .methods
+            .get("map_err")
+            .ok_or("FallibleIterator.map_err not found")?;
+        let callable_bound = map_err
+            .type_param_bound_details
+            .get("ErrorMap")
+            .and_then(|bounds| bounds.iter().find(|bound| bound.name == "Callable1"))
+            .ok_or("map_err Callable1 bound not found")?;
+        assert_eq!(
+            callable_bound.module_path.as_deref(),
+            Some(&["std".to_string(), "traits".to_string(), "callable".to_string()][..]),
+            "stdlib trait method bounds must retain their imported source module"
+        );
 
         Ok(())
     }

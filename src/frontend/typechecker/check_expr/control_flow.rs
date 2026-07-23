@@ -320,6 +320,15 @@ impl TypeChecker {
         let expected_result_ty = expected_ok_ty.map(|ok_ty| result_ty(ok_ty.clone(), ResolvedType::Unknown));
         let inner_ty = self.check_expr_with_expected(inner, expected_result_ty.as_ref());
 
+        self.validate_try_result_type(&inner_ty, span)
+    }
+
+    /// Validate a previously checked `Result` operand and return its successful type.
+    pub(in crate::frontend::typechecker) fn validate_try_result_type(
+        &mut self,
+        inner_ty: &ResolvedType,
+        span: Span,
+    ) -> ResolvedType {
         if !inner_ty.is_result() {
             self.errors.push(errors::try_on_non_result(&inner_ty.to_string(), span));
             return ResolvedType::Unknown;
