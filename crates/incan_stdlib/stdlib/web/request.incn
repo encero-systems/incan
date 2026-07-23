@@ -18,8 +18,8 @@ Example:
         return Json(results)
 
     @route("/users/{id}")
-    async def get_user(id: Path[int]) -> Json[User]:
-        return Json(find_user(id.0))
+    async def validate_user_route(_: Path[int]) -> Json[RouteStatus]:
+        return Json(RouteStatus(valid=True))
     ```
 """
 rust.module("incan_stdlib::web")
@@ -50,15 +50,14 @@ from rust::axum::extract import Path
 `Path[T]` — extract path parameters (`/users/{id}`) into a typed value or struct.
 
 For a single parameter, `T` can be a primitive like `int` or `str`.
-For multiple parameters, use a struct with matching field names.
+Use a source-level scalar capture argument when the handler body needs the extracted value.
 
 Example:
     ```incan
     from std.web.request import Path
 
     @route("/users/{id}")
-    async def get_user(id: Path[int]) -> ...:
-        user_id = id.0
+    async def validate_user_route(_: Path[int]) -> ...:
         ...
     ```
 """

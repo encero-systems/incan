@@ -77,6 +77,8 @@ pub fn route(args: TokenStream, input: TokenStream) -> TokenStream {
     }
 }
 
+/// Register one route directly when its signature already contains Axum extractors, or synthesize exactly one adapter
+/// that groups source-level scalar captures into Axum's ordered `Path` extractor.
 fn expand_route(args: RouteArgs, func: ItemFn) -> syn::Result<proc_macro2::TokenStream> {
     let methods: Vec<String> = if args.methods.is_empty() {
         vec!["GET".to_string()]
@@ -84,36 +86,83 @@ fn expand_route(args: RouteArgs, func: ItemFn) -> syn::Result<proc_macro2::Token
         args.methods.iter().map(|m| m.value().to_ascii_uppercase()).collect()
     };
     let original_path = args.path.value();
-    let axum_path = original_path.replace('{', ":").replace('}', "");
+    let capture_names = route_capture_names(&original_path);
     let fn_name = &func.sig.ident;
     let wrapper_name = format_ident!("__incan_route_{}", fn_name);
 
-    let mut wrapper_params = Vec::new();
-    let mut call_args = Vec::new();
-    for arg in &func.sig.inputs {
+    // ---- Capture planning ----
+    let mut scalar_path_params = Vec::new();
+    for (input_index, arg) in func.sig.inputs.iter().enumerate() {
         let FnArg::Typed(pat_ty) = arg else {
             return Err(syn::Error::new(arg.span(), "route only supports free functions"));
         };
-        let Pat::Ident(pat_ident) = pat_ty.pat.as_ref() else {
-            return Err(syn::Error::new(
-                pat_ty.pat.span(),
-                "unsupported route parameter pattern",
-            ));
-        };
-        let name = &pat_ident.ident;
-        let ty = &pat_ty.ty;
-        if original_path.contains(&format!("{{{name}}}")) {
-            wrapper_params.push(quote! { axum::extract::Path(#name): axum::extract::Path<#ty> });
-        } else if is_generic_wrapper(ty, "Json") {
-            wrapper_params.push(quote! { axum::extract::Json(#name): axum::extract::Json<_> });
-        } else if is_generic_wrapper(ty, "Query") {
-            wrapper_params.push(quote! { axum::extract::Query(#name): axum::extract::Query<_> });
-        } else {
-            wrapper_params.push(quote! { #name: #ty });
-        }
-        call_args.push(quote! { #name });
-    }
 
+        let Pat::Ident(pat_ident) = pat_ty.pat.as_ref() else {
+            continue;
+        };
+        if is_axum_extractor(&pat_ty.ty) {
+            continue;
+        }
+        let authored_name = pat_ident.ident.to_string();
+        let Some(capture_index) = capture_names.iter().position(|capture| capture == &authored_name) else {
+            continue;
+        };
+        let binding = format_ident!("{}", authored_name);
+        scalar_path_params.push((input_index, capture_index, binding, pat_ty.ty.as_ref()));
+    }
+    scalar_path_params.sort_by_key(|(_, capture_index, _, _)| *capture_index);
+
+    // ---- Handler adaptation ----
+    let (route_handler, wrapper) = if scalar_path_params.is_empty() {
+        (quote! { #fn_name }, quote! {})
+    } else {
+        let path_bindings = scalar_path_params
+            .iter()
+            .map(|(_, _, binding, _)| binding)
+            .collect::<Vec<_>>();
+        let path_types = scalar_path_params.iter().map(|(_, _, _, ty)| ty).collect::<Vec<_>>();
+        let path_param = if path_bindings.len() == 1 {
+            let binding = path_bindings[0];
+            let ty = path_types[0];
+            quote! { axum::extract::Path(#binding): axum::extract::Path<#ty> }
+        } else {
+            quote! {
+                axum::extract::Path((#(#path_bindings),*)):
+                    axum::extract::Path<(#(#path_types),*)>
+            }
+        };
+
+        let mut wrapper_params = vec![path_param];
+        let mut call_args = Vec::new();
+        for (input_index, arg) in func.sig.inputs.iter().enumerate() {
+            let FnArg::Typed(pat_ty) = arg else {
+                return Err(syn::Error::new(arg.span(), "route only supports free functions"));
+            };
+            if let Some((_, _, binding, _)) = scalar_path_params
+                .iter()
+                .find(|(scalar_input_index, _, _, _)| *scalar_input_index == input_index)
+            {
+                call_args.push(quote! { #binding });
+                continue;
+            }
+
+            let binding = format_ident!("__incan_arg_{input_index}");
+            let ty = &pat_ty.ty;
+            wrapper_params.push(quote! { #binding: #ty });
+            call_args.push(quote! { #binding });
+        }
+
+        (
+            quote! { #wrapper_name },
+            quote! {
+                async fn #wrapper_name(#(#wrapper_params),*) -> impl axum::response::IntoResponse {
+                    #fn_name(#(#call_args),*).await
+                }
+            },
+        )
+    };
+
+    // ---- Route registration ----
     let mut submits = Vec::new();
     for method in methods {
         let router_method = match method.as_str() {
@@ -129,9 +178,9 @@ fn expand_route(args: RouteArgs, func: ItemFn) -> syn::Result<proc_macro2::Token
         submits.push(quote! {
             inventory::submit! {
                 incan_stdlib::web::RouteEntry::new(
-                    #axum_path,
+                    #original_path,
                     #method,
-                    |router| router.route(#axum_path, axum::routing::#router_method(#wrapper_name)),
+                    |router| router.route(#original_path, axum::routing::#router_method(#route_handler)),
                 )
             }
         });
@@ -140,9 +189,7 @@ fn expand_route(args: RouteArgs, func: ItemFn) -> syn::Result<proc_macro2::Token
     Ok(quote! {
         #func
 
-        async fn #wrapper_name(#(#wrapper_params),*) -> impl axum::response::IntoResponse {
-            #fn_name(#(#call_args),*).await
-        }
+        #wrapper
 
         #(#submits)*
     })
@@ -253,6 +300,21 @@ fn is_generic_wrapper(ty: &Type, wrapper_name: &str) -> bool {
     matches!(seg.arguments, PathArguments::AngleBracketed(_))
 }
 
+/// Return whether a handler parameter is already one of Axum's typed extractor wrappers.
+fn is_axum_extractor(ty: &Type) -> bool {
+    ["Json", "Query", "Path"]
+        .iter()
+        .any(|wrapper_name| is_generic_wrapper(ty, wrapper_name))
+}
+
+/// Extract ordered Axum capture names from an Incan route path without changing its runtime spelling.
+fn route_capture_names(path: &str) -> Vec<String> {
+    path.split('/')
+        .filter_map(|segment| segment.strip_prefix('{')?.strip_suffix('}'))
+        .map(|capture| capture.strip_prefix('*').unwrap_or(capture).to_string())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -282,6 +344,107 @@ mod tests {
         assert_eq!(submit_count, 2);
         assert!(expanded_src.contains("\"GET\""));
         assert!(expanded_src.contains("\"DELETE\""));
+        Ok(())
+    }
+
+    #[test]
+    fn expand_route_registers_typed_extractors_without_an_inferred_wrapper() -> Result<(), Box<dyn std::error::Error>> {
+        let args: RouteArgs = syn::parse_str("\"/search\", methods=[\"GET\"]")?;
+        let func: ItemFn = syn::parse_str(
+            r#"
+            async fn search(query: Query<Params>) -> Json<Reply> {
+                Json(Reply { query: query.q })
+            }
+        "#,
+        )?;
+
+        let expanded = expand_route(args, func)?;
+        let expanded_src = expanded.to_string();
+        assert!(
+            expanded_src.contains("axum :: routing :: get (search)"),
+            "typed Axum extractors should register the source handler directly: {expanded_src}"
+        );
+        assert!(
+            !expanded_src.contains("__incan_route_search") && !expanded_src.contains("Query < _ >"),
+            "typed extractors must not gain an inferred item-signature wrapper: {expanded_src}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn expand_route_accepts_an_unused_typed_path_parameter() -> Result<(), Box<dyn std::error::Error>> {
+        let args: RouteArgs = syn::parse_str("\"/users/{id}\", methods=[\"GET\"]")?;
+        let func: ItemFn = syn::parse_str(
+            r#"
+            async fn get_user(_: Path<i64>) -> Json<Reply> {
+                Json(Reply { id: 1 })
+            }
+        "#,
+        )?;
+
+        let expanded = expand_route(args, func)?;
+        let expanded_src = expanded.to_string();
+        assert!(
+            expanded_src.contains("router . route (\"/users/{id}\" , axum :: routing :: get (get_user))"),
+            "typed Path handlers should retain Axum 0.8 captures and wildcard patterns: {expanded_src}"
+        );
+        assert!(
+            !expanded_src.contains("__incan_route_get_user"),
+            "a typed Path handler should not be double-wrapped: {expanded_src}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn expand_route_groups_multiple_scalar_path_captures() -> Result<(), Box<dyn std::error::Error>> {
+        let args: RouteArgs = syn::parse_str("\"/posts/{year}/{month}\", methods=[\"GET\"]")?;
+        let func: ItemFn = syn::parse_str(
+            r#"
+            async fn get_posts(year: i64, month: i64) -> i64 {
+                year + month
+            }
+        "#,
+        )?;
+
+        let expanded = expand_route(args, func)?;
+        let expanded_src = expanded.to_string();
+        assert!(
+            expanded_src.contains("Path ((year , month)) : axum :: extract :: Path < (i64 , i64) >"),
+            "multiple scalar captures should deserialize through one ordered Path tuple: {expanded_src}"
+        );
+        assert!(
+            expanded_src.contains("router . route (\"/posts/{year}/{month}\""),
+            "Axum 0.8 capture syntax must remain unchanged: {expanded_src}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn expand_route_mixes_scalar_paths_with_typed_extractors() -> Result<(), Box<dyn std::error::Error>> {
+        let args: RouteArgs = syn::parse_str("\"/users/{id}\", methods=[\"POST\"]")?;
+        let func: ItemFn = syn::parse_str(
+            r#"
+            async fn update_user(id: i64, query: Query<Params>, body: Json<Update>) -> Json<Reply> {
+                apply(id, query, body)
+            }
+        "#,
+        )?;
+
+        let expanded = expand_route(args, func)?;
+        let expanded_src = expanded.to_string();
+        assert!(
+            expanded_src.contains("Path (id) : axum :: extract :: Path < i64 >"),
+            "the scalar capture should be extracted by the generated adapter: {expanded_src}"
+        );
+        assert!(
+            expanded_src.contains("__incan_arg_1 : Query < Params >")
+                && expanded_src.contains("__incan_arg_2 : Json < Update >"),
+            "typed extractors should pass through the scalar-path adapter unchanged: {expanded_src}"
+        );
+        assert!(
+            !expanded_src.contains("Query < _ >") && !expanded_src.contains("Json < _ >"),
+            "mixed adapters must not emit inferred item-signature types: {expanded_src}"
+        );
         Ok(())
     }
 }
