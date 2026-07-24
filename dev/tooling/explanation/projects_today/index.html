@@ -4725,6 +4725,8 @@
       
         
       
+        
+      
     
     
       
@@ -4892,6 +4894,27 @@
   
   <span class="md-ellipsis">
     Compiled SDK provider flow
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../generated_build_storage/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Generated-build storage model
   </span>
   
 
@@ -6613,13 +6636,13 @@
 <p>On build, Incan prints the generated project directory and the compiled binary path. In practice, outputs live under:</p>
 <ul>
 <li>Generated Rust project: <code>target/incan/&lt;name&gt;/</code></li>
-<li>Built binary: <code>target/incan/.cargo-target/release/&lt;name&gt;</code></li>
+<li>Built binary: <code>target/incan/&lt;name&gt;/target/release/&lt;name&gt;</code></li>
 </ul>
 <p>See: <a href="../../reference/cli_reference/">CLI reference</a>.</p>
 <h2 id="what-gets-regenerated">What gets regenerated<a class="headerlink" href="#what-gets-regenerated" title="Permanent link">&para;</a></h2>
 <p>The generated Rust project under <code>target/incan/</code> is tool-managed output. Treat it as <strong>generated</strong>:</p>
 <ul>
-<li>It is safe to delete: <code>rm -rf target/incan/</code></li>
+<li>It is safe to delete when no Incan or Cargo command is using it: <code>rm -rf target/incan/</code></li>
 <li>Manual edits inside <code>target/incan/&lt;name&gt;/</code> may be overwritten on the next build</li>
 </ul>
 <p>If an <code>incan.lock</code> exists, the embedded <code>Cargo.lock</code> payload is materialized into the generated project directory so Cargo resolves the same dependency versions every time.</p>

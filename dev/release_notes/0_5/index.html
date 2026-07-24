@@ -4718,6 +4718,8 @@
       
         
       
+        
+      
     
     
       
@@ -4782,6 +4784,27 @@
   
   <span class="md-ellipsis">
     Compiled SDK provider flow
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tooling/explanation/generated_build_storage/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Generated-build storage model
   </span>
   
 
@@ -6564,6 +6587,7 @@
 <li><strong>Workspaces</strong>: RFC 077 adds explicit rooted and virtual project workspaces with deterministic member selection, explicit shared dependency and environment inheritance, one crash-safe root lock, <code>incan workspace inspect</code>, and member-scoped build/check/test/fmt reports (#405).</li>
 <li><strong>npm package</strong>: Installing the npm toolchain adapter no longer emits the package-manager install-script warning now that the release packaging no longer relies on that hook (#812).</li>
 <li><strong>Release tooling</strong>: Installer and packaging tests use lock-protected, named temporary staging, reclaim abandoned staging from interrupted runs, and surface cleanup failures instead of silently retaining release archives and package-manager fixtures (#864).</li>
+<li><strong>Bounded generated-build cache</strong>: Generated Cargo output reuses compatibility-scoped targets below <code>INCAN_HOME</code> by default instead of multiplying the same dependency graph across projects and worktrees; path-independent root identities prevent temporary paths from creating unbounded duplicate binaries, while per-root locks and project-local publication isolate concurrent final outputs. Active-use leases protect concurrent builds only through Cargo and project-local publication, then release before user code runs; interrupted domains are measured before idle reuse, and every completed lease prunes the newly idle set toward a 20 GiB soft limit. An idle domain that exceeds its configurable post-Cargo safety bound has only its rebuildable Cargo target discarded. <code>incan cache inspect|prune</code> exposes versioned human and JSON management surfaces with exact-identity cleanup and logical-usage reporting. The storage-model documentation records complete small and DataFusion-shaped cold/warm build, run, test, and library measurements plus cache-identical nested-Cargo throughput evidence (#876, #877, #925).</li>
 </ul>
 <h2 id="bugfixes">Bugfixes<a class="headerlink" href="#bugfixes" title="Permanent link">&para;</a></h2>
 <ul>
