@@ -118,6 +118,8 @@ libc = "0.2"
 byteorder = "1"
 # Runtime crate used by std.uuid generated-project offline smoke tests.
 rand = "0.8"
+# Runtime crate used by std.regex generated-project offline smoke tests.
+regex = "1"
 # Runtime crates used by std.compression generated-project offline smoke tests.
 flate2 = "1"
 zstd = "0.13"
@@ -141,6 +143,11 @@ incan_stdlib = { path = "crates/incan_stdlib" }
 # Temporary directories for manifest discovery tests
 tempfile = "3"
 wat = "1"
+
+[package.metadata.cargo-udeps.ignore]
+# `regex` deliberately anchors generated std.regex consumers in Cargo.lock for offline test shards; the Rust test
+# harness does not link it directly.
+development = ["regex"]
 
 [[bin]]
 name = "incan"

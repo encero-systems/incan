@@ -48,9 +48,21 @@ impl RustWorkspace {
         index
     }
 
-    /// Build cargo configuration for the Rust metadata workspace.
-    fn metadata_cargo_config() -> CargoConfig {
-        CargoConfig::default()
+    /// Build Cargo configuration for one Rust metadata workspace.
+    ///
+    /// rust-analyzer may run `cargo check` to discover build-script output. Keep those nested Cargo artifacts inside
+    /// the generated workspace target selected by Incan instead of inheriting a caller-level target or unstable
+    /// Cargo `build-dir` override.
+    fn metadata_cargo_config(target_dir: &Path) -> CargoConfig {
+        let target_dir = target_dir.to_string_lossy().into_owned();
+        let mut config = CargoConfig::default();
+        config
+            .extra_env
+            .insert("CARGO_TARGET_DIR".to_string(), Some(target_dir.clone()));
+        config
+            .extra_env
+            .insert("CARGO_BUILD_BUILD_DIR".to_string(), Some(target_dir));
+        config
     }
 
     /// Load the Cargo project rooted at `manifest_dir` (directory containing `Cargo.toml`).
@@ -67,8 +79,19 @@ impl RustWorkspace {
         progress: &(dyn Fn(String) + Sync),
         load_out_dirs_from_check: bool,
     ) -> Result<Self, RustMetadataError> {
+        let target_dir = crate::cache::cargo_configured_target_dir(manifest_dir);
+        Self::load_with_options_and_target(manifest_dir, &target_dir, progress, load_out_dirs_from_check)
+    }
+
+    /// Load a Cargo project while keeping any nested build-script discovery in the owner workspace's target.
+    pub(crate) fn load_with_options_and_target(
+        manifest_dir: &Path,
+        target_dir: &Path,
+        progress: &(dyn Fn(String) + Sync),
+        load_out_dirs_from_check: bool,
+    ) -> Result<Self, RustMetadataError> {
         let manifest_dir = manifest_dir.canonicalize()?;
-        let cargo_config = Self::metadata_cargo_config();
+        let cargo_config = Self::metadata_cargo_config(target_dir);
         let load_config = LoadCargoConfig {
             load_out_dirs_from_check,
             // Proc macros are optional for many crates; `None` keeps CI fast.
@@ -101,11 +124,16 @@ impl RustWorkspace {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::RustWorkspace;
 
+    use tempfile::tempdir;
+
     #[test]
-    fn metadata_loader_allows_cargo_to_resolve_uncached_dependencies() {
-        let cargo_config = RustWorkspace::metadata_cargo_config();
+    fn metadata_loader_allows_cargo_to_resolve_uncached_dependencies() -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = tempdir()?;
+        let cargo_config = RustWorkspace::metadata_cargo_config(&workspace.path().join("target"));
         assert!(
             !cargo_config.extra_args.iter().any(|arg| arg == "--offline"),
             "rust-inspect workspace loads must not force offline metadata resolution"
@@ -115,5 +143,25 @@ mod tests {
             None,
             "rust-inspect workspace loads must not force Cargo into offline mode"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn metadata_loader_contains_nested_cargo_output_in_configured_target() -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = tempdir()?;
+        let configured_target = workspace.path().join("managed-target");
+        fs::create_dir_all(workspace.path().join(".cargo"))?;
+        fs::write(
+            workspace.path().join(".cargo/config.toml"),
+            format!("[build]\ntarget-dir = {:?}\n", configured_target),
+        )?;
+
+        let resolved_target = crate::cache::cargo_configured_target_dir(workspace.path());
+        assert_eq!(resolved_target, configured_target);
+        let cargo_config = RustWorkspace::metadata_cargo_config(&resolved_target);
+        let expected = Some(configured_target.to_string_lossy().into_owned());
+        assert_eq!(cargo_config.extra_env.get("CARGO_TARGET_DIR"), Some(&expected));
+        assert_eq!(cargo_config.extra_env.get("CARGO_BUILD_BUILD_DIR"), Some(&expected));
+        Ok(())
     }
 }

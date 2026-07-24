@@ -148,9 +148,15 @@ fn collect_library_vocab_metadata_with_mode(
     {
         ensure_companion_supports_cdylib(&cargo_manifest_path)?;
         ensure_rust_target_installed(&desugarer.target)?;
-        run_cargo_build_for_target(&cargo_manifest_path, &desugarer.target, &desugarer.profile)?;
+        let desugarer_target_dir = cache_context.cache_dir.join("desugarer-target");
+        run_cargo_build_for_target(
+            &cargo_manifest_path,
+            &desugarer_target_dir,
+            &desugarer.target,
+            &desugarer.profile,
+        )?;
         pending_desugarer_artifact =
-            build_pending_desugarer_artifact(&companion_crate_root, &package_name, metadata.desugarer.as_ref())?;
+            build_pending_desugarer_artifact(&desugarer_target_dir, &package_name, metadata.desugarer.as_ref())?;
     }
     if !cache_hit
         || (mode == VocabExtractionMode::PackageArtifacts
@@ -494,8 +500,15 @@ fn read_companion_package_name(cargo_manifest_path: &Path) -> CliResult<String> 
     Ok(package_name.to_string())
 }
 
-fn run_cargo_build_for_target(cargo_manifest_path: &Path, target: &str, profile: &str) -> CliResult<()> {
-    let mut command = Command::new("cargo");
+/// Build one generated vocab companion for the requested Rust target and profile.
+fn run_cargo_build_for_target(
+    cargo_manifest_path: &Path,
+    target_dir: &Path,
+    target: &str,
+    profile: &str,
+) -> CliResult<()> {
+    let mut command = crate::backend::project::runner::cargo_command();
+    crate::backend::project::runner::configure_cargo_target(&mut command, target_dir);
     command.arg("build").arg("--manifest-path").arg(cargo_manifest_path);
     if profile == "release" {
         command.arg("--release");
@@ -597,12 +610,13 @@ fn extract_vocab_metadata_from_library_entrypoint(
     write_extraction_runner_manifest(&helper_root, companion_crate_root, package_name)?;
     write_extraction_runner_source(&helper_root)?;
 
-    let output = Command::new("cargo")
+    let mut command = crate::backend::project::runner::cargo_command();
+    crate::backend::project::runner::configure_cargo_target(&mut command, target_dir);
+    let output = command
         .arg("run")
         .arg("--quiet")
         .arg("--manifest-path")
         .arg(helper_root.join("Cargo.toml"))
-        .env("CARGO_TARGET_DIR", target_dir)
         .output()
         .map_err(|err| CliError::failure(format!("failed to run vocab extraction helper: {err}")))?;
 
@@ -724,8 +738,9 @@ fn escape_cargo_toml_string(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+/// Materialize a declared vocab desugarer into the selected generated target.
 fn build_pending_desugarer_artifact(
-    companion_crate_root: &Path,
+    target_dir: &Path,
     package_name: &str,
     desugarer: Option<&incan_vocab::DesugarerMetadata>,
 ) -> CliResult<Option<PendingDesugarerArtifact>> {
@@ -744,8 +759,7 @@ fn build_pending_desugarer_artifact(
         .file_name
         .clone()
         .unwrap_or_else(|| format!("{}.wasm", package_name.replace('-', "_")));
-    let source_path = companion_crate_root
-        .join("target")
+    let source_path = target_dir
         .join(&desugarer.target)
         .join(&desugarer.profile)
         .join(&artifact_file_name);

@@ -31,6 +31,7 @@ use crate::frontend::typechecker::TypeCheckInfo;
 use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
 use crate::frontend::vocab_desugar_pass;
 use crate::frontend::{lexer, parser};
+use crate::generated_cache::resolve_generated_cargo_target;
 use crate::lockfile::{CargoFeatureSelection, semantic_lock_state};
 use crate::manifest::ProjectManifest;
 use crate::provider::{FeatureSelection, ProviderPlan};
@@ -864,26 +865,23 @@ fn normalize_runner_assert_statements(ast: &mut Program) {
     }
 }
 
-/// Shared Cargo `target/` directory for generated test crates in a package.
-///
-/// By default this reuses the project's main `target/` so existing dependency artifacts are shared across regular
-/// builds and `incan test` runs for better DX.
+/// Resolve an explicit Cargo `target/` override for generated test crates.
 ///
 /// Set `INCAN_TEST_SHARED_TARGET_DIR` to force all generated test harnesses into a caller-provided target directory.
 /// This is primarily useful for integration tests that create many throwaway project roots but should still reuse the
 /// same compiled harness dependencies.
 ///
 /// Set `INCAN_TEST_ISOLATED_TARGET_DIR` to one of `1|true|yes|on` to use `target/incan_test_runner` instead.
-fn shared_cargo_target_dir(project_root: &Path) -> PathBuf {
+fn generated_test_target_override(project_root: &Path) -> Option<PathBuf> {
     if let Ok(shared_target_dir) = std::env::var("INCAN_TEST_SHARED_TARGET_DIR") {
         let shared_target_dir = PathBuf::from(shared_target_dir);
         if shared_target_dir.is_absolute() {
-            return shared_target_dir;
+            return Some(shared_target_dir);
         }
         if let Ok(cwd) = std::env::current_dir() {
-            return cwd.join(shared_target_dir);
+            return Some(cwd.join(shared_target_dir));
         }
-        return shared_target_dir;
+        return Some(shared_target_dir);
     }
 
     let absolute_project_root = if project_root.is_absolute() {
@@ -895,10 +893,11 @@ fn shared_cargo_target_dir(project_root: &Path) -> PathBuf {
     };
 
     if parse_isolated_target_env(std::env::var("INCAN_TEST_ISOLATED_TARGET_DIR").ok().as_deref()) {
-        absolute_project_root.join("target").join("incan_test_runner")
-    } else {
-        absolute_project_root.join("target")
+        return Some(absolute_project_root.join("target").join("incan_test_runner"));
     }
+    std::env::var_os(crate::backend::project::generator::GENERATED_CARGO_TARGET_DIR_ENV)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
 }
 
 /// Return the package entry path used for lockfile validation.
@@ -943,6 +942,8 @@ pub(super) struct PreparedTestFile {
     pub prechecked_type_info: (TypeCheckInfo, HashMap<Vec<String>, TypeCheckInfo>, StdlibAstCache),
     #[cfg(feature = "rust_inspect")]
     pub rust_inspect_manifest_dir: PathBuf,
+    #[cfg(feature = "rust_inspect")]
+    pub rust_inspect_target_dir: PathBuf,
 }
 
 /// Runner harness metadata for one inline source file emitted as its own Rust module.
@@ -1577,18 +1578,27 @@ fn merge_test_runner_dependencies(
 }
 
 /// Build a stable generated-crate suffix for one worker batch, which may contain multiple source files.
-fn file_batch_dir_suffix(file_paths: &[PathBuf]) -> String {
+fn file_batch_dir_suffix(file_paths: &[PathBuf], project_root: &Path) -> String {
     let mut hasher = Sha256::new();
     let mut paths = file_paths.to_vec();
     paths.sort();
     paths.dedup();
-    let multi_file = paths.len() > 1;
+    let canonical_root = fs::canonicalize(project_root).unwrap_or_else(|_| project_root.to_path_buf());
     for file_path in paths {
-        let p = fs::canonicalize(&file_path).unwrap_or(file_path);
-        hasher.update(p.to_string_lossy().as_bytes());
-        if multi_file {
-            hasher.update(b"\0");
+        let canonical = fs::canonicalize(&file_path).unwrap_or(file_path);
+        let logical_path = canonical.strip_prefix(&canonical_root).unwrap_or(&canonical);
+        hasher.update(logical_path.to_string_lossy().as_bytes());
+        hasher.update(b"\0");
+        match fs::read(&canonical) {
+            Ok(source) => hasher.update(source),
+            Err(_) => {
+                // Missing collection inputs will fail later with a source diagnostic. Preserve a collision-safe suffix
+                // for that failure path without making temporary project roots part of successful identities.
+                hasher.update(b"missing-source\0");
+                hasher.update(canonical.to_string_lossy().as_bytes());
+            }
         }
+        hasher.update(b"\0");
     }
     let digest = hex::encode(hasher.finalize());
     format!("batch_{}", &digest[..16])
@@ -2694,8 +2704,9 @@ fn cargo_test_command(
     no_run: bool,
     no_capture: bool,
 ) -> Command {
-    let mut command = Command::new("cargo");
+    let mut command = crate::backend::project::runner::cargo_command();
     crate::backend::project::runner::sanitize_cargo_environment(&mut command);
+    crate::backend::project::runner::configure_cargo_target(&mut command, shared_target_dir);
     command.arg("test");
     command.arg("--lib");
     if no_run {
@@ -2720,7 +2731,6 @@ fn cargo_test_command(
             command.arg("--nocapture");
         }
     }
-    command.env("CARGO_TARGET_DIR", shared_target_dir);
     // Keep runtime-relative fixture paths anchored to the caller's project, not the generated test crate.
     command.current_dir(project_root);
     command
@@ -3297,6 +3307,7 @@ pub(super) fn run_file_tests_batch(
                     .map(|s| s.to_string())
             })
             .unwrap_or_else(|| "incan_test".to_string());
+        let generated_cargo_target_dir = generated_test_target_override(&project_root);
         #[cfg(feature = "rust_inspect")]
         let metadata_query_paths = collect_rust_inspect_query_paths(&lock_dependency_modules);
         let lock_resolution = match commands::resolve_lock_context(commands::LockResolutionRequest {
@@ -3311,6 +3322,7 @@ pub(super) fn run_file_tests_batch(
             semantic: Some(&semantic),
             package_features: Some(package_features),
             sdk_profile_override,
+            generated_cargo_target_dir: generated_cargo_target_dir.as_deref(),
             #[cfg(feature = "rust_inspect")]
             rust_inspect_query_paths: &metadata_query_paths,
         }) {
@@ -3327,6 +3339,37 @@ pub(super) fn run_file_tests_batch(
         let cargo_lock_projection_root = cargo_lock_inputs.projection_root;
         let clear_cargo_lock = cargo_lock_inputs.clear_existing;
         let rust_inspect_cargo_flags = common::cargo_command_flags(cargo_policy, &cargo_feature_selection);
+
+        #[cfg(feature = "rust_inspect")]
+        let rust_inspect_managed_target = match resolve_generated_cargo_target(
+            generated_cargo_target_dir.as_deref(),
+            &project_root,
+            &project_root,
+            &lock_resolution.cargo_package_name,
+            "rust-inspect",
+            lock_payload.as_deref(),
+            &cargo_feature_selection,
+            &rust_inspect_cargo_flags,
+        ) {
+            Ok(target) => target,
+            Err(error) => {
+                return tests
+                    .iter()
+                    .map(|test| {
+                        (
+                            test.clone(),
+                            TestResult::Failed(
+                                start.elapsed(),
+                                format!("failed to prepare rust-inspect Cargo cache: {error}"),
+                            ),
+                        )
+                    })
+                    .collect();
+            }
+        };
+        #[cfg(feature = "rust_inspect")]
+        let (rust_inspect_target_dir, _rust_inspect_cache_lease, _rust_inspect_cache_identity) =
+            rust_inspect_managed_target.into_parts();
 
         #[cfg(feature = "rust_inspect")]
         let rust_inspect_manifest_dir = {
@@ -3350,6 +3393,7 @@ pub(super) fn run_file_tests_batch(
                 lock_payload.clone(),
                 cargo_lock_projection_root.as_deref(),
                 clear_cargo_lock,
+                &rust_inspect_target_dir,
                 &rust_inspect_cargo_flags,
             ) {
                 Ok(dir) => dir,
@@ -3360,7 +3404,11 @@ pub(super) fn run_file_tests_batch(
                         .collect();
                 }
             };
-            if let Err(err) = prewarm_rust_inspect_workspace(&rust_inspect_manifest_dir, &metadata_query_paths) {
+            if let Err(err) = prewarm_rust_inspect_workspace(
+                &rust_inspect_manifest_dir,
+                &rust_inspect_target_dir,
+                &metadata_query_paths,
+            ) {
                 return tests
                     .iter()
                     .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), err.message.clone())))
@@ -3441,6 +3489,8 @@ pub(super) fn run_file_tests_batch(
             prechecked_type_info,
             #[cfg(feature = "rust_inspect")]
             rust_inspect_manifest_dir,
+            #[cfg(feature = "rust_inspect")]
+            rust_inspect_target_dir,
         };
         let arc = Arc::new(prepared);
         prep_cache.prepared_files.insert(cache_key, Arc::clone(&arc));
@@ -3452,6 +3502,58 @@ pub(super) fn run_file_tests_batch(
             );
         }
         arc
+    };
+
+    // A preparation-cache hit retains the rust-inspect manifest, but not an activity lease. Reacquire the exact
+    // canonical domain for every batch and keep it live through codegen, whose fallback typechecker paths may still
+    // consult Cargo metadata after the shared front-end analysis completed.
+    #[cfg(feature = "rust_inspect")]
+    let _rust_inspect_codegen_lease = {
+        let explicit_target = generated_test_target_override(&prepared.project_root);
+        let cargo_flags = common::cargo_command_flags(cargo_policy, &cargo_feature_selection);
+        let managed_target = match resolve_generated_cargo_target(
+            explicit_target.as_deref(),
+            &prepared.project_root,
+            &prepared.project_root,
+            &prepared.cargo_package_name,
+            "rust-inspect",
+            prepared.lock_payload.as_deref(),
+            &cargo_feature_selection,
+            &cargo_flags,
+        ) {
+            Ok(target) => target,
+            Err(error) => {
+                return tests
+                    .iter()
+                    .map(|test| {
+                        (
+                            test.clone(),
+                            TestResult::Failed(
+                                start.elapsed(),
+                                format!("failed to reacquire rust-inspect Cargo cache: {error}"),
+                            ),
+                        )
+                    })
+                    .collect();
+            }
+        };
+        let (target_dir, lease, _identity) = managed_target.into_parts();
+        if target_dir != prepared.rust_inspect_target_dir {
+            return tests
+                .iter()
+                .map(|test| {
+                    (
+                        test.clone(),
+                        TestResult::Failed(
+                            start.elapsed(),
+                            "rust-inspect Cargo cache identity changed between test preparation and codegen"
+                                .to_string(),
+                        ),
+                    )
+                })
+                .collect();
+        }
+        lease
     };
 
     // ---- Codegen + unified file harness (library + #[cfg(test)] module) ----
@@ -3519,19 +3621,47 @@ pub(super) fn run_file_tests_batch(
     }
 
     let batch_file_paths = tests.iter().map(|test| test.file_path.clone()).collect::<Vec<_>>();
-    let dir_suffix = file_batch_dir_suffix(&batch_file_paths);
+    let dir_suffix = file_batch_dir_suffix(&batch_file_paths, &prepared.project_root);
     let runner_crate_name = runner_crate_name_for_batch_suffix(&dir_suffix);
-    let temp_dir = format!("target/incan_tests/{}", dir_suffix);
-    let temp_dir_path = PathBuf::from(&temp_dir);
-    let manifest_path = if temp_dir_path.is_absolute() {
-        temp_dir_path.join("Cargo.toml")
-    } else if let Ok(cwd) = std::env::current_dir() {
-        cwd.join(&temp_dir).join("Cargo.toml")
-    } else {
-        temp_dir_path.join("Cargo.toml")
-    };
+    // Generated harness source is project-owned even though compatible Cargo artifacts are shared. Anchoring this
+    // path at the project root prevents path-independent batch identities from making unrelated projects overwrite
+    // the same `Cargo.toml` under the compiler process's working directory.
+    let temp_dir_path = prepared.project_root.join("target/incan_tests").join(&dir_suffix);
+    let manifest_path = temp_dir_path.join("Cargo.toml");
 
-    let mut generator = ProjectGenerator::new(&temp_dir, &runner_crate_name, false);
+    let explicit_target = generated_test_target_override(&prepared.project_root);
+    let cargo_flags = common::cargo_command_flags(cargo_policy, &cargo_feature_selection);
+    let managed_target = match resolve_generated_cargo_target(
+        explicit_target.as_deref(),
+        &prepared.project_root,
+        &prepared.project_root,
+        &prepared.cargo_package_name,
+        "test",
+        prepared.lock_payload.as_deref(),
+        &cargo_feature_selection,
+        &cargo_flags,
+    ) {
+        Ok(target) => target,
+        Err(error) => {
+            return tests
+                .iter()
+                .map(|test| {
+                    (
+                        test.clone(),
+                        TestResult::Failed(
+                            start.elapsed(),
+                            format!("failed to prepare generated Cargo cache: {error}"),
+                        ),
+                    )
+                })
+                .collect();
+        }
+    };
+    let (shared_target_dir, managed_target_lease, managed_target_identity) = managed_target.into_parts();
+
+    let mut generator = ProjectGenerator::new(&temp_dir_path, &runner_crate_name, false);
+    generator.set_cargo_target_dir_override(Some(shared_target_dir.clone()));
+    generator.set_generated_cache_context(managed_target_lease, managed_target_identity);
     generator.set_provider_plan(&prepared.provider_plan);
     generator.set_sdk_path_dependencies(prepared.project_requirements.sdk_path_dependencies.clone());
     generator.set_package_name(Some(prepared.cargo_package_name.clone()));
@@ -3544,7 +3674,6 @@ pub(super) fn run_file_tests_batch(
     generator.set_cargo_lock_payload(prepared.lock_payload.clone());
     generator.set_cargo_lock_projection_root(prepared.cargo_lock_projection_root.clone());
     generator.set_clear_cargo_lock(prepared.clear_cargo_lock);
-    let cargo_flags = common::cargo_command_flags(cargo_policy, &cargo_feature_selection);
     generator.set_cargo_policy_flags(cargo_flags.clone());
 
     let gen_err = |msg: String| {
@@ -3634,7 +3763,6 @@ pub(super) fn run_file_tests_batch(
         Err(error) => return gen_err(format!("Failed to project generated Cargo.lock: {error}")),
     };
 
-    let shared_target_dir = shared_cargo_target_dir(&prepared.project_root);
     let generated_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
     let preheat_outcome = match preheat_generated_harness_if_needed(HarnessPreheatRequest {
         manifest_path: &manifest_path,
@@ -3795,9 +3923,10 @@ mod tests {
     use std::path::Path;
 
     #[test]
-    fn shared_target_dir_stays_under_project_target() {
-        let target_dir = shared_cargo_target_dir(Path::new("/tmp/incan_project"));
-        assert_eq!(target_dir, PathBuf::from("/tmp/incan_project/target"));
+    fn isolated_target_dir_stays_under_project_target() {
+        let project_root = Path::new("/tmp/incan_project");
+        let target_dir = project_root.join("target").join("incan_test_runner");
+        assert_eq!(target_dir, PathBuf::from("/tmp/incan_project/target/incan_test_runner"));
     }
 
     #[test]
@@ -4378,6 +4507,27 @@ test test_runner_76001490ba86f677::__incan_file_tests::incan_harness_1_b ... FAI
     fn runner_crate_name_is_derived_from_batch_suffix() {
         let name = runner_crate_name_for_batch_suffix("batch_76001490ba86f677");
         assert_eq!(name, "test_runner_76001490ba86f677");
+    }
+
+    #[test]
+    fn batch_suffix_is_path_independent_but_content_sensitive() -> Result<(), Box<dyn std::error::Error>> {
+        let first = tempfile::tempdir()?;
+        let second = tempfile::tempdir()?;
+        let first_test = first.path().join("tests/test_cache.incn");
+        let second_test = second.path().join("tests/test_cache.incn");
+        fs::create_dir_all(first_test.parent().ok_or("missing first test parent")?)?;
+        fs::create_dir_all(second_test.parent().ok_or("missing second test parent")?)?;
+        fs::write(&first_test, "def test_cache() -> None:\n  assert True\n")?;
+        fs::write(&second_test, "def test_cache() -> None:\n  assert True\n")?;
+
+        let first_suffix = file_batch_dir_suffix(std::slice::from_ref(&first_test), first.path());
+        let second_suffix = file_batch_dir_suffix(std::slice::from_ref(&second_test), second.path());
+        assert_eq!(first_suffix, second_suffix);
+
+        fs::write(&second_test, "def test_cache() -> None:\n  assert False\n")?;
+        let changed_suffix = file_batch_dir_suffix(&[second_test], second.path());
+        assert_ne!(first_suffix, changed_suffix);
+        Ok(())
     }
 
     #[test]

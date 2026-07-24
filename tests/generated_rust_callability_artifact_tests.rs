@@ -4,6 +4,8 @@ use std::process::{Command, Output};
 
 use incan::library_manifest::{LibraryManifest, TypeRef};
 
+mod support;
+
 fn incan_binary() -> PathBuf {
     if let Ok(path) = std::env::var("CARGO_BIN_EXE_incan") {
         return PathBuf::from(path);
@@ -25,12 +27,9 @@ fn run_incan(current_dir: &Path, args: &[&str]) -> Result<Output, Box<dyn std::e
         .env("INCAN_NO_BANNER", "1")
         .env(
             "INCAN_GENERATED_CARGO_TARGET_DIR",
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("target/incan_generated_shared_target"),
+            support::generated_cargo_target_dir(),
         )
-        .env(
-            "INCAN_INTERNAL_SDK_PROVIDER_STORE",
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("target/incan_test_sdk_provider_store"),
-        )
+        .env("INCAN_INTERNAL_SDK_PROVIDER_STORE", support::sdk_provider_store())
         .output()?)
 }
 

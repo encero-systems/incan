@@ -1,0 +1,22 @@
+name: Restore compiled SDK provider store
+description: Reuse an immutable SDK provider store for an exact compiler, lock, and stdlib identity.
+runs:
+  using: composite
+  steps:
+    - name: Fingerprint provider inputs
+      id: identity
+      shell: bash
+      run: |
+        echo "compiler=$(shasum -a 256 target/debug/incan | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+        echo "lock=$(shasum -a 256 Cargo.lock | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+        echo "stdlib=$(git rev-parse HEAD:crates/incan_stdlib/stdlib)" >> "$GITHUB_OUTPUT"
+    - name: Restore compiled SDK provider store
+      # The compiler independently validates the content-addressed store. The cache accelerates an exact match but
+      # never becomes the authority for provider compatibility.
+      uses: actions/cache@v4
+      with:
+        path: target/incan_test_sdk_provider_store
+        key: >-
+          incan-sdk-provider-v2-${{ runner.os }}-${{ runner.arch }}-${{
+          steps.identity.outputs.compiler }}-${{ steps.identity.outputs.lock }}-${{
+          steps.identity.outputs.stdlib }}

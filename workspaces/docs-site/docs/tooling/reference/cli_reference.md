@@ -19,6 +19,7 @@ Commands:
 - `check` - Type-check a file or project entrypoint, with optional stable JSON diagnostics
 - `explain` - Explain a stable diagnostic code
 - `build` - Compile to Rust and build an executable
+- `cache` - Inspect and prune Incan-managed generated-build storage
 - `inspect` - Inspect compiler artifacts such as generated Rust output
 - `run` - Compile and run a program
 - `fmt` - Format Incan source files
@@ -160,8 +161,8 @@ Behavior:
 
 - Default mode compiles a source file into an executable.
 - `--lib` builds the current project as a library. In this mode, `src/lib.incn` is required and `FILE` is optional.
-- Prints the generated Rust project path (example): `target/incan/<name>/`
-- Builds the generated Rust project and prints the binary path (example): `target/incan/.cargo-target/release/<name>`
+- Prints the generated Rust project path (default example): `target/incan/<name>/`
+- Builds the generated Rust project and prints the binary path. Generated source and the published final binary stay under the default project `target/incan/` tree, or under the positional caller-selected `OUTPUT_DIR`. Rebuildable Cargo dependency and intermediate output uses the managed cache described below unless an explicit generated Cargo target is selected.
 - In `--lib` mode, also emits a library artifact under `target/lib/` (including `<name>.incnlib`).
 
 Dependency flags:
@@ -177,7 +178,7 @@ Dependency flags:
 - `--cargo-no-default-features`: Disable default Cargo features.
 - `--cargo-all-features`: Enable all Cargo features.
 - `--release`: Explicitly request the release Cargo profile. This is the default for `incan build`, and the flag exists so first-contact flows can spell out that they are producing an optimized build.
-- `--generated-cargo-target-dir <PATH>`: Use a shared Cargo target directory for generated Rust projects. This is useful for CI and downstream packages with expensive Rust dependencies because separate clean checkouts can reuse the same compiled dependency artifacts when the lock/profile/target inputs match.
+- `--generated-cargo-target-dir <PATH>`: Override the managed cache and use this Cargo target directory for generated Rust projects. This remains useful when CI owns the cache lifecycle explicitly.
 - `--report json`: Emit a versioned machine-readable build report.
 - `--report-output <PATH>`: Write the build report to a file instead of stdout.
 - `--workspace`: Build every selected workspace member.
@@ -185,7 +186,9 @@ Dependency flags:
 
 Without `--locked` or `--frozen`, `incan build` creates `incan.lock` when it is missing. If an existing lockfile is stale, the command warns and leaves it untouched, but does not use its embedded `Cargo.lock` as build authority; run `incan lock` to refresh the committed lockfile intentionally. `--locked` and `--frozen` continue to reject stale locks.
 
-For `incan build --lib`, dependency preheat uses the generated lock workspace and the same release-profile Cargo target directory as the real generated library build. If the dependency graph is unchanged, the preheat stamp is reused; if it has to run, the command prints the target/profile domain before invoking Cargo and streams Cargo's progress while the preheat compiles. Vocab companion metadata and packaged desugarer artifacts are cached by companion input fingerprint; with `--generated-cargo-target-dir`, that cache lives alongside the shared generated Cargo target so repeated clean checkouts can reuse unchanged companion extraction and desugarer artifacts.
+Generated Cargo output from check, build, run, test, library, lock-preheat, Rust-metadata tooling, and LSP paths is shared by default below `$INCAN_HOME/cache/generated-cargo/v1`, or `~/.incan/cache/generated-cargo/v1` when `INCAN_HOME` is unset. Compatibility domains include the Incan compiler version, selected `rustc` command and verbose host/version output, selected Cargo executable and version, Rust/Cargo target and profile environment selectors, Cargo profile, canonical Cargo lock payload, Cargo feature selection, and Cargo arguments that can affect compiled artifacts. Execution-only offline, lock-enforcement, timing, verbosity, and presentation flags do not split otherwise compatible domains. Cargo fingerprints its remaining compiler and configuration inputs within each domain. This lets matching projects and worktrees reuse dependency artifacts without sharing generated Incan source or project-local rust-inspect metadata workspaces. Active domains hold advisory read leases. Before a domain is acquired, automatic least-recently-used pruning removes idle domains toward a 20 GiB default soft limit; active domains may temporarily keep usage above that limit. Each completed lease measures its domain and prunes the now-idle set toward the aggregate limit. If one domain's retained logical size exceeds the 20 GiB default safety bound, configurable with `INCAN_GENERATED_CACHE_MAX_ENTRY_BYTES`, Incan discards only that domain's rebuildable Cargo target. Cargo's target and build directories are both forced below the lifecycle-owned target root. Cargo `--target-dir` and target/build-directory `--config` passthrough are rejected in managed mode; use `--generated-cargo-target-dir` when the caller must own the target directory.
+
+For `incan build --lib`, dependency preheat uses the generated lock workspace and the same release-profile Cargo target directory as the real generated library build. If the dependency graph is unchanged, the preheat stamp is reused; if it has to run, the command prints the target/profile domain before invoking Cargo and streams Cargo's progress while the preheat compiles. Vocab companion metadata and packaged desugarer artifacts are cached by companion input fingerprint; with an explicit `--generated-cargo-target-dir`, that cache lives alongside the caller-managed target.
 
 Build reports use `schema_version: 1` and describe the successful build rather than restating terminal prose. They include the compiler version, build mode, profile, project identity, entrypoint or library root, source-file breadcrumbs, generated Rust project paths, emitted artifacts, Rust and Incan dependency summaries, Cargo policy flags, interop summary, coarse timings, and notes. Library reports include phase timings for source loading, dependency resolution, lock payload resolution, Rust metadata prewarm, typechecking, API validation, export resolution, manifest metadata, vocab metadata, Rust generation, dependency preheat, Cargo build, and total wall time. A multi-member `--report json` invocation emits one `incan.workspace.build.v1` aggregate with member-scoped nested reports. When `--report json` writes to stdout, human progress moves to stderr so tooling can parse stdout directly; when `--report-output <PATH>` is supplied, the report is written to that file and ordinary progress remains human-facing.
 
@@ -197,6 +200,9 @@ Environment defaults:
 - `INCAN_CARGO_ARGS="..."` is split on whitespace and used when no Cargo args were supplied on the CLI.
 - `INCAN_LOCK_PREHEAT=0` disables dependency preheat for lock/test and generated-library build paths.
 - `INCAN_GENERATED_CARGO_TARGET_DIR=<PATH>` is the environment form of `--generated-cargo-target-dir`; the explicit CLI flag wins when both are set.
+- `INCAN_GENERATED_CACHE=0` disables the default managed cache and restores project-local Cargo targets.
+- `INCAN_GENERATED_CACHE_MAX_BYTES=<BYTES>` changes the managed cache limit from its 20 GiB default.
+- `INCAN_GENERATED_CACHE_MAX_ENTRY_BYTES=<BYTES>` changes the per-domain managed safety bound from its 20 GiB default.
 - `INCAN_VOCAB_COMPANION_CACHE_DIR=<PATH>` overrides the vocab companion cache location when a package needs to keep that cache separate from the generated Cargo target.
 
 Examples:
@@ -214,6 +220,18 @@ incan build --release
 incan build src/main.incn --report json
 incan build --lib --report json --report-output target/build-report.json
 ```
+
+### `incan cache`
+
+Usage:
+
+```text
+incan cache inspect [--category generated-cargo] [--format text|json]
+incan cache prune [--category generated-cargo] [--dry-run] [--max-bytes BYTES] [--format text|json]
+incan cache prune --identity SHA256 [--identity SHA256 ...] [--dry-run] [--format text|json]
+```
+
+`inspect` reports the cache root, configured soft limit, recursive logical file bytes, full compatibility identities, profiles, last-use timestamps, and active-use state. `prune` removes least-recently-used idle domains toward the configured or command-local limit. Repeating `--identity` instead selects exact domains and cannot be combined with `--max-bytes`. Cleanup never removes a domain with an active build lease; use `--dry-run` to preview the removable domains and logical bytes. JSON reports include numeric `schema_version: 1`; `removed_logical_bytes` is the captured logical size of successfully removed domains, and all byte fields can differ from filesystem allocation or APFS clone accounting.
 
 ### `incan inspect rust`
 
@@ -774,10 +792,10 @@ See: [Checked contract metadata](contract_metadata.md) for bundle schema, materi
 Build outputs:
 
 - **Generated Rust project**: `target/incan/<name>/`
-- **Built binary**: `target/incan/.cargo-target/release/<name>`
+- **Built binary**: `target/incan/<name>/target/release/<name>`
 - **Built library artifact (`--lib`)**: `target/lib/<name>.incnlib` plus the generated library crate output
 
-Cleaning:
+Cleaning generated source and the project-local published binary (only while no Incan or Cargo command is using it):
 
 ```bash
 rm -rf target/incan/

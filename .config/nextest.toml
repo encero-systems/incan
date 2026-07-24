@@ -5,7 +5,10 @@
 dir = "target/nextest"
 
 [test-groups]
-nested-cargo = { max-threads = 12 }
+# Generated-project tests share Cargo targets and each Cargo child can compile several crates in parallel. Limit the
+# outer test processes here; the Makefile and CI separately cap each Cargo child so ordinary compiler unit tests do not
+# wait behind Cargo locks or an overcommitted Rust build.
+nested-cargo = { max-threads = 6 }
 
 [profile.default]
 # Fail fast: stop after the first test failure during local development.
@@ -25,9 +28,9 @@ slow-timeout = "30s"
 leak-timeout = "2s"
 
 [[profile.default.overrides]]
-filter = 'binary_id(incan::integration_tests) | binary_id(incan::cli_integration) | binary_id(incan::std_encoding_algorithm_modules) | binary_id(incan::generated_rust_artifact_tests) | binary_id(incan::generated_rust_callability_artifact_tests) | binary_id(incan::generated_rust_native_consumer_tests)'
+filter = 'binary_id(incan::integration_tests) | binary_id(incan::cli_integration) | binary_id(incan::std_encoding_algorithm_modules) | binary_id(incan::generated_cache_integration) | binary_id(incan::generated_rust_artifact_tests) | binary_id(incan::generated_rust_callability_artifact_tests) | binary_id(incan::generated_rust_native_consumer_tests) | binary_id(incan::toolchain_installer_tests) | test(/(generated_rust_warning_clean|generated_consumer_rebinds_absent_private_sdk_cache_root_issue911|nested_compiled_artifacts_propagate_sdk_projection_issue911|rust_inspect_helper_materializes_sdk_projection_issue911|identical_generation_preserves_a_valid_projected_cargo_lock_issue921|relative_output_dir_projects_without_duplicating_manifest_path_issue921|online_locked_projection_can_populate_a_fresh_cargo_home_issue923|build_library_accepts_(nested_directory_modules|canonical_nested_module_imports)|collect_library_vocab_metadata_(requires_library_vocab_entrypoint|extracts_payload_and_projection|uses_generated_target_cache_base))/)'
 test-group = 'nested-cargo'
 
 [[profile.ci.overrides]]
-filter = 'binary_id(incan::integration_tests) | binary_id(incan::cli_integration) | binary_id(incan::std_encoding_algorithm_modules) | binary_id(incan::generated_rust_artifact_tests) | binary_id(incan::generated_rust_callability_artifact_tests) | binary_id(incan::generated_rust_native_consumer_tests)'
+filter = 'binary_id(incan::integration_tests) | binary_id(incan::cli_integration) | binary_id(incan::std_encoding_algorithm_modules) | binary_id(incan::generated_cache_integration) | binary_id(incan::generated_rust_artifact_tests) | binary_id(incan::generated_rust_callability_artifact_tests) | binary_id(incan::generated_rust_native_consumer_tests) | binary_id(incan::toolchain_installer_tests) | test(/(generated_rust_warning_clean|generated_consumer_rebinds_absent_private_sdk_cache_root_issue911|nested_compiled_artifacts_propagate_sdk_projection_issue911|rust_inspect_helper_materializes_sdk_projection_issue911|identical_generation_preserves_a_valid_projected_cargo_lock_issue921|relative_output_dir_projects_without_duplicating_manifest_path_issue921|online_locked_projection_can_populate_a_fresh_cargo_home_issue923|build_library_accepts_(nested_directory_modules|canonical_nested_module_imports)|collect_library_vocab_metadata_(requires_library_vocab_entrypoint|extracts_payload_and_projection|uses_generated_target_cache_base))/)'
 test-group = 'nested-cargo'

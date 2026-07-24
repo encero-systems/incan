@@ -2,6 +2,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
+mod support;
+
 fn incan_binary() -> PathBuf {
     if let Ok(path) = std::env::var("CARGO_BIN_EXE_incan") {
         return PathBuf::from(path);
@@ -60,12 +62,9 @@ fn configured_incan_command(current_dir: &Path, args: &[&str]) -> Command {
         )
         .env(
             "INCAN_GENERATED_CARGO_TARGET_DIR",
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("target/incan_generated_shared_target"),
+            support::generated_cargo_target_dir(),
         )
-        .env(
-            "INCAN_INTERNAL_SDK_PROVIDER_STORE",
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("target/incan_test_sdk_provider_store"),
-        );
+        .env("INCAN_INTERNAL_SDK_PROVIDER_STORE", support::sdk_provider_store());
     command
 }
 
@@ -165,12 +164,9 @@ fn run_incan_with_os_env(
         )
         .env(
             "INCAN_GENERATED_CARGO_TARGET_DIR",
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("target/incan_generated_shared_target"),
+            support::generated_cargo_target_dir(),
         )
-        .env(
-            "INCAN_INTERNAL_SDK_PROVIDER_STORE",
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("target/incan_test_sdk_provider_store"),
-        )
+        .env("INCAN_INTERNAL_SDK_PROVIDER_STORE", support::sdk_provider_store())
         .env(key, value)
         .output()?)
 }
@@ -682,17 +678,20 @@ fn concurrent_sdk_provider_publication_reuses_one_complete_identity() -> Result<
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "concurrent_sdk_provider_publication", "")?;
     let store = tmp.path().join("provider-store");
+    let generated_target = tmp.path().join("generated-target");
     let main_arg = main_path.to_str().ok_or("main path was not valid UTF-8")?;
     let store_arg = store.to_str().ok_or("provider-store path was not valid UTF-8")?;
 
     let mut first = configured_incan_command(tmp.path(), &["check", main_arg]);
     first
         .env("INCAN_INTERNAL_SDK_PROVIDER_STORE", store_arg)
+        .env("INCAN_GENERATED_CARGO_TARGET_DIR", &generated_target)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut second = configured_incan_command(tmp.path(), &["check", main_arg]);
     second
         .env("INCAN_INTERNAL_SDK_PROVIDER_STORE", store_arg)
+        .env("INCAN_GENERATED_CARGO_TARGET_DIR", &generated_target)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
@@ -730,6 +729,16 @@ fn concurrent_sdk_provider_publication_reuses_one_complete_identity() -> Result<
         inventory.components.values().all(|component| component.available),
         "the reused full-profile provider identity must contain every component"
     );
+    let workspace_lock: toml::Value = toml::from_str(&fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock"),
+    )?)?;
+    let locked_packages = workspace_lock
+        .get("package")
+        .and_then(toml::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|package| package.get("name").and_then(toml::Value::as_str))
+        .collect::<std::collections::HashSet<_>>();
     for component_id in inventory.components.keys() {
         let manifest_path = artifact_roots
             .first()
@@ -755,6 +764,27 @@ fn concurrent_sdk_provider_publication_reuses_one_complete_identity() -> Result<
             "SPDX-licensed SDK provider `{component_id}` must not invent a Cargo license-file: {}",
             manifest_path.display()
         );
+        for (dependency_name, dependency) in manifest
+            .get("dependencies")
+            .and_then(toml::Value::as_table)
+            .into_iter()
+            .flatten()
+        {
+            let dependency_table = dependency.as_table();
+            if dependency_table.is_some_and(|dependency| dependency.contains_key("path")) {
+                continue;
+            }
+            let package_name = dependency_table
+                .and_then(|dependency| dependency.get("package"))
+                .and_then(toml::Value::as_str)
+                .unwrap_or(dependency_name);
+            assert!(
+                locked_packages.contains(package_name),
+                "SDK provider `{component_id}` registry dependency `{package_name}` must be anchored in the workspace \
+                 lock so offline integration shards can resolve it: {}",
+                manifest_path.display()
+            );
+        }
     }
     Ok(())
 }
@@ -1829,8 +1859,8 @@ hees_ai = { workspace = true }
     let stdlib = source_root.join("crates/incan_stdlib/stdlib");
     let toolchain_crates = source_root.join("crates");
     let incan_home = root.path().join(".incan-home");
-    let provider_store = incan_home.join("cache/providers/sdk-v2");
-    let generated_target = incan_home.join("generated-target");
+    let provider_store = support::cold_sdk_provider_store_or(&incan_home.join("cache/providers/sdk-v2"));
+    let generated_target = support::generated_cargo_target_dir_or(&incan_home.join("generated-target"));
     let run = |args: &[&str]| -> Result<Output, Box<dyn std::error::Error>> {
         Ok(Command::new(incan_binary())
             .args(args)
@@ -1859,7 +1889,7 @@ hees_ai = { workspace = true }
     let parsed = incan::lockfile::IncanLock::load(&lock_path)?;
     assert!(!parsed.deps_fingerprint.is_empty());
     assert!(root.path().join("target/lib/hees_ai.incnlib").is_file());
-    assert!(incan_home.is_dir());
+    assert!(provider_store.is_dir());
 
     let second_lock_output = run(&["lock"])?;
     assert_success(&second_lock_output, "cold rooted workspace lock fixed point");
@@ -2194,7 +2224,7 @@ fn workspace_lock_concurrent_publishers_leave_one_parseable_root_lock() -> Resul
     }
 
     let stdlib = Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib/stdlib");
-    let generated_target = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/incan_generated_shared_target");
+    let generated_target = support::generated_cargo_target_dir();
     let spawn_lock = |member: &str| -> Result<std::process::Child, Box<dyn std::error::Error>> {
         Ok(Command::new(incan_binary())
             .arg("lock")
@@ -2572,9 +2602,6 @@ def main() -> None:
 "#,
     )?;
 
-    let check_output = run_incan(tmp.path(), &["check", main_path.to_str().ok_or("non-utf8 main path")?])?;
-    assert_success(&check_output, "incan check for std.environ string accessors");
-
     let run_output = run_incan_with_env_and_removed(
         tmp.path(),
         &["run", main_path.to_str().ok_or("non-utf8 main path")?],
@@ -2669,9 +2696,6 @@ def main() -> None:
     _ => println("mode:unexpected")
 "#,
     )?;
-
-    let check_output = run_incan(tmp.path(), &["check", main_path.to_str().ok_or("non-utf8 main path")?])?;
-    assert_success(&check_output, "incan check for std.environ typed accessors");
 
     let run_output = run_incan_with_env_and_removed(
         tmp.path(),
@@ -2784,9 +2808,6 @@ def main() -> None:
     Err(error) => println(error.message())
 "#,
     )?;
-
-    let check_output = run_incan(tmp.path(), &["check", main_path.to_str().ok_or("non-utf8 main path")?])?;
-    assert_success(&check_output, "incan check for std.environ primitive typed accessors");
 
     let run_output = run_incan_with_env_and_removed(
         tmp.path(),
@@ -2918,9 +2939,6 @@ def main() -> None:
 "#,
     )?;
 
-    let check_output = run_incan(tmp.path(), &["check", main_path.to_str().ok_or("non-utf8 main path")?])?;
-    assert_success(&check_output, "incan check for std.environ validated newtypes");
-
     let run_output = run_incan_with_env_and_removed(
         tmp.path(),
         &["run", main_path.to_str().ok_or("non-utf8 main path")?],
@@ -2990,9 +3008,6 @@ def main() -> None:
     Err(error) => println(f"newtype:{error.kind_name()}")
 "#,
     )?;
-
-    let check_output = run_incan(tmp.path(), &["check", main_path.to_str().ok_or("non-utf8 main path")?])?;
-    assert_success(&check_output, "incan check for defaulted std.environ typed accessors");
 
     let run_output = run_incan_with_env_and_removed(
         tmp.path(),
@@ -5166,6 +5181,33 @@ pub def exported_value() -> int:
     assert!(
         second_stderr.contains("generated library dependency preheat: up-to-date"),
         "second build --lib should report generated-library dependency preheat reuse, got:\n{second_stderr}"
+    );
+    Ok(())
+}
+
+#[test]
+fn build_lib_reuses_canonical_lock_when_manifest_dependency_is_unused() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let _main_path = write_minimal_project(
+        tmp.path(),
+        "cli_library_unused_manifest_dependency",
+        r#"
+[rust-dependencies]
+serde_json = "1"
+"#,
+    )?;
+    fs::write(
+        tmp.path().join("src").join("lib.incn"),
+        "pub def exported_value() -> int:\n  return 7\n",
+    )?;
+
+    let build = run_incan(tmp.path(), &["build", "--lib"])?;
+    assert_success(&build, "incan build --lib with an unused manifest Rust dependency");
+    let generated_manifest = fs::read_to_string(tmp.path().join("target/lib/Cargo.toml"))?;
+    assert!(
+        !generated_manifest.contains("serde_json"),
+        "unused manifest dependencies must not expand the generated library beyond the canonical reachable graph:\n\
+         {generated_manifest}"
     );
     Ok(())
 }
@@ -7909,12 +7951,6 @@ def main() -> None:
 "#,
     )?;
 
-    let check_output = run_incan(
-        tmp.path(),
-        &["--check", main_path.to_str().ok_or("main path was not valid UTF-8")?],
-    )?;
-    assert_success(&check_output, "incan --check for generic reflection issue712");
-
     let run_output = run_incan(
         tmp.path(),
         &["run", main_path.to_str().ok_or("main path was not valid UTF-8")?],
@@ -7978,12 +8014,6 @@ def main() -> None:
     println(field_count_for[BareSchema]())
 "#,
     )?;
-
-    let check_output = run_incan(
-        tmp.path(),
-        &["--check", main_path.to_str().ok_or("main path was not valid UTF-8")?],
-    )?;
-    assert_success(&check_output, "incan --check for type-parameter reflection issue715");
 
     let run_output = run_incan(
         tmp.path(),
@@ -8050,15 +8080,6 @@ def main() -> None:
 "#,
     )?;
 
-    let check_output = run_incan(
-        tmp.path(),
-        &["--check", main_path.to_str().ok_or("main path was not valid UTF-8")?],
-    )?;
-    assert_success(
-        &check_output,
-        "incan --check for generic value field reflection issue819",
-    );
-
     let run_output = run_incan(
         tmp.path(),
         &["run", main_path.to_str().ok_or("main path was not valid UTF-8")?],
@@ -8102,15 +8123,6 @@ def main() -> None:
     show_items[ProbeRow](ProbeRow(id=8, score=4.25, active=false, label="late", optional_label=Some("x")))
 "#,
     )?;
-
-    let check_output = run_incan(
-        tmp.path(),
-        &["--check", main_path.to_str().ok_or("main path was not valid UTF-8")?],
-    )?;
-    assert_success(
-        &check_output,
-        "incan --check for optional generic value field reflection issue819",
-    );
 
     let run_output = run_incan(
         tmp.path(),
@@ -8173,15 +8185,6 @@ def main() -> None:
     println(session.reflected_summary[ProbeRow]([ProbeRow(id=7, label="paid")]))
 "#,
     )?;
-
-    let check_output = run_incan(
-        tmp.path(),
-        &["--check", main_path.to_str().ok_or("main path was not valid UTF-8")?],
-    )?;
-    assert_success(
-        &check_output,
-        "incan --check for method-owned generic value reflection issue819",
-    );
 
     let run_output = run_incan(
         tmp.path(),
@@ -8747,40 +8750,6 @@ def main() -> None:
 }
 
 #[test]
-fn build_inline_fstring_rust_str_argument_issue716() -> Result<(), Box<dyn std::error::Error>> {
-    let tmp = tempfile::tempdir()?;
-    let main_path = write_minimal_project(tmp.path(), "inline_fstring_rust_str_argument_issue716", "")?;
-    fs::write(
-        &main_path,
-        r#"from rust::incan_stdlib::errors import raise_value_error
-
-
-def fail_inline(value: str) -> int:
-    return raise_value_error(f"bad value `{value}`")
-
-
-def fail_local(value: str) -> int:
-    message = f"bad value `{value}`"
-    return raise_value_error(message)
-
-
-def main() -> None:
-    fail_inline("x")
-"#,
-    )?;
-
-    let build_output = run_incan(
-        tmp.path(),
-        &["build", main_path.to_str().ok_or("main path was not valid UTF-8")?],
-    )?;
-    assert_success(
-        &build_output,
-        "incan build for inline f-string Rust &str argument issue716",
-    );
-    Ok(())
-}
-
-#[test]
 fn check_combined_rust_and_source_imports_preserve_never_return_issue381() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(
@@ -8903,8 +8872,9 @@ def main() -> None:
     Ok(())
 }
 
+/// Ensures f-string values compile through both borrowed and owned Rust interop boundaries.
 #[test]
-fn build_inline_fstring_rust_string_variant_issue716() -> Result<(), Box<dyn std::error::Error>> {
+fn build_inline_fstring_rust_interop_variants_issue716() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let helper_dir = tmp.path().join("rust").join("tiny_error");
     fs::create_dir_all(helper_dir.join("src"))?;
@@ -8927,7 +8897,7 @@ pub fn consume(err: TinyError) -> i64 {
     )?;
     let main_path = write_minimal_project(
         tmp.path(),
-        "inline_fstring_rust_string_variant_issue716",
+        "inline_fstring_rust_interop_variants_issue716",
         r#"
 [rust-dependencies]
 tiny_error = { path = "rust/tiny_error" }
@@ -8935,7 +8905,17 @@ tiny_error = { path = "rust/tiny_error" }
     )?;
     fs::write(
         &main_path,
-        r#"from rust::tiny_error import TinyError, consume
+        r#"from rust::incan_stdlib::errors import raise_value_error
+from rust::tiny_error import TinyError, consume
+
+
+def fail_inline(value: str) -> int:
+    return raise_value_error(f"bad value `{value}`")
+
+
+def fail_local(value: str) -> int:
+    message = f"bad value `{value}`"
+    return raise_value_error(message)
 
 
 def make_error(value: str) -> int:
@@ -8944,6 +8924,7 @@ def make_error(value: str) -> int:
 
 def main() -> None:
     println(str(make_error("x")))
+    fail_inline("x")
 "#,
     )?;
 
@@ -8953,7 +8934,7 @@ def main() -> None:
     )?;
     assert_success(
         &build_output,
-        "incan build for inline f-string Rust String enum variant issue716",
+        "incan build for inline f-string Rust &str and String enum variants issue716",
     );
     Ok(())
 }

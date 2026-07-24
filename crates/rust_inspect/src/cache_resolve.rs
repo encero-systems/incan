@@ -53,13 +53,20 @@ pub(crate) fn crate_name_for_path(canonical_path: &str) -> &str {
 /// target/lib names before matching.
 fn dependency_manifest_dir_from_cargo_metadata(root: &Path, crate_name: &str) -> Option<PathBuf> {
     let manifest_path = root.join("Cargo.toml");
-    let output = Command::new("cargo")
+    let cargo = std::env::var_os("CARGO")
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "cargo".into());
+    let target_dir = crate::cache::cargo_configured_target_dir(root);
+    let output = Command::new(cargo)
         .arg("metadata")
         .arg("--offline")
         .arg("--manifest-path")
         .arg(manifest_path.as_os_str())
         .arg("--format-version")
         .arg("1")
+        .env("CARGO_TARGET_DIR", &target_dir)
+        .env("CARGO_BUILD_BUILD_DIR", &target_dir)
+        .current_dir(root)
         .output()
         .ok()?;
     if !output.status.success() {

@@ -21,7 +21,7 @@ Incan generates a Rust project and builds it via Cargo.
 On build, Incan prints the generated project directory and the compiled binary path. In practice, outputs live under:
 
 - Generated Rust project: `target/incan/<name>/`
-- Built binary: `target/incan/.cargo-target/release/<name>`
+- Built binary: `target/incan/<name>/target/release/<name>`
 
 See: [CLI reference](../reference/cli_reference.md).
 
@@ -29,7 +29,7 @@ See: [CLI reference](../reference/cli_reference.md).
 
 The generated Rust project under `target/incan/` is tool-managed output. Treat it as **generated**:
 
-- It is safe to delete: `rm -rf target/incan/`
+- It is safe to delete when no Incan or Cargo command is using it: `rm -rf target/incan/`
 - Manual edits inside `target/incan/<name>/` may be overwritten on the next build
 
 If an `incan.lock` exists, the embedded `Cargo.lock` payload is materialized into the generated project directory so Cargo resolves the same dependency versions every time.

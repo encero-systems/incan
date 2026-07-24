@@ -9,6 +9,8 @@ use std::sync::Mutex;
 
 use sha2::{Digest, Sha256};
 
+mod support;
+
 static PREPARE_ASSETS_LOCK: Mutex<()> = Mutex::new(());
 static ACTIVE_TOOLCHAIN_TEST_STAGING: Mutex<BTreeSet<PathBuf>> = Mutex::new(BTreeSet::new());
 static TOOLCHAIN_TEST_STAGING_SWEEP: Mutex<()> = Mutex::new(());
@@ -212,7 +214,7 @@ fn prepare_toolchain_assets(
         .env("INCAN_TOOLCHAIN_GENERATED_AT", generated_at)
         .env(
             "INCAN_GENERATED_CARGO_TARGET_DIR",
-            repo_root().join("target/incan_generated_shared_target"),
+            support::generated_cargo_target_dir(),
         );
     if skip_homebrew {
         command.env("INCAN_TOOLCHAIN_SKIP_HOMEBREW", "1");

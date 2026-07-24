@@ -1,24 +1,23 @@
 use std::fs;
 use std::process::Command;
 
+mod support;
+
 fn run_source_case(source: &str) -> Result<(), Box<dyn std::error::Error>> {
     let dir = tempfile::tempdir()?;
     let source_path = dir.path().join("main.incn");
     fs::write(&source_path, source)?;
 
-    let output = Command::new(env!("CARGO_BIN_EXE_incan"))
+    let output = Command::new(support::incan_binary())
         .arg("--no-banner")
         .arg("run")
         .arg(&source_path)
         .env("CARGO_NET_OFFLINE", "true")
         .env(
             "INCAN_GENERATED_CARGO_TARGET_DIR",
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/incan_generated_shared_target"),
+            support::generated_cargo_target_dir(),
         )
-        .env(
-            "INCAN_INTERNAL_SDK_PROVIDER_STORE",
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/incan_test_sdk_provider_store"),
-        )
+        .env("INCAN_INTERNAL_SDK_PROVIDER_STORE", support::sdk_provider_store())
         .output()?;
 
     assert!(

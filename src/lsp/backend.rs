@@ -17,15 +17,18 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
+#[cfg(feature = "rust_inspect")]
+use crate::cli::commands::common::{
+    CargoPolicy, build_source_map, cargo_command_flags, collect_inline_rust_imports, collect_rust_inspect_query_paths,
+    configure_rust_inspect_cargo_target, ensure_rust_inspect_workspace_with_cargo_package_name,
+    extend_requirements_with_provider_plan, format_dependency_error, merge_project_requirement_dependencies,
+    prewarm_rust_inspect_workspace,
+};
 use crate::cli::commands::common::{
     CompilationSession, collect_project_requirements, discover_effective_project_manifest,
 };
 #[cfg(feature = "rust_inspect")]
-use crate::cli::commands::common::{
-    build_source_map, collect_inline_rust_imports, collect_rust_inspect_query_paths, ensure_rust_inspect_workspace,
-    extend_requirements_with_provider_plan, format_dependency_error, merge_project_requirement_dependencies,
-    prewarm_rust_inspect_workspace,
-};
+use crate::cli::commands::lock::{LockResolutionRequest, resolve_lock_context};
 use crate::cli::prelude::ParsedModule;
 #[cfg(feature = "rust_inspect")]
 use crate::dependency_resolver::{ResolvedDependencies, resolve_dependencies};
@@ -47,6 +50,10 @@ use crate::frontend::module::{SourceModuleImportResolution, resolve_program_sour
 use crate::frontend::symbols::{FunctionInfo, ResolvedType, SymbolKind as FrontendSymbolKind, TypeInfo};
 use crate::frontend::typechecker::stdlib_loader::{StdlibAstCache, StdlibFunctionLspMetadata};
 use crate::frontend::{lexer, parser, typechecker};
+#[cfg(all(test, feature = "rust_inspect"))]
+use crate::generated_cache::resolve_generated_cargo_target_in_cache_root;
+#[cfg(feature = "rust_inspect")]
+use crate::generated_cache::{GeneratedCacheLease, GeneratedCargoTarget, resolve_generated_cargo_target};
 use crate::library_manifest::{
     EnumValueExport, EnumValueTypeExport, FieldExport, FieldVisibilityExport, ParamExport, ParamKindExport,
     ReceiverExport, TypeBoundExport, TypeParamExport, TypeRef,
@@ -190,7 +197,7 @@ impl IncanLanguageServer {
             .as_ref()
             .and_then(|session| session.manifest.clone());
         #[cfg(feature = "rust_inspect")]
-        let mut rust_inspect_context: Option<(PathBuf, Vec<String>)> = None;
+        let mut rust_inspect_context: Option<LspRustInspectContext> = None;
 
         // Step 2: Parse
         //
@@ -317,6 +324,7 @@ impl IncanLanguageServer {
                 &metadata_modules,
                 &library_manifest_index,
                 &provider_plan,
+                None,
             ) {
                 Ok(ctx) => Some(ctx),
                 Err(err) => {
@@ -332,9 +340,17 @@ impl IncanLanguageServer {
         checker.set_provider_plan(Arc::clone(&provider_plan));
         let document_provider_plan = compilation_session.as_ref().map(|_| Arc::clone(&provider_plan));
         #[cfg(feature = "rust_inspect")]
-        if let Some((dir, metadata_query_paths)) = rust_inspect_context {
-            spawn_rust_inspect_prewarm(dir.clone(), metadata_query_paths);
-            checker.set_rust_inspect_manifest_dir(dir);
+        let mut rust_inspect_typecheck_lease = None;
+        #[cfg(feature = "rust_inspect")]
+        if let Some(context) = rust_inspect_context {
+            rust_inspect_typecheck_lease = context.typecheck_lease;
+            spawn_rust_inspect_prewarm(
+                context.manifest_dir.clone(),
+                context.target_dir,
+                context.query_paths,
+                context.prewarm_lease,
+            );
+            checker.set_rust_inspect_manifest_dir(context.manifest_dir);
         }
 
         let dep_refs: Vec<(&str, &Program)> = typecheck_deps
@@ -343,6 +359,8 @@ impl IncanLanguageServer {
             .collect();
 
         let check_result = checker.check_with_imports(&typecheck_ast, &dep_refs);
+        #[cfg(feature = "rust_inspect")]
+        drop(rust_inspect_typecheck_lease);
         let api_metadata_previews = if check_result.is_ok() {
             let metadata =
                 collect_checked_api_metadata(&ast, &checker, lsp_metadata_module_path(module_path.as_deref()));
@@ -805,7 +823,12 @@ fn take_next_prewarm_batch(
 /// - at most one worker runs per manifest directory
 /// - requests arriving during a run are coalesced into `pending`
 /// - the worker loops until `pending` is empty under lock, then exits
-fn spawn_rust_inspect_prewarm(manifest_dir: PathBuf, query_paths: Vec<String>) {
+fn spawn_rust_inspect_prewarm(
+    manifest_dir: PathBuf,
+    target_dir: PathBuf,
+    query_paths: Vec<String>,
+    cache_lease: Option<GeneratedCacheLease>,
+) {
     if query_paths.is_empty() {
         return;
     }
@@ -824,12 +847,17 @@ fn spawn_rust_inspect_prewarm(manifest_dir: PathBuf, query_paths: Vec<String>) {
         return;
     }
     tokio::spawn(async move {
-        run_rust_inspect_prewarm_queue(manifest_dir).await;
+        run_rust_inspect_prewarm_queue(manifest_dir, target_dir, cache_lease).await;
     });
 }
 
 #[cfg(feature = "rust_inspect")]
-async fn run_rust_inspect_prewarm_queue(manifest_dir: PathBuf) {
+/// Drain coalesced rust-inspect prewarm requests while retaining the generated-cache lease.
+async fn run_rust_inspect_prewarm_queue(
+    manifest_dir: PathBuf,
+    target_dir: PathBuf,
+    _cache_lease: Option<GeneratedCacheLease>,
+) {
     loop {
         let batch: Vec<String> = {
             let mut queue = match prewarm_queue().lock() {
@@ -847,7 +875,8 @@ async fn run_rust_inspect_prewarm_queue(manifest_dir: PathBuf) {
 
         match tokio::task::spawn_blocking({
             let manifest_dir = manifest_dir.clone();
-            move || prewarm_rust_inspect_workspace(&manifest_dir, &batch)
+            let target_dir = target_dir.clone();
+            move || prewarm_rust_inspect_workspace(&manifest_dir, &target_dir, &batch)
         })
         .await
         {
@@ -914,12 +943,87 @@ fn resolved_rust_inspect_dependencies(
 ///
 /// The shared CLI helper owns workspace generation; this wrapper only translates the LSP document set into the
 /// resolved dependency inputs that helper expects.
+struct LspRustInspectContext {
+    manifest_dir: PathBuf,
+    target_dir: PathBuf,
+    query_paths: Vec<String>,
+    typecheck_lease: Option<GeneratedCacheLease>,
+    prewarm_lease: Option<GeneratedCacheLease>,
+}
+
+#[cfg(feature = "rust_inspect")]
+/// Prepare the rust-inspect Cargo workspace and managed target used by one LSP analysis request.
 fn prepare_lsp_rust_inspect_workspace(
     manifest: &ProjectManifest,
     modules: &[ParsedModule],
     library_manifest_index: &LibraryManifestIndex,
     provider_plan: &ProviderPlan,
-) -> std::result::Result<(PathBuf, Vec<String>), String> {
+    generated_cargo_target_dir: Option<&Path>,
+) -> std::result::Result<LspRustInspectContext, String> {
+    prepare_lsp_rust_inspect_workspace_with_target_resolver(
+        manifest,
+        modules,
+        library_manifest_index,
+        provider_plan,
+        generated_cargo_target_dir,
+        |cargo_package_name, lock_payload, cargo_features, cargo_flags| {
+            resolve_generated_cargo_target(
+                generated_cargo_target_dir,
+                manifest.project_root(),
+                manifest.project_root(),
+                cargo_package_name,
+                "rust-inspect",
+                lock_payload,
+                cargo_features,
+                cargo_flags,
+            )
+        },
+    )
+}
+
+#[cfg(all(test, feature = "rust_inspect"))]
+/// Prepare an LSP rust-inspect workspace against a test-owned generated-cache root.
+fn prepare_lsp_rust_inspect_workspace_in_cache_root(
+    manifest: &ProjectManifest,
+    modules: &[ParsedModule],
+    library_manifest_index: &LibraryManifestIndex,
+    provider_plan: &ProviderPlan,
+    cache_root: &Path,
+) -> std::result::Result<LspRustInspectContext, String> {
+    let lock_preheat_target = cache_root.join("lock-preheat");
+    prepare_lsp_rust_inspect_workspace_with_target_resolver(
+        manifest,
+        modules,
+        library_manifest_index,
+        provider_plan,
+        Some(&lock_preheat_target),
+        |cargo_package_name, lock_payload, cargo_features, cargo_flags| {
+            resolve_generated_cargo_target_in_cache_root(
+                cache_root,
+                manifest.project_root(),
+                cargo_package_name,
+                "rust-inspect",
+                lock_payload,
+                cargo_features,
+                cargo_flags,
+            )
+        },
+    )
+}
+
+#[cfg(feature = "rust_inspect")]
+/// Build an LSP rust-inspect context with a caller-supplied generated-target resolver.
+fn prepare_lsp_rust_inspect_workspace_with_target_resolver<F>(
+    manifest: &ProjectManifest,
+    modules: &[ParsedModule],
+    library_manifest_index: &LibraryManifestIndex,
+    provider_plan: &ProviderPlan,
+    lock_generation_target: Option<&Path>,
+    acquire_target: F,
+) -> std::result::Result<LspRustInspectContext, String>
+where
+    F: Fn(&str, Option<&str>, &CargoFeatureSelection, &[String]) -> std::io::Result<GeneratedCargoTarget>,
+{
     let project_name = manifest
         .project
         .as_ref()
@@ -938,18 +1042,71 @@ fn prepare_lsp_rust_inspect_workspace(
         collect_project_requirements(modules, library_manifest_index).map_err(|err| err.to_string())?;
     extend_requirements_with_provider_plan(&mut project_requirements, provider_plan)
         .map_err(|error| error.to_string())?;
-    let rust_inspect_manifest_dir = ensure_rust_inspect_workspace(
+    let query_paths = collect_rust_inspect_query_paths(modules);
+    let cargo_features = CargoFeatureSelection::default().normalized();
+    let cargo_policy = CargoPolicy::default();
+    let cargo_flags = cargo_command_flags(&cargo_policy, &cargo_features);
+    let lock_resolution = resolve_lock_context(LockResolutionRequest {
+        project_root: manifest.project_root(),
+        project_name: project_name.as_str(),
+        entry_file: modules.first().map(|module| module.file_path.as_path()),
+        manifest: Some(manifest),
+        resolved: &resolved,
+        project_requirements: &project_requirements,
+        cargo_features: &cargo_features,
+        cargo_policy: &cargo_policy,
+        semantic: None,
+        package_features: None,
+        sdk_profile_override: None,
+        generated_cargo_target_dir: lock_generation_target,
+        rust_inspect_query_paths: &query_paths,
+    })
+    .map_err(|error| error.to_string())?;
+    let cargo_package_name = lock_resolution.cargo_package_name;
+    let resolved = lock_resolution.resolved;
+    let project_requirements = lock_resolution.project_requirements;
+    let cargo_lock_inputs = lock_resolution.cargo_lock_authority.into_generator_inputs();
+    let target = acquire_target(
+        &cargo_package_name,
+        cargo_lock_inputs.payload.as_deref(),
+        &cargo_features,
+        &cargo_flags,
+    )
+    .map_err(|error| error.to_string())?;
+    let (target_dir, typecheck_lease, _identity) = target.into_parts();
+    let prewarm_target = acquire_target(
+        &cargo_package_name,
+        cargo_lock_inputs.payload.as_deref(),
+        &cargo_features,
+        &cargo_flags,
+    )
+    .map_err(|error| error.to_string())?;
+    let (prewarm_target_dir, prewarm_lease, _identity) = prewarm_target.into_parts();
+    if prewarm_target_dir != target_dir {
+        return Err("rust-inspect cache identity changed during LSP preparation".to_string());
+    }
+    let rust_inspect_manifest_dir = ensure_rust_inspect_workspace_with_cargo_package_name(
         manifest.project_root(),
         project_name.as_str(),
+        &cargo_package_name,
         manifest.build.as_ref().and_then(|build| build.rust_edition.clone()),
         &resolved,
         &project_requirements,
-        None,
-        &[],
+        cargo_lock_inputs.payload,
+        cargo_lock_inputs.projection_root.as_deref(),
+        cargo_lock_inputs.clear_existing,
+        &target_dir,
+        &cargo_flags,
     )
     .map_err(|err| err.to_string())?;
-    let query_paths = collect_rust_inspect_query_paths(modules);
-    Ok((rust_inspect_manifest_dir, query_paths))
+    configure_rust_inspect_cargo_target(&rust_inspect_manifest_dir, &target_dir).map_err(|error| error.to_string())?;
+    Ok(LspRustInspectContext {
+        manifest_dir: rust_inspect_manifest_dir,
+        target_dir,
+        query_paths,
+        typecheck_lease,
+        prewarm_lease,
+    })
 }
 
 #[cfg(all(test, feature = "rust_inspect"))]
@@ -958,7 +1115,8 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        PrewarmQueueEntry, enqueue_prewarm_paths, prepare_lsp_rust_inspect_workspace, take_next_prewarm_batch,
+        PrewarmQueueEntry, enqueue_prewarm_paths, prepare_lsp_rust_inspect_workspace_in_cache_root,
+        take_next_prewarm_batch,
     };
     use crate::cli::commands::common::CompilationSession;
     use crate::cli::prelude::ParsedModule;
@@ -1036,10 +1194,20 @@ def use_it(x: Serialize) -> None:
         let session = CompilationSession::discover_with_feature_selection(&module.file_path, &Default::default())?;
         let provider_plan = session.provider_plan_for_modules(std::slice::from_ref(&module))?;
 
-        let (out_dir, _query_paths) =
-            prepare_lsp_rust_inspect_workspace(&manifest, &[module], &LibraryManifestIndex::default(), &provider_plan)
-                .map_err(std::io::Error::other)?;
-        let cargo_toml = std::fs::read_to_string(out_dir.join("Cargo.toml"))?;
+        let cache_root = tmp.path().join("managed-cache");
+        let context = prepare_lsp_rust_inspect_workspace_in_cache_root(
+            &manifest,
+            &[module],
+            &LibraryManifestIndex::default(),
+            &provider_plan,
+            &cache_root,
+        )
+        .map_err(std::io::Error::other)?;
+        assert!(context.target_dir.starts_with(&cache_root));
+        assert!(context.typecheck_lease.is_some());
+        assert!(context.prewarm_lease.is_some());
+        let cargo_toml = std::fs::read_to_string(context.manifest_dir.join("Cargo.toml"))?;
+        let cargo_config = std::fs::read_to_string(context.manifest_dir.join(".cargo/config.toml"))?;
 
         assert!(
             cargo_toml.contains("serde"),
@@ -1048,6 +1216,10 @@ def use_it(x: Serialize) -> None:
         assert!(
             cargo_toml.contains("incan_stdlib_data") && cargo_toml.contains("json"),
             "expected provider implementation facts in generated Cargo.toml, got:\n{cargo_toml}"
+        );
+        assert!(
+            cargo_config.contains(context.target_dir.to_string_lossy().as_ref()),
+            "expected LSP rust-inspect Cargo output to use its leased target, got:\n{cargo_config}"
         );
         Ok(())
     }

@@ -1126,6 +1126,16 @@ fn render_surface_methods_section(out: &mut String) {
 /// ## Panics
 /// - If the path cannot be resolved (this indicates a broken workspace layout).
 fn workspace_root() -> PathBuf {
+    if let Some(root) = std::env::var_os("INCAN_SOURCE_ROOT").filter(|path| !path.is_empty()) {
+        return PathBuf::from(root);
+    }
+    if let Ok(current_dir) = std::env::current_dir()
+        && current_dir.join("Cargo.toml").is_file()
+        && current_dir.join("crates/incan_core").is_dir()
+    {
+        return current_dir;
+    }
+
     // crates/incan_core -> crates -> workspace root
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     match manifest_dir.parent().and_then(|p| p.parent()).map(|p| p.to_path_buf()) {
