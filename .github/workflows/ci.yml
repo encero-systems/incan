@@ -10,6 +10,8 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   INCAN_NO_BANNER: 1
+  COLD_PROVIDER_TEST_FILTER: >-
+    test(/(concurrent_sdk_provider_publication_reuses_one_complete_identity|cold_rooted_workspace_lock_publishes_and_strict_library_build_agrees_issue931|test_run_std_regex_rfc059_surface_from_cold_sdk_provider)/)
 
 jobs:
   fmt:
@@ -70,8 +72,8 @@ jobs:
         if: always()
         run: ${SCCACHE_PATH:-sccache} --show-stats || true
 
-  test-linux-prewarm:
-    name: Test Suite Cache Warmup (ubuntu-latest, stable)
+  test-linux-archive:
+    name: Test Suite Archive (ubuntu-latest, stable)
     runs-on: ubuntu-latest
     env:
       CARGO_PROFILE_TEST_DEBUG: "0"
@@ -82,47 +84,96 @@ jobs:
           toolchain: stable
       - name: Install WASI target for vocab desugarers
         run: rustup target add wasm32-wasip1
-      - uses: Swatinem/rust-cache@v2
+      - name: Restore Cargo sources
+        uses: actions/cache@v4
         with:
-          shared-key: incan-stable-tests-nodebug-v2
-          # The warmup job owns writes for pushes and same-repository PRs, whose shards restore the warmed Cargo cache.
-          # Fork PRs cannot publish that cache; they still receive the explicitly transferred SDK provider artifact.
-          save-if: >-
-            ${{
-              (github.event_name == 'push'
-                && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')))
-              || (github.event_name == 'pull_request'
-                && github.event.pull_request.head.repo.full_name == github.repository)
-            }}
-          cache-on-failure: true
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: incan-test-cargo-sources-v1-stable-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            incan-test-cargo-sources-v1-stable-${{ runner.os }}-${{ runner.arch }}-
+      - name: Fetch locked Cargo sources
+        run: cargo fetch --locked
       - uses: taiki-e/install-action@nextest
-      - name: Compile test suite
-        run: CARGO_BUILD_JOBS=2 cargo nextest run --all --profile ci --no-run
+      - name: Build portable test archive
+        run: |
+          mkdir -p target/nextest-ci
+          CARGO_BUILD_JOBS=2 cargo nextest archive --workspace --profile ci \
+            --archive-file target/nextest-ci/test-suite.tar.zst
+      - name: Upload portable test archive
+        uses: actions/upload-artifact@v6
+        with:
+          name: test-linux-nextest-archive
+          path: target/nextest-ci/test-suite.tar.zst
+          if-no-files-found: error
+          retention-days: 1
+      - name: Upload matching Incan CLI
+        uses: actions/upload-artifact@v6
+        with:
+          name: test-linux-incan-cli
+          path: target/debug/incan
+          if-no-files-found: error
+          retention-days: 1
+
+  test-linux-provider:
+    name: SDK Provider Warmup (ubuntu-latest, stable)
+    runs-on: ubuntu-latest
+    needs: test-linux-archive
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+      - name: Install WASI target for vocab desugarers
+        run: rustup target add wasm32-wasip1
+      - name: Restore Cargo sources
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: incan-test-cargo-sources-v1-stable-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            incan-test-cargo-sources-v1-stable-${{ runner.os }}-${{ runner.arch }}-
+      - name: Fetch locked Cargo sources
+        run: cargo fetch --locked
+      - name: Download matching Incan CLI
+        uses: actions/download-artifact@v6
+        with:
+          name: test-linux-incan-cli
+          path: target/debug
+      - name: Restore CLI executable permission
+        run: chmod +x target/debug/incan
       - uses: ./.github/actions/restore-sdk-provider-store
       - name: Prewarm compiled SDK providers
-        # The test executables share this immutable provider store. Populate it before the provider artifact is
-        # uploaded so shard workers download a completed identity instead of competing under a store-wide lock.
+        # Ordinary test shards share this immutable provider store. The separate cold-provider acceptance job does
+        # not download it and therefore continues to prove first publication from an empty store.
         run: >-
           CARGO_BUILD_JOBS=2
           CARGO_NET_OFFLINE=true
+          INCAN_SOURCE_ROOT="$GITHUB_WORKSPACE"
           INCAN_STDLIB="$GITHUB_WORKSPACE/crates/incan_stdlib/stdlib"
           INCAN_STDLIB_DIR="$GITHUB_WORKSPACE/crates/incan_stdlib/stdlib"
+          INCAN_TOOLCHAIN_CRATES_DIR="$GITHUB_WORKSPACE/crates"
           INCAN_GENERATED_CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target/incan_generated_shared_target"
           INCAN_INTERNAL_SDK_PROVIDER_STORE="$GITHUB_WORKSPACE/target/incan_test_sdk_provider_store"
           ./target/debug/incan check tests/fixtures/test_assert_canary.incn
       - name: Upload compiled SDK provider store
-        # rust-cache cleans non-Cargo directories under target before saving, so transfer this immutable store
-        # explicitly to the dependent shard jobs.
+        # The provider store is a small immutable product of the matching compiler, not part of the test archive.
         uses: actions/upload-artifact@v6
         with:
           name: test-linux-sdk-provider-store
           path: target/incan_test_sdk_provider_store
           if-no-files-found: error
           retention-days: 1
+
   test-linux-shards:
-    name: Test Suite Shard (ubuntu-latest, stable, bucket ${{ matrix.partition }}/${{ matrix.total }})
+    name: Test Suite Shard (ubuntu-latest, stable, slice ${{ matrix.partition }}/${{ matrix.total }})
     runs-on: ubuntu-latest
-    needs: test-linux-prewarm
+    needs:
+      - test-linux-archive
+      - test-linux-provider
     env:
       CARGO_PROFILE_TEST_DEBUG: "0"
     strategy:
@@ -137,12 +188,23 @@ jobs:
           toolchain: stable
       - name: Install WASI target for vocab desugarers
         run: rustup target add wasm32-wasip1
-      - uses: Swatinem/rust-cache@v2
+      - name: Restore Cargo sources
+        uses: actions/cache/restore@v4
         with:
-          shared-key: incan-stable-tests-nodebug-v2
-          # Test shards restore the cache produced by the warmup job; the warmup job owns writes.
-          save-if: false
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: incan-test-cargo-sources-v1-stable-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            incan-test-cargo-sources-v1-stable-${{ runner.os }}-${{ runner.arch }}-
+      - name: Fetch locked Cargo sources
+        run: cargo fetch --locked
       - uses: taiki-e/install-action@nextest
+      - name: Download portable test archive
+        uses: actions/download-artifact@v6
+        with:
+          name: test-linux-nextest-archive
+          path: target/nextest-ci
       - name: Download compiled SDK provider store
         uses: actions/download-artifact@v6
         with:
@@ -153,17 +215,82 @@ jobs:
           du -sh target
           df -h "$GITHUB_WORKSPACE"
       - name: Run test shard
-        # Hashing makes expensive nested-Cargo assignments stable and keeps the managed-cache and cold-provider proofs
-        # on separate workers without adding jobs or dropping either test.
+        # The dedicated acceptance job owns the intentionally cold provider tests. Sliced partitions balance the
+        # remaining inventory without asking every runner to rebuild the workspace before listing tests.
         run: >-
           CARGO_BUILD_JOBS=2
           INCAN_GENERATED_CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target/incan_generated_shared_target"
           INCAN_INTERNAL_SDK_PROVIDER_STORE="$GITHUB_WORKSPACE/target/incan_test_sdk_provider_store"
-          cargo nextest run --all --profile ci --partition hash:${{ matrix.partition }}/${{ matrix.total }}
+          cargo nextest run
+          --archive-file target/nextest-ci/test-suite.tar.zst
+          --workspace-remap "$GITHUB_WORKSPACE"
+          --profile ci
+          --partition slice:${{ matrix.partition }}/${{ matrix.total }}
+          -E "not ($COLD_PROVIDER_TEST_FILTER)"
+
+  test-linux-cold-provider:
+    name: Cold SDK Provider Acceptance (ubuntu-latest, stable)
+    runs-on: ubuntu-latest
+    needs: test-linux-archive
+    env:
+      CARGO_PROFILE_TEST_DEBUG: "0"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+      - name: Install WASI target for vocab desugarers
+        run: rustup target add wasm32-wasip1
+      - name: Restore Cargo sources
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: incan-test-cargo-sources-v1-stable-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            incan-test-cargo-sources-v1-stable-${{ runner.os }}-${{ runner.arch }}-
+      - name: Fetch locked Cargo sources
+        run: cargo fetch --locked
+      - uses: taiki-e/install-action@nextest
+      - name: Download portable test archive
+        uses: actions/download-artifact@v6
+        with:
+          name: test-linux-nextest-archive
+          path: target/nextest-ci
+      - name: Verify cold-provider inventory
+        run: |
+          selected="$(
+            cargo nextest list \
+              --archive-file target/nextest-ci/test-suite.tar.zst \
+              --workspace-remap "$GITHUB_WORKSPACE" \
+              --profile ci \
+              -E "$COLD_PROVIDER_TEST_FILTER" \
+              -T oneline
+          )"
+          printf '%s\n' "$selected"
+          count="$(printf '%s\n' "$selected" | sed '/^$/d' | wc -l | tr -d ' ')"
+          if [ "$count" != "3" ]; then
+            echo "expected exactly 3 cold-provider acceptance tests, found $count"
+            exit 1
+          fi
+      - name: Run cold-provider acceptance
+        run: >-
+          CARGO_BUILD_JOBS=1
+          INCAN_GENERATED_CARGO_TARGET_DIR="$RUNNER_TEMP/incan_cold_generated_target"
+          INCAN_INTERNAL_SDK_PROVIDER_STORE="$RUNNER_TEMP/incan_cold_provider_store"
+          cargo nextest run
+          --archive-file target/nextest-ci/test-suite.tar.zst
+          --workspace-remap "$GITHUB_WORKSPACE"
+          --profile ci
+          -E "$COLD_PROVIDER_TEST_FILTER"
+
   test-linux:
     name: Test Suite (ubuntu-latest, stable)
     runs-on: ubuntu-latest
-    needs: test-linux-shards
+    needs:
+      - test-linux-shards
+      - test-linux-cold-provider
     if: ${{ always() }}
     steps:
       - name: Verify Ubuntu test shards
@@ -172,10 +299,14 @@ jobs:
             echo "test-linux-shards finished with ${{ needs.test-linux-shards.result }}"
             exit 1
           fi
+          if [ "${{ needs.test-linux-cold-provider.result }}" != "success" ]; then
+            echo "test-linux-cold-provider finished with ${{ needs.test-linux-cold-provider.result }}"
+            exit 1
+          fi
           echo "ubuntu test shards passed"
 
-  test-macos-prewarm:
-    name: Test Suite Cache Warmup (macos-latest, stable)
+  test-macos-archive:
+    name: Test Suite Archive (macos-latest, stable)
     runs-on: macos-latest
     env:
       CARGO_PROFILE_TEST_DEBUG: "0"
@@ -186,47 +317,95 @@ jobs:
           toolchain: stable
       - name: Install WASI target for vocab desugarers
         run: rustup target add wasm32-wasip1
-      - uses: Swatinem/rust-cache@v2
+      - name: Restore Cargo sources
+        uses: actions/cache@v4
         with:
-          shared-key: incan-stable-tests-nodebug-v2
-          # The warmup job owns writes for pushes and same-repository PRs, whose shards restore the warmed Cargo cache.
-          # Fork PRs cannot publish that cache; they still receive the explicitly transferred SDK provider artifact.
-          save-if: >-
-            ${{
-              (github.event_name == 'push'
-                && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')))
-              || (github.event_name == 'pull_request'
-                && github.event.pull_request.head.repo.full_name == github.repository)
-            }}
-          cache-on-failure: true
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: incan-test-cargo-sources-v1-stable-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            incan-test-cargo-sources-v1-stable-${{ runner.os }}-${{ runner.arch }}-
+      - name: Fetch locked Cargo sources
+        run: cargo fetch --locked
       - uses: taiki-e/install-action@nextest
-      - name: Compile test suite
-        run: CARGO_BUILD_JOBS=2 cargo nextest run --all --profile ci --no-run
+      - name: Build portable test archive
+        run: |
+          mkdir -p target/nextest-ci
+          CARGO_BUILD_JOBS=2 cargo nextest archive --workspace --profile ci \
+            --archive-file target/nextest-ci/test-suite.tar.zst
+      - name: Upload portable test archive
+        uses: actions/upload-artifact@v6
+        with:
+          name: test-macos-nextest-archive
+          path: target/nextest-ci/test-suite.tar.zst
+          if-no-files-found: error
+          retention-days: 1
+      - name: Upload matching Incan CLI
+        uses: actions/upload-artifact@v6
+        with:
+          name: test-macos-incan-cli
+          path: target/debug/incan
+          if-no-files-found: error
+          retention-days: 1
+
+  test-macos-provider:
+    name: SDK Provider Warmup (macos-latest, stable)
+    runs-on: macos-latest
+    needs: test-macos-archive
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+      - name: Install WASI target for vocab desugarers
+        run: rustup target add wasm32-wasip1
+      - name: Restore Cargo sources
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: incan-test-cargo-sources-v1-stable-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            incan-test-cargo-sources-v1-stable-${{ runner.os }}-${{ runner.arch }}-
+      - name: Fetch locked Cargo sources
+        run: cargo fetch --locked
+      - name: Download matching Incan CLI
+        uses: actions/download-artifact@v6
+        with:
+          name: test-macos-incan-cli
+          path: target/debug
+      - name: Restore CLI executable permission
+        run: chmod +x target/debug/incan
       - uses: ./.github/actions/restore-sdk-provider-store
       - name: Prewarm compiled SDK providers
-        # The test executables share this immutable provider store. Populate it before the provider artifact is
-        # uploaded so shard workers download a completed identity instead of competing under a store-wide lock.
+        # Ordinary test shards share this immutable provider store. The separate cold-provider acceptance job does
+        # not download it and therefore continues to prove first publication from an empty store.
         run: >-
           CARGO_BUILD_JOBS=2
           CARGO_NET_OFFLINE=true
+          INCAN_SOURCE_ROOT="$GITHUB_WORKSPACE"
           INCAN_STDLIB="$GITHUB_WORKSPACE/crates/incan_stdlib/stdlib"
           INCAN_STDLIB_DIR="$GITHUB_WORKSPACE/crates/incan_stdlib/stdlib"
+          INCAN_TOOLCHAIN_CRATES_DIR="$GITHUB_WORKSPACE/crates"
           INCAN_GENERATED_CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target/incan_generated_shared_target"
           INCAN_INTERNAL_SDK_PROVIDER_STORE="$GITHUB_WORKSPACE/target/incan_test_sdk_provider_store"
           ./target/debug/incan check tests/fixtures/test_assert_canary.incn
       - name: Upload compiled SDK provider store
-        # rust-cache cleans non-Cargo directories under target before saving, so transfer this immutable store
-        # explicitly to the dependent shard jobs.
         uses: actions/upload-artifact@v6
         with:
           name: test-macos-sdk-provider-store
           path: target/incan_test_sdk_provider_store
           if-no-files-found: error
           retention-days: 1
+
   test-macos-shards:
-    name: Test Suite Shard (macos-latest, stable, bucket ${{ matrix.partition }}/${{ matrix.total }})
+    name: Test Suite Shard (macos-latest, stable, slice ${{ matrix.partition }}/${{ matrix.total }})
     runs-on: macos-latest
-    needs: test-macos-prewarm
+    needs:
+      - test-macos-archive
+      - test-macos-provider
     env:
       CARGO_PROFILE_TEST_DEBUG: "0"
     strategy:
@@ -241,12 +420,23 @@ jobs:
           toolchain: stable
       - name: Install WASI target for vocab desugarers
         run: rustup target add wasm32-wasip1
-      - uses: Swatinem/rust-cache@v2
+      - name: Restore Cargo sources
+        uses: actions/cache/restore@v4
         with:
-          shared-key: incan-stable-tests-nodebug-v2
-          # Test shards restore the cache produced by the warmup job; the warmup job owns writes.
-          save-if: false
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: incan-test-cargo-sources-v1-stable-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            incan-test-cargo-sources-v1-stable-${{ runner.os }}-${{ runner.arch }}-
+      - name: Fetch locked Cargo sources
+        run: cargo fetch --locked
       - uses: taiki-e/install-action@nextest
+      - name: Download portable test archive
+        uses: actions/download-artifact@v6
+        with:
+          name: test-macos-nextest-archive
+          path: target/nextest-ci
       - name: Download compiled SDK provider store
         uses: actions/download-artifact@v6
         with:
@@ -257,23 +447,92 @@ jobs:
           du -sh target
           df -h "$GITHUB_WORKSPACE"
       - name: Run test shard
-        # Hashing makes expensive nested-Cargo assignments stable and keeps the managed-cache and cold-provider proofs
-        # on separate workers without adding jobs or dropping either test.
+        # The dedicated acceptance job owns the intentionally cold provider tests. Sliced partitions balance the
+        # remaining inventory without asking every runner to rebuild the workspace before listing tests.
         run: >-
           CARGO_BUILD_JOBS=2
           INCAN_GENERATED_CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target/incan_generated_shared_target"
           INCAN_INTERNAL_SDK_PROVIDER_STORE="$GITHUB_WORKSPACE/target/incan_test_sdk_provider_store"
-          cargo nextest run --all --profile ci --partition hash:${{ matrix.partition }}/${{ matrix.total }}
+          cargo nextest run
+          --archive-file target/nextest-ci/test-suite.tar.zst
+          --workspace-remap "$GITHUB_WORKSPACE"
+          --profile ci
+          --partition slice:${{ matrix.partition }}/${{ matrix.total }}
+          -E "not ($COLD_PROVIDER_TEST_FILTER)"
+
+  test-macos-cold-provider:
+    name: Cold SDK Provider Acceptance (macos-latest, stable)
+    runs-on: macos-latest
+    needs: test-macos-archive
+    env:
+      CARGO_PROFILE_TEST_DEBUG: "0"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+      - name: Install WASI target for vocab desugarers
+        run: rustup target add wasm32-wasip1
+      - name: Restore Cargo sources
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: incan-test-cargo-sources-v1-stable-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            incan-test-cargo-sources-v1-stable-${{ runner.os }}-${{ runner.arch }}-
+      - name: Fetch locked Cargo sources
+        run: cargo fetch --locked
+      - uses: taiki-e/install-action@nextest
+      - name: Download portable test archive
+        uses: actions/download-artifact@v6
+        with:
+          name: test-macos-nextest-archive
+          path: target/nextest-ci
+      - name: Verify cold-provider inventory
+        run: |
+          selected="$(
+            cargo nextest list \
+              --archive-file target/nextest-ci/test-suite.tar.zst \
+              --workspace-remap "$GITHUB_WORKSPACE" \
+              --profile ci \
+              -E "$COLD_PROVIDER_TEST_FILTER" \
+              -T oneline
+          )"
+          printf '%s\n' "$selected"
+          count="$(printf '%s\n' "$selected" | sed '/^$/d' | wc -l | tr -d ' ')"
+          if [ "$count" != "3" ]; then
+            echo "expected exactly 3 cold-provider acceptance tests, found $count"
+            exit 1
+          fi
+      - name: Run cold-provider acceptance
+        run: >-
+          CARGO_BUILD_JOBS=1
+          INCAN_GENERATED_CARGO_TARGET_DIR="$RUNNER_TEMP/incan_cold_generated_target"
+          INCAN_INTERNAL_SDK_PROVIDER_STORE="$RUNNER_TEMP/incan_cold_provider_store"
+          cargo nextest run
+          --archive-file target/nextest-ci/test-suite.tar.zst
+          --workspace-remap "$GITHUB_WORKSPACE"
+          --profile ci
+          -E "$COLD_PROVIDER_TEST_FILTER"
+
   test-macos:
     name: Test Suite (macos-latest, stable)
     runs-on: ubuntu-latest
-    needs: test-macos-shards
+    needs:
+      - test-macos-shards
+      - test-macos-cold-provider
     if: ${{ always() }}
     steps:
       - name: Verify macOS test shards
         run: |
           if [ "${{ needs.test-macos-shards.result }}" != "success" ]; then
             echo "test-macos-shards finished with ${{ needs.test-macos-shards.result }}"
+            exit 1
+          fi
+          if [ "${{ needs.test-macos-cold-provider.result }}" != "success" ]; then
+            echo "test-macos-cold-provider finished with ${{ needs.test-macos-cold-provider.result }}"
             exit 1
           fi
           echo "macOS test shards passed"
@@ -300,8 +559,8 @@ jobs:
         if: always()
         run: ${SCCACHE_PATH:-sccache} --show-stats || true
 
-  msrv-test-prewarm:
-    name: MSRV Test Cache Warmup (1.93.0)
+  msrv-test-archive:
+    name: MSRV Test Archive (1.93.0)
     runs-on: ubuntu-latest
     env:
       CARGO_PROFILE_TEST_DEBUG: "0"
@@ -314,47 +573,97 @@ jobs:
           components: clippy
       - name: Install WASI target for vocab desugarers
         run: rustup target add wasm32-wasip1
-      - uses: Swatinem/rust-cache@v2
+      - name: Restore Cargo sources
+        uses: actions/cache@v4
         with:
-          shared-key: incan-msrv-tests-nodebug-v2
-          # The warmup job owns writes for pushes and same-repository PRs, whose shards restore the warmed Cargo cache.
-          # Fork PRs cannot publish that cache; they still receive the explicitly transferred SDK provider artifact.
-          save-if: >-
-            ${{
-              (github.event_name == 'push'
-                && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')))
-              || (github.event_name == 'pull_request'
-                && github.event.pull_request.head.repo.full_name == github.repository)
-            }}
-          cache-on-failure: true
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: incan-test-cargo-sources-v1-msrv-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            incan-test-cargo-sources-v1-msrv-${{ runner.os }}-${{ runner.arch }}-
+      - name: Fetch locked Cargo sources
+        run: cargo fetch --locked
       - uses: taiki-e/install-action@nextest
-      - name: Compile test suite (locked)
-        run: CARGO_BUILD_JOBS=2 cargo nextest run --locked --profile ci --no-run
+      - name: Build portable test archive
+        run: |
+          mkdir -p target/nextest-ci
+          CARGO_BUILD_JOBS=2 cargo nextest archive --locked --workspace --profile ci \
+            --archive-file target/nextest-ci/test-suite.tar.zst
+      - name: Upload portable test archive
+        uses: actions/upload-artifact@v6
+        with:
+          name: msrv-test-nextest-archive
+          path: target/nextest-ci/test-suite.tar.zst
+          if-no-files-found: error
+          retention-days: 1
+      - name: Upload matching Incan CLI
+        uses: actions/upload-artifact@v6
+        with:
+          name: msrv-test-incan-cli
+          path: target/debug/incan
+          if-no-files-found: error
+          retention-days: 1
+
+  msrv-test-provider:
+    name: MSRV SDK Provider Warmup (1.93.0)
+    runs-on: ubuntu-latest
+    needs: msrv-test-archive
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rust 1.93.0
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.93.0
+          components: clippy
+      - name: Install WASI target for vocab desugarers
+        run: rustup target add wasm32-wasip1
+      - name: Restore Cargo sources
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: incan-test-cargo-sources-v1-msrv-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            incan-test-cargo-sources-v1-msrv-${{ runner.os }}-${{ runner.arch }}-
+      - name: Fetch locked Cargo sources
+        run: cargo fetch --locked
+      - name: Download matching Incan CLI
+        uses: actions/download-artifact@v6
+        with:
+          name: msrv-test-incan-cli
+          path: target/debug
+      - name: Restore CLI executable permission
+        run: chmod +x target/debug/incan
       - uses: ./.github/actions/restore-sdk-provider-store
       - name: Prewarm compiled SDK providers
-        # The test executables share this immutable provider store. Populate it before the provider artifact is
-        # uploaded so shard workers download a completed identity instead of competing under a store-wide lock.
+        # Ordinary test shards share this immutable provider store. The separate cold-provider acceptance job does
+        # not download it and therefore continues to prove first publication from an empty store.
         run: >-
           CARGO_BUILD_JOBS=2
           CARGO_NET_OFFLINE=true
+          INCAN_SOURCE_ROOT="$GITHUB_WORKSPACE"
           INCAN_STDLIB="$GITHUB_WORKSPACE/crates/incan_stdlib/stdlib"
           INCAN_STDLIB_DIR="$GITHUB_WORKSPACE/crates/incan_stdlib/stdlib"
+          INCAN_TOOLCHAIN_CRATES_DIR="$GITHUB_WORKSPACE/crates"
           INCAN_GENERATED_CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target/incan_generated_shared_target"
           INCAN_INTERNAL_SDK_PROVIDER_STORE="$GITHUB_WORKSPACE/target/incan_test_sdk_provider_store"
           ./target/debug/incan check tests/fixtures/test_assert_canary.incn
       - name: Upload compiled SDK provider store
-        # rust-cache cleans non-Cargo directories under target before saving, so transfer this immutable store
-        # explicitly to the dependent shard jobs.
         uses: actions/upload-artifact@v6
         with:
           name: msrv-test-sdk-provider-store
           path: target/incan_test_sdk_provider_store
           if-no-files-found: error
           retention-days: 1
+
   msrv-test-shards:
-    name: MSRV Test Shard (1.93.0, bucket ${{ matrix.partition }}/${{ matrix.total }})
+    name: MSRV Test Shard (1.93.0, slice ${{ matrix.partition }}/${{ matrix.total }})
     runs-on: ubuntu-latest
-    needs: msrv-test-prewarm
+    needs:
+      - msrv-test-archive
+      - msrv-test-provider
     env:
       CARGO_PROFILE_TEST_DEBUG: "0"
     strategy:
@@ -371,12 +680,23 @@ jobs:
           components: clippy
       - name: Install WASI target for vocab desugarers
         run: rustup target add wasm32-wasip1
-      - uses: Swatinem/rust-cache@v2
+      - name: Restore Cargo sources
+        uses: actions/cache/restore@v4
         with:
-          shared-key: incan-msrv-tests-nodebug-v2
-          # Test shards restore the cache produced by the warmup job; the warmup job owns writes.
-          save-if: false
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: incan-test-cargo-sources-v1-msrv-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            incan-test-cargo-sources-v1-msrv-${{ runner.os }}-${{ runner.arch }}-
+      - name: Fetch locked Cargo sources
+        run: cargo fetch --locked
       - uses: taiki-e/install-action@nextest
+      - name: Download portable test archive
+        uses: actions/download-artifact@v6
+        with:
+          name: msrv-test-nextest-archive
+          path: target/nextest-ci
       - name: Download compiled SDK provider store
         uses: actions/download-artifact@v6
         with:
@@ -386,19 +706,86 @@ jobs:
         run: |
           du -sh target
           df -h "$GITHUB_WORKSPACE"
-      - name: Cargo test shard (locked)
-        # Match stable sharding so the expensive managed-cache and cold-provider proofs stay separated on MSRV too.
+      - name: Run test shard
+        # The dedicated acceptance job owns the intentionally cold provider tests. Sliced partitions balance the
+        # remaining inventory without asking every runner to rebuild the workspace before listing tests.
         run: >-
           CARGO_BUILD_JOBS=2
           INCAN_GENERATED_CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target/incan_generated_shared_target"
           INCAN_INTERNAL_SDK_PROVIDER_STORE="$GITHUB_WORKSPACE/target/incan_test_sdk_provider_store"
-          cargo nextest run --locked --profile ci --partition hash:${{ matrix.partition }}/${{ matrix.total }}
+          cargo nextest run
+          --archive-file target/nextest-ci/test-suite.tar.zst
+          --workspace-remap "$GITHUB_WORKSPACE"
+          --profile ci
+          --partition slice:${{ matrix.partition }}/${{ matrix.total }}
+          -E "not ($COLD_PROVIDER_TEST_FILTER)"
+
+  msrv-test-cold-provider:
+    name: MSRV Cold SDK Provider Acceptance (1.93.0)
+    runs-on: ubuntu-latest
+    needs: msrv-test-archive
+    env:
+      CARGO_PROFILE_TEST_DEBUG: "0"
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rust 1.93.0
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.93.0
+          components: clippy
+      - name: Install WASI target for vocab desugarers
+        run: rustup target add wasm32-wasip1
+      - name: Restore Cargo sources
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: incan-test-cargo-sources-v1-msrv-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            incan-test-cargo-sources-v1-msrv-${{ runner.os }}-${{ runner.arch }}-
+      - name: Fetch locked Cargo sources
+        run: cargo fetch --locked
+      - uses: taiki-e/install-action@nextest
+      - name: Download portable test archive
+        uses: actions/download-artifact@v6
+        with:
+          name: msrv-test-nextest-archive
+          path: target/nextest-ci
+      - name: Verify cold-provider inventory
+        run: |
+          selected="$(
+            cargo nextest list \
+              --archive-file target/nextest-ci/test-suite.tar.zst \
+              --workspace-remap "$GITHUB_WORKSPACE" \
+              --profile ci \
+              -E "$COLD_PROVIDER_TEST_FILTER" \
+              -T oneline
+          )"
+          printf '%s\n' "$selected"
+          count="$(printf '%s\n' "$selected" | sed '/^$/d' | wc -l | tr -d ' ')"
+          if [ "$count" != "3" ]; then
+            echo "expected exactly 3 cold-provider acceptance tests, found $count"
+            exit 1
+          fi
+      - name: Run cold-provider acceptance
+        run: >-
+          CARGO_BUILD_JOBS=1
+          INCAN_GENERATED_CARGO_TARGET_DIR="$RUNNER_TEMP/incan_cold_generated_target"
+          INCAN_INTERNAL_SDK_PROVIDER_STORE="$RUNNER_TEMP/incan_cold_provider_store"
+          cargo nextest run
+          --archive-file target/nextest-ci/test-suite.tar.zst
+          --workspace-remap "$GITHUB_WORKSPACE"
+          --profile ci
+          -E "$COLD_PROVIDER_TEST_FILTER"
+
   msrv:
     name: MSRV Build/Test (1.93.0)
     runs-on: ubuntu-latest
     needs:
       - msrv-build
       - msrv-test-shards
+      - msrv-test-cold-provider
     if: ${{ always() }}
     steps:
       - name: Verify MSRV build and test shards
@@ -409,6 +796,10 @@ jobs:
           fi
           if [ "${{ needs.msrv-test-shards.result }}" != "success" ]; then
             echo "msrv-test-shards finished with ${{ needs.msrv-test-shards.result }}"
+            exit 1
+          fi
+          if [ "${{ needs.msrv-test-cold-provider.result }}" != "success" ]; then
+            echo "msrv-test-cold-provider finished with ${{ needs.msrv-test-cold-provider.result }}"
             exit 1
           fi
           echo "MSRV build and test shards passed"
