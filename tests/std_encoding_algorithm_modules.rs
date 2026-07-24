@@ -8,7 +8,7 @@ fn run_source_case(source: &str) -> Result<(), Box<dyn std::error::Error>> {
     let source_path = dir.path().join("main.incn");
     fs::write(&source_path, source)?;
 
-    let output = Command::new(env!("CARGO_BIN_EXE_incan"))
+    let output = Command::new(support::incan_binary())
         .arg("--no-banner")
         .arg("run")
         .arg(&source_path)

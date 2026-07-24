@@ -11,7 +11,7 @@ use std::time::{Duration, Instant, SystemTime};
 mod support;
 
 fn incan_command(project_root: &Path, incan_home: &Path) -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_incan"));
+    let mut command = Command::new(support::incan_binary());
     command
         .current_dir(project_root)
         // The repository test harness deliberately gives other nested Cargo tests one explicit shared target. This

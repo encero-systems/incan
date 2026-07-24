@@ -1,5 +1,17 @@
 use std::path::{Path, PathBuf};
 
+/// Return the Incan CLI built alongside the current integration-test executable.
+///
+/// Nextest rewrites `CARGO_BIN_EXE_incan` when a portable archive is extracted on another runner. Read it at runtime
+/// instead of embedding the archive producer's absolute `target/debug/incan` path in the test executable.
+#[allow(dead_code)]
+pub(crate) fn incan_binary() -> PathBuf {
+    std::env::var_os("CARGO_BIN_EXE_incan")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("target/debug/incan"))
+}
+
 /// Return the generated Cargo target selected by the outer test harness.
 ///
 /// `make` and CI preheat one task-local target before starting nextest. Subprocess helpers must preserve that
