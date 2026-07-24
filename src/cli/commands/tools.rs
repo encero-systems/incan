@@ -236,7 +236,15 @@ pub fn inspect_registry(
 /// standard library module and is validated here only at the documentation boundary that renders its public contract.
 pub fn write_feature_inventory_reference(path: &Path) -> CliResult<()> {
     let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("crates/incan_stdlib/stdlib/capabilities.incn");
-    let package = collect_registry_metadata_package(&source)?;
+    write_feature_inventory_reference_from_source(&source, path)
+}
+
+/// Regenerate the public feature inventory from an explicit checked `std.capabilities` source.
+///
+/// Build artifacts use this entry point so their source checkout can be relocated independently from the machine that
+/// compiled the generator.
+pub fn write_feature_inventory_reference_from_source(source: &Path, path: &Path) -> CliResult<()> {
+    let package = collect_registry_metadata_package(source)?;
     let entries = stdlib_capability_inventory(&package)?;
     let mut output = String::new();
     output.push_str("# Incan feature inventory\n\n");
@@ -1858,7 +1866,7 @@ mod tests {
 
         let output_dir = tempfile::tempdir()?;
         let output = output_dir.path().join("feature_inventory.md");
-        write_feature_inventory_reference(&output)?;
+        write_feature_inventory_reference_from_source(&source, &output)?;
         let rendered = fs::read_to_string(output)?;
         assert!(rendered.contains("`std.registry` typed declaration catalogues"));
         assert!(rendered.contains("Workspace and multi-package projects"));

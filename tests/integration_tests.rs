@@ -7580,8 +7580,9 @@ async def main() -> None:
             &source,
         )?;
         let generated_project = tmp.path().join("target/incan/std_regex_surface");
-        let provider_store = tmp.path().join("sdk-provider-store");
-        let generated_cargo_target = tmp.path().join("generated-cargo-target");
+        let provider_store = crate::support::cold_sdk_provider_store_or(&tmp.path().join("sdk-provider-store"));
+        let generated_cargo_target =
+            crate::support::generated_cargo_target_dir_or(&tmp.path().join("generated-cargo-target"));
         let cargo_home = tmp.path().join("cargo-home");
 
         let mut command = incan_command();

@@ -115,6 +115,15 @@ jobs:
           path: target/debug/incan
           if-no-files-found: error
           retention-days: 1
+      - name: Upload checked-reference generators
+        uses: actions/upload-artifact@v6
+        with:
+          name: test-linux-reference-generators
+          path: |
+            target/debug/generate_lang_reference
+            target/debug/generate_feature_inventory
+          if-no-files-found: error
+          retention-days: 1
 
   test-linux-provider:
     name: SDK Provider Warmup (ubuntu-latest, stable)
@@ -179,8 +188,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        partition: [1, 2, 3, 4, 5]
-        total: [5]
+        partition: [1, 2, 3, 4]
+        total: [4]
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@master
@@ -215,8 +224,8 @@ jobs:
           du -sh target
           df -h "$GITHUB_WORKSPACE"
       - name: Run test shard
-        # The dedicated acceptance job owns the intentionally cold provider tests. Sliced partitions balance the
-        # remaining inventory without asking every runner to rebuild the workspace before listing tests.
+        # The dedicated acceptance job owns the intentionally cold provider tests. Four ordinary shards plus that
+        # cold job fit the observed hosted-runner capacity, while the archive avoids rebuilding the workspace.
         run: >-
           CARGO_BUILD_JOBS=2
           INCAN_GENERATED_CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target/incan_generated_shared_target"
@@ -278,6 +287,7 @@ jobs:
         run: >-
           CARGO_BUILD_JOBS=1
           INCAN_GENERATED_CARGO_TARGET_DIR="$RUNNER_TEMP/incan_cold_generated_target"
+          INCAN_TEST_COLD_PROVIDER_STORE="$RUNNER_TEMP/incan_cold_provider_store"
           INCAN_INTERNAL_SDK_PROVIDER_STORE="$RUNNER_TEMP/incan_cold_provider_store"
           cargo nextest run
           --archive-file target/nextest-ci/test-suite.tar.zst
@@ -411,8 +421,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        partition: [1, 2, 3, 4, 5]
-        total: [5]
+        partition: [1, 2, 3, 4]
+        total: [4]
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@master
@@ -447,8 +457,8 @@ jobs:
           du -sh target
           df -h "$GITHUB_WORKSPACE"
       - name: Run test shard
-        # The dedicated acceptance job owns the intentionally cold provider tests. Sliced partitions balance the
-        # remaining inventory without asking every runner to rebuild the workspace before listing tests.
+        # The dedicated acceptance job owns the intentionally cold provider tests. Four ordinary shards plus that
+        # cold job fit the observed hosted-runner capacity, while the archive avoids rebuilding the workspace.
         run: >-
           CARGO_BUILD_JOBS=2
           INCAN_GENERATED_CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target/incan_generated_shared_target"
@@ -510,6 +520,7 @@ jobs:
         run: >-
           CARGO_BUILD_JOBS=1
           INCAN_GENERATED_CARGO_TARGET_DIR="$RUNNER_TEMP/incan_cold_generated_target"
+          INCAN_TEST_COLD_PROVIDER_STORE="$RUNNER_TEMP/incan_cold_provider_store"
           INCAN_INTERNAL_SDK_PROVIDER_STORE="$RUNNER_TEMP/incan_cold_provider_store"
           cargo nextest run
           --archive-file target/nextest-ci/test-suite.tar.zst
@@ -669,8 +680,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        partition: [1, 2, 3, 4, 5]
-        total: [5]
+        partition: [1, 2, 3, 4]
+        total: [4]
     steps:
       - uses: actions/checkout@v5
       - name: Install Rust 1.93.0
@@ -707,8 +718,8 @@ jobs:
           du -sh target
           df -h "$GITHUB_WORKSPACE"
       - name: Run test shard
-        # The dedicated acceptance job owns the intentionally cold provider tests. Sliced partitions balance the
-        # remaining inventory without asking every runner to rebuild the workspace before listing tests.
+        # The dedicated acceptance job owns the intentionally cold provider tests. Four ordinary shards plus that
+        # cold job fit the observed hosted-runner capacity, while the archive avoids rebuilding the workspace.
         run: >-
           CARGO_BUILD_JOBS=2
           INCAN_GENERATED_CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target/incan_generated_shared_target"
@@ -772,6 +783,7 @@ jobs:
         run: >-
           CARGO_BUILD_JOBS=1
           INCAN_GENERATED_CARGO_TARGET_DIR="$RUNNER_TEMP/incan_cold_generated_target"
+          INCAN_TEST_COLD_PROVIDER_STORE="$RUNNER_TEMP/incan_cold_provider_store"
           INCAN_INTERNAL_SDK_PROVIDER_STORE="$RUNNER_TEMP/incan_cold_provider_store"
           cargo nextest run
           --archive-file target/nextest-ci/test-suite.tar.zst
@@ -1043,19 +1055,70 @@ jobs:
   generated-reference:
     name: Generated Reference Up-to-date
     runs-on: ubuntu-latest
+    needs:
+      - test-linux-archive
+      - test-linux-provider
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - name: Restore Cargo sources
+        uses: actions/cache/restore@v4
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: ./.github/actions/setup-rust-sccache
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: incan-test-cargo-sources-v1-stable-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            incan-test-cargo-sources-v1-stable-${{ runner.os }}-${{ runner.arch }}-
+      - name: Fetch locked Cargo sources
+        run: cargo fetch --locked
+      - name: Download matching Incan CLI
+        uses: actions/download-artifact@v6
+        with:
+          name: test-linux-incan-cli
+          path: target/debug
+      - name: Download checked-reference generators
+        uses: actions/download-artifact@v6
+        with:
+          name: test-linux-reference-generators
+          path: target/debug
+      - name: Restore executable permissions
+        run: chmod +x target/debug/incan target/debug/generate_lang_reference target/debug/generate_feature_inventory
+      - name: Fingerprint checked feature inventory
+        id: inventory-identity
+        run: |
+          {
+            echo "compiler=$(shasum -a 256 target/debug/incan | awk '{print $1}')"
+            echo "lock=$(shasum -a 256 Cargo.lock | awk '{print $1}')"
+            echo "stdlib=$(git rev-parse HEAD:crates/incan_stdlib/stdlib)"
+          } >> "$GITHUB_OUTPUT"
+      - name: Restore checked feature inventory providers
+        id: inventory-provider-cache
+        uses: actions/cache@v4
+        with:
+          path: target/incan_reference_sdk_provider_store
+          key: >-
+            incan-feature-inventory-provider-v1-${{ runner.os }}-${{ runner.arch }}-${{
+            steps.inventory-identity.outputs.compiler }}-${{ steps.inventory-identity.outputs.lock }}-${{
+            steps.inventory-identity.outputs.stdlib }}
+      - name: Seed checked feature inventory providers
+        if: steps.inventory-provider-cache.outputs.cache-hit != 'true'
+        uses: actions/download-artifact@v6
+        with:
+          name: test-linux-sdk-provider-store
+          path: target/incan_reference_sdk_provider_store
       - name: Regenerate checked language references
-        run: cargo run -p incan_core --bin generate_lang_reference
+        run: ./target/debug/generate_lang_reference
       - name: Regenerate checked capability inventory
-        run: cargo run --features cli --bin generate_feature_inventory
-      - name: Show sccache stats
-        if: always()
-        run: ${SCCACHE_PATH:-sccache} --show-stats || true
+        run: ./target/debug/generate_feature_inventory
+        env:
+          CARGO_BUILD_JOBS: "2"
+          CARGO_BIN_EXE_incan: ${{ github.workspace }}/target/debug/incan
+          INCAN_SOURCE_ROOT: ${{ github.workspace }}
+          INCAN_STDLIB: ${{ github.workspace }}/crates/incan_stdlib/stdlib
+          INCAN_STDLIB_DIR: ${{ github.workspace }}/crates/incan_stdlib/stdlib
+          INCAN_TOOLCHAIN_CRATES_DIR: ${{ github.workspace }}/crates
+          INCAN_GENERATED_CARGO_TARGET_DIR: ${{ runner.temp }}/incan_reference_generated_target
+          INCAN_INTERNAL_SDK_PROVIDER_STORE: ${{ github.workspace }}/target/incan_reference_sdk_provider_store
       - name: Verify no generated-reference diff
         run: git diff --exit-code workspaces/docs-site/docs/language/reference/language.md workspaces/docs-site/docs/language/reference/feature_inventory.md

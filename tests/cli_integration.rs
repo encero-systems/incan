@@ -678,17 +678,20 @@ fn concurrent_sdk_provider_publication_reuses_one_complete_identity() -> Result<
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "concurrent_sdk_provider_publication", "")?;
     let store = tmp.path().join("provider-store");
+    let generated_target = tmp.path().join("generated-target");
     let main_arg = main_path.to_str().ok_or("main path was not valid UTF-8")?;
     let store_arg = store.to_str().ok_or("provider-store path was not valid UTF-8")?;
 
     let mut first = configured_incan_command(tmp.path(), &["check", main_arg]);
     first
         .env("INCAN_INTERNAL_SDK_PROVIDER_STORE", store_arg)
+        .env("INCAN_GENERATED_CARGO_TARGET_DIR", &generated_target)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut second = configured_incan_command(tmp.path(), &["check", main_arg]);
     second
         .env("INCAN_INTERNAL_SDK_PROVIDER_STORE", store_arg)
+        .env("INCAN_GENERATED_CARGO_TARGET_DIR", &generated_target)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
@@ -1856,8 +1859,8 @@ hees_ai = { workspace = true }
     let stdlib = source_root.join("crates/incan_stdlib/stdlib");
     let toolchain_crates = source_root.join("crates");
     let incan_home = root.path().join(".incan-home");
-    let provider_store = incan_home.join("cache/providers/sdk-v2");
-    let generated_target = incan_home.join("generated-target");
+    let provider_store = support::cold_sdk_provider_store_or(&incan_home.join("cache/providers/sdk-v2"));
+    let generated_target = support::generated_cargo_target_dir_or(&incan_home.join("generated-target"));
     let run = |args: &[&str]| -> Result<Output, Box<dyn std::error::Error>> {
         Ok(Command::new(incan_binary())
             .args(args)
@@ -1886,7 +1889,7 @@ hees_ai = { workspace = true }
     let parsed = incan::lockfile::IncanLock::load(&lock_path)?;
     assert!(!parsed.deps_fingerprint.is_empty());
     assert!(root.path().join("target/lib/hees_ai.incnlib").is_file());
-    assert!(incan_home.is_dir());
+    assert!(provider_store.is_dir());
 
     let second_lock_output = run(&["lock"])?;
     assert_success(&second_lock_output, "cold rooted workspace lock fixed point");

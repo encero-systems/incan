@@ -647,6 +647,7 @@ fn build_sdk_components_into_staging(
     let mut inventory = source_catalog_inventory(catalog, staging_root);
     let inventory_path = staging_root.join(SDK_INVENTORY_FILE);
     let cargo_target_dir = staging_root.join(".cargo-target");
+    let caller_cargo_target = env::var_os(GENERATED_CARGO_TARGET_DIR_ENV).filter(|path| !path.is_empty());
     let mut built_any = false;
 
     for component in catalog.publication_order() {
@@ -677,7 +678,12 @@ fn build_sdk_components_into_staging(
             .args(["build", "--lib", "."])
             .arg(&output_root)
             .arg("--all-features");
-        configure_sdk_provider_build_environment(&mut command, &component.id, &cargo_target_dir);
+        configure_sdk_provider_build_environment(
+            &mut command,
+            &component.id,
+            &cargo_target_dir,
+            caller_cargo_target.as_deref(),
+        );
         if built_any {
             inventory
                 .write_to_path(&inventory_path)
@@ -764,8 +770,14 @@ fn build_sdk_components_into_staging(
     Ok(inventory)
 }
 
-/// Keep provider-publication Cargo state private to its staging transaction rather than the user generated cache.
-fn configure_sdk_provider_build_environment(command: &mut Command, component_id: &str, cargo_target_dir: &Path) {
+/// Preserve a caller-owned Cargo target while keeping the ordinary provider-publication fallback transaction-local.
+fn configure_sdk_provider_build_environment(
+    command: &mut Command,
+    component_id: &str,
+    transaction_cargo_target: &Path,
+    caller_cargo_target: Option<&std::ffi::OsStr>,
+) {
+    let cargo_target_dir = caller_cargo_target.map(Path::new).unwrap_or(transaction_cargo_target);
     command
         .env_remove(INTERNAL_MANIFEST_OVERRIDE_ENV)
         .env_remove(INTERNAL_PROJECT_ROOT_OVERRIDE_ENV)
@@ -4196,12 +4208,30 @@ mod tests {
     fn sdk_provider_build_uses_transaction_local_cargo_target() {
         let mut command = Command::new("incan");
         let target = Path::new("/staging/.cargo-target");
-        configure_sdk_provider_build_environment(&mut command, "stdlib-core", target);
+        configure_sdk_provider_build_environment(&mut command, "stdlib-core", target, None);
         let configured_target = command
             .get_envs()
             .find_map(|(name, value)| (name == GENERATED_CARGO_TARGET_DIR_ENV).then_some(value))
             .flatten();
         assert_eq!(configured_target, Some(target.as_os_str()));
+    }
+
+    #[test]
+    fn sdk_provider_build_preserves_caller_owned_cargo_target() {
+        let mut command = Command::new("incan");
+        let transaction_target = Path::new("/staging/.cargo-target");
+        let caller_target = Path::new("/ci/shared-generated-target");
+        configure_sdk_provider_build_environment(
+            &mut command,
+            "stdlib-core",
+            transaction_target,
+            Some(caller_target.as_os_str()),
+        );
+        let configured_target = command
+            .get_envs()
+            .find_map(|(name, value)| (name == GENERATED_CARGO_TARGET_DIR_ENV).then_some(value))
+            .flatten();
+        assert_eq!(configured_target, Some(caller_target.as_os_str()));
     }
 
     #[test]
