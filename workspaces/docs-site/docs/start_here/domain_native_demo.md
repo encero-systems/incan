@@ -20,7 +20,7 @@ The important result is not only that the program runs, but that the code shape 
 
 ## Target source shape
 
-This is target syntax, not a claim that every construct belongs in the base language. `model` is part of Incan's core language surface, while `DataFrame`, `query {}`, `step`, `pipeline`, and `quality:` may be owned by domain packages such as InQL or workflow/quality packages rather than the base vocabulary.
+This is target syntax, not a claim that every construct belongs in the base language. `model` is part of Incan's core language surface, while `DataFrame`, `query {}`, `step`, `pipeline`, and `quality:` may be owned by domain packages such as IncQL or workflow/quality packages rather than the base vocabulary.
 
 ```incan
 # Row contract: a typed shape that downstream query and quality code can reference.
@@ -47,7 +47,7 @@ step load_repos(config: PipelineConfig) -> DataFrame[RawRepo]:
     return read_json(config.input_path)
 
 step aggregate_by_language(repos: DataFrame[RawRepo], config: PipelineConfig) -> DataFrame[LanguageStats]:
-    # InQL-style query syntax should be checked against RawRepo fields.
+    # IncQL-style query syntax should be checked against RawRepo fields.
     return query {
         FROM repos
         WHERE .stars >= config.min_stars
@@ -83,7 +83,7 @@ Exact syntax may change, but the contract should not: the demo must make typeche
 | ------------------------ | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
 | `model`                  | Existing language surface.                                                      | Row-level contracts and schema-shaped code.                                             |
 | `ctx` / typed config     | Directional surface.                                                            | Environment-aware configuration without loose YAML/env glue.                            |
-| `query {}`               | InQL/domain package direction.                                                  | Typechecked relational logic over model-shaped data.                                    |
+| `query {}`               | IncQL/domain package direction.                                                  | Typechecked relational logic over model-shaped data.                                    |
 | `step`                   | Planned/domain package direction.                                               | Operational unit with typed inputs, outputs, retries, observability, and failure paths. |
 | `pipeline`               | Planned/domain package direction.                                               | Typed DAG/workflow composition rather than ad hoc function calls.                       |
 | `quality:`               | Planned/domain package direction.                                               | Batch-level expectations tied to typed fields.                                          |

@@ -125,7 +125,7 @@ The contract should name:
 
 - direct/local behavior that must work,
 - import, reexport/facade, package-consumer, dependency-owned type, test-batch, vocab, formatter, generated-Rust, or Rust-metadata boundaries that can observe the behavior,
-- downstream acceptance lanes such as InQL when relevant,
+- downstream acceptance lanes such as IncQL when relevant,
 - docs/generated-reference/rustdoc/release-note gates,
 - performance or progress-output expectations when relevant.
 

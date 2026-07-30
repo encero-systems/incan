@@ -49,7 +49,7 @@ When adding or fixing a boundary-sensitive feature, resolve the source item once
 
 Backend lowering and emission should project semantic identity into Rust paths; they should not rediscover semantics from short names, facade names, generated harness names, or stringly manifest lookups. If a feature needs different Rust spelling at a package boundary, that is an emission projection of the same source identity, not a second semantic model. Compatibility fallback for older manifests is allowed, but new package-boundary behavior should consult the checked identity graph first.
 
-Boundary parity tests are required for any new feature whose behavior could differ across local, import, reexport, package, stdlib, vocab, formatter, or test-runner surfaces. Prefer compact synthetic fixtures that prove the invariant without heavy downstream dependencies; downstream acceptance lanes such as InQL are proof lanes, not substitutes for Incan-owned regression coverage.
+Boundary parity tests are required for any new feature whose behavior could differ across local, import, reexport, package, stdlib, vocab, formatter, or test-runner surfaces. Prefer compact synthetic fixtures that prove the invariant without heavy downstream dependencies; downstream acceptance lanes such as IncQL are proof lanes, not substitutes for Incan-owned regression coverage.
 
 ## Rule of Thumb
 

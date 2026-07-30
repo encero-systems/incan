@@ -16,7 +16,7 @@ Choose by goal:
   <a class="inc-route-card" href="../language/reference/language/"><span class="inc-eyebrow">Reference</span><strong>Look something up</strong><span>Use the generated language reference for syntax, types, built-ins, and standard-library modules.</span></a>
   <a class="inc-route-card" href="coming_from_python/"><span class="inc-eyebrow">Bridge</span><strong>Coming from Python?</strong><span>Translate familiar application, model, error, async, and tooling concepts into Incan.</span></a>
   <a class="inc-route-card" href="coming_from_rust/"><span class="inc-eyebrow">Bridge</span><strong>Coming from Rust?</strong><span>See which Rust-shaped semantics remain and where Incan trades ceremony for application ergonomics.</span></a>
-  <a class="inc-route-card" href="encero_stack/"><span class="inc-eyebrow">Context</span><strong>See the Encero stack</strong><span>Understand how Incan fits with InQL, Pallay, Omerus, Hees.ai, and Hees.io.</span></a>
+  <a class="inc-route-card" href="encero_stack/"><span class="inc-eyebrow">Context</span><strong>See the Encero stack</strong><span>Understand how Incan fits with IncQL, Pallay, Omerus, Hees.ai, and Hees.io.</span></a>
   <a class="inc-route-card" href="../contributing/"><span class="inc-eyebrow">Build with us</span><strong>Contribute</strong><span>Explore the compiler architecture, contributor book, RFC process, and repository workflows.</span></a>
 </div>
 

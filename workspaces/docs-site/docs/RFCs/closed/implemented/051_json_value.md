@@ -248,7 +248,7 @@ This feature is additive. Existing typed JSON code keeps its meaning.
 
 ### Phase 2: Stdlib numeric classification
 
-- Promote the InQL-style integer-like and float-like string predicates into Incan stdlib.
+- Promote the IncQL-style integer-like and float-like string predicates into Incan stdlib.
 - Define JSON-compatible lexical rules for signs, decimal points, and exponent notation.
 - Add focused tests for accepted and rejected numeric strings.
 

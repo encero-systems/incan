@@ -25,7 +25,7 @@ Execution engines do not want to compare those names repeatedly while scanning d
 2, 3, 1
 ```
 
-`OrdinalMap[str]` lets a planner resolve names once and then carry integer positions through the plan. The map is not the physical table index by itself. It is the stable name-to-slot primitive that larger table indexes, catalogs, and InQL-style planners can build on.
+`OrdinalMap[str]` lets a planner resolve names once and then carry integer positions through the plan. The map is not the physical table index by itself. It is the stable name-to-slot primitive that larger table indexes, catalogs, and IncQL-style planners can build on.
 
 The same idea applies when the key is not text. A dataset may need stable ordinals for UUID tenants, civil dates, fixed enum values, or generated identifiers. `OrdinalMap` handles those through the `OrdinalKey` contract rather than forcing users to stringify precise values.
 
