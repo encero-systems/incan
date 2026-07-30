@@ -276,6 +276,13 @@ pub struct IrNewtypeConstructionPlan {
 pub enum IrCheckedCType {
     /// One exact C scalar category represented by the ordinary Incan integer carrier.
     Scalar(ScalarTypeId),
+    /// A checked raw pointer whose pointee contract remains distinct from an integer address.
+    Pointer {
+        /// Whether native code may mutate the pointed-to value.
+        mutable: bool,
+        /// Exact checked pointee contract.
+        pointee: Box<IrCheckedCType>,
+    },
     /// An opaque resource passed by value, shared borrow, or exclusive borrow.
     Resource {
         /// Call-site ownership relationship declared by the binding.
@@ -411,6 +418,8 @@ pub struct IrProgram {
     pub newtype_construction: std::collections::HashMap<String, IrNewtypeConstructionPlan>,
     /// Checked C functions selected by source calls in this module.
     pub checked_c_functions: Vec<IrCheckedCFunction>,
+    /// Whether this module uses compiler-private checked C string temporaries.
+    pub uses_checked_c_strings: bool,
 }
 
 impl IrProgram {
@@ -426,6 +435,7 @@ impl IrProgram {
             rust_module_path: None,
             newtype_construction: std::collections::HashMap::new(),
             checked_c_functions: Vec::new(),
+            uses_checked_c_strings: false,
         }
     }
 }

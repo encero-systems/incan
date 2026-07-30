@@ -44,6 +44,7 @@ impl AstLowering {
     fn checked_c_value_ir_type(binding: &str, ty: &IrCheckedCType) -> IrType {
         match ty {
             IrCheckedCType::Scalar(_) => IrType::Int,
+            IrCheckedCType::Pointer { mutable, pointee } => Self::checked_c_pointer_ir_type(*mutable, pointee),
             IrCheckedCType::Resource { resource, .. } => {
                 IrType::Struct(IrCheckedCFunction::resource_rust_type_name(binding, resource))
             }
@@ -51,6 +52,28 @@ impl AstLowering {
             IrCheckedCType::Void => IrType::Unit,
             IrCheckedCType::Output { .. } => IrType::Unknown,
         }
+    }
+
+    /// Convert the bounded pointer subset into its exact private Rust carrier.
+    fn checked_c_pointer_ir_type(mutable: bool, pointee: &IrCheckedCType) -> IrType {
+        let pointee = match pointee {
+            IrCheckedCType::Scalar(scalar) => match scalar {
+                incan_core::lang::c_abi::ScalarTypeId::I8 => "i8",
+                incan_core::lang::c_abi::ScalarTypeId::U8 => "u8",
+                incan_core::lang::c_abi::ScalarTypeId::I16 => "i16",
+                incan_core::lang::c_abi::ScalarTypeId::U16 => "u16",
+                incan_core::lang::c_abi::ScalarTypeId::I32 => "i32",
+                incan_core::lang::c_abi::ScalarTypeId::U32 => "u32",
+                incan_core::lang::c_abi::ScalarTypeId::I64 => "i64",
+                incan_core::lang::c_abi::ScalarTypeId::U64 => "u64",
+                incan_core::lang::c_abi::ScalarTypeId::Size => "usize",
+                incan_core::lang::c_abi::ScalarTypeId::CChar => "::std::os::raw::c_char",
+                incan_core::lang::c_abi::ScalarTypeId::CInt => "::std::os::raw::c_int",
+            },
+            _ => return IrType::Unknown,
+        };
+        let qualifier = if mutable { "mut" } else { "const" };
+        IrType::RustDisplay(format!("*{qualifier} {pointee}"))
     }
 
     /// Convert one checked-C parameter to its call-site carrier, preserving compiler-managed output storage.
@@ -186,6 +209,42 @@ impl AstLowering {
         )))
     }
 
+    /// Lower the sole approved raw extraction from a checked C string temporary.
+    fn lower_checked_c_string_pointer(
+        &mut self,
+        receiver: &ast::Spanned<ast::Expr>,
+        method: &str,
+        type_args: &[ast::Spanned<ast::Type>],
+        args: &[ast::CallArg],
+    ) -> Result<Option<TypedExpr>, LoweringError> {
+        if method != "as_const_ptr" || !type_args.is_empty() || !args.is_empty() {
+            return Ok(None);
+        }
+        let is_checked_c_string = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.expr_type(receiver.span))
+            .is_some_and(|ty| matches!(ty, ResolvedType::Named(identity) if identity == incan_core::lang::c_abi::C_STRING_TYPE_ID));
+        if !is_checked_c_string {
+            return Ok(None);
+        }
+        Ok(Some(TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(self.lower_expr_spanned(receiver)?),
+                method: "as_ptr".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: Vec::new(),
+                callable_signature: None,
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            Self::checked_c_pointer_ir_type(
+                false,
+                &IrCheckedCType::Scalar(incan_core::lang::c_abi::ScalarTypeId::CChar),
+            ),
+        )))
+    }
+
     /// Lower compiler-managed output storage and direct checked C symbols outside the recursive expression frame.
     ///
     /// Large ordinary source expressions lower recursively. Keeping this bounded checked-C plan in a separate frame
@@ -202,7 +261,13 @@ impl AstLowering {
         if let Some((kind, ty)) = self.lower_checked_c_output_slot_constructor(call_span, args)? {
             return Ok(Some(TypedExpr::new(kind, ty)));
         }
+        if let Some((kind, ty)) = self.lower_checked_c_string_constructor(call_span, args)? {
+            return Ok(Some(TypedExpr::new(kind, ty)));
+        }
         if let Some(lowered) = self.lower_checked_c_output_slot_take(call_span, receiver, method, type_args, args)? {
+            return Ok(Some(lowered));
+        }
+        if let Some(lowered) = self.lower_checked_c_string_pointer(receiver, method, type_args, args)? {
             return Ok(Some(lowered));
         }
         let Some(c_function) = self.checked_c_function_for_call(call_span) else {

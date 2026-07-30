@@ -3817,6 +3817,9 @@ impl TypeChecker {
         span: Span,
         expected_return_ty: Option<&ResolvedType>,
     ) -> ResolvedType {
+        if let Some(result) = self.check_c_abi_c_string_constructor(base, method, type_args, args, span) {
+            return result;
+        }
         if let Some(result) = self.check_c_abi_output_slot_constructor(base, method, type_args, args, span) {
             return result;
         }
@@ -3824,6 +3827,9 @@ impl TypeChecker {
             return result;
         }
         if let Some(result) = self.check_c_abi_output_slot_take(base, method, type_args, args, span) {
+            return result;
+        }
+        if let Some(result) = self.check_c_abi_c_string_pointer(base, method, type_args, args, span) {
             return result;
         }
         if Self::is_explicit_builtin_namespace_expr(base) {

@@ -83,6 +83,8 @@ pub struct CAbiInteropArtifacts {
     pub enum_accesses: Vec<CBindingEnumAccess>,
     /// Folded C enum values keyed by `(binding, enum, variant)` after Clang verification.
     pub enum_values: HashMap<(String, String, String), i64>,
+    /// Whether source lowering requires the compiler-private checked C string constructor.
+    pub uses_checked_c_strings: bool,
 }
 
 /// One direct source call to a checked C binding symbol.

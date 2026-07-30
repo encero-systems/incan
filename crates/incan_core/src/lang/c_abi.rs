@@ -58,6 +58,31 @@ pub const SYMBOL_OUTCOME_KEYWORD: &str = "outcome";
 /// backend Rust name generation; lowering maps each slot to a private generated carrier later.
 pub const OUTPUT_SLOT_TYPE_PREFIX: &str = "__incan_c_output_slot";
 
+/// Compiler-internal nominal identity for a terminator-checked temporary C string.
+///
+/// This is not source vocabulary. `c.cstr(value)` returns it only after validating that `value` has no interior NUL;
+/// `as_const_ptr()` may then expose its checked pointer inside an `unsafe:` region.
+pub const C_STRING_TYPE_ID: &str = "__incan_c_cstring";
+
+/// Generated helper that validates Incan text before it becomes a C string temporary.
+///
+/// The helper remains compiler-private. Its spelling is shared only so typed lowering and Rust emission cannot drift.
+pub const C_STRING_CONSTRUCTOR_RUST_NAME: &str = "__incan_checked_c_cstr";
+
+/// Prefix of compiler-internal nominal identities for checked C pointers.
+///
+/// Pointer identities carry mutability and the complete pointed-to C contract. They never represent ordinary integer
+/// addresses and are only produced by compiler-authorized bridge views.
+pub const POINTER_TYPE_PREFIX: &str = "__incan_c_pointer";
+
+/// Return the compiler-internal nominal identity for one checked C pointer contract.
+pub fn pointer_type_identity(mutable: bool, pointee: &str) -> String {
+    let mut identity = String::from(POINTER_TYPE_PREFIX);
+    identity.push_str(if mutable { "::mut::" } else { "::const::" });
+    identity.push_str(pointee);
+    identity
+}
+
 /// Return the compiler-internal nominal identity for one checked C output slot.
 ///
 /// The source offsets distinguish otherwise-identical slots in nested scopes. They are not an exposed ABI detail:
@@ -273,12 +298,13 @@ pub fn is_interop_namespace_path<'a>(segments: impl IntoIterator<Item = &'a str>
 #[cfg(test)]
 mod tests {
     use super::{
-        BINDING_DECLARATION_BASE, BindingArgumentId, BindingMemberId, LinkCapabilityId, PlainStructArgumentId,
-        PointerConstructorId, ResourceArgumentId, ResourceTypeConstructorId, SYMBOL_OUTCOME_KEYWORD, ScalarTypeId,
-        SymbolArgumentId, SymbolOutcomeArgumentId, binding_argument_from_str, binding_member_from_str,
-        is_interop_namespace_path, is_void_type_spelling, link_capability_from_str, plain_struct_argument_from_str,
-        pointer_constructor_as_str, resource_argument_from_str, resource_type_constructor_as_str, scalar_type_as_str,
-        scalar_type_from_str, symbol_argument_from_str, symbol_outcome_argument_from_str,
+        BINDING_DECLARATION_BASE, BindingArgumentId, BindingMemberId, C_STRING_TYPE_ID, LinkCapabilityId,
+        POINTER_TYPE_PREFIX, PlainStructArgumentId, PointerConstructorId, ResourceArgumentId,
+        ResourceTypeConstructorId, SYMBOL_OUTCOME_KEYWORD, ScalarTypeId, SymbolArgumentId, SymbolOutcomeArgumentId,
+        binding_argument_from_str, binding_member_from_str, is_interop_namespace_path, is_void_type_spelling,
+        link_capability_from_str, plain_struct_argument_from_str, pointer_constructor_as_str, pointer_type_identity,
+        resource_argument_from_str, resource_type_constructor_as_str, scalar_type_as_str, scalar_type_from_str,
+        symbol_argument_from_str, symbol_outcome_argument_from_str,
     };
 
     #[test]
@@ -310,6 +336,12 @@ mod tests {
         assert_eq!(scalar_type_from_str("c.i32"), Some(ScalarTypeId::I32));
         assert_eq!(scalar_type_as_str(ScalarTypeId::CInt), "c.c_int");
         assert_eq!(pointer_constructor_as_str(PointerConstructorId::ConstPtr), "c.ConstPtr");
+        assert_eq!(C_STRING_TYPE_ID, "__incan_c_cstring");
+        assert_eq!(POINTER_TYPE_PREFIX, "__incan_c_pointer");
+        assert_eq!(
+            pointer_type_identity(false, "c.c_char"),
+            "__incan_c_pointer::const::c.c_char"
+        );
         assert_eq!(
             link_capability_from_str("system_library"),
             Some(LinkCapabilityId::SystemLibrary)

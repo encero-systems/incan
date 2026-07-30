@@ -17878,6 +17878,72 @@ def main() -> Result[None, SessionError]:
     }
 
     #[test]
+    fn consumer_run_passes_checked_c_string_to_a_pointer_parameter() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let fixture_header = tmp.path().join("checked_c_string_fixture.h");
+        std::fs::write(
+            &fixture_header,
+            "typedef unsigned long size_t;\nsize_t strlen(const char *value);\n",
+        )?;
+        let source = format!(
+            r#"from std.interop import c
+
+binding LibC:
+    header = "{}"
+    link = c.system_library("c")
+
+    symbol string_length(value: c.ConstPtr[c.c_char]) -> c.Size:
+        native = "strlen"
+
+def checked_length(value: str) -> Result[int, str]:
+    text = c.cstr(value)?
+    unsafe:
+        return Ok(LibC.string_length(text.as_const_ptr()))
+
+def main() -> Result[None, str]:
+    assert checked_length("incan")? == 5
+    match c.cstr("not{nul}allowed"):
+        Err(_) => return Ok(None)
+        Ok(_) => return Err("expected c.cstr to reject an interior terminator")
+"#,
+            fixture_header.display(),
+            nul = '\0',
+        );
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"checked_c_string\"\n\n[sdk]\nprofile = \"minimal\"\n",
+            &source,
+        )?;
+        let generated_cargo_target = tmp.path().join("generated-cargo-target");
+
+        let output = run_check_against_checkout_sdk(&main_path, &generated_cargo_target)?;
+        assert!(
+            output.status.success(),
+            "expected a checked C string to typecheck.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let checkout = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let run_output = super::incan_command()
+            .env("INCAN_SOURCE_ROOT", checkout)
+            .env("INCAN_STDLIB", checkout.join("crates/incan_stdlib/stdlib"))
+            .env_remove("INCAN_STDLIB_DIR")
+            .env("INCAN_TOOLCHAIN_CRATES_DIR", checkout.join("crates"))
+            .env("INCAN_GENERATED_CARGO_TARGET_DIR", &generated_cargo_target)
+            .env("INCAN_LOCK_PREHEAT", "0")
+            .env("CARGO_NET_OFFLINE", "true")
+            .args(["run", main_path.to_string_lossy().as_ref()])
+            .output()?;
+        assert!(
+            run_output.status.success(),
+            "expected a checked C string to compile and run.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&run_output.stdout),
+            String::from_utf8_lossy(&run_output.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
     fn consumer_check_reports_checked_c_signature_mismatch_at_the_binding() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let fixture_header = tmp.path().join("fixture.h");

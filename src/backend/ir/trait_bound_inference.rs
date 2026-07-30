@@ -3148,6 +3148,7 @@ mod tests {
             rust_module_path: None,
             newtype_construction: Default::default(),
             checked_c_functions: Vec::new(),
+            uses_checked_c_strings: false,
         }
     }
 
@@ -3201,6 +3202,7 @@ mod tests {
             rust_module_path: None,
             newtype_construction: Default::default(),
             checked_c_functions: Vec::new(),
+            uses_checked_c_strings: false,
         };
 
         infer_trait_bounds(&mut program);

@@ -20894,6 +20894,56 @@ fn checked_c_scalar_call_requires_unsafe_and_records_the_descriptor_call() {
     );
 }
 
+#[test]
+fn checked_c_string_pointer_requires_unsafe_acknowledgement() {
+    let errors = check_str_err(
+        r#"
+from std.interop import c
+
+def pointer_without_unsafe(value: str) -> Result[None, str]:
+  text = c.cstr(value)?
+  text.as_const_ptr()
+  return Ok(None)
+"#,
+        "checked C string pointer without unsafe acknowledgement",
+    );
+    assert!(
+        errors.iter().any(|error| {
+            error
+                .message
+                .contains("extracting a checked C string pointer requires an enclosing `unsafe:` acknowledgement")
+        }),
+        "expected checked C string pointer acknowledgement diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn checked_c_binding_rejects_general_pointer_calls() {
+    let span = Span::new(1, 20);
+    let mut checker = TypeChecker::new();
+    let mut descriptor = scalar_c_binding_descriptor();
+    descriptor.symbols[0].parameters[0].ty = CBindingType::Pointer {
+        mutable: false,
+        pointee: Box::new(CBindingType::Scalar(ScalarTypeId::I32)),
+    };
+    checker
+        .type_info
+        .c_abi
+        .bindings
+        .insert(descriptor.class_name.clone(), descriptor);
+    checker.unsafe_depth = 1;
+
+    assert_eq!(checker.check_expr(&scalar_c_binding_call(span)), ResolvedType::Unknown);
+    assert!(
+        checker.errors.iter().any(|error| error
+            .message
+            .contains("requires native ownership or ABI emission that is not implemented yet")),
+        "expected general-pointer rejection, got {:?}",
+        checker.errors
+    );
+    assert!(checker.type_info.c_abi.raw_calls.is_empty());
+}
+
 fn resource_c_binding_descriptor() -> CBindingDescriptor {
     CBindingDescriptor {
         span: Span::default(),

@@ -39,7 +39,29 @@ Use the C namespace in the raw declaration, even when a type looks similar to In
 | Call-scoped shared or exclusive resource access | `c.Borrowed[Handle]` or `c.BorrowedMut[Handle]` |
 | Native-written or caller-initialized output storage | `c.Out[T]` or `c.InOut[T]` |
 
-The executable subset admits scalar calls, opaque resource calls, and scalar or owned-resource output positions. Pointer and by-value structure declarations are still useful because the compiler verifies their declared shape, but calls that would require pointer arithmetic, arbitrary dereference, or unimplemented view rules remain rejected.
+The executable subset admits scalar calls, opaque resource calls, scalar or owned-resource output positions, and one checked text-input path. Pointer and by-value structure declarations are still useful because the compiler verifies their declared shape, but calls that would require pointer arithmetic, arbitrary dereference, pointer returns, or unimplemented view rules remain rejected.
+
+## Pass text to a const C character pointer
+
+Use `c.cstr(value)?` when a C function takes a NUL-terminated `const char *`. It constructs a private temporary whose storage remains live for the enclosing raw call and rejects an interior NUL instead of silently truncating the text.
+
+```incan
+from std.interop import c
+
+binding LibC:
+    header = "string.h"
+    link = c.system_library("c")
+
+    symbol string_length(value: c.ConstPtr[c.c_char]) -> c.Size:
+        native = "strlen"
+
+def checked_length(value: str) -> Result[int, str]:
+    text = c.cstr(value)?
+    unsafe:
+        return Ok(LibC.string_length(text.as_const_ptr()))
+```
+
+`as_const_ptr()` is the only operation that exposes this temporary, and it is accepted only inside `unsafe:` for the exact `c.ConstPtr[c.c_char]` contract. It does not produce an integer address or permit pointer arithmetic or dereference. This is input conversion only: returned strings, byte spans, mutable buffers, and scoped foreign views remain separate bounded-lifetime work.
 
 ## Associate one release operation with an opaque resource
 

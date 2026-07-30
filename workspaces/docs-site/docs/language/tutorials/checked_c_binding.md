@@ -111,6 +111,6 @@ Use `c.InOut[c.i32]` for a scalar pointer whose initial value is supplied by the
 
 ## What this slice supports
 
-You can use checked bindings today for scalar free functions, native integer constants, plain-structure layout declarations, opaque owned resources, inferred call-scoped resource borrows, and scalar or owned-resource `Out`/`InOut` positions. Pointer and by-value plain-structure calls remain unavailable. C strings, spans, caller-owned buffers, and scoped foreign views also remain separate work, as do callbacks, variadics, shims, bundled artifacts, and mobile packaging.
+You can use checked bindings today for scalar free functions, native integer constants, plain-structure layout declarations, opaque owned resources, inferred call-scoped resource borrows, scalar or owned-resource `Out`/`InOut` positions, and NUL-terminated text input through `c.cstr(value)?` to an exact `c.ConstPtr[c.c_char]` parameter. General pointer and by-value plain-structure calls remain unavailable. Returned C strings, spans, caller-owned buffers, and scoped foreign views also remain separate work, as do callbacks, variadics, shims, bundled artifacts, and mobile packaging.
 
 Next, use the [checked C binding how-to](../how-to/checked_c_bindings.md) when you need to model a real header, and read [how checked C interop is structured](../explanation/checked_c_interop.md) before choosing C over Rust interop. The [`std.interop` reference](../reference/stdlib/interop.md) lists every accepted declaration form and boundary.

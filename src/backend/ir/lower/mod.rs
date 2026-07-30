@@ -268,6 +268,10 @@ impl AstLowering {
     pub(super) fn checked_c_ir_type(ty: &CBindingType) -> Option<IrCheckedCType> {
         match ty {
             CBindingType::Scalar(scalar) => Some(IrCheckedCType::Scalar(*scalar)),
+            CBindingType::Pointer { mutable, pointee } => Some(IrCheckedCType::Pointer {
+                mutable: *mutable,
+                pointee: Box::new(Self::checked_c_ir_type(pointee)?),
+            }),
             CBindingType::Void => Some(IrCheckedCType::Void),
             CBindingType::Resource { access, resource } => Some(IrCheckedCType::Resource {
                 access: *access,
@@ -278,7 +282,7 @@ impl AstLowering {
                 value: Box::new(Self::checked_c_ir_type(value)?),
             }),
             CBindingType::Nullable(value) => Some(IrCheckedCType::Nullable(Box::new(Self::checked_c_ir_type(value)?))),
-            CBindingType::Pointer { .. } | CBindingType::Struct(_) => None,
+            CBindingType::Struct(_) => None,
         }
     }
 
@@ -2289,6 +2293,10 @@ impl AstLowering {
                 && left.system_library == right.system_library
         });
         ir_program.checked_c_functions = checked_c_functions;
+        ir_program.uses_checked_c_strings = self
+            .type_info
+            .as_ref()
+            .is_some_and(|info| info.c_abi.uses_checked_c_strings);
 
         if errors.is_empty() {
             Ok(ir_program)

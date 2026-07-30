@@ -2,9 +2,9 @@
 
 `std.interop` activates the checked C binding vocabulary. This page is the exact contract: it lists accepted declaration forms, current execution limits, and verification behavior. Start with the [tutorial](../../tutorials/checked_c_binding.md), use the [how-to guide](../../how-to/checked_c_bindings.md) for modelling and diagnostics, and read the [architecture explanation](../../explanation/checked_c_interop.md) before choosing C over Rust interop.
 
-The surface lets a module declare a small, explicit C ABI contract and call supported scalar functions, opaque resources, and output positions without writing a Rust wrapper first. The compiler verifies declared signatures, enum carriers, and listed plain-structure layouts with Clang before generating Rust.
+The surface lets a module declare a small, explicit C ABI contract and call supported scalar functions, opaque resources, output positions, and checked NUL-terminated text input without writing a Rust wrapper first. The compiler verifies declared signatures, enum carriers, and listed plain-structure layouts with Clang before generating Rust.
 
-This is a deliberately narrow foundation. It is useful for direct scalar C functions, opaque resource ownership, output positions, and ABI verification; bounded C strings and views, native artifact resolution, shims, and platform packaging have separate RFC 116 slices.
+This is a deliberately narrow foundation. It is useful for direct scalar C functions, opaque resource ownership, output positions, ABI verification, and `c.cstr` input temporaries; byte spans, returned views, native artifact resolution, shims, and platform packaging have separate RFC 116 slices.
 
 ## Activate the vocabulary
 
@@ -72,7 +72,20 @@ The current surface accepts these declaration forms:
 - `c.Owned[T]`, `c.Borrowed[T]`, and `c.BorrowedMut[T]` resource parameters and owned or nullable-owned resource results.
 - `c.Out[T]` and `c.InOut[T]` parameters for scalar values and owned resources, plus an `outcome` declaration that makes output initialization explicit.
 
-For the executable subset, Incan carries scalar values as `int`, releases owned resources through their declared native operation, and keeps output storage in compiler-generated private slots. Generated wrappers range-check every scalar conversion; a value that cannot be represented by Incan `int` is not silently truncated. A verified enum constant is available as an ordinary integer expression such as `LibC.Status.OK`. `c.Out[...]` is readable only after its declared outcome, while a consumed `c.Owned[...]` resource cannot be used again. Pointer and by-value structure contracts are verified declarations in this slice, but calls using them stay rejected until the later view design is implemented.
+For the executable subset, Incan carries scalar values as `int`, releases owned resources through their declared native operation, and keeps output storage in compiler-generated private slots. Generated wrappers range-check every scalar conversion; a value that cannot be represented by Incan `int` is not silently truncated. A verified enum constant is available as an ordinary integer expression such as `LibC.Status.OK`. `c.Out[...]` is readable only after its declared outcome, while a consumed `c.Owned[...]` resource cannot be used again. Pointer and by-value structure contracts are verified declarations in this slice, except that a `c.cstr` temporary may supply the exact `c.ConstPtr[c.c_char]` parameter declared by a raw symbol.
+
+## Pass checked text input
+
+`c.cstr(value)` converts one Incan `str` into a fallible private NUL-terminated temporary. It returns `Result`, rejecting an interior NUL, because passing truncated text to C would be unsafe and surprising.
+
+```incan
+def checked_length(value: str) -> Result[int, str]:
+    text = c.cstr(value)?
+    unsafe:
+        return Ok(LibC.string_length(text.as_const_ptr()))
+```
+
+`as_const_ptr()` has no arguments and is valid only in `unsafe:`. Its result has the exact `c.ConstPtr[c.c_char]` contract; source code cannot convert it to an integer, perform pointer arithmetic, or dereference it. The feature is input-only: returned `char *` values, explicit bounds scans, byte spans, mutable buffers, encoding conversion from C, and scoped foreign views are not available.
 
 ## Verification and diagnostics
 
@@ -86,7 +99,7 @@ The repository verifies the pure checked-ABI fixture in Linux x86-64 and macOS a
 
 Do not use this surface for:
 
-- C strings, spans, caller-owned buffers, scoped foreign views, pointer arithmetic, casts, dereferences, or dynamic symbol lookup;
+- returned C strings, spans, caller-owned buffers, scoped foreign views, pointer arithmetic, casts, dereferences, or dynamic symbol lookup; `c.cstr` is the sole supported C-string input conversion;
 - callbacks, variadics, unions, and bitfields;
 - native artifact downloads, vendored libraries, C/C++ shim compilation, `incan.pub` publication policy, or final packaging handoff;
 - Android, Xcode, Gradle, or signing handoff artifacts.

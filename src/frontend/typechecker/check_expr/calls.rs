@@ -84,6 +84,11 @@ impl TypeChecker {
         expected_return_ty: Option<&ResolvedType>,
     ) -> ResolvedType {
         if let Expr::Field(base, member) = &callee.node
+            && let Some(result) = self.check_c_abi_c_string_constructor(base, member, type_args, args, span)
+        {
+            return result;
+        }
+        if let Expr::Field(base, member) = &callee.node
             && let Some(result) = self.check_c_abi_output_slot_constructor(base, member, type_args, args, span)
         {
             return result;
@@ -665,8 +670,9 @@ impl TypeChecker {
     /// Resolve an ordinary `Binding.symbol(...)` expression through a checked C binding descriptor.
     ///
     /// This is deliberately an expression-level semantic hook: parser and class syntax remain ordinary Incan. The
-    /// initial executable subset admits scalar parameters/results and `void`; pointer, structure, and ownership
-    /// contracts remain declaration-checked until their runtime carriers are introduced by later slices.
+    /// executable subset admits scalar and resource contracts, compiler-managed output positions, and a checked
+    /// C string temporary for an exact `const char *` parameter. General pointers and structures remain
+    /// declaration-checked until later slices provide their own bounded runtime carriers.
     pub(in crate::frontend::typechecker::check_expr) fn check_c_binding_symbol_member_call(
         &mut self,
         base: &Spanned<Expr>,
@@ -760,6 +766,13 @@ impl TypeChecker {
             matches!(parameter.ty, CBindingType::Scalar(_) | CBindingType::Resource { .. })
                 || matches!(
                     &parameter.ty,
+                    CBindingType::Pointer {
+                        mutable: false,
+                        pointee,
+                    } if matches!(pointee.as_ref(), CBindingType::Scalar(c_abi::ScalarTypeId::CChar))
+                )
+                || matches!(
+                    &parameter.ty,
                     CBindingType::Output { value, .. }
                         if matches!(value.as_ref(), CBindingType::Scalar(_)
                             | CBindingType::Resource { access: CResourceAccess::Owned, .. })
@@ -796,15 +809,114 @@ impl TypeChecker {
             CBindingType::Nullable(value) => {
                 ResolvedType::Generic("Option".to_string(), vec![Self::c_raw_call_type(binding, value)])
             }
-            CBindingType::Pointer { .. } | CBindingType::Struct(_) | CBindingType::Output { .. } => {
-                ResolvedType::Unknown
-            }
+            CBindingType::Pointer { mutable, pointee } => Self::c_pointer_type_identity(*mutable, pointee)
+                .map(ResolvedType::Named)
+                .unwrap_or(ResolvedType::Unknown),
+            CBindingType::Struct(_) | CBindingType::Output { .. } => ResolvedType::Unknown,
         }
     }
 
     /// Return one compiler-internal nominal identity for a resource scoped by its binding declaration.
     fn c_resource_type_identity(binding: &str, resource: &str) -> String {
         format!("__incan_c_resource::{binding}::{resource}")
+    }
+
+    /// Return the compiler-owned nominal identity for a pointer supported by the direct checked-C bridge.
+    fn c_pointer_type_identity(mutable: bool, pointee: &CBindingType) -> Option<String> {
+        let CBindingType::Scalar(scalar) = pointee else {
+            return None;
+        };
+        Some(c_abi::pointer_type_identity(
+            mutable,
+            c_abi::scalar_type_as_str(*scalar),
+        ))
+    }
+
+    /// Recognize `c.cstr(value)` as the explicit conversion from Incan text to temporary NUL-terminated storage.
+    ///
+    /// It returns a private compiler-known carrier rather than a raw pointer. The only admitted extraction is
+    /// `as_const_ptr()` inside an `unsafe:` region, so the temporary's storage remains live through the raw call.
+    pub(super) fn check_c_abi_c_string_constructor(
+        &mut self,
+        base: &Spanned<Expr>,
+        member: &str,
+        type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        span: Span,
+    ) -> Option<ResolvedType> {
+        if member != "cstr" {
+            return None;
+        }
+        let Expr::Ident(namespace) = &base.node else {
+            return None;
+        };
+        if !self
+            .import_aliases
+            .get(namespace)
+            .is_some_and(|segments| c_abi::is_interop_namespace_path(segments.iter().map(String::as_str)))
+        {
+            return None;
+        }
+        if !type_args.is_empty() || args.len() != 1 || !matches!(args.first(), Some(CallArg::Positional(_))) {
+            self.errors.push(CompileError::type_error(
+                "c.cstr(value) requires exactly one positional str argument and no type arguments".to_string(),
+                span,
+            ));
+            self.check_call_args(args);
+            return Some(ResolvedType::Unknown);
+        }
+        let actual = self
+            .check_call_arg_types(args)
+            .into_iter()
+            .next()
+            .unwrap_or(ResolvedType::Unknown);
+        if !self.types_compatible(&actual, &ResolvedType::Str) {
+            self.errors.push(CompileError::type_error(
+                format!("c.cstr(value) requires str, found {actual}"),
+                span,
+            ));
+            return Some(ResolvedType::Unknown);
+        }
+        self.type_info.c_abi.uses_checked_c_strings = true;
+        Some(ResolvedType::Generic(
+            "Result".to_string(),
+            vec![
+                ResolvedType::Named(c_abi::C_STRING_TYPE_ID.to_string()),
+                ResolvedType::Str,
+            ],
+        ))
+    }
+
+    /// Type-check the sole raw extraction admitted for a validated temporary C string.
+    pub(super) fn check_c_abi_c_string_pointer(
+        &mut self,
+        base: &Spanned<Expr>,
+        method: &str,
+        type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        span: Span,
+    ) -> Option<ResolvedType> {
+        if method != "as_const_ptr"
+            || !matches!(self.check_expr(base), ResolvedType::Named(identity) if identity == c_abi::C_STRING_TYPE_ID)
+        {
+            return None;
+        }
+        if !type_args.is_empty() || !args.is_empty() {
+            self.errors.push(CompileError::type_error(
+                "a checked C string pointer takes no type or value arguments".to_string(),
+                span,
+            ));
+            self.check_call_args(args);
+            return Some(ResolvedType::Unknown);
+        }
+        if self.unsafe_depth == 0 {
+            self.errors.push(CompileError::type_error(
+                "extracting a checked C string pointer requires an enclosing `unsafe:` acknowledgement".to_string(),
+                span,
+            ));
+            return Some(ResolvedType::Unknown);
+        }
+        Some(ResolvedType::Named(c_abi::pointer_type_identity(false, "c.c_char")))
     }
 
     /// Recognize ordinary `c.out[...]()` and `c.inout(...)` calls without adding parser grammar.

@@ -29,6 +29,7 @@ use crate::library_manifest::{
     ParamDefaultExport, ParamExport, ParamKindExport,
 };
 use crate::provider::{ProviderModuleResolution, ProviderRecord};
+use incan_core::lang::c_abi;
 use incan_core::lang::keywords::{self, KeywordId};
 use incan_core::lang::stdlib;
 use incan_core::lang::stdlib::{STDLIB_BUILTINS, STDLIB_ROOT};
@@ -96,6 +97,57 @@ impl AstLowering {
                 canonical_path: None,
             },
             IrType::Struct(slot_type),
+        )))
+    }
+
+    /// Lower `c.cstr(value)` into the compiler-private checked Rust temporary constructor.
+    ///
+    /// The typechecker records this capability only after resolving the imported `std.interop.c` namespace. Lowering
+    /// keys from that fact, rather than from a source spelling, so aliases and vocabulary desugaring remain ordinary.
+    pub(super) fn lower_checked_c_string_constructor(
+        &mut self,
+        call_span: ast::Span,
+        args: &[ast::CallArg],
+    ) -> Result<Option<(IrExprKind, IrType)>, LoweringError> {
+        let is_checked_c_string = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.expr_type(call_span))
+            .is_some_and(|ty| {
+                matches!(
+                    ty,
+                    ResolvedType::Generic(name, values)
+                        if name == "Result"
+                            && matches!(values.first(), Some(ResolvedType::Named(identity)) if identity == c_abi::C_STRING_TYPE_ID)
+                )
+            });
+        if !is_checked_c_string {
+            return Ok(None);
+        }
+        let return_type = IrType::Result(
+            Box::new(IrType::RustDisplay("::std::ffi::CString".to_string())),
+            Box::new(IrType::String),
+        );
+        let function = TypedExpr::new(
+            IrExprKind::Var {
+                name: c_abi::C_STRING_CONSTRUCTOR_RUST_NAME.to_string(),
+                access: VarAccess::Copy,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Function {
+                params: vec![IrType::String],
+                ret: Box::new(return_type.clone()),
+            },
+        );
+        Ok(Some((
+            IrExprKind::Call {
+                func: Box::new(function),
+                type_args: Vec::new(),
+                args: self.lower_call_args(args)?,
+                callable_signature: None,
+                canonical_path: None,
+            },
+            return_type,
         )))
     }
 
@@ -2659,6 +2711,9 @@ impl AstLowering {
         call_span: ast::Span,
     ) -> Result<(IrExprKind, IrType), LoweringError> {
         if let Some(lowered) = self.lower_checked_c_output_slot_constructor(call_span, args)? {
+            return Ok(lowered);
+        }
+        if let Some(lowered) = self.lower_checked_c_string_constructor(call_span, args)? {
             return Ok(lowered);
         }
         let source_args = args;
