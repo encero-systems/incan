@@ -516,6 +516,8 @@ pub enum VarAccess {
     Read,
     /// Borrow immutably (&)
     Borrow,
+    /// Borrow immutably for a checked C resource call, even when its lowered wrapper parameter is an owned carrier.
+    CAbiBorrow,
     /// Borrow mutably (&mut)
     BorrowMut,
     /// Copy the value (for Copy types)

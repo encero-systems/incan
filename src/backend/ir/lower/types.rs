@@ -20,6 +20,7 @@ use crate::frontend::symbols::ResolvedType;
 use crate::frontend::typechecker::split_canonical_public_library_type_name;
 use crate::library_manifest::{TypeAliasExport, resolved_type_from_manifest_type_ref};
 use crate::numeric_adapters::{ir_type_to_numeric_ty, numeric_op_from_ast};
+use incan_core::lang::c_abi;
 use incan_core::lang::conventions;
 use incan_core::lang::types::collections::{self, CollectionTypeId};
 use incan_core::lang::types::numerics::{self, NumericFamily, NumericTypeId};
@@ -745,6 +746,9 @@ impl AstLowering {
                 ],
             ),
             ResolvedType::Unit => IrType::Unit,
+            ResolvedType::Named(name) if name == c_abi::C_STRING_TYPE_ID => {
+                IrType::RustDisplay("::std::ffi::CString".to_string())
+            }
             ResolvedType::Named(name) => IrType::Struct(name.clone()),
             ResolvedType::Ref(inner) => IrType::Ref(Box::new(
                 self.lower_resolved_type_with_rust_path_mode(inner, rust_path_mode),

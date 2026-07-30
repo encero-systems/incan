@@ -1422,6 +1422,18 @@ impl<'a> IrEmitter<'a> {
         items
     }
 
+    /// Emit the private fallible constructor used by checked C string temporaries in this module.
+    fn emit_checked_c_string_constructor() -> TokenStream {
+        let constructor = format_ident!("{}", incan_core::lang::c_abi::C_STRING_CONSTRUCTOR_RUST_NAME);
+        quote! {
+            #[inline]
+            fn #constructor(value: String) -> Result<::std::ffi::CString, String> {
+                ::std::ffi::CString::new(value)
+                    .map_err(|_| "C strings cannot contain an interior NUL byte".to_string())
+            }
+        }
+    }
+
     /// Emit one non-cloneable release-guard wrapper for each opaque C resource used by emitted calls.
     fn emit_checked_c_resources(functions: &[IrCheckedCFunction]) -> Vec<TokenStream> {
         let mut resources = BTreeMap::<String, IrCheckedCResource>::new();
@@ -1597,6 +1609,7 @@ impl<'a> IrEmitter<'a> {
                 );
                 quote! { &mut #slot }
             }
+            IrCheckedCType::Pointer { .. } => Self::checked_c_ffi_type(ty),
             IrCheckedCType::Nullable(_) | IrCheckedCType::Void => quote! { () },
         }
     }
@@ -1605,6 +1618,14 @@ impl<'a> IrEmitter<'a> {
     fn checked_c_ffi_type(ty: &IrCheckedCType) -> TokenStream {
         match ty {
             IrCheckedCType::Scalar(scalar) => Self::checked_c_scalar_rust_type(*scalar),
+            IrCheckedCType::Pointer { mutable, pointee } => {
+                let pointee = Self::checked_c_ffi_type(pointee);
+                if *mutable {
+                    quote! { *mut #pointee }
+                } else {
+                    quote! { *const #pointee }
+                }
+            }
             IrCheckedCType::Resource { .. } => quote! { *mut ::core::ffi::c_void },
             IrCheckedCType::Output { value, .. } => {
                 let value = Self::checked_c_ffi_type(value);
@@ -1639,6 +1660,7 @@ impl<'a> IrEmitter<'a> {
                 | crate::frontend::typechecker::CResourceAccess::BorrowedMut => quote! { #name.as_raw() },
             },
             IrCheckedCType::Output { .. } => quote! { #name.as_mut_ptr() },
+            IrCheckedCType::Pointer { .. } => quote! { #name },
             IrCheckedCType::Nullable(_) | IrCheckedCType::Void => quote! { () },
         }
     }
@@ -1647,6 +1669,7 @@ impl<'a> IrEmitter<'a> {
     fn checked_c_value_rust_type(binding: &str, ty: &IrCheckedCType) -> TokenStream {
         match ty {
             IrCheckedCType::Scalar(_) => quote! { i64 },
+            IrCheckedCType::Pointer { .. } => Self::checked_c_ffi_type(ty),
             IrCheckedCType::Resource { resource, .. } => {
                 let resource = format_ident!("{}", IrCheckedCFunction::resource_rust_type_name(binding, resource));
                 quote! { #resource }
@@ -1690,6 +1713,7 @@ impl<'a> IrEmitter<'a> {
                 }
                 _ => quote! { () },
             },
+            IrCheckedCType::Pointer { .. } => quote! { __incan_result },
             IrCheckedCType::Void | IrCheckedCType::Output { .. } => quote! { () },
         }
     }
@@ -3721,6 +3745,9 @@ impl<'a> IrEmitter<'a> {
 
         let compiler_version = crate::version::INCAN_VERSION;
         items.push(quote! { incan_stdlib::__incan_stdlib_version_check!(#compiler_version); });
+        if program.uses_checked_c_strings {
+            items.push(Self::emit_checked_c_string_constructor());
+        }
         items.extend(Self::emit_checked_c_functions(&program.checked_c_functions));
 
         let needs_json_serialize_trait_scope = emitted_declarations.iter().any(|decl| {
@@ -4085,6 +4112,41 @@ mod tests {
         assert!(normalized.contains("match<i32>::try_from(__incan_arg_0)"));
         assert!(normalized.contains("matchi64::try_from(__incan_result)"));
         assert!(!normalized.contains(".expect("));
+        Ok(())
+    }
+
+    #[test]
+    fn checked_c_string_input_emits_private_cstring_and_const_character_pointer_bridge() -> Result<(), String> {
+        let mut program = IrProgram::new();
+        program.uses_checked_c_strings = true;
+        program.checked_c_functions.push(IrCheckedCFunction {
+            binding: "LibC".to_string(),
+            symbol: "string_length".to_string(),
+            native_symbol: "strlen".to_string(),
+            system_library: "c".to_string(),
+            parameters: vec![IrCheckedCType::Pointer {
+                mutable: false,
+                pointee: Box::new(IrCheckedCType::Scalar(ScalarTypeId::CChar)),
+            }],
+            parameter_names: vec!["value".to_string()],
+            return_type: IrCheckedCType::Scalar(ScalarTypeId::Size),
+            resources: Vec::new(),
+        });
+
+        let mut emitter = IrEmitter::new(&program.function_registry);
+        let generated = emitter.emit_program(&program).map_err(|error| error.to_string())?;
+        let normalized = generated.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+
+        assert!(normalized.contains("fn__incan_checked_c_cstr(value:String)->Result<::std::ffi::CString,String>"));
+        assert!(normalized.contains("CString::new(value)"));
+        assert!(
+            normalized.contains(
+                "fn__incan_c_LibC__string_5flength__ffi(__incan_arg_0:*const::std::os::raw::c_char,)->usize;"
+            )
+        );
+        assert!(
+            normalized.contains("fn__incan_c_LibC__string_5flength(__incan_arg_0:*const::std::os::raw::c_char)->i64")
+        );
         Ok(())
     }
 }

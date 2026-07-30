@@ -328,6 +328,10 @@ impl ArgumentPassingPlan {
                     passing = ArgumentPassingMode::MutableBorrow;
                     value = ArgumentValuePlan::Ownership(OwnershipPlan::None);
                 }
+                VarAccess::CAbiBorrow => {
+                    passing = ArgumentPassingMode::SharedBorrow;
+                    value = ArgumentValuePlan::Ownership(OwnershipPlan::None);
+                }
                 VarAccess::Borrow if value_use_site_target_ty(site).is_none() => {
                     passing = ArgumentPassingMode::SharedBorrow;
                     value = ArgumentValuePlan::Ownership(OwnershipPlan::None);
@@ -993,6 +997,29 @@ mod tests {
         );
         assert_eq!(render(plan.apply_full(quote! { thing })), "&thing");
         assert_eq!(render(plan.apply_after_value_plan(quote! { &thing })), "&thing");
+    }
+
+    #[test]
+    fn argument_plan_checked_c_borrow_skips_owned_value_materialization() {
+        let resource = IrType::Struct("__incan_c_resource::Binding::Handle".to_string());
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "handle".to_string(),
+                access: VarAccess::CAbiBorrow,
+                ref_kind: VarRefKind::Value,
+            },
+            resource.clone(),
+        );
+        let plan = ArgumentPassingPlan::for_use_site(
+            &expr,
+            ValueUseSite::IncanCallArg {
+                target_ty: Some(&resource),
+                callee_param: None,
+                in_return: false,
+            },
+        );
+
+        assert_eq!(render(plan.apply_full(quote! { handle })), "&handle");
     }
 
     #[test]

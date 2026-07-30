@@ -27,19 +27,37 @@ The `binding` vocabulary desugars to a `@c.binding(...)` declaration class exten
 
 Use the C namespace in the raw declaration, even when a type looks similar to Incan `int`:
 
-| C declaration need | Binding type |
-| --- | --- |
-| Exact signed or unsigned width | `c.i8` through `c.i64`, or `c.u8` through `c.u64` |
-| C `int` | `c.c_int` |
-| C `char` | `c.c_char` |
-| Target-sized byte count | `c.Size` |
-| Required immutable or mutable pointer | `c.ConstPtr[T]` or `c.MutPtr[T]` |
-| Nullable pointer | `Option[c.ConstPtr[T]]` or `Option[c.MutPtr[T]]` |
-| Opaque resource consumed by the native call | `c.Owned[Handle]` |
-| Call-scoped shared or exclusive resource access | `c.Borrowed[Handle]` or `c.BorrowedMut[Handle]` |
-| Native-written or caller-initialized output storage | `c.Out[T]` or `c.InOut[T]` |
+- Use `c.i8` through `c.i64`, or `c.u8` through `c.u64`, for an exact signed or unsigned width.
+- Use `c.c_int` for C `int` and `c.c_char` for C `char`.
+- Use `c.Size` for a target-sized byte count.
+- Use `c.ConstPtr[T]` or `c.MutPtr[T]` for a required immutable or mutable pointer; wrap either in `Option[...]` for a nullable pointer.
+- Use `c.Owned[Handle]` for an opaque resource consumed by the native call.
+- Use `c.Borrowed[Handle]` or `c.BorrowedMut[Handle]` for call-scoped shared or exclusive resource access.
+- Use `c.Out[T]` or `c.InOut[T]` for native-written or caller-initialized output storage.
 
-The executable subset admits scalar calls, opaque resource calls, and scalar or owned-resource output positions. Pointer and by-value structure declarations are still useful because the compiler verifies their declared shape, but calls that would require pointer arithmetic, arbitrary dereference, or unimplemented view rules remain rejected.
+The executable subset admits scalar calls, opaque resource calls, scalar or owned-resource output positions, and one checked text-input path. Pointer and by-value structure declarations are still useful because the compiler verifies their declared shape, but calls that would require pointer arithmetic, arbitrary dereference, pointer returns, or unimplemented view rules remain rejected.
+
+## Pass text to a const C character pointer
+
+Use `c.cstr(value)?` when a C function takes a NUL-terminated `const char *`. It constructs a private temporary whose storage remains live for the enclosing raw call and rejects an interior NUL instead of silently truncating the text.
+
+```incan
+from std.interop import c
+
+binding LibC:
+    header = "string.h"
+    link = c.system_library("c")
+
+    symbol string_length(value: c.ConstPtr[c.c_char]) -> c.Size:
+        native = "strlen"
+
+def checked_length(value: str) -> Result[int, str]:
+    text = c.cstr(value)?
+    unsafe:
+        return Ok(LibC.string_length(text.as_const_ptr()))
+```
+
+`as_const_ptr()` is the only operation that exposes this temporary, and it is accepted only inside `unsafe:` for the exact `c.ConstPtr[c.c_char]` contract. It does not produce an integer address or permit pointer arithmetic or dereference. This is input conversion only: returned strings, byte spans, mutable buffers, and scoped foreign views remain separate bounded-lifetime work.
 
 ## Associate one release operation with an opaque resource
 
@@ -62,6 +80,12 @@ binding Fixture:
 ```
 
 `c.Owned[Handle]` moves into `close`, so use after that call is a type error and generated Rust disarms the last-resort guard before invoking the native release function. `c.Borrowed[Handle]` and `c.BorrowedMut[Handle]` are selected from the parameter declaration at the call site; wrapper authors do not write Rust-shaped borrow calls. A mutable local is required for `c.BorrowedMut[Handle]`.
+
+## Keep the raw bridge inside an ordinary Incan façade
+
+The binding and its façade may be authored in the same module. Put the `unsafe:` region around the small set of raw calls, then publish only functions, models, or errors built from ordinary Incan values. Do not return `c.Owned[...]`, `c.Out[...]`, raw status values, or a foreign pointer from that façade.
+
+An owned resource may pass through any number of declared `c.Borrowed[...]` or `c.BorrowedMut[...]` calls while it stays in the façade. The compiler emits the matching Rust borrow for each call and retains the release guard. If a façade needs deterministic early release, pass the resource to its declared `c.Owned[...]` release symbol; otherwise the guard releases it once on normal scope exit or an early return. No separate `with`-style cleanup surface is required for this compiler-managed lifetime.
 
 ## Use output positions only through compiler-managed storage
 
@@ -163,15 +187,13 @@ This declaration and lock slice deliberately does not download artifacts, discov
 
 ## Interpret common failures
 
-| Failure | What to check |
-| --- | --- |
-| `@c.binding requires from std.interop import c` | Import `c` in the declaring module. An alias is allowed; a global activation is not. |
-| C symbol has an unsupported parameter or return type | Use the current scalar, opaque-resource, or output forms. Do not weaken an unsupported pointer or view contract into an integer. |
-| Clang rejects the signature or layout | Compare the header's exact spelling, calling shape, field order, and scalar category with the binding. Do not change the declaration to make generated Rust compile. |
-| Native enum carrier mismatch | Keep one declared `c.*` carrier for all variants and verify what the header exposes after macro expansion. |
-| `take()` is rejected | For `Out`, guard the read with the binding outcome that names the initialized parameter. For `InOut`, ensure the selected outcome has not invalidated the slot. |
-| C resource was transferred or requires a mutable borrow | Do not reuse a resource passed as `c.Owned[...]`; bind it as `mut` before a call declared `c.BorrowedMut[...]`. |
-| Missing system library at final link | `c.system_library("name")` records a logical system capability; this slice does not download, vendor, or lock a library for you. |
+- If `@c.binding requires from std.interop import c`, import `c` in the declaring module. An alias is allowed; global activation is not.
+- If a C symbol has an unsupported parameter or return type, use the current scalar, opaque-resource, or output forms. Do not weaken an unsupported pointer or view contract into an integer.
+- If Clang rejects a signature or layout, compare the header's exact spelling, calling shape, field order, and scalar category with the binding. Do not change the declaration merely to make generated Rust compile.
+- If an enum carrier mismatches, keep one declared `c.*` carrier for all variants and verify the header's macro-expanded value.
+- If `take()` is rejected for `Out`, guard the read with the binding outcome that initializes the parameter. For `InOut`, ensure the selected outcome has not invalidated the slot.
+- If a C resource was transferred or requires a mutable borrow, do not reuse a resource passed as `c.Owned[...]`; bind it as `mut` before a call declared `c.BorrowedMut[...]`.
+- If the final link misses a system library, remember that `c.system_library("name")` records a logical system capability; this slice does not download, vendor, or lock a library for you.
 
 ## Review the checked declaration
 

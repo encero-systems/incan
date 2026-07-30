@@ -188,15 +188,15 @@
     },
     {
       "path": "src/backend/ir/lower/expr/calls.rs",
-      "category": "public dependency call/default lowering and assert-raises policy",
-      "expected_count": 5,
-      "expected_fingerprint": "0x4302ea99a4296bec"
+      "category": "public dependency call, checked C string construction, default lowering, and assert-raises policy",
+      "expected_count": 6,
+      "expected_fingerprint": "0x481b95906ddd6a11"
     },
     {
       "path": "src/backend/ir/lower/expr/mod.rs",
-      "category": "method, public dependency, stdlib, and checked C output lowering compatibility",
-      "expected_count": 15,
-      "expected_fingerprint": "0x23acfaded25c7743"
+      "category": "method, public dependency, stdlib, checked C string-pointer, and output lowering compatibility",
+      "expected_count": 16,
+      "expected_fingerprint": "0x487c445c173c38b6"
     },
     {
       "path": "src/backend/ir/lower/mod.rs",
@@ -272,9 +272,9 @@
     },
     {
       "path": "src/frontend/typechecker/check_expr/calls.rs",
-      "category": "enum constructor, public-module member, and checked C output-constructor compatibility",
-      "expected_count": 6,
-      "expected_fingerprint": "0x695604741fc0073a"
+      "category": "enum constructor, public-module member, and checked C output/string-constructor compatibility",
+      "expected_count": 8,
+      "expected_fingerprint": "0xa3d9c851279c3d6d"
     },
     {
       "path": "src/frontend/typechecker/check_expr/calls/constructors.rs",
