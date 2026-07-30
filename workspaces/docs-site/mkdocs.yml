@@ -278,6 +278,7 @@ nav:
           - Checked API metadata: tooling/reference/checked_api_metadata.md
           - Project configuration: tooling/reference/project_configuration.md
           - SDK components and package features: tooling/reference/sdk_components_and_package_features.md
+          - Native deployment plans: tooling/reference/native_deployment_plans.md
           - LSP protocol support: tooling/reference/lsp_protocol_support.md
   - Contributing:
       - Start here: contributing/index.md

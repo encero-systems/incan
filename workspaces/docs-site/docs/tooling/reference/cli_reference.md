@@ -33,7 +33,7 @@ Commands:
 
 ## Semantic inspection surfaces
 
-Incan 0.5 extends the machine-readable inspection surfaces introduced in 0.4. Use `incan check --format json` for the stable diagnostic plane, `incan build --report json` for successful build and artifact metadata, `incan inspect rust --format json` for current generated Rust output, `incan inspect codegraph --format jsonl` for source-structure graph facts, `incan inspect providers --format json` for SDK component and provider participation, and `incan inspect features --format json` for the additive package-feature graph.
+Incan 0.5 extends the machine-readable inspection surfaces introduced in 0.4. Use `incan check --format json` for the stable diagnostic plane, `incan build --report json` for successful build and artifact metadata, `incan inspect rust --format json` for current generated Rust output, `incan inspect codegraph --format jsonl` for source-structure graph facts, `incan inspect providers --format json` for SDK component and provider participation, `incan inspect features --format json` for the additive package-feature graph, and `incan inspect native-plan --format json` for one locked target-native platform handoff.
 
 These commands are intentionally not a single full semantic database. They are stable public surfaces that tools can join without scraping terminal prose, generated Rust, or source text independently. When a fact appears in more than one surface, consumers should prefer compiler-owned identity fields, source paths, schema versions, and explicit degraded-state or diagnostic records over human output.
 
@@ -102,6 +102,7 @@ Options:
 - `--format text|json`: Output human diagnostics or a stable machine-readable JSON report (default: `text`).
 - `--features`, `--no-default-features`, `--all-features`: Select the root package-feature projection.
 - `--sdk-profile <PROFILE>`: Select a non-persistent SDK profile for this check.
+- `--native-target <TRIPLE>`: Verify checked C declarations against one exact target declared by `[native].targets`. This does not cross-compile generated Rust or package an application.
 - `--workspace`: Check every selected workspace member.
 - `--member <NAME_OR_PATH>`: Check one or more selected workspace members.
 
@@ -112,6 +113,7 @@ Examples:
 ```bash
 incan check src/main.incn
 incan check src/main.incn --format json
+incan check --native-target aarch64-linux-android src/main.incn
 incan --check src/main.incn --format json
 incan check --workspace --format json
 ```
@@ -331,6 +333,26 @@ Examples:
 incan inspect features
 incan inspect features . --format json
 incan inspect features . --format json --no-default-features --features json
+```
+
+### `incan inspect native-plan`
+
+Usage:
+
+```text
+incan inspect native-plan [PATH] --target <TRIPLE> [--format text|json]
+```
+
+Projects a standalone package or selected workspace member's exact locked native target into a deterministic, versioned deployment handoff. The command requires the selected target in `[native].targets` and a current canonical `incan.lock`; workspace members use the single workspace-root lock. It refuses to emit a plan after a declared native file or deployment fact changes.
+
+The JSON report contains package-relative input receipts, target/toolchain/SDK/platform facts, include roots, definitions, dependency-ordered static, bundled, and system actions, runtime names, placements, minimum platform constraints, governed shim inputs and logical outputs, and provenance. It does not build, stage, link, sign, publish, or invoke Gradle or Xcode.
+
+Examples:
+
+```bash
+incan inspect native-plan --target aarch64-linux-android
+incan inspect native-plan . --target aarch64-apple-ios --format json
+incan inspect native-plan packages/mobile --target aarch64-apple-ios --format json
 ```
 
 See [SDK components and package features](sdk_components_and_package_features.md) for the state and resolution model.

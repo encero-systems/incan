@@ -185,7 +185,20 @@ INCAN_C_ABI_CLANG=/path/to/ndk/toolchains/llvm/prebuilt/host/bin/aarch64-linux-a
 
 The selected target's `definitions` are passed to both the signature/layout probe and the enum-value probe. The command rejects a target that is not declared by the package. It also keeps the boundary narrow: this checks the source-owned C ABI against that compiler and target profile, but it does not cross-compile generated Rust, link declared artifacts, build shims, stage a mobile package, or attest that a logical `toolchain` or `sdk` name matches the installed binary. `INCAN_C_ABI_CLANG` provisions the executable for this invocation; it does not replace the manifest as ABI or target authority.
 
-This declaration and lock slice deliberately does not download artifacts, discover a system library, compile a shim, or define a Gradle/Xcode handover format. Those are separate Oven and platform-tooling responsibilities. Do not put signing or license policy here: native publication policy belongs to `incan.pub`.
+## Inspect the locked platform handoff
+
+Regenerate `incan.lock` after changing target-native files or deployment facts, then inspect one exact target:
+
+```console
+incan lock
+incan inspect native-plan --target aarch64-linux-android --format json
+```
+
+The report retains locked header, artifact, and shim-source digests; target, toolchain, SDK, and platform facts; derived include roots; definitions; dependency-ordered static, bundled, and system actions; runtime names; placement; minimum platform constraints; shim outputs; and provenance. All file paths remain package-relative, so a byte-identical locked package emits the same JSON after relocation.
+
+The command rejects a missing or stale native lock projection. A workspace member is checked against its entry in the single workspace-root `incan.lock`; a member-local lock is never accepted as authority. The command also rejects missing artifact dependencies and dependency cycles rather than leaving a Gradle or Xcode adapter to guess link order. See the [native deployment plan reference](../../tooling/reference/native_deployment_plans.md) for the complete schema and action meanings.
+
+This handoff deliberately does not download artifacts, discover a system library, compile a shim, cross-compile generated Rust, stage an application, or define a Gradle/Xcode command protocol. Those are separate Oven and platform-adapter responsibilities. Do not put signing or license policy here: native publication policy belongs to `incan.pub`.
 
 ## Interpret common failures
 
@@ -199,6 +212,8 @@ This declaration and lock slice deliberately does not download artifacts, discov
 | C resource was transferred or requires a mutable borrow | Do not reuse a resource passed as `c.Owned[...]`; bind it as `mut` before a call declared `c.BorrowedMut[...]`. |
 | `--native-target` is not declared | Add the exact target and its required mobile `platform` facts to `[native].targets`; the command does not invent a target profile. |
 | Android toolchain is not provisioned | Point `INCAN_C_ABI_CLANG` at the NDK Clang executable for the declared API profile until Oven owns managed toolchain resolution. |
+| Native plan requires a current lock | Run `incan lock` after every native file or deployment declaration change; plan emission never silently refreshes evidence. |
+| Native artifact graph contains a cycle | Make every `dependencies` edge name a distinct sibling and remove cycles so the handoff has one deterministic dependencies-first order. |
 | Missing system library at final link | `c.system_library("name")` records a logical system capability; this slice does not download, vendor, or lock a library for you. |
 
 ## Decide whether C is the right boundary

@@ -26,6 +26,7 @@ pub mod format;
 pub mod init;
 pub mod lifecycle;
 pub mod lock;
+pub mod native_plan;
 pub mod provider_inspect;
 pub mod stdlib_loader;
 pub mod tools;
@@ -45,6 +46,7 @@ pub use format::format_files;
 pub use init::init_project;
 pub use lifecycle::{env_list, env_run, env_show, version_project};
 pub use lock::lock_project;
+pub use native_plan::{NativePlanInspectionFormat, inspect_native_plan};
 pub use provider_inspect::{ProviderInspectionFormat, inspect_features, inspect_providers};
 pub use tools::{
     ToolsDoctorFormat, ToolsMetadataFormat, ToolsModelMetadataFormat, tools_doctor, tools_metadata_api,

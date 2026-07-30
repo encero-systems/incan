@@ -80,7 +80,7 @@ fn c_abi_test_clang() -> Option<String> {
             return None;
         }
         let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        return (!path.is_empty()).then_some(path);
+        (!path.is_empty()).then_some(path)
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -5319,6 +5319,244 @@ output = "fixture_bridge"
         "declared native input drift should invalidate the lock:\n{}",
         String::from_utf8_lossy(&stale.stderr)
     );
+    Ok(())
+}
+
+#[test]
+fn inspect_native_plan_is_locked_complete_and_relocatable() -> Result<(), Box<dyn std::error::Error>> {
+    // ---- Declare representative Android deployment inputs ----
+    let tmp = tempfile::tempdir()?;
+    let package = tmp.path().join("package");
+    fs::create_dir_all(&package)?;
+    let main_path = write_minimal_project(
+        &package,
+        "native_plan_handoff",
+        r#"
+
+[native]
+schema = 1
+
+[[native.targets]]
+target = "aarch64-linux-android"
+toolchain = "android-ndk-r29"
+sdk = "android-36"
+headers = ["native/include/runtime.h"]
+definitions = ["TFLITE_STATIC_MEMORY=1"]
+provenance = "mobile-runtime-fixture"
+
+[native.targets.platform]
+kind = "android"
+api-level = 34
+
+[[native.targets.artifacts]]
+name = "llama"
+kind = "static"
+path = "native/lib/libllama.a"
+dependencies = ["tflite"]
+
+[[native.targets.artifacts]]
+name = "tflite"
+kind = "bundled"
+path = "native/lib/libtensorflowlite_c.so"
+runtime-name = "libtensorflowlite_c.so"
+placement = "jniLibs/arm64-v8a"
+minimum-platform = "21"
+dependencies = ["log"]
+
+[[native.targets.artifacts]]
+name = "log"
+kind = "system"
+capability = "android.library.log"
+
+[[native.targets.shims]]
+name = "llama_bridge"
+language = "cxx"
+sources = ["native/src/llama_bridge.cc"]
+headers = ["native/include/runtime.h"]
+output = "llama_bridge"
+"#,
+    )?;
+    fs::create_dir_all(package.join("native/include"))?;
+    fs::create_dir_all(package.join("native/src"))?;
+    fs::create_dir_all(package.join("native/lib"))?;
+    fs::write(package.join("native/include/runtime.h"), "int runtime(void);\n")?;
+    fs::write(
+        package.join("native/src/llama_bridge.cc"),
+        "extern \"C\" int runtime(void) { return 0; }\n",
+    )?;
+    fs::write(package.join("native/lib/libllama.a"), b"llama archive")?;
+    fs::write(
+        package.join("native/lib/libtensorflowlite_c.so"),
+        b"tflite shared object",
+    )?;
+    let main_arg = main_path.to_str().ok_or("main path was not valid UTF-8")?;
+
+    // ---- Lock and inspect the complete structured handoff ----
+    let lock = run_incan(&package, &["lock", main_arg])?;
+    assert_success(&lock, "incan lock before native plan inspection");
+    let output = run_incan(
+        &package,
+        &[
+            "inspect",
+            "native-plan",
+            "--target",
+            "aarch64-linux-android",
+            "--format",
+            "json",
+            ".",
+        ],
+    )?;
+    assert_success(&output, "locked Android native plan inspection");
+    let plan: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(plan["schema_version"].as_u64(), Some(1));
+    assert_eq!(plan["target"].as_str(), Some("aarch64-linux-android"));
+    assert_eq!(plan["toolchain"].as_str(), Some("android-ndk-r29"));
+    assert_eq!(plan["sdk"].as_str(), Some("android-36"));
+    assert_eq!(plan["platform"]["kind"].as_str(), Some("android"));
+    assert_eq!(plan["platform"]["api_level"].as_u64(), Some(34));
+    assert_eq!(plan["include_roots"][0].as_str(), Some("native/include"));
+    assert_eq!(
+        plan["artifacts"]
+            .as_array()
+            .ok_or("native plan artifacts were not an array")?
+            .iter()
+            .filter_map(|artifact| artifact["name"].as_str())
+            .collect::<Vec<_>>(),
+        ["log", "tflite", "llama"]
+    );
+    assert_eq!(plan["artifacts"][0]["deployment"].as_str(), Some("system"));
+    assert_eq!(plan["artifacts"][0]["capability"].as_str(), Some("android.library.log"));
+    assert_eq!(plan["artifacts"][1]["deployment"].as_str(), Some("bundle"));
+    assert_eq!(plan["artifacts"][1]["placement"].as_str(), Some("jniLibs/arm64-v8a"));
+    assert_eq!(plan["artifacts"][2]["deployment"].as_str(), Some("static_link"));
+    assert_eq!(plan["shims"][0]["output"].as_str(), Some("llama_bridge"));
+    assert_eq!(plan["provenance"].as_str(), Some("mobile-runtime-fixture"));
+    assert!(
+        !String::from_utf8_lossy(&output.stdout).contains(&package.to_string_lossy().to_string()),
+        "native plan leaked its original package location"
+    );
+
+    let unknown = run_incan(
+        &package,
+        &["inspect", "native-plan", "--target", "aarch64-apple-ios", "."],
+    )?;
+    assert_failure(&unknown, "undeclared native plan target");
+    assert!(
+        String::from_utf8_lossy(&unknown.stderr).contains("is not declared and locked by this package"),
+        "unexpected undeclared native-plan diagnostic:\n{}",
+        String::from_utf8_lossy(&unknown.stderr)
+    );
+
+    // ---- Preserve the plan across relocation and reject stale bytes ----
+    let relocated = tmp.path().join("relocated");
+    fs::rename(&package, &relocated)?;
+    let relocated_output = run_incan(
+        &relocated,
+        &[
+            "inspect",
+            "native-plan",
+            "--target",
+            "aarch64-linux-android",
+            "--format",
+            "json",
+            ".",
+        ],
+    )?;
+    assert_success(&relocated_output, "relocated native plan inspection");
+    assert_eq!(
+        output.stdout, relocated_output.stdout,
+        "relocating a locked native package changed its deployment handoff"
+    );
+
+    fs::write(
+        relocated.join("native/lib/libtensorflowlite_c.so"),
+        b"changed tflite shared object",
+    )?;
+    let stale = run_incan(
+        &relocated,
+        &["inspect", "native-plan", "--target", "aarch64-linux-android", "."],
+    )?;
+    assert_failure(&stale, "stale native plan inspection");
+    assert!(
+        String::from_utf8_lossy(&stale.stderr).contains("incan.lock native inputs are out of date"),
+        "unexpected stale native-plan diagnostic:\n{}",
+        String::from_utf8_lossy(&stale.stderr)
+    );
+    Ok(())
+}
+
+#[test]
+fn inspect_native_plan_uses_the_selected_workspace_member_lock_projection() -> Result<(), Box<dyn std::error::Error>> {
+    // ---- Declare one native workspace member ----
+    let root = tempfile::tempdir()?;
+    fs::write(
+        root.path().join("incan.toml"),
+        "[workspace]\nmembers = [\"packages/mobile\"]\n",
+    )?;
+    let member = root.path().join("packages/mobile");
+    let main_path = write_minimal_project(
+        &member,
+        "mobile",
+        r#"
+
+[native]
+schema = 1
+
+[[native.targets]]
+target = "aarch64-apple-ios"
+toolchain = "apple-clang-17"
+sdk = "iphoneos-18.0"
+headers = ["native/include/accelerate_bridge.h"]
+provenance = "workspace-mobile-fixture"
+
+[native.targets.platform]
+kind = "ios"
+deployment-target = "13.0"
+
+[[native.targets.artifacts]]
+name = "accelerate"
+kind = "system"
+capability = "apple.framework.Accelerate"
+"#,
+    )?;
+    fs::create_dir_all(member.join("native/include"))?;
+    fs::write(
+        member.join("native/include/accelerate_bridge.h"),
+        "float incan_dot(const float *left, const float *right, unsigned long count);\n",
+    )?;
+    let main_arg = main_path.to_str().ok_or("workspace main path was not valid UTF-8")?;
+
+    // ---- Publish the one canonical workspace lock ----
+    let lock = run_incan(&member, &["lock", main_arg])?;
+    assert_success(&lock, "canonical workspace lock before native plan inspection");
+    assert!(
+        root.path().join("incan.lock").is_file() && !member.join("incan.lock").exists(),
+        "native workspace fixture did not publish exactly one canonical root lock"
+    );
+
+    // ---- Inspect the selected member through its root-lock projection ----
+    let output = run_incan(
+        root.path(),
+        &[
+            "inspect",
+            "native-plan",
+            "packages/mobile",
+            "--target",
+            "aarch64-apple-ios",
+            "--format",
+            "json",
+        ],
+    )?;
+    assert_success(&output, "workspace member native plan inspection");
+    let plan: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(plan["target"].as_str(), Some("aarch64-apple-ios"));
+    assert_eq!(plan["platform"]["kind"].as_str(), Some("ios"));
+    assert_eq!(plan["artifacts"][0]["deployment"].as_str(), Some("system"));
+    assert_eq!(
+        plan["artifacts"][0]["capability"].as_str(),
+        Some("apple.framework.Accelerate")
+    );
+    assert_eq!(plan["provenance"].as_str(), Some("workspace-mobile-fixture"));
     Ok(())
 }
 

@@ -4,7 +4,7 @@
 //! discovery, compile a shim, or decide application semantics. Those actions consume this checked plan in later
 //! RFC 116 slices.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path};
 
@@ -15,6 +15,9 @@ use crate::manifest::ProjectManifest;
 
 /// Current compatibility format for the `[native]` manifest section.
 pub const NATIVE_MANIFEST_SCHEMA_VERSION: u32 = 1;
+
+/// Current compatibility format for a target-resolved native deployment handoff.
+pub(crate) const NATIVE_DEPLOYMENT_PLAN_SCHEMA_VERSION: u32 = 1;
 
 /// Target-specific package inputs for checked native interop.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -79,6 +82,14 @@ impl NativeSection {
             for artifact in &target.artifacts {
                 validate_artifact_dependencies(artifact, &target.target, &artifact_names)?;
             }
+            ordered_artifact_names(
+                &target.target,
+                target
+                    .artifacts
+                    .iter()
+                    .map(|artifact| (artifact.name.clone(), artifact.dependencies.clone()))
+                    .collect(),
+            )?;
             let mut shim_names = BTreeSet::new();
             for shim in &target.shims {
                 if shim.name.trim().is_empty() || !shim_names.insert(shim.name.clone()) {
@@ -289,6 +300,16 @@ pub enum NativeShimLanguage {
     Cxx,
 }
 
+impl NativeShimLanguage {
+    /// Stable manifest and inspection spelling for this shim language.
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::C => "c",
+            Self::Cxx => "cxx",
+        }
+    }
+}
+
 /// Portable native inputs frozen in one canonical semantic lock state.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LockedNativeTarget {
@@ -371,6 +392,130 @@ pub struct LockedNativeShim {
     pub output: String,
 }
 
+/// One portable target-native handoff emitted from canonical locked package inputs.
+///
+/// This is the declared platform-packager boundary carried by a future Loaf. It records locked physical facts without
+/// embedding a Gradle task, Xcode build phase, signing identity, credential, or machine-local toolchain path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct NativeDeploymentPlan {
+    /// Compatibility version for this deployment-plan shape.
+    pub(crate) schema_version: u32,
+    /// Exact compilation and deployment target triple.
+    pub(crate) target: String,
+    /// Logical managed toolchain identity retained from the lock.
+    pub(crate) toolchain: String,
+    /// Logical SDK identity retained from the lock, when the target requires one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) sdk: Option<String>,
+    /// Platform version facts needed by a Gradle or Xcode adapter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) platform: Option<NativeDeploymentPlatform>,
+    /// Locked header files used by verification and downstream native compilation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) headers: Vec<LockedNativeInput>,
+    /// Portable package-relative include roots derived from locked headers and shim headers.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) include_roots: Vec<String>,
+    /// Explicit preprocessor definitions applied to verification and shim compilation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) definitions: Vec<String>,
+    /// Deterministic dependencies-first static, bundled, and system planning actions.
+    ///
+    /// The explicit dependency edges remain authoritative. A platform adapter must derive its linker's argument order
+    /// rather than treating this planning sequence as a raw command line.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) artifacts: Vec<NativeDeploymentArtifact>,
+    /// Authored shim build inputs and logical outputs required before platform handoff.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) shims: Vec<NativeShimBuildPlan>,
+    /// Package-supplied provenance retained as evidence rather than publication admission.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) provenance: Option<String>,
+}
+
+/// One dependency-ordered native artifact action in a deployment plan.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct NativeDeploymentArtifact {
+    /// Stable package-local artifact name.
+    pub(crate) name: String,
+    /// Logical sibling artifacts that must be available before this artifact.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) dependencies: Vec<String>,
+    /// Structured platform-neutral action for the selected deployment class.
+    #[serde(flatten)]
+    pub(crate) action: NativeDeploymentAction,
+}
+
+/// Mobile platform facts projected into the JSON handoff independently from manifest field spelling.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum NativeDeploymentPlatform {
+    /// Android arm64 handoff facts.
+    Android {
+        /// Android API level selected for verification and deployment.
+        api_level: u32,
+    },
+    /// iOS arm64 handoff facts.
+    Ios {
+        /// Minimum supported iOS deployment target.
+        deployment_target: String,
+    },
+}
+
+impl From<&NativeTargetPlatform> for NativeDeploymentPlatform {
+    fn from(platform: &NativeTargetPlatform) -> Self {
+        match platform {
+            NativeTargetPlatform::Android { api_level } => Self::Android { api_level: *api_level },
+            NativeTargetPlatform::Ios { deployment_target } => Self::Ios {
+                deployment_target: deployment_target.clone(),
+            },
+        }
+    }
+}
+
+/// Platform-neutral action consumed by a later Gradle, Xcode, or other packager adapter.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "deployment", rename_all = "snake_case")]
+pub(crate) enum NativeDeploymentAction {
+    /// Link one locked package archive into the final product.
+    StaticLink {
+        /// Portable archive path and digest.
+        input: LockedNativeInput,
+    },
+    /// Stage one locked dynamic library or framework for the platform packager.
+    Bundle {
+        /// Portable dynamic artifact path and digest.
+        input: LockedNativeInput,
+        /// Runtime loader name expected by the native dependency graph.
+        runtime_name: String,
+        /// Logical packager placement retained without embedding an absolute output path.
+        placement: String,
+        /// Minimum platform version required by this artifact.
+        minimum_platform: String,
+    },
+    /// Request one explicit library or framework capability from the selected toolchain or SDK.
+    System {
+        /// Stable capability identity such as `apple.framework.Accelerate`.
+        capability: String,
+    },
+}
+
+/// One governed authored shim action that must be baked before the deployment plan is ready for final assembly.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct NativeShimBuildPlan {
+    /// Stable package-local shim name.
+    pub(crate) name: String,
+    /// Selected C or C++ source language.
+    pub(crate) language: NativeShimLanguage,
+    /// Locked authored source inputs.
+    pub(crate) sources: Vec<LockedNativeInput>,
+    /// Locked headers describing the shim's bounded C contract.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) headers: Vec<LockedNativeInput>,
+    /// Logical artifact name produced by the future managed shim baker.
+    pub(crate) output: String,
+}
+
 /// Resolve declared native package files into lockable content identities without ambient host discovery.
 pub fn locked_native_targets(manifest: &ProjectManifest) -> Result<Vec<LockedNativeTarget>, String> {
     locked_native_targets_from_section(manifest.project_root(), manifest.native())
@@ -395,6 +540,155 @@ pub fn locked_native_targets_from_section(
         .collect::<Result<Vec<_>, _>>()?;
     targets.sort_by(|left, right| left.target.cmp(&right.target));
     Ok(targets)
+}
+
+/// Project one canonical locked target into a deterministic native deployment handoff.
+///
+/// The projection neither reads the package filesystem nor discovers host libraries. Every physical file comes from
+/// an existing locked input receipt, so relocating the package does not change the emitted plan.
+pub(crate) fn native_deployment_plan(target: &LockedNativeTarget) -> Result<NativeDeploymentPlan, String> {
+    // ---- Validate and order the artifact graph ----
+    let artifact_names = ordered_artifact_names(
+        &target.target,
+        target
+            .artifacts
+            .iter()
+            .map(|artifact| (artifact.name.clone(), artifact.dependencies.clone()))
+            .collect(),
+    )?;
+    let artifacts_by_name = target
+        .artifacts
+        .iter()
+        .map(|artifact| (artifact.name.as_str(), artifact))
+        .collect::<BTreeMap<_, _>>();
+    let artifacts = artifact_names
+        .iter()
+        .map(|name| {
+            let artifact = artifacts_by_name.get(name.as_str()).ok_or_else(|| {
+                format!(
+                    "native deployment plan for `{}` lost artifact `{name}` while ordering dependencies",
+                    target.target
+                )
+            })?;
+            deployment_artifact(artifact, &target.target)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    // ---- Project governed shim inputs ----
+    let shims = target
+        .shims
+        .iter()
+        .map(|shim| NativeShimBuildPlan {
+            name: shim.name.clone(),
+            language: shim.language,
+            sources: shim.sources.clone(),
+            headers: shim.headers.clone(),
+            output: shim.output.clone(),
+        })
+        .collect();
+
+    Ok(NativeDeploymentPlan {
+        schema_version: NATIVE_DEPLOYMENT_PLAN_SCHEMA_VERSION,
+        target: target.target.clone(),
+        toolchain: target.toolchain.clone(),
+        sdk: target.sdk.clone(),
+        platform: target.platform.as_ref().map(NativeDeploymentPlatform::from),
+        headers: target.headers.clone(),
+        include_roots: native_include_roots(target),
+        definitions: target.definitions.clone(),
+        artifacts,
+        shims,
+        provenance: target.provenance.clone(),
+    })
+}
+
+/// Convert one locked artifact into the exact action required by its declared deployment class.
+fn deployment_artifact(artifact: &LockedNativeArtifact, target: &str) -> Result<NativeDeploymentArtifact, String> {
+    // ---- Select the structured deployment action ----
+    let action = match artifact.kind {
+        NativeArtifactKind::Static => NativeDeploymentAction::StaticLink {
+            input: required_locked_artifact_input(artifact, target)?,
+        },
+        NativeArtifactKind::Bundled => NativeDeploymentAction::Bundle {
+            input: required_locked_artifact_input(artifact, target)?,
+            runtime_name: required_locked_artifact_field(
+                artifact.runtime_name.as_deref(),
+                artifact,
+                target,
+                "runtime name",
+            )?,
+            placement: required_locked_artifact_field(artifact.placement.as_deref(), artifact, target, "placement")?,
+            minimum_platform: required_locked_artifact_field(
+                artifact.minimum_platform.as_deref(),
+                artifact,
+                target,
+                "minimum platform",
+            )?,
+        },
+        NativeArtifactKind::System => NativeDeploymentAction::System {
+            capability: required_locked_artifact_field(
+                artifact.capability.as_deref(),
+                artifact,
+                target,
+                "system capability",
+            )?,
+        },
+    };
+
+    // ---- Normalize explicit dependency edges ----
+    let mut dependencies = artifact.dependencies.clone();
+    dependencies.sort();
+    Ok(NativeDeploymentArtifact {
+        name: artifact.name.clone(),
+        dependencies,
+        action,
+    })
+}
+
+/// Require one package-file receipt for a static or bundled artifact.
+fn required_locked_artifact_input(artifact: &LockedNativeArtifact, target: &str) -> Result<LockedNativeInput, String> {
+    artifact.input.clone().ok_or_else(|| {
+        format!(
+            "locked native artifact `{}` on target `{target}` is missing its package-file receipt",
+            artifact.name
+        )
+    })
+}
+
+/// Require one non-empty deployment field from a canonical locked artifact.
+fn required_locked_artifact_field(
+    value: Option<&str>,
+    artifact: &LockedNativeArtifact,
+    target: &str,
+    field: &str,
+) -> Result<String, String> {
+    value
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| {
+            format!(
+                "locked native artifact `{}` on target `{target}` is missing its {field}",
+                artifact.name
+            )
+        })
+}
+
+/// Derive deterministic package-relative include roots without leaking the package's current absolute location.
+fn native_include_roots(target: &LockedNativeTarget) -> Vec<String> {
+    let mut roots = target
+        .headers
+        .iter()
+        .chain(target.shims.iter().flat_map(|shim| shim.headers.iter()))
+        .map(|input| {
+            Path::new(&input.path)
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .map_or_else(|| ".".to_string(), |parent| parent.to_string_lossy().to_string())
+        })
+        .collect::<Vec<_>>();
+    roots.sort();
+    roots.dedup();
+    roots
 }
 
 /// Validate one target artifact's deployment kind and the fields it is allowed to declare.
@@ -500,6 +794,77 @@ fn validate_artifact_dependencies(
         }
     }
     Ok(())
+}
+
+/// Return a stable dependencies-first artifact order and reject malformed or cyclic locked graphs.
+fn ordered_artifact_names(target: &str, artifacts: Vec<(String, Vec<String>)>) -> Result<Vec<String>, String> {
+    // ---- Validate the declared graph shape ----
+    let names = artifacts.iter().map(|(name, _)| name.clone()).collect::<BTreeSet<_>>();
+    if names.len() != artifacts.len() {
+        return Err(format!(
+            "native target `{target}` artifact names must be unique and non-empty"
+        ));
+    }
+
+    let mut dependency_counts = BTreeMap::new();
+    let mut dependents = BTreeMap::<String, BTreeSet<String>>::new();
+    for (name, dependencies) in artifacts {
+        if name.trim().is_empty() {
+            return Err(format!(
+                "native target `{target}` artifact names must be unique and non-empty"
+            ));
+        }
+        let unique_dependencies = dependencies.iter().cloned().collect::<BTreeSet<_>>();
+        if unique_dependencies.len() != dependencies.len()
+            || unique_dependencies
+                .iter()
+                .any(|dependency| dependency == &name || !names.contains(dependency))
+        {
+            return Err(format!(
+                "native artifact `{name}` on target `{target}` must depend on distinct declared sibling artifacts"
+            ));
+        }
+        dependency_counts.insert(name.clone(), unique_dependencies.len());
+        for dependency in unique_dependencies {
+            dependents.entry(dependency).or_default().insert(name.clone());
+        }
+    }
+
+    // ---- Resolve one stable dependencies-first order ----
+    let mut ready = dependency_counts
+        .iter()
+        .filter_map(|(name, count)| (*count == 0).then_some(name.clone()))
+        .collect::<BTreeSet<_>>();
+    let mut ordered = Vec::with_capacity(dependency_counts.len());
+    while let Some(name) = ready.pop_first() {
+        ordered.push(name.clone());
+        if let Some(dependent_names) = dependents.get(&name) {
+            for dependent in dependent_names {
+                let count = dependency_counts.get_mut(dependent).ok_or_else(|| {
+                    format!("native deployment plan for target `{target}` lost dependency state for `{dependent}`")
+                })?;
+                *count = count.checked_sub(1).ok_or_else(|| {
+                    format!("native deployment plan for target `{target}` counted dependency `{name}` more than once")
+                })?;
+                if *count == 0 {
+                    ready.insert(dependent.clone());
+                }
+            }
+        }
+    }
+
+    // ---- Report unresolved cycles ----
+    if ordered.len() != dependency_counts.len() {
+        let cycle = dependency_counts
+            .iter()
+            .filter_map(|(name, count)| (*count > 0).then_some(name.as_str()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(format!(
+            "native target `{target}` artifact dependency graph contains a cycle involving: {cycle}"
+        ));
+    }
+    Ok(ordered)
 }
 
 /// Require one optional native path field and validate it with the common package-relative path policy.
@@ -690,6 +1055,7 @@ deployment-target = "13.0"
 name = "fixture"
 kind = "static"
 path = "native/lib/libfixture.a"
+dependencies = ["foundation"]
 
 [[native.targets.artifacts]]
 name = "foundation"
@@ -755,6 +1121,127 @@ output = "fixture_bridge"
             second[0].shims[0].sources[0].digest
         );
         Ok(())
+    }
+
+    #[test]
+    fn native_deployment_plan_is_portable_dependency_ordered_and_complete() -> Result<(), Box<dyn std::error::Error>> {
+        let (workspace, manifest) = project_with_native_inputs()?;
+        let locked = locked_native_targets(&manifest)?;
+        let plan = native_deployment_plan(&locked[0])?;
+
+        assert_eq!(plan.schema_version, NATIVE_DEPLOYMENT_PLAN_SCHEMA_VERSION);
+        assert_eq!(plan.target, "aarch64-apple-ios");
+        assert_eq!(plan.toolchain, "apple-clang-17");
+        assert_eq!(plan.sdk.as_deref(), Some("iphoneos-18.0"));
+        assert_eq!(plan.include_roots, ["native/include"]);
+        assert_eq!(
+            plan.artifacts
+                .iter()
+                .map(|artifact| artifact.name.as_str())
+                .collect::<Vec<_>>(),
+            ["foundation", "fixture"]
+        );
+        assert!(matches!(
+            &plan.artifacts[0].action,
+            NativeDeploymentAction::System { capability }
+                if capability == "apple.framework.Foundation"
+        ));
+        assert!(matches!(
+            &plan.artifacts[1].action,
+            NativeDeploymentAction::StaticLink { input }
+                if input.path == "native/lib/libfixture.a"
+                    && input.digest.starts_with("sha256:")
+        ));
+        assert_eq!(plan.artifacts[1].dependencies, ["foundation"]);
+        assert_eq!(plan.shims[0].output, "fixture_bridge");
+        assert_eq!(plan.shims[0].sources[0].path, "native/src/bridge.c");
+        assert_eq!(plan.provenance.as_deref(), Some("fixture-source"));
+
+        let serialized = serde_json::to_string(&plan)?;
+        assert!(!serialized.contains(&workspace.path().to_string_lossy().to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn native_deployment_plan_carries_bundled_runtime_placement() -> Result<(), Box<dyn std::error::Error>> {
+        let plan = native_deployment_plan(&LockedNativeTarget {
+            target: "aarch64-linux-android".to_string(),
+            toolchain: "android-ndk-r29".to_string(),
+            sdk: Some("android-36".to_string()),
+            platform: Some(NativeTargetPlatform::Android { api_level: 34 }),
+            definitions: Vec::new(),
+            headers: Vec::new(),
+            artifacts: vec![LockedNativeArtifact {
+                name: "tflite".to_string(),
+                kind: NativeArtifactKind::Bundled,
+                input: Some(LockedNativeInput {
+                    path: "native/android/arm64-v8a/libtensorflowlite_c.so".to_string(),
+                    digest: "sha256:fixture".to_string(),
+                }),
+                capability: None,
+                runtime_name: Some("libtensorflowlite_c.so".to_string()),
+                placement: Some("jniLibs/arm64-v8a".to_string()),
+                minimum_platform: Some("21".to_string()),
+                dependencies: Vec::new(),
+            }],
+            shims: Vec::new(),
+            provenance: Some("tflite-fixture".to_string()),
+        })?;
+
+        assert!(matches!(
+            &plan.artifacts[0].action,
+            NativeDeploymentAction::Bundle {
+                input,
+                runtime_name,
+                placement,
+                minimum_platform,
+            } if input.path == "native/android/arm64-v8a/libtensorflowlite_c.so"
+                && runtime_name == "libtensorflowlite_c.so"
+                && placement == "jniLibs/arm64-v8a"
+                && minimum_platform == "21"
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn native_artifact_dependency_cycles_are_rejected() {
+        let mut target = mobile_target(
+            "aarch64-linux-android",
+            Some("android-36"),
+            NativeTargetPlatform::Android { api_level: 34 },
+        );
+        target.artifacts = vec![
+            NativeArtifact {
+                name: "model".to_string(),
+                kind: NativeArtifactKind::Static,
+                path: Some("native/lib/libmodel.a".to_string()),
+                capability: None,
+                runtime_name: None,
+                placement: None,
+                minimum_platform: None,
+                dependencies: vec!["runtime".to_string()],
+            },
+            NativeArtifact {
+                name: "runtime".to_string(),
+                kind: NativeArtifactKind::Static,
+                path: Some("native/lib/libruntime.a".to_string()),
+                capability: None,
+                runtime_name: None,
+                placement: None,
+                minimum_platform: None,
+                dependencies: vec!["model".to_string()],
+            },
+        ];
+        let native = NativeSection {
+            schema: NATIVE_MANIFEST_SCHEMA_VERSION,
+            targets: vec![target],
+        };
+
+        assert!(
+            native
+                .validate()
+                .is_err_and(|error| error.contains("dependency graph contains a cycle"))
+        );
     }
 
     #[test]
