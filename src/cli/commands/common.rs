@@ -13,7 +13,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 
 #[cfg(feature = "rust_inspect")]
 use crate::backend::ProjectGenerator;
-use crate::backend::c_abi::{CAbiTarget, ClangToolchain, verify_checked_c_binding};
+use crate::backend::c_abi::{CAbiVerificationPlan, ClangToolchain, verify_checked_c_binding};
 use crate::backend::ir::detect_serde_non_import_usage;
 use crate::backend::project::generator::GENERATED_CARGO_TARGET_DIR_ENV;
 use crate::backend::project::{GENERATED_TOOLCHAIN_SUPPORT_CRATES, INCAN_STDLIB_CRATE_NAME};
@@ -1772,6 +1772,7 @@ impl CompilationSession {
             modules,
             self.manifest.as_ref(),
             &provider_plan,
+            None,
             #[cfg(feature = "rust_inspect")]
             rust_inspect_manifest_dir,
         )?;
@@ -4182,27 +4183,30 @@ pub(crate) fn typecheck_modules_with_import_graph(
     provider_plan: &Arc<ProviderPlan>,
     #[cfg(feature = "rust_inspect")] rust_inspect_manifest_dir: Option<&Path>,
 ) -> CliResult<()> {
-    typecheck_modules_with_import_graph_detailed(
+    typecheck_modules_with_import_graph_detailed_for_c_abi_target(
         modules,
         manifest,
         provider_plan,
+        None,
         #[cfg(feature = "rust_inspect")]
         rust_inspect_manifest_dir,
     )
     .map_err(|failure| CliError::failure(failure.render_human()))
 }
 
-/// Typecheck all collected modules and preserve diagnostics as structured data for stable reporting.
-pub(crate) fn typecheck_modules_with_import_graph_detailed(
+/// Typecheck modules while selecting one already-validated C ABI target for this invocation.
+pub(crate) fn typecheck_modules_with_import_graph_detailed_for_c_abi_target(
     modules: &[ParsedModule],
     manifest: Option<&ProjectManifest>,
     provider_plan: &Arc<ProviderPlan>,
+    c_abi_plan: Option<&CAbiVerificationPlan>,
     #[cfg(feature = "rust_inspect")] rust_inspect_manifest_dir: Option<&Path>,
 ) -> Result<(), CliDiagnosticFailure> {
     typecheck_modules_with_import_graph_info(
         modules,
         manifest,
         provider_plan,
+        c_abi_plan,
         #[cfg(feature = "rust_inspect")]
         rust_inspect_manifest_dir,
     )
@@ -4214,12 +4218,14 @@ pub(crate) fn typecheck_modules_with_import_graph_info(
     modules: &[ParsedModule],
     manifest: Option<&ProjectManifest>,
     provider_plan: &Arc<ProviderPlan>,
+    c_abi_plan: Option<&CAbiVerificationPlan>,
     #[cfg(feature = "rust_inspect")] rust_inspect_manifest_dir: Option<&Path>,
 ) -> Result<BTreeMap<PathBuf, TypeCheckInfo>, CliDiagnosticFailure> {
     let typecheck_artifacts = typecheck_modules_with_import_graph_artifacts(
         modules,
         manifest,
         provider_plan,
+        c_abi_plan,
         #[cfg(feature = "rust_inspect")]
         rust_inspect_manifest_dir,
     )?;
@@ -4245,6 +4251,7 @@ fn typecheck_modules_with_import_graph_artifacts(
     modules: &[ParsedModule],
     manifest: Option<&ProjectManifest>,
     provider_plan: &Arc<ProviderPlan>,
+    c_abi_plan: Option<&CAbiVerificationPlan>,
     #[cfg(feature = "rust_inspect")] rust_inspect_manifest_dir: Option<&Path>,
 ) -> Result<TypecheckModuleArtifacts, CliDiagnosticFailure> {
     let declared = manifest.map(|m| m.declared_rust_crate_names());
@@ -4298,7 +4305,7 @@ fn typecheck_modules_with_import_graph_artifacts(
     }
 
     if diagnostics_out.is_empty() {
-        verify_checked_c_bindings(modules, &mut type_infos, &mut diagnostics_out);
+        verify_checked_c_bindings(modules, &mut type_infos, c_abi_plan, &mut diagnostics_out);
     }
 
     if diagnostics_out.is_empty() {
@@ -4313,13 +4320,14 @@ fn typecheck_modules_with_import_graph_artifacts(
     }
 }
 
-/// Verify every checked C descriptor against the selected host-target Clang toolchain before any code generation.
+/// Verify every checked C descriptor against the host or explicitly selected target before any code generation.
 ///
 /// The typechecker has already established the source contract. This phase only checks those explicit facts against
 /// the declared header for the target; it neither imports arbitrary headers nor performs library discovery.
 fn verify_checked_c_bindings(
     modules: &[ParsedModule],
     type_infos: &mut [TypeCheckInfo],
+    selected_plan: Option<&CAbiVerificationPlan>,
     diagnostics_out: &mut Vec<CliDiagnostic>,
 ) {
     let mut bindings = Vec::new();
@@ -4335,14 +4343,14 @@ fn verify_checked_c_bindings(
     if bindings.is_empty() {
         return;
     }
-    let Some(target) = CAbiTarget::host() else {
+    let Some(plan) = selected_plan.cloned().or_else(CAbiVerificationPlan::host) else {
         for (_, module, binding) in bindings {
             diagnostics_out.push(CliDiagnostic {
                 file_path: module.file_path.to_string_lossy().to_string(),
                 source: module.source.clone(),
                 phase: diagnostics::DiagnosticPhase::Typecheck,
                 error: diagnostics::CompileError::type_error(
-                    "checked C bindings currently require a Linux x86-64 or macOS arm64 verification target"
+                    "checked C bindings currently require a Linux x86-64 or macOS arm64 host verification target"
                         .to_string(),
                     binding.span,
                 ),
@@ -4350,7 +4358,7 @@ fn verify_checked_c_bindings(
         }
         return;
     };
-    let toolchain = match ClangToolchain::discover() {
+    let toolchain = match ClangToolchain::discover(&plan) {
         Ok(toolchain) => toolchain,
         Err(error) => {
             for (_, module, binding) in bindings {
@@ -4365,7 +4373,7 @@ fn verify_checked_c_bindings(
         }
     };
     for (module_index, module, binding) in bindings {
-        match verify_checked_c_binding(&toolchain, target, &binding) {
+        match verify_checked_c_binding(&toolchain, &plan, &binding) {
             Ok(receipt) => {
                 let enum_values = &mut type_infos[module_index].c_abi.enum_values;
                 for ((enumeration, variant), value) in receipt.enum_values() {

@@ -120,7 +120,7 @@ binding Fixture:
         right: c.i32 = right
 ```
 
-Clang checks each requested field offset, size, and alignment for the selected host target. It does not infer omitted fields or discover a structure from the header. By-value structure and pointer calls are deliberately unavailable in this slice, so do not use a structure declaration as an assertion that you can already pass it across the boundary.
+Clang checks each requested field offset, size, and alignment for the selected verification target. It does not infer omitted fields or discover a structure from the header. By-value structure and pointer calls are deliberately unavailable in this slice, so do not use a structure declaration as an assertion that you can already pass it across the boundary.
 
 ## Freeze native inputs for a target
 
@@ -168,6 +168,23 @@ Every declared package file must be a regular, normalized relative path. Running
 
 The locked mobile profile is a target-selection receipt, not a machine-local path. It records which Android API level or iOS deployment target a future managed toolchain must use without embedding an NDK directory, Xcode path, Gradle configuration, or signing credential in the package.
 
+## Check a declared mobile ABI target
+
+`incan check` verifies checked C declarations against the compiler host by default. Pass `--native-target` to select exactly one target declared by the current package instead:
+
+```console
+incan check --native-target aarch64-apple-ios .
+```
+
+For an iOS target on macOS, the verifier selects Xcode Clang with the iPhoneOS SDK sysroot and uses the declared deployment target in Clang's ABI triple. For Android, supply the NDK Clang executable that corresponds to the declared toolchain while managed Oven resolution is still being built:
+
+```console
+INCAN_C_ABI_CLANG=/path/to/ndk/toolchains/llvm/prebuilt/host/bin/aarch64-linux-android34-clang \
+  incan check --native-target aarch64-linux-android .
+```
+
+The selected target's `definitions` are passed to both the signature/layout probe and the enum-value probe. The command rejects a target that is not declared by the package. It also keeps the boundary narrow: this checks the source-owned C ABI against that compiler and target profile, but it does not cross-compile generated Rust, link declared artifacts, build shims, stage a mobile package, or attest that a logical `toolchain` or `sdk` name matches the installed binary. `INCAN_C_ABI_CLANG` provisions the executable for this invocation; it does not replace the manifest as ABI or target authority.
+
 This declaration and lock slice deliberately does not download artifacts, discover a system library, compile a shim, or define a Gradle/Xcode handover format. Those are separate Oven and platform-tooling responsibilities. Do not put signing or license policy here: native publication policy belongs to `incan.pub`.
 
 ## Interpret common failures
@@ -180,6 +197,8 @@ This declaration and lock slice deliberately does not download artifacts, discov
 | Native enum carrier mismatch | Keep one declared `c.*` carrier for all variants and verify what the header exposes after macro expansion. |
 | `take()` is rejected | For `Out`, guard the read with the binding outcome that names the initialized parameter. For `InOut`, ensure the selected outcome has not invalidated the slot. |
 | C resource was transferred or requires a mutable borrow | Do not reuse a resource passed as `c.Owned[...]`; bind it as `mut` before a call declared `c.BorrowedMut[...]`. |
+| `--native-target` is not declared | Add the exact target and its required mobile `platform` facts to `[native].targets`; the command does not invent a target profile. |
+| Android toolchain is not provisioned | Point `INCAN_C_ABI_CLANG` at the NDK Clang executable for the declared API profile until Oven owns managed toolchain resolution. |
 | Missing system library at final link | `c.system_library("name")` records a logical system capability; this slice does not download, vendor, or lock a library for you. |
 
 ## Decide whether C is the right boundary

@@ -322,6 +322,10 @@ pub enum Command {
         /// Select a non-persistent SDK profile for this check
         #[command(flatten)]
         sdk_profile: SdkProfileCliFlags,
+        /// Verify checked C declarations against this declared native target; this does not cross-compile Rust or
+        /// package an app
+        #[arg(long = "native-target", value_name = "TRIPLE")]
+        native_target: Option<String>,
         /// Select every member in the active workspace
         #[arg(long, conflicts_with = "members")]
         workspace: bool,
@@ -982,6 +986,7 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             format,
             package_features,
             sdk_profile,
+            native_target,
             workspace,
             members,
         }) => execute_check(
@@ -989,6 +994,7 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             format,
             package_features.into(),
             sdk_profile.sdk_profile,
+            native_target,
             workspace,
             members,
         ),
@@ -1499,11 +1505,18 @@ fn execute_check(
     format: DiagnosticOutputFormat,
     package_features: FeatureSelection,
     sdk_profile: Option<String>,
+    native_target: Option<String>,
     select_workspace: bool,
     member_selectors: Vec<String>,
 ) -> CliResult<ExitCode> {
     let Some(scope) = resolve_workspace_command_scope(select_workspace, &member_selectors)? else {
-        return commands::check_path_with_selections(&path, format, &package_features, sdk_profile.as_deref());
+        return commands::diagnostics::check_path_with_native_target_selection(
+            &path,
+            format,
+            &package_features,
+            sdk_profile.as_deref(),
+            native_target.as_deref(),
+        );
     };
 
     let mut outcomes = Vec::new();
@@ -1520,10 +1533,11 @@ fn execute_check(
                 continue;
             }
         };
-        match commands::diagnostics::check_path_report_with_selections(
+        match commands::diagnostics::check_path_report_with_native_target_selection(
             &target,
             &package_features,
             sdk_profile.as_deref(),
+            native_target.as_deref(),
         ) {
             Ok(report) => outcomes.push(WorkspaceCheckMemberOutcome {
                 member: member.clone(),
@@ -2638,6 +2652,26 @@ mod tests {
         };
         assert!(!workspace);
         assert_eq!(members, vec!["alpha"]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_cli_parse_check_native_target() -> Result<(), clap::Error> {
+        let check = parse_cli([
+            "incan",
+            "check",
+            "--native-target",
+            "aarch64-linux-android",
+            "src/main.incn",
+        ])?;
+        let Some(Command::Check {
+            native_target, path, ..
+        }) = check.command
+        else {
+            return Err(expected_command("check"));
+        };
+        assert_eq!(native_target.as_deref(), Some("aarch64-linux-android"));
+        assert_eq!(path, std::path::PathBuf::from("src/main.incn"));
         Ok(())
     }
 

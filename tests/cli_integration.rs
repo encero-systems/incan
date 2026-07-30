@@ -68,6 +68,27 @@ fn configured_incan_command(current_dir: &Path, args: &[&str]) -> Command {
     command
 }
 
+/// Return a Clang executable suitable for a header-only C ABI verifier fixture, when this host has one.
+fn c_abi_test_clang() -> Option<String> {
+    if let Some(executable) = std::env::var_os("INCAN_C_ABI_CLANG").filter(|value| !value.is_empty()) {
+        return Some(executable.to_string_lossy().into_owned());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let output = Command::new("xcrun").args(["--find", "clang"]).output().ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        return (!path.is_empty()).then_some(path);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let status = Command::new("clang").arg("--version").status().ok()?;
+        status.success().then_some("clang".to_string())
+    }
+}
+
 /// Run one Unix CLI probe in its own process group so recursive subprocess regressions can be terminated together.
 #[cfg(unix)]
 fn run_incan_with_timeout(
@@ -5298,6 +5319,126 @@ output = "fixture_bridge"
         "declared native input drift should invalidate the lock:\n{}",
         String::from_utf8_lossy(&stale.stderr)
     );
+    Ok(())
+}
+
+#[test]
+fn check_verifies_c_bindings_against_a_declared_android_target() -> Result<(), Box<dyn std::error::Error>> {
+    let Some(clang) = c_abi_test_clang() else {
+        return Ok(());
+    };
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(
+        tmp.path(),
+        "declared_android_c_abi_check",
+        r#"
+
+[sdk]
+profile = "minimal"
+
+[native]
+schema = 1
+
+[[native.targets]]
+target = "aarch64-linux-android"
+toolchain = "android-ndk-r29"
+sdk = "android-36"
+definitions = ["INCAN_ANDROID_FIXTURE=1"]
+
+[native.targets.platform]
+kind = "android"
+api-level = 34
+"#,
+    )?;
+    let header = tmp.path().join("android_fixture.h");
+    fs::write(
+        &header,
+        "#ifndef INCAN_ANDROID_FIXTURE\n#error expected Android target definition\n#endif\ntypedef struct fixture_pair { int left; int right; } fixture_pair;\n#define FIXTURE_OK 0\nint fixture_abs(int value);\n",
+    )?;
+    fs::write(
+        &main_path,
+        format!(
+            "from std.interop import c\n\nbinding Fixture:\n    header = \"{}\"\n    link = c.system_library(\"c\")\n\n    symbol absolute(value: c.i32) -> c.i32:\n        native = \"fixture_abs\"\n\n    enum Status:\n        OK: c.i32 = FIXTURE_OK\n\n    struct Pair:\n        native = \"fixture_pair\"\n        left: c.i32 = left\n        right: c.i32 = right\n\ndef main() -> None:\n    assert Fixture.Status.OK == 0\n",
+            header.display()
+        ),
+    )?;
+    let main_arg = main_path.to_str().ok_or("main path was not valid UTF-8")?;
+
+    let output = run_incan_with_env(
+        tmp.path(),
+        &["check", "--native-target", "aarch64-linux-android", main_arg],
+        &[("INCAN_C_ABI_CLANG", clang.as_str())],
+    )?;
+    assert_success(&output, "declared Android C ABI verification");
+    Ok(())
+}
+
+#[test]
+fn check_rejects_an_undeclared_native_target() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "undeclared_native_target", "")?;
+    let main_arg = main_path.to_str().ok_or("main path was not valid UTF-8")?;
+
+    let output = run_incan(
+        tmp.path(),
+        &["check", "--native-target", "aarch64-linux-android", main_arg],
+    )?;
+    assert_failure(&output, "undeclared native target selection");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("requires a [native] declaration in incan.toml"),
+        "unexpected undeclared-target diagnostic:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn check_verifies_c_bindings_against_a_declared_ios_target() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(
+        tmp.path(),
+        "declared_ios_c_abi_check",
+        r#"
+
+[sdk]
+profile = "minimal"
+
+[native]
+schema = 1
+
+[[native.targets]]
+target = "aarch64-apple-ios"
+toolchain = "apple-clang-17"
+sdk = "iphoneos-18.0"
+definitions = ["INCAN_IOS_FIXTURE=1"]
+
+[native.targets.platform]
+kind = "ios"
+deployment-target = "13.0"
+"#,
+    )?;
+    let header = tmp.path().join("ios_fixture.h");
+    fs::write(
+        &header,
+        "#include <stdint.h>\n#ifndef INCAN_IOS_FIXTURE\n#error expected iOS target definition\n#endif\ntypedef struct fixture_pair { int32_t left; int32_t right; } fixture_pair;\n#define FIXTURE_OK 0\nint32_t fixture_abs(int32_t value);\n",
+    )?;
+    fs::write(
+        &main_path,
+        format!(
+            "from std.interop import c\n\nbinding Fixture:\n    header = \"{}\"\n    link = c.system_library(\"c\")\n\n    symbol absolute(value: c.i32) -> c.i32:\n        native = \"fixture_abs\"\n\n    enum Status:\n        OK: c.i32 = FIXTURE_OK\n\n    struct Pair:\n        native = \"fixture_pair\"\n        left: c.i32 = left\n        right: c.i32 = right\n\ndef main() -> None:\n    assert Fixture.Status.OK == 0\n",
+            header.display()
+        ),
+    )?;
+    let main_arg = main_path.to_str().ok_or("main path was not valid UTF-8")?;
+
+    let output = run_incan_with_env_and_removed(
+        tmp.path(),
+        &["check", "--native-target", "aarch64-apple-ios", main_arg],
+        &[],
+        &["INCAN_C_ABI_CLANG"],
+    )?;
+    assert_success(&output, "declared iOS C ABI verification");
     Ok(())
 }
 

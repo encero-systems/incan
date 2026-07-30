@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use clap::ValueEnum;
 use serde::Serialize;
 
+use crate::backend::c_abi::CAbiVerificationPlan;
 use crate::cli::{CliError, CliResult, ExitCode};
 use crate::frontend::diagnostics::{self, DIAGNOSTIC_SCHEMA_VERSION, StableDiagnostic};
 #[cfg(feature = "rust_inspect")]
@@ -19,7 +20,7 @@ use crate::provider::FeatureSelection;
 use super::common::CargoPolicy;
 use super::common::{
     CliDiagnosticFailure, CompilationSession, collect_modules_detailed_with_session, resolve_project_root,
-    typecheck_modules_with_import_graph_detailed,
+    typecheck_modules_with_import_graph_detailed_for_c_abi_target,
 };
 #[cfg(feature = "rust_inspect")]
 use super::lock::{RustInspectTypecheckRequest, prepare_rust_inspect_typecheck_workspace};
@@ -86,6 +87,19 @@ pub fn check_path_with_selections(
     render_check_report(&report, format)
 }
 
+/// Run the canonical check pipeline with an explicit declared target for checked C ABI verification only.
+pub(crate) fn check_path_with_native_target_selection(
+    path: &Path,
+    format: DiagnosticOutputFormat,
+    feature_selection: &FeatureSelection,
+    sdk_profile_override: Option<&str>,
+    native_target: Option<&str>,
+) -> CliResult<ExitCode> {
+    let report =
+        check_path_report_with_native_target_selection(path, feature_selection, sdk_profile_override, native_target)?;
+    render_check_report(&report, format)
+}
+
 /// Run the canonical check pipeline for one package-feature and SDK-profile projection without rendering it.
 ///
 /// This is the single-project compiler boundary used by both `incan check` and RFC 077 workspace command fan-out. It
@@ -94,6 +108,16 @@ pub(crate) fn check_path_report_with_selections(
     path: &Path,
     feature_selection: &FeatureSelection,
     sdk_profile_override: Option<&str>,
+) -> CliResult<DiagnosticReport> {
+    check_path_report_with_native_target_selection(path, feature_selection, sdk_profile_override, None)
+}
+
+/// Run one canonical package-feature, SDK-profile, and declared C ABI target projection without rendering it.
+pub(crate) fn check_path_report_with_native_target_selection(
+    path: &Path,
+    feature_selection: &FeatureSelection,
+    sdk_profile_override: Option<&str>,
+    native_target: Option<&str>,
 ) -> CliResult<DiagnosticReport> {
     let normalized_path = normalize_input_path(path)?;
     let compilation_session =
@@ -109,12 +133,15 @@ pub(crate) fn check_path_report_with_selections(
                 return Ok(diagnostic_report_from_failure(failure));
             }
         };
+    let manifest = compilation_session.manifest.clone();
+    let c_abi_plan = native_target
+        .map(|target| select_native_c_abi_verification_plan(manifest.as_ref(), target))
+        .transpose()?;
     let modules = match collect_modules_detailed_with_session(normalized_path.clone(), &compilation_session) {
         Ok(modules) => modules,
         Err(failure) => return Ok(diagnostic_report_from_failure(failure)),
     };
     let project_root = resolve_project_root(&normalized_path);
-    let manifest = compilation_session.manifest.clone();
     let library_manifest_index = compilation_session.library_manifest_index.clone();
     let provider_plan = compilation_session.provider_plan_for_modules(&modules)?;
     #[cfg(feature = "rust_inspect")]
@@ -146,15 +173,18 @@ pub(crate) fn check_path_report_with_selections(
             .and_then(|manifest| manifest.build.as_ref().and_then(|build| build.rust_edition.clone())),
     })?;
 
-    match typecheck_modules_with_import_graph_detailed(
+    let typecheck = typecheck_modules_with_import_graph_detailed_for_c_abi_target(
         &modules,
         manifest.as_ref(),
         &provider_plan,
+        c_abi_plan.as_ref(),
         #[cfg(feature = "rust_inspect")]
         rust_inspect_manifest_dir
             .as_ref()
             .map(|workspace| workspace.manifest_dir()),
-    ) {
+    );
+
+    match typecheck {
         Ok(()) => Ok(DiagnosticReport {
             schema_version: DIAGNOSTIC_SCHEMA_VERSION,
             ok: true,
@@ -163,6 +193,29 @@ pub(crate) fn check_path_report_with_selections(
         }),
         Err(failure) => Ok(diagnostic_report_from_failure(failure)),
     }
+}
+
+/// Select exactly one manifest-native C ABI profile for an invocation that names `--native-target`.
+fn select_native_c_abi_verification_plan(
+    manifest: Option<&crate::manifest::ProjectManifest>,
+    requested_target: &str,
+) -> CliResult<CAbiVerificationPlan> {
+    let Some(manifest) = manifest else {
+        return Err(CliError::failure(format!(
+            "`--native-target {requested_target}` requires a project manifest with a [native] declaration"
+        )));
+    };
+    let Some(native) = manifest.native.as_ref() else {
+        return Err(CliError::failure(format!(
+            "`--native-target {requested_target}` requires a [native] declaration in incan.toml"
+        )));
+    };
+    let Some(native_target) = native.targets.iter().find(|target| target.target == requested_target) else {
+        return Err(CliError::failure(format!(
+            "`--native-target {requested_target}` is not declared by [native].targets in incan.toml"
+        )));
+    };
+    CAbiVerificationPlan::from_native_target(native_target).map_err(CliError::failure)
 }
 
 /// Print a catalog-backed diagnostic explanation.

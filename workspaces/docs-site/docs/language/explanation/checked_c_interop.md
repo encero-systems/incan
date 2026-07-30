@@ -16,7 +16,7 @@ flowchart LR
   F --> A["Application API"]
 ```
 
-The probe is syntax-only. It checks free-function signatures, folds declared enum constants, and checks requested plain-structure size, alignment, and field offsets for the selected host ABI. It neither links the native library nor executes its code. The later generated build still links the system library named by `c.system_library("name")`.
+The probe is syntax-only. It checks free-function signatures, folds declared enum constants, and checks requested plain-structure size, alignment, and field offsets for either the host ABI or an explicitly selected package-native target. It neither links the native library nor executes its code. The later generated build still links the system library named by `c.system_library("name")`.
 
 ## Why the boundary begins with C declarations
 
@@ -38,11 +38,13 @@ The language in which a library happens to be implemented is not decisive. A C++
 
 ## What is deliberately not claimed yet
 
-The checked boundary does not resolve native artifacts, compile C/C++ shims, provision Android or Apple targets, or hand application assemblies to Gradle and Xcode. It also does not make `c.system_library("name")` a portable library-discovery mechanism. Those jobs need target-specific artifact identity and packaging facts, which are distinct from the source ABI declaration.
+The checked boundary does not resolve native artifacts, compile C/C++ shims, cross-compile generated Rust, or hand application assemblies to Gradle and Xcode. It also does not make `c.system_library("name")` a portable library-discovery mechanism. Those jobs need target-specific artifact identity and packaging facts, which are distinct from the source ABI declaration.
 
-A package can declare target-specific, package-relative headers, static or bundled artifacts, system capabilities, C/C++ shim sources, and a mobile platform version in `incan.toml`; `incan lock` then records content-derived receipts for those inputs. Android arm64 records its NDK API level, while iOS arm64 records its deployment target. The declaration is intentionally binding-kind-neutral, so a future JNI, Python-extension, or other native entry point can consume the same package-level evidence without replacing the language binding as ABI authority.
+The native-input declaration records those facts without taking over their later jobs. A package can declare target-specific, package-relative headers, static or bundled artifacts, system capabilities, C/C++ shim sources, and a mobile platform version in `incan.toml`; `incan lock` then records content-derived receipts for those inputs. Android arm64 records its NDK API level, while iOS arm64 records its deployment target. The declaration is intentionally binding-kind-neutral, so a future JNI, Python-extension, or other native entry point can consume the same package-level evidence without replacing the language binding as ABI authority.
 
-That is a locking boundary, not a native build system or a platform packager. It does not perform host discovery, download inputs, compile a shim, select a final Android/iOS deployment layout, or interpret publication signing and licence policy. Oven will eventually own managed resolution, verification, baking, caching, staging, and a directionally useful deployment plan; Gradle and Xcode remain final application assembly and signing consumers. The exact handover interface remains an associated RFC concern rather than a promise frozen into this experimental surface.
+`incan check --native-target <triple>` connects one declared mobile profile to the source ABI verifier. Android API levels and iOS deployment targets become part of Clang's exact target triple, and the selected target's preprocessor definitions apply to every probe. The command still stops at syntax and layout verification. Android currently needs an explicitly provisioned NDK Clang executable, while iOS uses the selected Xcode iPhoneOS SDK; neither path yet attests the installed toolchain or SDK against the manifest's logical identity.
+
+That remains a declaration and verification boundary, not a native build system or a platform packager. It does not download inputs, compile a shim, select a final Android/iOS deployment layout, or interpret publication signing and licence policy. Oven will eventually own managed resolution, toolchain attestation, verification, baking, caching, staging, and a directionally useful deployment plan; Gradle and Xcode remain final application assembly and signing consumers. The exact handover interface remains an associated RFC concern rather than a promise frozen into this experimental surface.
 
 The same restraint still applies to views and general pointers. C strings, spans, caller-owned buffers, scoped foreign views, arbitrary pointer operations, and context-manager syntax need additional lifetime and bounds contracts. The current guarantee is deliberately smaller: opaque resources and output storage remain private compiler-managed carriers, while public APIs use ordinary Incan values.
 
