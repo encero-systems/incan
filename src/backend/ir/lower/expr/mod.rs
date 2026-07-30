@@ -128,7 +128,7 @@ impl AstLowering {
             };
             let variable_access = match access {
                 crate::frontend::typechecker::CResourceAccess::Owned => VarAccess::Move,
-                crate::frontend::typechecker::CResourceAccess::Borrowed => VarAccess::Borrow,
+                crate::frontend::typechecker::CResourceAccess::Borrowed => VarAccess::CAbiBorrow,
                 crate::frontend::typechecker::CResourceAccess::BorrowedMut => VarAccess::BorrowMut,
             };
             Self::set_checked_c_argument_access(&mut argument.expr, variable_access);

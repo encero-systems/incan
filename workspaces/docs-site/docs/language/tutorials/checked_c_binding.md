@@ -84,6 +84,9 @@ binding Fixture:
     symbol close(handle: c.Owned[Handle]) -> None:
         native = "fixture_close"
 
+    symbol inspect(handle: c.Borrowed[Handle]) -> c.i32:
+        native = "fixture_inspect"
+
     enum Status:
         OK: c.i32 = FIXTURE_OK
 
@@ -94,18 +97,27 @@ binding Fixture:
             initializes = [output]
 ```
 
-`c.Owned[Handle]` is a non-copyable private bridge value. Passing it to `close` transfers the resource to the declared release operation. If ordinary control flow leaves a still-owned handle unconsumed, the generated release guard performs the same release once. `c.Out[...]` is compiler-managed storage, not a general-purpose container: call it with `c.out[...]()`, and call `take()` only on the outcome path that declares the slot initialized.
+`c.Owned[Handle]` is a non-copyable compiler-managed bridge value. Passing it to `close` transfers the resource to the declared release operation. If ordinary control flow leaves a still-owned handle unconsumed, the generated release guard performs the same release once. `c.Out[...]` is compiler-managed storage, not a general-purpose container: call it with `c.out[...]()`, and call `take()` only on the outcome path that declares the slot initialized.
+
+## Put the safe façade beside the binding
+
+The binding and its ordinary Incan façade can live in the same module. Keep `unsafe:` entirely inside the façade and publish only the façade from a library. The application below receives one ordinary `bool`; it never receives a raw handle, output slot, or native status integer.
 
 ```incan
-def open_handle() -> int:
+def handle_is_ready() -> bool:
     unsafe:
         output = c.out[c.Owned[Handle]]()
         status = Fixture.open(output)
-        if status == Fixture.Status.OK:
-            handle = output.take()
-            Fixture.close(handle)
-        return status
+        if status != Fixture.Status.OK:
+            return False
+        handle = output.take()
+        return Fixture.inspect(handle) == 0
+
+def main() -> None:
+    assert handle_is_ready()
 ```
+
+`inspect` receives a call-scoped shared borrow, so `handle` remains owned by the façade. It is released automatically when the function returns; use `Fixture.close(handle)` only when the façade needs an earlier, explicit release point. This lifecycle does not need a `with` statement because the compiler-owned resource guard already covers normal scope exit and early return.
 
 Use `c.InOut[c.i32]` for a scalar pointer whose initial value is supplied by the caller and may be updated by the native call. Create it with `c.inout(value)` and consume its post-call value with `take()`. A binding outcome can state that an `Out` slot is initialized and that an `InOut` slot is updated; the compiler will reject an unguarded `Out.take()`.
 

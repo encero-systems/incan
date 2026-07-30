@@ -24,12 +24,10 @@ The probe is syntax-only. It checks free-function signatures, folds declared enu
 
 The declaration projection deliberately does not absorb facts with different lifecycles:
 
-| Surface | Question it answers |
-| --- | --- |
-| Binding inspection | What ABI, ownership, output, enum, and layout contract did the compiler accept from this source graph? |
-| `[oven.interop]` and `incan.lock` | What target requirements and package-owned physical inputs did the author declare and lock? |
-| Future Oven receipt and store | Which concrete toolchain, SDK, artifacts, commands, and shim outputs satisfied those requirements? |
-| Future editor and codegraph projections | Where are raw declarations, private bridges, and public façades related in source? |
+- Binding inspection answers which ABI, ownership, output, enum, and layout contract the compiler accepted from the source graph.
+- `[oven.interop]` and `incan.lock` answer which target requirements and package-owned physical inputs the author declared and locked.
+- A future Oven receipt and store will answer which concrete toolchain, SDK, artifacts, commands, and shim outputs satisfied those requirements.
+- Future editor and codegraph projections will answer where raw declarations, private bridges, and public façades are related in source.
 
 Keeping these projections separate prevents a source inspection from being mistaken for evidence that an artifact was resolved, a shim was built, or a mobile package is ready. They can still share stable binding identities as the tooling vertical grows.
 
@@ -39,15 +37,15 @@ C is an ABI, not a complete ownership model. A header can expose an integer func
 
 The current surface adds one narrow ownership model without widening into general pointers. A binding may declare an opaque resource, one matching release operation, and whether each call consumes, shares, or mutably borrows that resource. It may also declare scalar and owned-resource output positions. These are compiler-owned call facts: the source does not expose raw addresses, and generated Rust does not infer ownership from its own requirements. The façade above the binding remains responsible for input validation, native status interpretation, error models, retries, and cancellation.
 
+A binding and its façade can live in the same Incan module. The raw calls stay inside a small `unsafe:` region, while the package publishes only the façade's ordinary values and domain operations. A compiler-managed owned resource carries a last-resort release guard, so a façade can borrow it for one checked call and return normally without inventing a separate context-manager API. An explicit release call remains available when the domain needs an earlier release point.
+
 ## C interop and Rust interop solve different problems
 
 Neither choice is universally better:
 
-| Choose | When it is the better fit today |
-| --- | --- |
-| Checked C binding | The supported foreign boundary is a small, stable C ABI whose scalar calls, opaque handles, and output positions can be declared and verified exactly. |
-| Rust interop | A maintained Rust crate already exposes the safe API you need, especially for resources, callbacks, async work, collections, or richer types. |
-| A future checked shim | The underlying C API is real but needs an adapter for callbacks, variadics, function tables, bitfields, unions, or lifetime relationships. |
+- Choose a checked C binding when the supported foreign boundary is a small, stable C ABI whose scalar calls, opaque handles, and output positions can be declared and verified exactly.
+- Choose Rust interop when a maintained Rust crate already exposes the safe API you need, especially for resources, callbacks, async work, collections, or richer types.
+- Choose a future checked shim when the underlying C API is real but needs an adapter for callbacks, variadics, function tables, bitfields, unions, or lifetime relationships.
 
 The language in which a library happens to be implemented is not decisive. A C++ engine, a Python extension, or a Rust library may intentionally publish a C ABI; a Rust wrapper can still be preferable when it owns difficult safety and build concerns well. Conversely, a small C ABI can be clearer and more durable than a wrapper when it is the producer's published contract.
 

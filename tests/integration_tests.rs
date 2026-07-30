@@ -17944,6 +17944,104 @@ def main() -> Result[None, str]:
     }
 
     #[test]
+    fn consumer_check_hides_owned_c_resources_behind_an_incan_facade() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let fixture_header = tmp.path().join("fixture.h");
+        std::fs::write(
+            &fixture_header,
+            r#"typedef struct fixture_file FILE;
+int fclose(FILE *);
+FILE *tmpfile(void);
+int fflush(FILE *);
+int fileno(FILE *);
+int close(int);
+"#,
+        )?;
+        let source = format!(
+            r#"from std.interop import c
+
+binding CFile:
+    header = "{}"
+    link = c.system_library("c")
+
+    resource File:
+        native = "FILE"
+        release = close
+
+    symbol close(file: c.Owned[File]) -> c.i32:
+        native = "fclose"
+
+    symbol open() -> Option[c.Owned[File]]:
+        native = "tmpfile"
+
+    symbol flush(file: c.BorrowedMut[File]) -> c.i32:
+        native = "fflush"
+
+    symbol descriptor(file: c.Borrowed[File]) -> c.i32:
+        native = "fileno"
+
+    symbol close_descriptor(descriptor: c.i32) -> c.i32:
+        native = "close"
+
+def temporary_descriptor() -> int:
+    unsafe:
+        if let Some(open_file) = CFile.open():
+            mut file = open_file
+            if CFile.flush(file) != 0:
+                return -1
+            return CFile.descriptor(file)
+        return -1
+
+def temporary_file_is_released() -> bool:
+    descriptor = temporary_descriptor()
+    if descriptor < 0:
+        return False
+    unsafe:
+        return CFile.close_descriptor(descriptor) == -1
+
+def main() -> None:
+    assert temporary_file_is_released()
+"#,
+            fixture_header.display()
+        );
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"checked_c_resource_facade\"\n\n[sdk]\nprofile = \"minimal\"\n",
+            &source,
+        )?;
+        let generated_cargo_target = tmp.path().join("generated-cargo-target");
+
+        let output = run_check_against_checkout_sdk(&main_path, &generated_cargo_target)?;
+        assert!(
+            output.status.success(),
+            "expected a same-module Incan façade to hide an owned C resource.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let checkout = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let run_output = super::incan_command()
+            .env("INCAN_SOURCE_ROOT", checkout)
+            .env("INCAN_STDLIB", checkout.join("crates/incan_stdlib/stdlib"))
+            .env_remove("INCAN_STDLIB_DIR")
+            .env("INCAN_TOOLCHAIN_CRATES_DIR", checkout.join("crates"))
+            .env("INCAN_GENERATED_CARGO_TARGET_DIR", &generated_cargo_target)
+            .env("INCAN_LOCK_PREHEAT", "0")
+            .env("CARGO_NET_OFFLINE", "true")
+            .args(["run", main_path.to_string_lossy().as_ref()])
+            .output()?;
+        assert!(
+            run_output.status.success(),
+            concat!(
+                "expected the Incan façade to borrow, flush, and release its encapsulated C resource.\n",
+                "stdout:\n{}\nstderr:\n{}",
+            ),
+            String::from_utf8_lossy(&run_output.stdout),
+            String::from_utf8_lossy(&run_output.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
     fn consumer_check_reports_checked_c_signature_mismatch_at_the_binding() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let fixture_header = tmp.path().join("fixture.h");
