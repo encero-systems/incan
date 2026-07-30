@@ -68,6 +68,9 @@ impl NativeSection {
             {
                 return Err(format!("native target `{}` provenance cannot be empty", target.target));
             }
+            if let Some(platform) = &target.platform {
+                validate_target_platform(platform, target)?;
+            }
 
             let mut artifact_names = BTreeSet::new();
             for artifact in &target.artifacts {
@@ -112,6 +115,9 @@ pub struct NativeTarget {
     /// Optional selected SDK identity; Apple and Android SDKs remain toolchain capabilities rather than package files.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sdk: Option<String>,
+    /// Target-platform facts that affect ABI verification and deployment planning.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platform: Option<NativeTargetPlatform>,
     /// Package-relative public or shim headers used for verification.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub headers: Vec<String>,
@@ -127,6 +133,93 @@ pub struct NativeTarget {
     /// Authored C or C++ shim source inputs.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shims: Vec<NativeShim>,
+}
+
+/// Platform-specific constraints that complete a mobile native target identity.
+///
+/// The target triple remains the source of CPU and operating-system identity. This profile carries the platform
+/// version selected by the target toolchain, which Android and Apple Clang need in addition to that triple.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", rename_all_fields = "kebab-case")]
+pub enum NativeTargetPlatform {
+    /// Android arm64 verification and deployment require an NDK API level.
+    Android {
+        /// Android API level selected for Clang, libc, and deployment compatibility.
+        api_level: u32,
+    },
+    /// iOS verification and deployment require a minimum supported OS version.
+    Ios {
+        /// Minimum iOS version selected for Clang and deployment compatibility.
+        deployment_target: String,
+    },
+}
+
+/// Validate that one mobile profile supplies the target triple, platform version, and SDK identity it requires.
+fn validate_target_platform(platform: &NativeTargetPlatform, target: &NativeTarget) -> Result<(), String> {
+    match platform {
+        NativeTargetPlatform::Android { api_level } => {
+            if target.target != "aarch64-linux-android" {
+                return Err(format!(
+                    "Android platform facts require the `aarch64-linux-android` target, found `{}`",
+                    target.target
+                ));
+            }
+            if *api_level < 21 {
+                return Err(format!(
+                    "Android arm64 target `{}` requires API level 21 or later, found {api_level}",
+                    target.target
+                ));
+            }
+            validate_sdk_identity(target.sdk.as_deref(), "android-", "Android", &target.target)
+        }
+        NativeTargetPlatform::Ios { deployment_target } => {
+            if target.target != "aarch64-apple-ios" {
+                return Err(format!(
+                    "iOS platform facts require the `aarch64-apple-ios` target, found `{}`",
+                    target.target
+                ));
+            }
+            if !is_deployment_target_version(deployment_target) {
+                return Err(format!(
+                    "iOS deployment target `{deployment_target}` for `{}` must be a numeric `major.minor` version",
+                    target.target
+                ));
+            }
+            validate_sdk_identity(target.sdk.as_deref(), "iphoneos-", "iOS", &target.target)
+        }
+    }
+}
+
+/// Require one declared logical SDK identity to use the platform-specific namespace reserved for this target.
+fn validate_sdk_identity(sdk: Option<&str>, expected_prefix: &str, platform: &str, target: &str) -> Result<(), String> {
+    let Some(sdk) = sdk else {
+        return Err(format!(
+            "{platform} target `{target}` requires an SDK identity beginning with `{expected_prefix}`"
+        ));
+    };
+    if sdk.starts_with(expected_prefix) {
+        Ok(())
+    } else {
+        Err(format!(
+            "{platform} target `{target}` requires an SDK identity beginning with `{expected_prefix}`, found `{sdk}`"
+        ))
+    }
+}
+
+/// Return whether a declared iOS deployment target uses an explicit numeric major and minor version.
+fn is_deployment_target_version(value: &str) -> bool {
+    let mut components = value.split('.');
+    let Some(first) = components.next() else {
+        return false;
+    };
+    let Some(second) = components.next() else {
+        return false;
+    };
+    !first.is_empty()
+        && first.bytes().all(|byte| byte.is_ascii_digit())
+        && !second.is_empty()
+        && second.bytes().all(|byte| byte.is_ascii_digit())
+        && components.all(|component| !component.is_empty() && component.bytes().all(|byte| byte.is_ascii_digit()))
 }
 
 /// One declared physical native artifact.
@@ -206,6 +299,9 @@ pub struct LockedNativeTarget {
     /// Selected SDK identity, when the target requires one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sdk: Option<String>,
+    /// Target-platform facts retained for target-specific verification and deployment planning.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platform: Option<NativeTargetPlatform>,
     /// Explicit definitions sorted as part of the target configuration identity.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub definitions: Vec<String>,
@@ -489,6 +585,7 @@ fn lock_native_target(root: &Path, target: &NativeTarget) -> Result<LockedNative
         target: target.target.clone(),
         toolchain: target.toolchain.clone(),
         sdk: target.sdk.clone(),
+        platform: target.platform.clone(),
         definitions,
         headers,
         artifacts,
@@ -585,6 +682,10 @@ headers = ["native/include/bridge.h"]
 definitions = ["FIXTURE=1"]
 provenance = "fixture-source"
 
+[native.targets.platform]
+kind = "ios"
+deployment-target = "13.0"
+
 [[native.targets.artifacts]]
 name = "fixture"
 kind = "static"
@@ -607,12 +708,32 @@ output = "fixture_bridge"
         Ok((workspace, manifest))
     }
 
+    fn mobile_target(target: &str, sdk: Option<&str>, platform: NativeTargetPlatform) -> NativeTarget {
+        NativeTarget {
+            target: target.to_string(),
+            toolchain: "managed-clang".to_string(),
+            sdk: sdk.map(str::to_string),
+            platform: Some(platform),
+            headers: Vec::new(),
+            definitions: Vec::new(),
+            provenance: None,
+            artifacts: Vec::new(),
+            shims: Vec::new(),
+        }
+    }
+
     #[test]
     fn native_inputs_lock_portably_and_change_with_declared_bytes() -> Result<(), Box<dyn std::error::Error>> {
         let (workspace, manifest) = project_with_native_inputs()?;
         let first = locked_native_targets(&manifest)?;
         assert_eq!(first.len(), 1);
         assert_eq!(first[0].target, "aarch64-apple-ios");
+        assert_eq!(
+            first[0].platform,
+            Some(NativeTargetPlatform::Ios {
+                deployment_target: "13.0".to_string(),
+            })
+        );
         assert_eq!(first[0].headers[0].path, "native/include/bridge.h");
         assert_eq!(
             first[0].artifacts[0].input.as_ref().map(|input| input.path.as_str()),
@@ -637,6 +758,92 @@ output = "fixture_bridge"
     }
 
     #[test]
+    fn mobile_platform_profiles_require_matching_target_sdk_and_version_facts() {
+        let android = NativeSection {
+            schema: NATIVE_MANIFEST_SCHEMA_VERSION,
+            targets: vec![mobile_target(
+                "aarch64-linux-android",
+                Some("android-36"),
+                NativeTargetPlatform::Android { api_level: 34 },
+            )],
+        };
+        assert!(android.validate().is_ok());
+
+        let apple = NativeSection {
+            schema: NATIVE_MANIFEST_SCHEMA_VERSION,
+            targets: vec![mobile_target(
+                "aarch64-apple-ios",
+                Some("iphoneos-26.5"),
+                NativeTargetPlatform::Ios {
+                    deployment_target: "13.0".to_string(),
+                },
+            )],
+        };
+        assert!(apple.validate().is_ok());
+
+        let mut unsupported_android_api = android.clone();
+        unsupported_android_api.targets[0].platform = Some(NativeTargetPlatform::Android { api_level: 20 });
+        assert!(
+            unsupported_android_api
+                .validate()
+                .is_err_and(|error| error.contains("API level 21 or later"))
+        );
+
+        let mut wrong_android_sdk = android.clone();
+        wrong_android_sdk.targets[0].sdk = Some("iphoneos-26.5".to_string());
+        assert!(
+            wrong_android_sdk
+                .validate()
+                .is_err_and(|error| error.contains("SDK identity beginning with `android-`"))
+        );
+
+        let mut incompatible_apple_target = apple.clone();
+        incompatible_apple_target.targets[0].target = "aarch64-apple-darwin".to_string();
+        assert!(
+            incompatible_apple_target
+                .validate()
+                .is_err_and(|error| error.contains("aarch64-apple-ios"))
+        );
+
+        let mut malformed_apple_version = apple;
+        malformed_apple_version.targets[0].platform = Some(NativeTargetPlatform::Ios {
+            deployment_target: "iOS 13".to_string(),
+        });
+        assert!(
+            malformed_apple_version
+                .validate()
+                .is_err_and(|error| error.contains("numeric `major.minor` version"))
+        );
+    }
+
+    #[test]
+    fn android_platform_profile_parses_and_locks_its_ndk_api_level() -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = TempDir::new()?;
+        let manifest = ProjectManifest::from_str(
+            r#"
+[native]
+schema = 1
+
+[[native.targets]]
+target = "aarch64-linux-android"
+toolchain = "android-ndk-r29"
+sdk = "android-36"
+
+[native.targets.platform]
+kind = "android"
+api-level = 34
+"#,
+            &workspace.path().join("incan.toml"),
+        )?;
+        let locked = locked_native_targets(&manifest)?;
+        assert_eq!(
+            locked[0].platform,
+            Some(NativeTargetPlatform::Android { api_level: 34 })
+        );
+        Ok(())
+    }
+
+    #[test]
     fn native_inputs_reject_ambient_paths_and_incomplete_bundles() {
         let absolute = NativeSection {
             schema: NATIVE_MANIFEST_SCHEMA_VERSION,
@@ -644,6 +851,7 @@ output = "fixture_bridge"
                 target: "x86_64-unknown-linux-gnu".to_string(),
                 toolchain: "clang-18".to_string(),
                 sdk: None,
+                platform: None,
                 headers: vec!["/usr/include/fixture.h".to_string()],
                 definitions: Vec::new(),
                 provenance: None,
@@ -659,6 +867,7 @@ output = "fixture_bridge"
                 target: "x86_64-apple-darwin".to_string(),
                 toolchain: "apple-clang-17".to_string(),
                 sdk: Some("macosx-15.0".to_string()),
+                platform: None,
                 headers: Vec::new(),
                 definitions: Vec::new(),
                 provenance: None,
@@ -683,6 +892,7 @@ output = "fixture_bridge"
                 target: "x86_64-unknown-linux-gnu".to_string(),
                 toolchain: "clang-18".to_string(),
                 sdk: None,
+                platform: None,
                 headers: Vec::new(),
                 definitions: Vec::new(),
                 provenance: None,

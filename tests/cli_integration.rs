@@ -5224,10 +5224,15 @@ fn lock_records_declared_native_input_receipts_and_detects_drift() -> Result<(),
 schema = 1
 
 [[native.targets]]
-target = "x86_64-unknown-linux-gnu"
-toolchain = "clang-18"
+target = "aarch64-linux-android"
+toolchain = "android-ndk-r29"
+sdk = "android-36"
 headers = ["native/include/bridge.h"]
 definitions = ["FIXTURE=1"]
+
+[native.targets.platform]
+kind = "android"
+api-level = 34
 
 [[native.targets.artifacts]]
 name = "fixture"
@@ -5260,8 +5265,11 @@ output = "fixture_bridge"
         .as_array()
         .and_then(|targets| targets.first())
         .ok_or("lock did not contain a native target receipt")?;
-    assert_eq!(target["target"].as_str(), Some("x86_64-unknown-linux-gnu"));
-    assert_eq!(target["toolchain"].as_str(), Some("clang-18"));
+    assert_eq!(target["target"].as_str(), Some("aarch64-linux-android"));
+    assert_eq!(target["toolchain"].as_str(), Some("android-ndk-r29"));
+    assert_eq!(target["sdk"].as_str(), Some("android-36"));
+    assert_eq!(target["platform"]["kind"].as_str(), Some("android"));
+    assert_eq!(target["platform"]["api-level"].as_integer(), Some(34));
     assert_eq!(
         target["headers"]
             .as_array()

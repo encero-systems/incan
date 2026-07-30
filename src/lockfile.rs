@@ -2012,6 +2012,9 @@ mod tests {
                 target: "aarch64-apple-ios".to_string(),
                 toolchain: "apple-clang-17".to_string(),
                 sdk: Some("iphoneos-18.0".to_string()),
+                platform: Some(crate::native_artifact::NativeTargetPlatform::Ios {
+                    deployment_target: "13.0".to_string(),
+                }),
                 headers: vec!["native/include/bridge.h".to_string()],
                 definitions: vec!["FIXTURE=1".to_string()],
                 provenance: Some("fixture-source".to_string()),
@@ -2045,8 +2048,33 @@ mod tests {
             &[],
         )?;
         assert_eq!(first.native.len(), 1);
+        assert_eq!(
+            first.native[0].platform,
+            Some(crate::native_artifact::NativeTargetPlatform::Ios {
+                deployment_target: "13.0".to_string(),
+            })
+        );
         assert_eq!(first.native[0].headers[0].path, "native/include/bridge.h");
         let first_fingerprint = compute_resolved_fingerprint(&[], &[], &cargo_features, Some(project.path()), &first);
+
+        let mut changed_platform_native = native.clone();
+        changed_platform_native.targets[0].platform = Some(crate::native_artifact::NativeTargetPlatform::Ios {
+            deployment_target: "14.0".to_string(),
+        });
+        let changed_platform = semantic_lock_state(
+            project.path(),
+            Some(&changed_platform_native),
+            None,
+            None,
+            None,
+            &ProviderPlan::default(),
+            &[],
+        )?;
+        assert_ne!(first.native, changed_platform.native);
+        assert_ne!(
+            first_fingerprint,
+            compute_resolved_fingerprint(&[], &[], &cargo_features, Some(project.path()), &changed_platform)
+        );
 
         fs::write(
             project.path().join("native/src/bridge.c"),

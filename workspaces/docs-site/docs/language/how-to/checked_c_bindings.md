@@ -138,6 +138,10 @@ headers = ["native/include/bridge.h"]
 definitions = ["FIXTURE=1"]
 provenance = "fixture-source"
 
+[native.targets.platform]
+kind = "ios"
+deployment-target = "13.0"
+
 [[native.targets.artifacts]]
 name = "fixture"
 kind = "static"
@@ -158,7 +162,11 @@ output = "fixture_bridge"
 
 `static` artifacts name a package-owned archive. `bundled` artifacts name a package-owned dynamic library or framework and must also specify its `runtime-name`, `placement`, and `minimum-platform`. `system` artifacts instead name one selected toolchain or SDK capability. Shims may be authored in C or C++, but a future shim baker will expose C++ only behind the shim's bounded C contract.
 
+The target triple remains the CPU and operating-system identity. A mobile `platform` table supplies the extra version fact that the target compiler and packager need. `kind = "android"` is valid only for `aarch64-linux-android`; it requires an `android-...` SDK identity and an `api-level` of 21 or later. `kind = "ios"` is valid only for `aarch64-apple-ios`; it requires an `iphoneos-...` SDK identity and a numeric `major.minor` `deployment-target`. For example, an Android target declares `platform = { kind = "android", api-level = 34 }` in its own target table.
+
 Every declared package file must be a regular, normalized relative path. Running `incan lock` hashes the exact header, artifact, and shim-source bytes into the semantic lock state with the target, toolchain, SDK, definitions, and capability selections. Changing any declared input makes the lock stale; relocating an unchanged package does not change these package-relative receipt entries.
+
+The locked mobile profile is a target-selection receipt, not a machine-local path. It records which Android API level or iOS deployment target a future managed toolchain must use without embedding an NDK directory, Xcode path, Gradle configuration, or signing credential in the package.
 
 This declaration and lock slice deliberately does not download artifacts, discover a system library, compile a shim, or define a Gradle/Xcode handover format. Those are separate Oven and platform-tooling responsibilities. Do not put signing or license policy here: native publication policy belongs to `incan.pub`.
 
