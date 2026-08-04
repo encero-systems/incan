@@ -10,14 +10,15 @@
     - RFC 034 (`incan.pub` package registry)
     - RFC 075 (starter profiles and capability packs)
     - RFC 076 (project mutation policy and recovery)
+    - RFC 117 (`Loaf.toml` and Oven's language-neutral project model)
 - **Issue:** https://github.com/encero-systems/incan/issues/402
 - **RFC PR:** —
-- **Written against:** v0.3
+- **Written against:** ~~v0.3~~ v0.5
 - **Shipped in:** —
 
 ## Summary
 
-This RFC defines a deterministic template rendering, generated-file ownership, and provenance model for Incan project tooling. Templates are static input files referenced by lifecycle tooling, starter profiles, capability packs, or package-provided setup data. Rendering is intentionally constrained: v1 templates may substitute declared parameters, but they must not execute arbitrary code, run shell commands, fetch remote data, or infer behavior from filename conventions alone. When rendered files are written into a project, the toolchain may record provenance so users and tools can later check, diff, status, reset, or update generated boilerplate without treating the original template as hidden build state.
+This RFC defines a deterministic template rendering, generated-file ownership, and provenance model for Oven project tooling. Templates are static input files referenced by lifecycle tooling, starter profiles, capability packs, or package-provided setup data. Rendering is intentionally constrained: v1 templates may substitute declared parameters, but they must not execute arbitrary code, run shell commands, fetch remote data, or infer behavior from filename conventions alone. When rendered files are written into a project, Oven may record provenance so users and tools can later check, diff, status, reset, or update generated boilerplate without treating the original template as hidden build state.
 
 ## Core model
 
@@ -155,7 +156,7 @@ The project does not need the template to compile. The template was used to crea
 If the descriptor requests tracked provenance, the lifecycle tool records enough metadata to explain the file later:
 
 ```toml
-[tool.incan.templates."src/data/session.incn"]
+[oven.templates."src/data/session.incn"]
 source = "sample_session:templates/session.incn.tpl"
 package = "sample_session"
 version = "0.1.0"
@@ -174,7 +175,7 @@ This record is tooling provenance. Removing it must not break compilation. Keepi
 A user may ask the toolchain to write the values a template expects before applying it:
 
 ```text
-incan template values-file sample_session:templates/session.incn.tpl --output session.values.toml
+oven template values-file sample_session:templates/session.incn.tpl --output session.values.toml
 ```
 
 The generated file contains declared parameters, defaults, choices, and prompt text:
@@ -189,7 +190,7 @@ backend_type = "DataFusion"
 This gives teams something concrete to review in automation and allows non-interactive application:
 
 ```text
-incan template render sample_session:templates/session.incn.tpl --values session.values.toml --dry-run
+oven template render sample_session:templates/session.incn.tpl --values session.values.toml --dry-run
 ```
 
 The exact command spelling may change, but the lifecycle layer must expose the same capability: inspect required values, write a values file, and render from that file without interactive prompts.
@@ -199,7 +200,7 @@ The exact command spelling may change, but the lifecycle layer must expose the s
 A user may ask whether tracked files are stale or edited:
 
 ```text
-incan template check
+oven template check
 ```
 
 Example output:
@@ -223,7 +224,7 @@ tracked templates:
 When a template source comes from a package, starter, capability, or registry-backed catalog, users need more than byte-level drift. They also need to know whether the project is using the latest compatible template source:
 
 ```text
-incan template status
+oven template status
 ```
 
 Example output:
@@ -241,7 +242,7 @@ If the source catalog is unavailable, status may fall back to local provenance a
 If a package version provides a newer template, tooling can show the proposed change without writing it:
 
 ```text
-incan template diff src/data/session.incn
+oven template diff src/data/session.incn
 ```
 
 The diff is between the current project file and the output that would be rendered from the current descriptor and parameter values. If the file has user edits, the tool must make that clear before offering an update.
@@ -251,8 +252,8 @@ The diff is between the current project file and the output that would be render
 Template updates are explicit:
 
 ```text
-incan template update src/data/session.incn --dry-run
-incan template update src/data/session.incn
+oven template update src/data/session.incn --dry-run
+oven template update src/data/session.incn
 ```
 
 If the current file still matches `rendered_hash`, an explicit receiver-approved update may replace it with the newly rendered output. If the file has user edits, the tool must either stop with a conflict diagnostic or use a documented merge strategy. It must not silently overwrite user edits.
@@ -262,8 +263,8 @@ If the current file still matches `rendered_hash`, an explicit receiver-approved
 If an update cannot be applied cleanly, users may need a stronger operation that recreates managed files from the current template source while preserving recorded values:
 
 ```text
-incan template reset src/data/session.incn --dry-run
-incan template reset src/data/session.incn
+oven template reset src/data/session.incn --dry-run
+oven template reset src/data/session.incn
 ```
 
 Reset is not a normal update. It should be treated as an explicit recovery operation. By default, it must preserve bootstrap-owned files, preserve values from provenance or an explicit values file, show a dry-run plan, require confirmation unless running in an explicit non-interactive mode, and leave the resulting changes for review in source control. Reset is still a receiver-side code mutation and must follow the same rendered-diff review and source-identity checks as update.
@@ -470,7 +471,7 @@ Each rendered file may declare one ownership policy:
 
 `advisory` is appropriate when a tool wants to explain origin without assuming future ownership.
 
-The ownership policy must be independent from whether provenance is recorded. A bootstrap file may still record provenance so tooling can explain where it came from, but `incan template update` must not rewrite it by default.
+The ownership policy must be independent from whether provenance is recorded. A bootstrap file may still record provenance so tooling can explain where it came from, but `oven template update` must not rewrite it by default.
 
 ### Provenance modes
 
@@ -514,13 +515,13 @@ The record must not store secrets. If parameter values may include secrets, the 
 
 This RFC adds the following lifecycle tooling concepts:
 
-- `incan template check`
-- `incan template status`
-- `incan template values-file <template-or-origin>`
-- `incan template render <template-or-origin>`
-- `incan template diff [target]`
-- `incan template update [target]`
-- `incan template reset [target]`
+- `oven template check`
+- `oven template status`
+- `oven template values-file <template-or-origin>`
+- `oven template render <template-or-origin>`
+- `oven template diff [target]`
+- `oven template update [target]`
+- `oven template reset [target]`
 
 The exact command spelling may be adjusted if the lifecycle CLI uses a different namespace, but the toolchain must support these operations before tracked provenance can be considered complete.
 
@@ -562,7 +563,7 @@ Reviewing the template source diff is not sufficient. Update tooling must show t
 
 Template provenance must pin the selected source strongly enough to detect unexpected changes. For git sources, provenance should record an immutable commit, not only a branch or tag. For package or catalog sources, provenance should record the package or descriptor version, source identity, and content hash or verified integrity metadata when available. A later update must surface changes to source identity, publisher identity, integrity state, yanking state, or trust tier before showing file diffs.
 
-`incan template update` must default to a dry-run review path for security-sensitive changes. At minimum, the update plan must call out newly created files, executable source changes, manifest dependency changes, script or task changes, CI/configuration changes, env changes, and agent guidance metadata changes. Non-interactive update modes must still emit this information in machine-readable output and should require an explicit flag for source identity changes.
+`oven template update` must default to a dry-run review path for security-sensitive changes. At minimum, the update plan must call out newly created files, executable source changes, manifest dependency changes, script or task changes, CI/configuration changes, env changes, and agent guidance metadata changes. Non-interactive update modes must still emit this information in machine-readable output and should require an explicit flag for source identity changes.
 
 If two template sources can satisfy the same id, update tooling must not silently switch sources. This is especially important when private and public catalogs both contain a matching id. The lifecycle CLI must either preserve the recorded source identity or require explicit user intent to change it.
 
@@ -675,7 +676,7 @@ Rejected because generated project boilerplate should be reviewable, editable, a
 
 - **Parser:** rendered Incan templates must parse before they are written when `language = "incan"`.
 - **Formatter:** rendered Incan templates should be formatted before write and before `rendered_hash` is recorded when a formatter is available.
-- **Manifest schema / configuration validation:** project tooling must support an explicit provenance location for tracked templates, whether in `incan.toml`, a sidecar state file, or a future lock/state artifact.
+- **Manifest schema / configuration validation:** project tooling must support an explicit provenance location for tracked templates, whether in a typed `Loaf.toml` table or an explicit tool-owned state artifact. `Oven.lock` remains resolver state and must not become a general mutation-history store.
 - **CLI / tooling:** lifecycle tooling must implement deterministic template rendering, path validation, parameter validation, ownership handling, provenance recording, and check/status/values-file/diff/update/reset operations.
 - **LSP / IDE tooling:** editor-facing tools should consume machine-readable template provenance and lifecycle diagnostics rather than reimplementing template rendering.
 - **Package integration:** package-provided templates must be loaded as package data and rendered locally under the same safety rules as built-in templates. Package or registry metadata may feed version-aware status and upgrade previews.
@@ -683,17 +684,17 @@ Rejected because generated project boilerplate should be reviewable, editable, a
 
 ## Unresolved questions
 
-- Should template provenance live in `incan.toml`, `incan.lock`, or a separate tool-owned state file?
+- Should template provenance live in a typed `Loaf.toml` table or a separate tool-owned state file, and which facts must remain outside `Oven.lock`?
 - Is the v1 parameter kind set sufficient, or should it include specific kinds for package names, dependency requirements, env names, and script ids?
 - Which derived-value transforms should be standardized in v1?
 - Should optional file groups live in RFC 074 as template renderer metadata, or should RFC 075 own them as starter/capability mutation metadata?
 - Should generated-file ownership be encoded as a separate `ownership` field, as part of provenance mode, or as part of RFC 075 file mutation metadata?
 - Should descriptors reject declared-but-unused parameters by default, or should unused parameters be permitted for descriptor reuse?
 - Should `tracked` or `none` be the default provenance mode for file templates applied by starter and capability workflows?
-- What merge strategy, if any, should `incan template update` support for edited tracked files in v1?
-- Should `incan template diff` produce a stable machine-readable patch format in v1, or is human-readable diff output enough initially?
-- What is the minimum useful `incan template status` behavior without registry access?
-- Should `incan template reset` be part of v1, or should it wait until normal update behavior has shipped?
+- What merge strategy, if any, should `oven template update` support for edited tracked files in v1?
+- Should `oven template diff` produce a stable machine-readable patch format in v1, or is human-readable diff output enough initially?
+- What is the minimum useful `oven template status` behavior without registry access?
+- Should `oven template reset` be part of v1, or should it wait until normal update behavior has shipped?
 - What provider validation command, if any, should be required before templates can be published or promoted in `incan.pub`?
 - Should `.incn.tpl` be the recommended suffix for all Incan source templates, or should package authors prefer neutral names plus descriptor metadata?
 - How should preserved later-phase placeholders be represented so they are explicit but not awkward for common deployment/configuration tools?

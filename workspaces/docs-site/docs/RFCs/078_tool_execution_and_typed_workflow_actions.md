@@ -12,14 +12,16 @@
     - RFC 077 (workspace and multi-package projects)
     - RFC 079 (`incan.pub` artifact graph)
     - RFC 080 (AI assets and agent metadata)
+    - RFC 117 (`Loaf.toml` and Oven's language-neutral project model)
+    - RFC 118 (Incan and Oven command-line surfaces)
 - **Issue:** https://github.com/encero-systems/incan/issues/406
 - **RFC PR:** —
-- **Written against:** v0.3
+- **Written against:** ~~v0.3~~ v0.5
 - **Shipped in:** —
 
 ## Summary
 
-This RFC defines a typed workflow-action and tool-execution model for Incan projects. It gives Incan the ergonomic center of gravity that npm scripts and uv tool execution provide, while avoiding arbitrary install-time mutation as the default: packages, starters, capabilities, and AI assets may advertise actions, but lifecycle tooling exposes them as typed, inspectable, policy-gated commands.
+This RFC defines a typed workflow-action and tool-execution model for Loaf projects. It gives Oven the inspectable lifecycle center of gravity that npm scripts and uv tool execution provide, while avoiding arbitrary install-time mutation as the default: packages, starters, capabilities, and AI assets may advertise actions, but Oven exposes them as typed, inspectable, policy-gated commands.
 
 ## Core model
 
@@ -67,14 +69,14 @@ RFC 015 already has envs and scripts. RFC 075 lets capabilities advertise toolin
 A project or capability may declare typed actions:
 
 ```toml
-[[tool.incan.actions]]
+[[oven.actions]]
 id = "test"
 kind = "test"
 command = ["incan", "test"]
 scope = "member"
 mutates = []
 
-[[tool.incan.actions]]
+[[oven.actions]]
 id = "generate-client"
 kind = "generate"
 tool = "pub:openapi-client"
@@ -91,8 +93,8 @@ The exact encoding is not normative in this Draft. The key requirement is that a
 A user can run a project action:
 
 ```text
-incan action run test
-incan action run generate-client --dry-run
+oven action run test
+oven action run generate-client --dry-run
 ```
 
 The dry run shows the tool source, inputs, outputs, workspace scope, env, mutation risk categories, and policy outcome.
@@ -104,8 +106,8 @@ For capability-aware actions, the dry run should also show required capabilities
 Incan may support isolated tool execution:
 
 ```text
-incan tool run formatter@1.2.0 -- src/
-incan tool run pub:docs-preview --port 8000
+oven tool run formatter@1.2.0 -- src/
+oven tool run pub:docs-preview --port 8000
 ```
 
 An isolated tool should not become a project dependency merely because it was executed once. If it mutates the project, the mutation must still be visible and policy-gated.
@@ -261,13 +263,13 @@ Rejected because install-time hooks are difficult to review and policy-gate. Pro
 
 ## Implementation architecture
 
-The recommended implementation shape is to build an action registry from built-ins, project manifests, workspace manifests, package metadata, starter/capability descriptors, and AI assets. `incan action list` and IDE tooling consume this registry. `incan action run` resolves source, scope, env, policy, and execution mode before invoking anything.
+The recommended implementation shape is to build an action registry from built-ins, `Loaf.toml` project and workspace data, package metadata, starter/capability descriptors, and AI assets. `oven action list` and IDE tooling consume this registry. `oven action run` resolves source, inherited workspace scope, env, policy, target context, and execution mode before invoking anything. RFC 118 may expose an Incan convenience that delegates downward to this operation, but it must not resolve or execute actions independently.
 
 ## Layers affected
 
 - **Manifest schema / configuration validation:** projects need typed action metadata, tool source references, execution modes, inputs, outputs, and mutation categories.
 - **CLI / tooling:** commands need action listing, dry-run planning, isolated tool execution, source resolution, capability preview, receipt expectation display, and policy gating.
-- **Workspace tooling:** actions must support member scope and workspace-level execution.
+- **Workspace tooling:** actions must support hierarchical sub-Loaf selection within one inherited root-workspace authority and must show the selected closure in plans and receipts.
 - **LSP / IDE tooling:** editor integrations should surface actions, run/debug affordances, policy outcomes, and mutation previews.
 - **Package and catalog integration:** packages and catalogs may advertise tool binaries and action descriptors.
 - **Runtime / reporting:** actions that execute through capability-aware runtimes should produce RFC 104-compatible report identities so declared authority and actual receipts can be compared.
@@ -277,7 +279,7 @@ The recommended implementation shape is to build an action registry from built-i
 ## Unresolved questions
 
 - Which action kinds should be standardized in v1?
-- Should `incan run` and `incan test` become aliases for typed actions, or remain separate command families?
+- Should `oven run` and `oven test` become aliases for typed actions, or remain separate command families? RFC 118 separately decides which, if any, Incan aliases delegate to those Oven operations.
 - What is the minimum useful dry-run contract for mutating external tools?
 - Should isolated tool execution use a global cache, per-project cache, or always temporary environment?
 - How should action inputs and outputs be represented for tools that cannot predict outputs?

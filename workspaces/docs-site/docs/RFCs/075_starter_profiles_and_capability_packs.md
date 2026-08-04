@@ -13,53 +13,55 @@
     - RFC 073 (environment matrices and toolchain constraints)
     - RFC 074 (template rendering and boilerplate provenance)
     - RFC 076 (project mutation policy and recovery)
+    - RFC 117 (`Loaf.toml` and Oven's language-neutral project model)
+    - RFC 118 (Incan and Oven command-line surfaces)
 - **Issue:** https://github.com/encero-systems/incan/issues/403
 - **RFC PR:** —
-- **Written against:** v0.3
+- **Written against:** ~~v0.3~~ v0.5
 - **Shipped in:** —
 
 ## Summary
 
-This RFC extends the project lifecycle model from RFC 015 with starter profiles and capability packs. A starter profile is a declarative recipe for creating or initializing a project with a coherent set of files, manifest entries, and capability packs. A capability pack is a reusable, explicit project mutation that can add package dependencies, scripts, environment configuration, starter files, tooling metadata, and follow-up diagnostics to an existing project. Starter and capability descriptors may depend on other descriptors, but they must resolve into one reviewable mutation plan. The goal is not hidden framework magic; the goal is to keep the Rust-like package workflow from RFC 034 (`incan add <pkg>`) while adding an explicit project-capability workflow (`incan capability add <capability>`) for setup that changes source files, scripts, envs, and tooling metadata.
+This RFC extends the Loaf/Oven project model with starter profiles and capability packs. A starter profile is a declarative recipe for creating or initializing a project with a coherent set of files, manifest entries, and capability packs. A capability pack is a reusable, explicit project mutation that can add package dependencies, scripts, environment configuration, starter files, tooling metadata, and follow-up diagnostics to an existing project. Starter and capability descriptors may depend on other descriptors, but they must resolve into one reviewable mutation plan. The goal is not hidden framework magic; the goal is to keep the Cargo-shaped package workflow from RFC 034 (`oven add <pkg>`) while adding an explicit project-capability workflow (`oven capability add <capability>`) for setup that changes source files, scripts, envs, and tooling metadata.
 
 ## Core model
 
 Read this RFC as nine foundations plus five mechanisms:
 
-1. **Foundation:** RFC 015 owns the minimal project lifecycle surface; this RFC layers richer project shapes on top of that surface rather than changing the meaning of `incan.toml`, project roots, or named envs.
+1. **Foundation:** RFC 117 owns the `Loaf.toml` project model and root authority; this RFC layers richer project shapes on top without redefining manifest discovery, workspace inheritance, dependency resolution, or named-environment semantics.
 2. **Foundation:** Starters and capability packs are tooling descriptors, not new language constructs. Applying one must result in explicit project files and manifest entries.
 3. **Foundation:** Generated projects remain ordinary Incan projects. There is no hidden starter mode, no runtime dependency injection container, and no implicit activation that cannot be inspected after creation.
-4. **Foundation:** Capability packs are composition units. A starter profile may include zero or more capability packs, and an existing project may add a capability pack later through `incan capability add`.
+4. **Foundation:** Capability packs are composition units. A starter profile may include zero or more capability packs, and an existing project may add a capability pack later through `oven capability add`.
 5. **Foundation:** Descriptor dependencies are explicit. Starters and capability packs may depend on other starters, capabilities, or templates, but the CLI must resolve that graph before applying any mutation.
 6. **Foundation:** Starter application must be deterministic and safe by default: no arbitrary script execution, no unprompted overwrites, no silent dependency changes, and no secret material embedded into generated files.
-7. **Foundation:** Incan packages may advertise capability packs. Adding a package and applying a capability are separate operations: `incan add <pkg>` changes dependencies; `incan capability add <capability>` applies project setup and may add dependencies as part of an explicit mutation plan.
+7. **Foundation:** Incan packages may advertise capability packs. Adding a package and applying a capability are separate operations: `oven add <pkg>` changes dependencies; `oven capability add <capability>` applies project setup and may add dependencies as part of an explicit mutation plan.
 8. **Foundation:** Applicability and back-off decisions are explicit. A descriptor may explain why it applies, why it is already satisfied, why it skipped a mutation, or why it is blocked, but it must not infer success from undocumented file conventions.
 9. **Foundation:** The same descriptor model must be consumable by CLI and editor tooling. IDE support should not infer project intent from ad-hoc filenames when the starter or capability pack can declare that intent directly.
-10. **Mechanism A:** `incan new <name> --starter <id>` creates a project by resolving one starter profile, applying its capability packs, rendering its files, and writing a normal `incan.toml`.
-11. **Mechanism B:** `incan init --starter <id>` applies starter initialization to an existing directory with adoption-oriented conflict rules. Existing-project initialization must preserve user-authored files more aggressively than greenfield creation.
-12. **Mechanism C:** `incan capability add <capability-id>` resolves one capability pack, which may be advertised by a package, then applies the resulting mutation plan to an existing project.
-13. **Mechanism D:** `incan starter list`, `incan starter show`, and dry-run output expose what a starter or capability pack would change before files are written.
+10. **Mechanism A:** `oven new <name> --starter <id>` creates a project by resolving one starter profile, applying its capability packs, rendering its files, and writing a normal `Loaf.toml`.
+11. **Mechanism B:** `oven init --starter <id>` applies starter initialization to an existing directory with adoption-oriented conflict rules. Existing-project initialization must preserve user-authored files more aggressively than greenfield creation.
+12. **Mechanism C:** `oven capability add <capability-id>` resolves one capability pack, which may be advertised by a package, then applies the resulting mutation plan to an existing project.
+13. **Mechanism D:** `oven starter list`, `oven starter show`, and dry-run output expose what a starter or capability pack would change before files are written.
 14. **Mechanism E:** lifecycle tooling exposes machine-readable starter, capability, and project-capability views so LSP servers and IDE plugins can offer completion, code actions, run actions, and project-shape diagnostics from the same contract as the CLI.
 
 ## Motivation
 
-RFC 015 deliberately defines a small, explicit project lifecycle CLI: create a project, initialize metadata, define scripts and envs, bump versions, and run named env commands. That is the right base layer, but a minimal `hello world` scaffold is not enough once the ecosystem has reusable libraries for common domains such as CLIs, HTTP clients, web entrypoints, serialization, testing, data access, and documentation. Rust users can often add a crate and immediately use its API; Incan should preserve that simple dependency story through RFC 034's `incan add <pkg>` while also recognizing that application capabilities often need a small amount of project setup. Without a first-class starter model, users will copy examples by hand, drift from recommended dependency combinations, and re-learn the same manifest wiring in every repository.
+RFC 015 deliberately defines a small, explicit project lifecycle CLI: create a project, initialize metadata, define scripts and envs, bump versions, and run named env commands. That is the right base layer, but a minimal `hello world` scaffold is not enough once the ecosystem has reusable libraries for common domains such as CLIs, HTTP clients, web entrypoints, serialization, testing, data access, and documentation. Rust users can often add a crate and immediately use its API; Incan should preserve that simple dependency story through RFC 034's `oven add <pkg>` while also recognizing that application capabilities often need a small amount of project setup. Without a first-class starter model, users will copy examples by hand, drift from recommended dependency combinations, and re-learn the same manifest wiring in every repository.
 
 Library metadata and manifests already point toward a more declarative ecosystem. RFC 027 says feature and dependency metadata should travel through library manifests rather than ad-hoc compiler scans, and RFC 031 establishes `.incnlib` as a semantic library artifact. Those pieces help libraries describe themselves, but they do not answer the project-author question: "start this repo with the standard shape for X" or "add the standard support for Y to this repo."
 
-The missing layer is an explicit project mutation contract. Users need a command that can say what it will do, apply the change deterministically, and leave behind normal files that can be reviewed in source control. That is a different problem from typechecking, package resolution, environment matrix execution, or future product-specific app templates. This RFC defines the generic Incan-side layer those higher-level experiences can build on.
+The missing layer is an explicit project mutation contract. Users need a command that can say what it will do, apply the change deterministically, and leave behind normal files that can be reviewed in source control. That is a different problem from typechecking, package resolution, environment matrix execution, or future product-specific app templates. This RFC defines the generic Oven-side layer those higher-level experiences can build on. RFC 118 may expose downward-delegating Incan conveniences, but it must not duplicate Oven mutation planning, resolver, policy, or receipt behavior.
 
 ## Goals
 
-- Define starter profiles as declarative recipes for `incan new` and `incan init`.
-- Define capability packs as reusable project mutations that can be applied independently through `incan capability add`.
+- Define starter profiles as declarative recipes for `oven new` and `oven init`.
+- Define capability packs as reusable project mutations that can be applied independently through `oven capability add`.
 - Define descriptor dependency resolution so starters, capabilities, and templates can compose without hidden ordering.
-- Allow package authors to advertise capability packs so `incan add <package>` can add the package dependency and then point users toward optional setup through `incan capability add <capability>`.
+- Allow package authors to advertise capability packs so `oven add <package>` can add the package dependency and then point users toward optional setup through `oven capability add <capability>`.
 - Make starter and capability application deterministic, conflict-aware, dry-runnable, and reviewable.
 - Define explainable applicability and back-off behavior for existing projects.
 - Distinguish greenfield project creation from existing-project adoption so migration does not overwrite user-authored files under creation-oriented assumptions.
 - Allow starters and capability packs to add manifest entries, dependencies, dev-dependencies, scripts, env definitions, file templates, tooling metadata, agent guidance metadata, and user-facing follow-up notes.
-- Keep generated projects ordinary: all persistent behavior must be represented in source files, `incan.toml`, `incan.lock`, or documented generated artifacts.
+- Keep generated projects ordinary: all persistent behavior must be represented in source files, `Loaf.toml`, `Oven.lock`, or documented generated artifacts.
 - Provide inspection commands so users can list available starters, preview one starter, and see which capabilities are recorded in a project.
 - Define a review-first capability update path so a project can move an applied capability from one recorded descriptor version to another without treating the change as an automatic package upgrade or silent template rewrite.
 - Provide machine-readable inspection surfaces so LSP and IDE tooling can list starters, preview capability changes, show enabled capabilities, and surface project-specific actions without reimplementing descriptor resolution.
@@ -91,7 +93,7 @@ The missing layer is an explicit project mutation contract. Users need a command
 A user can ask the toolchain which starter profiles are available:
 
 ```text
-incan starter list
+oven starter list
 ```
 
 The output should show stable starter ids, short descriptions, source kind, and compatibility with the active Incan version. A built-in `bin` starter may be the default shape already described by RFC 015.
@@ -111,15 +113,15 @@ The exact starter set is not normative. The normative requirement is that availa
 A starter may be selected during project creation:
 
 ```text
-incan new weather_tool --starter cli
+oven new weather_tool --starter cli
 ```
 
-The generated project is still an ordinary Incan project. The starter writes `incan.toml`, source files, docs, test files, and any other explicit artifacts described by the starter descriptor. There is no persistent hidden link to the starter that changes compilation semantics later.
+The generated project is still an ordinary Incan project. The starter writes `Loaf.toml`, source files, docs, test files, and any other explicit artifacts described by the starter descriptor. There is no persistent hidden link to the starter that changes compilation semantics later.
 
 If the starter includes capability packs, the CLI applies them as part of creation and records them in the project manifest for inspection:
 
 ```toml
-[tool.incan.capabilities]
+[oven.capabilities]
 enabled = ["std.process", "testing.basic"]
 ```
 
@@ -127,20 +129,20 @@ The record is tooling provenance, not a runtime feature switch. The actual behav
 
 ### Initializing an existing directory
 
-`incan init` may also accept a starter:
+`oven init` may also accept a starter:
 
 ```text
-incan init --starter cli
+oven init --starter cli
 ```
 
-This uses the same descriptor as `incan new`, but conflict handling is stricter because files may already exist. By default, generated files must not overwrite existing files. If a starter cannot be applied without overwriting or merging conflicting data, the CLI must stop with a diagnostic and suggest `--dry-run` or explicit overwrite flags.
+This uses the same descriptor as `oven new`, but conflict handling is stricter because files may already exist. By default, generated files must not overwrite existing files. If a starter cannot be applied without overwriting or merging conflicting data, the CLI must stop with a diagnostic and suggest `--dry-run` or explicit overwrite flags.
 
 ### Adding a capability pack
 
 An existing project may add one reusable capability without switching to a different starter:
 
 ```text
-incan capability add std.http-client
+oven capability add std.http-client
 ```
 
 The CLI resolves the capability pack, previews or applies its manifest changes, writes any declared files that do not conflict, and records the capability as enabled. If the capability depends on other capability packs, the CLI must show those transitive additions before applying them.
@@ -152,8 +154,8 @@ Capability packs should be small enough to explain. A pack named `std.http-clien
 Both starters and capability packs should support dry-run output:
 
 ```text
-incan new weather_tool --starter cli --dry-run
-incan capability add std.http-client --dry-run
+oven new weather_tool --starter cli --dry-run
+oven capability add std.http-client --dry-run
 ```
 
 Dry-run output must show planned file writes, manifest additions, dependency changes, env/script additions, skipped mutations, already-satisfied expectations, and any conflicts. The dry run should be detailed enough that a user can decide whether the command is safe before mutating the project.
@@ -165,10 +167,10 @@ Capability updates are review-first project migrations, not package upgrades and
 When a project records that it applied `cli` from descriptor version `1.3.0`, a later user should be able to ask what it would mean to move that project concern to `1.6.0`:
 
 ```text
-incan capability status cli
-incan capability diff cli --to 1.6.0
-incan capability update cli --to 1.6.0 --dry-run
-incan capability update cli --to 1.6.0
+oven capability status cli
+oven capability diff cli --to 1.6.0
+oven capability update cli --to 1.6.0 --dry-run
+oven capability update cli --to 1.6.0
 ```
 
 The lifecycle CLI resolves the currently recorded descriptor source and target descriptor version, verifies that the source identity has not silently changed, expands descriptor dependencies, renders affected RFC 074 templates with preserved or supplied values, and produces one receiver-side mutation plan.
@@ -185,8 +187,8 @@ Descriptor integrity: verified
 Would update dependencies:
   app-cli 1.3.0 -> 1.6.0
 
-Would update incan.toml:
-  add [tool.incan.actions.run-cli]
+Would update Loaf.toml:
+  add [oven.actions.run-cli]
   rename script "run" -> "cli.run"
 
 Files:
@@ -208,7 +210,7 @@ Files:
 
 The user-facing update unit is the capability because that is how the project concern was applied. RFC 074 still owns the lower-level template behavior for individual files: managed files may be updated when unchanged, bootstrap files are not rewritten by normal capability updates, advisory files are explained but not owned, and edited managed files must stop with a conflict or use a documented merge strategy. RFC 076 evaluates the resulting mutation plan before anything is written.
 
-`incan capability diff` should show the receiver-side patch that would land in the project. Catalog or registry source diffs between descriptor versions are useful supporting evidence, but they are not a substitute for the rendered project diff.
+`oven capability diff` should show the receiver-side patch that would land in the project. Catalog or registry source diffs between descriptor versions are useful supporting evidence, but they are not a substitute for the rendered project diff.
 
 If the descriptor declares ordered migration steps between intermediate versions, the CLI may collapse them into one target update as long as the resulting plan remains explainable. If a required step cannot be represented declaratively, the update must stop and present manual instructions rather than running arbitrary provider code.
 
@@ -233,7 +235,7 @@ Suppose a user has an existing project:
 
 ```text
 weather_core/
-  incan.toml
+  Loaf.toml
   src/lib.incn
 ```
 
@@ -242,7 +244,7 @@ They want to add a standard command-line entrypoint without hand-copying example
 The user may start with the Rust-like package workflow:
 
 ```text
-incan add app-cli
+oven add app-cli
 ```
 
 That only changes dependencies:
@@ -254,13 +256,13 @@ This package advertises project capabilities:
   cli  Adds a CLI entrypoint, run script, and test skeleton
 
 Apply setup with:
-  incan capability add cli
+  oven capability add cli
 ```
 
 To preview the project setup, the user asks for a capability dry run:
 
 ```text
-incan capability add cli --dry-run
+oven capability add cli --dry-run
 ```
 
 The CLI resolves `cli` as a capability, sees that its recommended provider is `app-cli`, validates the descriptor against the active project, and prints a mutation plan:
@@ -279,15 +281,15 @@ Would create:
   src/main.incn
   tests/test_cli.incn
 
-Would update incan.toml:
+Would update Loaf.toml:
   [project.scripts]
   main = "src/main.incn"
 
-  [tool.incan.envs.default.scripts]
-  run = ["incan", "run"]
-  test = ["incan", "test"]
+  [oven.envs.default.scripts]
+  run = ["oven", "run"]
+  test = ["oven", "test"]
 
-  [tool.incan.capabilities]
+  [oven.capabilities]
   enabled += ["cli"]
 
 Tooling:
@@ -301,14 +303,14 @@ Agent guidance:
 If the plan looks right, they apply it:
 
 ```text
-incan capability add cli
+oven capability add cli
 ```
 
 The result is an ordinary project:
 
 ```text
 weather_core/
-  incan.toml
+  Loaf.toml
   src/lib.incn
   src/main.incn
   tests/test_cli.incn
@@ -327,11 +329,11 @@ app-cli = "0.3.1"
 [project.scripts]
 main = "src/main.incn"
 
-[tool.incan.envs.default.scripts]
-run = ["incan", "run"]
-test = ["incan", "test"]
+[oven.envs.default.scripts]
+run = ["oven", "run"]
+test = ["oven", "test"]
 
-[tool.incan.capabilities]
+[oven.capabilities]
 enabled = ["cli"]
 ```
 
@@ -362,8 +364,8 @@ mode = "create"
 [manifest.project.scripts]
 main = "src/main.incn"
 
-[manifest.tool.incan.envs.default.scripts]
-test = ["incan", "test"]
+[manifest.oven.envs.default.scripts]
+test = ["oven", "test"]
 ```
 
 A capability pack descriptor uses the same project mutation model, but its root identity is a capability rather than a starter:
@@ -380,8 +382,8 @@ source = "templates/test_main.incn"
 target = "tests/test_main.incn"
 mode = "create"
 
-[manifest.tool.incan.envs.default.scripts]
-test = ["incan", "test"]
+[manifest.oven.envs.default.scripts]
+test = ["oven", "test"]
 
 [[tooling.actions]]
 id = "run-tests"
@@ -408,7 +410,7 @@ For the walkthrough above, the provider-side descriptor could be packaged as ord
 
 ```text
 app-cli/
-  incan.toml
+  Loaf.toml
   capabilities/
     cli.toml
   templates/
@@ -443,9 +445,9 @@ mode = "create"
 [manifest.project.scripts]
 main = "src/main.incn"
 
-[manifest.tool.incan.envs.default.scripts]
-run = ["incan", "run"]
-test = ["incan", "test"]
+[manifest.oven.envs.default.scripts]
+run = ["oven", "run"]
+test = ["oven", "test"]
 
 [[tooling.actions]]
 id = "run-cli"
@@ -466,7 +468,7 @@ applies_to = ["cli"]
 description = "Use when extending the command-line entrypoint or tests."
 ```
 
-The provider ships static descriptor data and templates. The provider does not ship an arbitrary setup script that the user's project executes during `incan capability add`.
+The provider ships static descriptor data and templates. The provider does not ship an arbitrary setup script that the user's project executes during `oven capability add`.
 
 ## Reference-level explanation
 
@@ -476,7 +478,7 @@ A **starter profile** is a named descriptor that can create a new project or ini
 
 A **capability pack** is a named descriptor that applies one reusable project concern to an existing project. A starter profile may include capability packs.
 
-A **project mutation** is a planned change to project files, `incan.toml`, dependency declarations, env definitions, scripts, generated docs, or other explicit artifacts owned by the project.
+A **project mutation** is a planned change to project files, `Loaf.toml`, dependency declarations, env definitions, scripts, generated docs, or other explicit artifacts owned by the project.
 
 A **starter catalog** is a source of starter and capability descriptors. V1 implementations must support built-in descriptors. They may also support explicit local descriptor paths. Future source kinds may include git references, package-provided descriptors, public catalog sources, and private catalog sources.
 
@@ -490,36 +492,36 @@ Starter ids and capability ids must be stable ASCII identifiers. They should use
 
 The same id must not resolve to two descriptors in the same catalog source. If two catalog sources provide the same id, the CLI must either reject the ambiguity or apply a documented source precedence rule and show the selected source in diagnostics.
 
-If a capability id is advertised by multiple packages and no default provider is configured, `incan capability add <capability-id>` must not guess silently. It must show the candidate providers and require the user to disambiguate through a package-qualified capability id or an explicit provider flag.
+If a capability id is advertised by multiple packages and no default provider is configured, `oven capability add <capability-id>` must not guess silently. It must show the candidate providers and require the user to disambiguate through a package-qualified capability id or an explicit provider flag.
 
 ### Command surface
 
 This RFC adds the following lifecycle commands and flags:
 
-- `incan starter list`
-- `incan starter show <starter-id>`
-- `incan capability list`
-- `incan capability show <capability-id>`
-- `incan capability status`
-- `incan capability diff <capability-id> --to <version-or-ref>`
-- `incan capability add <capability-id>`
-- `incan capability update <capability-id> --to <version-or-ref>`
-- `incan new <name> --starter <starter-id>`
-- `incan init --starter <starter-id>`
+- `oven starter list`
+- `oven starter show <starter-id>`
+- `oven capability list`
+- `oven capability show <capability-id>`
+- `oven capability status`
+- `oven capability diff <capability-id> --to <version-or-ref>`
+- `oven capability add <capability-id>`
+- `oven capability update <capability-id> --to <version-or-ref>`
+- `oven new <name> --starter <starter-id>`
+- `oven init --starter <starter-id>`
 
-`incan starter show` and `incan capability show` must report the descriptor source, required Incan constraint, descriptor dependencies, included capabilities, planned manifest effects, declared files, and known conflicts if evaluated in a project context.
+`oven starter show` and `oven capability show` must report the descriptor source, required Incan constraint, descriptor dependencies, included capabilities, planned manifest effects, declared files, and known conflicts if evaluated in a project context.
 
-`incan capability add` requires a project root. If no `incan.toml` is found, it must fail with a diagnostic suggesting `incan init` or `incan new`.
+`oven capability add` requires a project root. If no `Loaf.toml` is found, it must fail with a diagnostic suggesting `oven init` or `oven new`.
 
-`incan add <pkg>` remains the RFC 034 package dependency command. If the added package advertises capabilities, the CLI should report those capabilities and show the corresponding `incan capability add <capability-id>` command, but it must not apply project setup as part of plain dependency addition.
+`oven add <pkg>` remains the RFC 034 package dependency command. If the added package advertises capabilities, the CLI should report those capabilities and show the corresponding `oven capability add <capability-id>` command, but it must not apply project setup as part of plain dependency addition.
 
-`incan capability status` requires a project root. It must report enabled capability provenance and should report whether the project still appears consistent with each enabled capability's declared expectations. When catalog or registry metadata is available, status should also report the latest compatible descriptor version and whether the recorded source is yanked, revoked, superseded, or unknown.
+`oven capability status` requires a project root. It must report enabled capability provenance and should report whether the project still appears consistent with each enabled capability's declared expectations. When catalog or registry metadata is available, status should also report the latest compatible descriptor version and whether the recorded source is yanked, revoked, superseded, or unknown.
 
-`incan capability diff` requires a project root and an enabled capability. It must resolve the current recorded descriptor and requested target descriptor, then show the receiver-side mutation plan without writing files. Source-level descriptor diffs may be shown as supporting information, but the rendered project diff is the review artifact.
+`oven capability diff` requires a project root and an enabled capability. It must resolve the current recorded descriptor and requested target descriptor, then show the receiver-side mutation plan without writing files. Source-level descriptor diffs may be shown as supporting information, but the rendered project diff is the review artifact.
 
-`incan capability update` requires a project root and an enabled capability. It applies an explicit receiver-approved mutation plan for moving from the recorded descriptor version to the requested target version or ref. It must support `--dry-run`, must preserve recorded source identity unless the user explicitly requests a source switch, and must not bypass RFC 076 policy.
+`oven capability update` requires a project root and an enabled capability. It applies an explicit receiver-approved mutation plan for moving from the recorded descriptor version to the requested target version or ref. It must support `--dry-run`, must preserve recorded source identity unless the user explicitly requests a source switch, and must not bypass RFC 076 policy.
 
-`incan new` without `--starter` must keep the RFC 015 default behavior. Implementations may model that default internally as a built-in starter, but users must not be required to know that.
+`oven new` without `--starter` must keep the RFC 015 default behavior. Implementations may model that default internally as a built-in starter, but users must not be required to know that.
 
 Commands that list, show, or add starters and capabilities may accept a catalog source selector. The exact flag spelling is not normative, but the model must distinguish built-in descriptors, local descriptor paths, git references, package-provided descriptors, public catalog descriptors, and private catalog descriptors in diagnostics and machine-readable output.
 
@@ -620,14 +622,14 @@ For list-like keys, applying a descriptor should append missing values without d
 
 For dependency tables, applying a descriptor must reject incompatible duplicate dependency requirements unless a documented resolver can prove the resulting requirement is compatible. The CLI must not silently replace a user-authored dependency constraint with a starter-provided one.
 
-For env definitions under `[tool.incan.envs.*]`, applying a descriptor must use RFC 015 and RFC 073 validation rules. Inherited envs, scripts, matrices, and toolchain constraints must remain valid after the mutation.
+For env definitions under `[oven.envs.*]`, applying a descriptor must use RFC 073 validation rules. Inherited envs, scripts, matrices, and toolchain constraints must remain valid after the mutation.
 
 ### Capability provenance
 
-When `incan capability add` applies a capability pack, the project manifest should record that the capability is enabled:
+When `oven capability add` applies a capability pack, the project manifest should record that the capability is enabled:
 
 ```toml
-[tool.incan.capabilities]
+[oven.capabilities]
 enabled = ["testing.basic", "std.http-client"]
 ```
 
@@ -635,13 +637,13 @@ The enabled list is provenance and tooling state. It does not replace explicit d
 
 Capability provenance must preserve the descriptor source kind, source identity, selected descriptor version or content hash when available, provider package when applicable, applied capability id, expanded transitive capability graph, and the Incan version used to apply the descriptor. When available, it should also preserve publisher identity, integrity/signature state, yanking or revocation state, catalog trust tier, and the top-level user request that caused transitive capabilities to be applied.
 
-The compact `enabled = [...]` form is sufficient for human-readable manifest summaries, but tools that support refresh, status, or security review need access to the richer provenance record. That richer record may live in `incan.toml`, a sidecar state file, or a future lock/state artifact, but it must be explicit project tooling state rather than inferred from generated files.
+The compact `enabled = [...]` form is sufficient for human-readable manifest summaries, but tools that support refresh, status, or security review need access to the richer provenance record. That richer record may live in `Loaf.toml`, a sidecar state file, or a future lock/state artifact, but it must be explicit project tooling state rather than inferred from generated files.
 
-If a capability pack is already recorded as enabled, `incan capability add <capability-id>` should be idempotent. It may revalidate that the expected project shape is still present, but it must not duplicate manifest entries or files.
+If a capability pack is already recorded as enabled, `oven capability add <capability-id>` should be idempotent. It may revalidate that the expected project shape is still present, but it must not duplicate manifest entries or files.
 
 Capability provenance should preserve enough information to explain transitive additions. A project may record that a starter enabled `sample_query.project`, and that `sample_query.project` pulled in `sample_query.session` and `testing.basic`. Tooling should be able to show the user both the top-level request and the expanded capability graph.
 
-Capability provenance is also the anchor for future updates. A project that records `cli@1.3.0` can later ask for a reviewable update to `cli@1.6.0` only if tooling can identify the recorded descriptor source, selected version or content hash, parameter values or safe value fingerprints, transitive descriptor graph, generated-file ownership, and applied template provenance. If that information is missing, `incan capability update` must degrade to an explicit adoption or manual-migration flow rather than guessing.
+Capability provenance is also the anchor for future updates. A project that records `cli@1.3.0` can later ask for a reviewable update to `cli@1.6.0` only if tooling can identify the recorded descriptor source, selected version or content hash, parameter values or safe value fingerprints, transitive descriptor graph, generated-file ownership, and applied template provenance. If that information is missing, `oven capability update` must degrade to an explicit adoption or manual-migration flow rather than guessing.
 
 Descriptor-version updates may include declarative migration metadata. V1 migration metadata should stay non-executable: manifest key additions, manifest key renames, parameter renames, template id changes, file ownership changes, dependency version changes, action descriptor changes, and manual instruction blocks are acceptable shapes. Arbitrary shell, Python, plugin, or provider-defined migration hooks are out of scope for this RFC.
 
@@ -663,7 +665,7 @@ If tooling metadata references files, paths must be relative to the project root
 
 The LSP or another editor-facing tool may use this metadata for completions, code actions, diagnostics, project-tree grouping, and run/debug affordances. It must still treat the compiler and lifecycle CLI as the source of truth for validation.
 
-RFC 078 owns typed action semantics, execution modes, risk labels, dry-run expectations for action execution, and `incan action run`. This RFC only lets starters and capabilities contribute or reference action descriptors as part of a project mutation plan. A descriptor that mentions an action must remain descriptive until the user or tooling explicitly invokes the action through RFC 078 behavior.
+RFC 078 owns typed action semantics, execution modes, risk labels, dry-run expectations for action execution, and `oven action run`. This RFC only lets starters and capabilities contribute or reference action descriptors as part of a project mutation plan. A descriptor that mentions an action must remain descriptive until the user or tooling explicitly invokes the action through RFC 078 behavior.
 
 ### Agent guidance metadata
 
@@ -683,7 +685,7 @@ This metadata is useful because capability packs encode project intent. If a pro
 
 ### Dry-run behavior
 
-`--dry-run` must be supported for `incan new --starter`, `incan init --starter`, and `incan capability add`.
+`--dry-run` must be supported for `oven new --starter`, `oven init --starter`, and `oven capability add`.
 
 Dry-run output must include the full mutation plan and must not write project files, lockfiles, or generated artifacts. If a dry run detects conflicts, it must report them with the same diagnostics that a real apply would use. The plan must explain why each descriptor or mutation is applicable, already satisfied, skipped, blocked, conflicting, or unsafe when those states apply.
 
@@ -691,7 +693,7 @@ Implementations must provide a machine-readable dry-run format for the full muta
 
 ### Lockfile interaction
 
-Starter and capability application may update `incan.toml`, but it must not silently rewrite `incan.lock` unless the command documents and exposes that behavior. The default behavior should leave lockfile updates to the next `incan lock`, `incan build`, or `incan test` flow governed by RFC 020.
+Starter and capability application may update `Loaf.toml`, but it must not silently rewrite `Oven.lock` unless the command documents and exposes that behavior. The default behavior should leave lockfile updates to the next `oven lock`, `oven bake`, or `oven test` flow governed by RFC 020.
 
 If a descriptor includes dependency changes and the project is in a locked or frozen mode, the CLI must report that lockfile refresh is required rather than pretending the project remains fully locked.
 
@@ -717,7 +719,7 @@ Catalog resolution must avoid dependency-confusion behavior. A public catalog en
 
 Security-sensitive mutation categories must be explicit in dry-run and machine-readable output. At minimum, plans must identify dependency additions or upgrades, script/task changes, env changes, CI/config changes, executable source changes, generated-file ownership changes, and agent guidance metadata changes.
 
-Project and organization policy may restrict which catalog sources, publishers, trust tiers, or descriptor pin forms are allowed for starters and capabilities. Policy may also require approval for high-risk mutation categories before `incan capability add` or a future capability refresh writes changes. This mirrors code review ownership for CI workflows: source files, scripts, CI config, env definitions, and agent guidance may need different reviewers.
+Project and organization policy may restrict which catalog sources, publishers, trust tiers, or descriptor pin forms are allowed for starters and capabilities. Policy may also require approval for high-risk mutation categories before `oven capability add` or a future capability refresh writes changes. This mirrors code review ownership for CI workflows: source files, scripts, CI config, env definitions, and agent guidance may need different reviewers.
 
 Automated capability update should follow a review-first model. It may detect stale descriptors, vulnerable sources, or newer compatible versions, but it should emit a reviewable mutation plan or pull-request-sized patch rather than applying changes unattended. The plan should show before/after descriptor source, version or content hash, provider identity, known advisory state, yanking state, and every security-sensitive mutation category.
 
@@ -737,15 +739,15 @@ Diagnostics should prefer actionable conflict explanations over generic "templat
 
 ## Design details
 
-### Relationship to RFC 015
+### Relationship to RFCs 015 and 117
 
-RFC 015 defines the baseline project lifecycle: project metadata, root discovery, `incan new`, `incan init`, versioning, and named envs. This RFC does not change those rules. It adds richer starter selection and capability addition on top of the same project model.
+RFC 015 remains the historical source of the baseline lifecycle ideas. RFC 117 prospectively supersedes its manifest filename, discovery, lock, and environment-configuration placement. This RFC adds richer starter selection and capability application on top of the `Loaf.toml` project model without reviving the old manifest contract.
 
 The RFC 015 default scaffold remains valid and should stay small. Starter profiles are the place for opinionated project shapes.
 
 ### Relationship to library metadata
 
-Capability packs are project-level activation units. Library manifests may eventually advertise capabilities, dependencies, config needs, or generated helper files, but applying those capabilities to a project remains a lifecycle CLI operation through `incan capability add`. This avoids a hidden model where merely importing a package or adding a dependency rewrites the project or changes source layout.
+Capability packs are project-level activation units. Library manifests may eventually advertise capabilities, dependencies, config needs, or generated helper files, but applying those capabilities to a project remains a lifecycle CLI operation through `oven capability add`. This avoids a hidden model where merely importing a package or adding a dependency rewrites the project or changes source layout.
 
 Where library manifests and starter descriptors overlap, library manifest data should be the source of truth for package-owned dependency and feature requirements. Starter descriptors should compose those capabilities rather than copy stale requirements by hand.
 
@@ -826,15 +828,15 @@ Rejected because arbitrary scripts make starters powerful but unsafe, hard to in
 
 ### Make package import activate capabilities automatically
 
-Rejected because imports should not mutate projects or create hidden configuration. Capability activation should be explicit through `incan capability add` or a selected starter profile.
+Rejected because imports should not mutate projects or create hidden configuration. Capability activation should be explicit through `oven capability add` or a selected starter profile.
 
-### Make plain `incan add <pkg>` apply default capability setup
+### Make plain `oven add <pkg>` apply default capability setup
 
-Rejected because it overloads dependency addition with project mutation. RFC 034 defines `incan add <pkg>` as the package workflow, analogous to `cargo add`. It should be safe to add a dependency without creating source files or scripts. Packages may advertise capabilities and the CLI may suggest them after adding the dependency, but applying capability setup belongs to `incan capability add`.
+Rejected because it overloads dependency addition with project mutation. RFC 034 defines `oven add <pkg>` as the package workflow, analogous to `cargo add`. It should be safe to add a dependency without creating source files or scripts. Packages may advertise capabilities and the CLI may suggest them after adding the dependency, but applying capability setup belongs to `oven capability add`.
 
-### Store all starter behavior in `incan.toml`
+### Store all starter behavior in `Loaf.toml`
 
-Rejected because starters often need file templates, docs, and sample tests. `incan.toml` should record project metadata and applied capability provenance, not become a large embedded template archive.
+Rejected because starters often need file templates, docs, and sample tests. `Loaf.toml` should record project metadata and applied capability provenance, not become a large embedded template archive.
 
 ### Add capability removal in v1
 
@@ -854,12 +856,12 @@ The recommended implementation shape is to treat starter and capability applicat
 
 First, resolve the descriptor from a catalog. Then expand included capability packs and template dependencies into one ordered acyclic mutation plan. Then validate the plan against the target project, including manifest conflicts, file conflicts, generated-file ownership policy, toolchain constraints, env validity, and path safety. Finally, apply the plan atomically or report diagnostics without writing anything.
 
-The same mutation plan should power dry-run output, human diagnostics, and machine-readable inspection. This keeps `incan new --starter`, `incan init --starter`, `incan capability add`, and `incan capability update` aligned rather than implementing separate generators and updaters.
+The same mutation plan should power dry-run output, human diagnostics, and machine-readable inspection. This keeps `oven new --starter`, `oven init --starter`, `oven capability add`, and `oven capability update` aligned rather than implementing separate generators and updaters.
 
 ## Layers affected
 
-- **Manifest schema / configuration validation:** `incan.toml` should allow capability provenance under `[tool.incan.capabilities]`; starter-applied env, script, dependency, and project metadata changes must validate under existing RFC 015, RFC 020, and RFC 073 rules.
-- **CLI / tooling:** `incan starter`, `incan capability`, `incan new --starter`, `incan init --starter`, `incan capability add`, `incan capability diff`, and `incan capability update` are new lifecycle tooling surfaces. They must support inspection, dry-run planning, conflict diagnostics, deterministic application, and review-first descriptor-version updates.
+- **Manifest schema / configuration validation:** `Loaf.toml` should allow capability provenance under `[oven.capabilities]`; starter-applied env, script, dependency, and project metadata changes must validate under RFCs 020, 073, 076, and 117.
+- **CLI / tooling:** `oven starter`, `oven capability`, `oven new --starter`, `oven init --starter`, `oven capability add`, `oven capability diff`, and `oven capability update` are new lifecycle tooling surfaces. They must support inspection, dry-run planning, conflict diagnostics, deterministic application, and review-first descriptor-version updates.
 - **LSP / IDE tooling:** editor-facing tools should consume machine-readable starter, capability, mutation-plan, file-role, and action metadata from the lifecycle layer. They may expose completions, code actions, project diagnostics, and run/debug affordances, but they must not fork descriptor semantics.
 - **Agentic tooling:** agent-facing tools may consume capability provenance, file roles, and agent guidance metadata to select relevant skills or workflows, but starter/capability descriptors remain descriptive and must not execute agents implicitly.
 - **Project scaffolding:** the project generator must support descriptor-backed file creation, manifest mutation, safe path normalization, and non-overwrite defaults.
@@ -869,10 +871,10 @@ The same mutation plan should power dry-run output, human diagnostics, and machi
 ## Unresolved questions
 
 - Should v1 support only built-in starter catalogs and explicit local descriptor paths, with `incan.pub` as a designed follow-up, or should registry-backed descriptor discovery be part of the first accepted design?
-- Should `incan capability add` always record capability provenance under `[tool.incan.capabilities]`, or should provenance be opt-in for projects that want very small manifests?
+- Should `oven capability add` always record capability provenance under `[oven.capabilities]`, or should provenance be opt-in for projects that want very small manifests?
 - How much of descriptor dependency resolution belongs in v1, and should optional dependencies be allowed before required dependency graphs are fully implemented?
 - Which files should starters mark as bootstrap-owned versus managed by default?
-- Should `incan init --starter` have an explicit adoption mode, or should existing-project adoption be auto-detected?
+- Should `oven init --starter` have an explicit adoption mode, or should existing-project adoption be auto-detected?
 - What provider validation should be required before a starter or capability can be published or promoted through `incan.pub`?
 - Should starter descriptors support interactive prompts in v1, or should all parameterization come from command-line flags and project metadata?
 - Which `tooling.file_roles` and `tooling.actions` values should be standardized in v1 versus left as free-form extension strings?

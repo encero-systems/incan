@@ -16,6 +16,8 @@
     - RFC 104 (ambient runtime capabilities and receipts)
     - RFC 112 (crash-safe local publication and file coordination)
     - RFC 114 (compiled providers, SDK components, and package features)
+    - RFC 117 (`Loaf.toml` and Oven's language-neutral project model)
+    - RFC 118 (Incan and Oven command-line surfaces)
 - **Issue:** [#939](https://github.com/encero-systems/incan/issues/939)
 - **RFC PR:** —
 - **Written against:** v0.5
@@ -24,6 +26,19 @@
 ## Summary
 
 This RFC defines a typed, explicit C ABI interop surface for Incan. `from std.interop import c` activates a local `binding` vocabulary whose declarations are ordinarily private and normally feed a safe Incan façade. Binding declarations preserve exact ABI types, symbols, layouts, ownership, nullability, output positions, buffers, headers, toolchain constraints, and target-native artifacts without assigning application meaning to foreign status values. The Incan toolchain verifies declarations with a Clang-compatible target toolchain, resolves and locks static, bundled, and system-native artifacts through the package graph, and lowers calls from compiler-owned semantic ownership facts rather than backend guesses. The same package, provenance, inspection, and façade boundaries remain extensible to future foreign runtimes without making C pointers or C ownership the universal interop model.
+
+## 0.5 release boundary and post-0.5 envelope transition
+
+The v0.5 RFC 116 release contract is the currently implemented `incan.toml` `[oven.interop]` schema and its bounded checked-binding, target-requirement, and locked-input behavior. It must remain internally coherent through the v0.5 release; this RFC does not claim that it already uses the future `Loaf.toml` project model.
+
+The release-bound implementation is deliberately distinct from later work:
+
+- **Implemented and closed v0.5 slices:** #940 provides the checked-binding and Clang-verification foundation; #942 provides declared native artifacts, shims, and normalized locked requirement facts.
+- **Remaining v0.5 completion work:** #941 owns the resource/bounded-value acceptance closure and #943 owns final inspection, editor, and documentation projection. Their issue state—not a source branch or this RFC prose—determines when RFC 116 can close.
+- **v0.6 execution and evidence:** #944 resolves the declared requirements into selected tool and SDK receipts, bakes/stages artifacts, produces adapter inputs, and gathers virtual-device evidence. It does not reopen RFC 116's source declaration or current requirement semantics.
+- **v0.6 Loaf-envelope successor:** [#1008](https://github.com/encero-systems/incan/issues/1008) moves the established requirement data from `incan.toml` to `Loaf.toml` and from the current semantic lock to `Oven.lock` after the RFC 117 cutover. It preserves the v0.5 requirement meaning, rejects legacy parsing, and does not duplicate #944.
+
+RFC 117 owns the project-model cutover; RFC 118 owns the later CLI presentation. Neither changes the C-specific source safety contract in this RFC.
 
 ## Core model
 
@@ -767,15 +782,15 @@ Deliver the import-activated `std.interop` vocabulary, exact scalar declarations
 
 Add resource release associations, inferred call-scoped borrowing, `Out` / `InOut` initialization rules, bounded strings and spans, scoped copies, and a SQLite proof.
 
-### Phase 3: Governed artifacts and shims (#942)
+### Phase 3: Governed artifacts and shims (#942, v0.5)
 
-Extend the package and lock graph with `[oven.interop]` target requirements, package-owned artifacts, authored C/C++ shim inputs, content identities, and offline drift detection.
+Extend the v0.5 package and lock graph with `[oven.interop]` target requirements in `incan.toml`, package-owned artifacts, authored C/C++ shim inputs, content identities, and offline drift detection. RFC 117 successor chore #1008 relocates the same declared envelope after v0.5.
 
 ### Phase 4: Tooling projection (#943)
 
 Project checked binding facts, bridge and façade edges, diagnostics, inspection, editor support, generated references, and compatibility documentation from the same descriptor.
 
-### Phase 5: Mobile inference proof (#944)
+### Phase 5: Mobile inference proof (#944, v0.6 follow-up)
 
 Verify Android and iOS target paths with a real native inference binding and define the directional handoff from a Loaf to Gradle or Xcode without freezing their command protocol.
 
@@ -793,7 +808,7 @@ Verify Android and iOS target paths with a real native inference binding and def
 - [x] Verify declared function signatures, enum carriers and values, and plain layouts with Clang before code generation.
 - [x] Add positive consumer execution and declaration-mismatch diagnostics.
 - [x] Add reference documentation, release-note inventory, and generated capability inventory.
-- [ ] Complete the slice review and PR-readiness gate.
+- [x] Complete the slice review and PR-readiness gate.
 
 ### Owned resources and bounded bridge values (#941)
 
@@ -801,10 +816,11 @@ Verify Android and iOS target paths with a real native inference binding and def
 - [ ] Implement `Out` / `InOut` slot construction, initialization conditions, and `take()` checks.
 - [ ] Add bounded string, span, and scoped-view bridge operations with SQLite acceptance evidence.
 
-### Governed artifacts and shims (#942)
+### Governed artifacts and shims (#942, v0.5)
 
-- [ ] Define target-specific native artifact and shim inputs, lock identity, provenance, and offline verification.
-- [ ] Define source versus `incan.toml` responsibilities for target-specific physical configuration.
+- [x] Define target-specific native artifact and shim inputs, lock identity, provenance, and offline verification.
+- [x] Define the v0.5 source versus `incan.toml` responsibilities for target-specific physical configuration.
+- [ ] Complete #1008 after v0.5 to relocate the unchanged declared envelope to `Loaf.toml` and `Oven.lock`.
 
 ### Tooling projection (#943)
 
@@ -827,7 +843,7 @@ Verify Android and iOS target paths with a real native inference binding and def
 - Call-scoped foreign borrows are inferred from semantic parameter modes and recorded before backend emission.
 - `c.Out[T]` and `c.InOut[T]` describe declaration positions without enabling arbitrary dereference. Private bridge code creates compiler-managed slots with ordinary expressions such as `c.out[c.Owned[Database]]()` and `c.inout(value)`, then consumes them with `take()` only on the declared valid outcome or post-call path.
 - Returned foreign views may be copied within the current unsafe region or declared static; owner-tied escaping views are excluded.
-- Source declarations remain the semantic authority. Target-specific artifact requirements, authored shim sources, and package-owned physical inputs may live under `[oven.interop]` in `incan.toml` when an author needs them; they do not replace the binding declaration or claim that Oven has already selected a local toolchain.
+- Source declarations remain the semantic authority. For v0.5, target-specific artifact requirements, authored shim sources, and package-owned physical inputs live under `[oven.interop]` in `incan.toml`; they do not replace the binding declaration or claim that Oven has already selected a local toolchain. After the RFC 117 cutover, #1008 relocates this same authored requirement envelope to `Loaf.toml` without legacy parsing or a C-safety redesign.
 - Shims are first-class governed package assets.
 - Verification requires a managed Clang-compatible target toolchain.
 - Oven interop deployment classes are static, bundled, and explicit system capability.

@@ -13,27 +13,31 @@
     - RFC 043 (Rust trait implementation from Incan)
     - RFC 079 (`incan.pub` artifact graph)
     - RFC 092 (interactive runtime stdlib contracts)
+    - RFC 117 (`Loaf.toml` and Oven's language-neutral project model)
+    - RFC 119 (Oven-native Rust build facets and Cargo interoperation)
+    - #656 (Rust-facing ABI and Incan package compatibility direction)
+    - #975 (Oven: Cargo-free Incan/Rust toolchain)
 - **Issue:** https://github.com/encero-systems/incan/issues/569
 - **RFC PR:** —
-- **Written against:** v0.3
+- **Written against:** ~~v0.3~~ v0.5
 - **Shipped in:** —
 
 ## Summary
 
-This RFC defines a Rust-hosted Incan caller model: a native Rust application should be able to depend on an Incan-authored library through ordinary Cargo mechanics and call a curated, typed Rust-facing API without reverse-engineering compiler output, manually wiring Incan runtime helpers, or treating every public Incan export as a stable Rust API.
+This RFC defines a Rust-hosted Incan caller model: a native Rust application should be able to depend on an Incan-authored library through a Cargo-compatible caller package or an Oven-native Rust-host path and call a curated, typed Rust-facing API without reverse-engineering compiler output, manually wiring Incan runtime helpers, or treating every public Incan export as a stable Rust API.
 
-This Draft is now framed around a Rust-facing caller ABI and Cargo-usable Incan package artifact. Generated Rust source may remain useful for inspection, debugging, migration, or an implementation backend, but it must not be the public package compatibility path. The caller boundary is the stable host API shape; it is backed by checked Incan metadata, ABI/package metadata, generated adapters where needed, and a small support crate that owns initialization, conversions, async/runtime policy, diagnostics, version checks, and panic/error containment.
+This Draft is framed around a Rust-facing caller facet and caller ABI/package metadata. Generated Rust source may remain useful for inspection, debugging, migration, or an implementation backend, but it must not be the public package compatibility path. Oven plans and materializes target-compatible caller build units and `*.loaf` assets from the selected facet. A Cargo-usable package is a compatibility projection for a Rust host, not Oven's build authority. The caller boundary is the stable host API shape; it is backed by checked Incan metadata, ABI/package metadata, generated adapters where needed, and a small support crate that owns initialization, conversions, async/runtime policy, diagnostics, version checks, and panic/error containment.
 
 ## Core model
 
 1. **Rust-hosted consumption is a first-class direction:** Incan already lets Incan code call Rust; this RFC defines the reverse direction where Rust code deliberately calls Incan-authored behavior.
-2. **The Cargo-usable artifact is not generated Rust source as contract:** Rust hosts need a Cargo-native dependency shape, but the public compatibility promise is the caller ABI/package metadata, not compiler-emitted Rust internals.
+2. **The Rust-host artifact is not generated Rust source as contract:** a Cargo-compatible package may be useful to a Rust host, but the public compatibility promise is the caller facet and ABI/package metadata, not compiler-emitted Rust internals.
 3. **Implementation artifacts remain inspectable:** generated Rust, object code, IR snapshots, or other backend artifacts should be inspectable and debuggable where emitted, but they are not the host-facing semantic contract.
 4. **The caller boundary is the stable host-facing shape:** Rust consumers should target caller helpers and support traits that make calls feel natural from Rust while preserving Incan semantics.
 5. **The `pub` system should grow rather than be bypassed:** Rust-hosted exports should be modeled as a public export profile or facet, not as an unrelated side channel.
 6. **Types cross through reusable helpers:** primitive values, models, newtypes, enums, `Result`, `Option`, collections, and Rust-backed types should cross through explicit, versioned conversion helpers that can also simplify emitter responsibilities.
 7. **Runtime policy is explicit:** async execution, logger/telemetry hooks, host capabilities, panic handling, and initialization must be part of the caller contract rather than incidental generated code behavior.
-8. **Cargo remains the host integration substrate:** Rust applications should use normal dependency declarations, build scripts, or Cargo-usable package artifacts instead of a bespoke binary loader.
+8. **Cargo is a host compatibility surface, not Incan's build authority:** an ordinary Rust application may use normal Cargo dependency declarations and a caller package, while Oven remains responsible for resolving, baking, selecting, and verifying the Incan artifact graph. Oven-native Rust hosts consume the same caller facet without Cargo.
 
 ## Motivation
 
@@ -42,6 +46,8 @@ Incan's current interop story is strong in one direction: Incan source imports R
 That question exposes a deeper product direction. Incan should produce Rust-native integration artifacts without making generated Rust source the package contract. Generated Rust can still be valuable as an implementation artifact and inspection surface, but the durable promise to Rust hosts should be an explicit caller ABI, metadata, support crate contract, and Cargo-native package shape.
 
 RFC 031 created the first library artifact foundation: an Incan library can build a semantic manifest and implementation artifacts. The missing product-level answer is the shape above those artifacts: which public exports are intended for Rust hosts, which helper types make calls feel Incan-like from Rust, which support code owns repeated boundary mechanics, and which metadata defines compatibility without exposing generated Rust internals as API.
+
+Oven completes the delivery boundary without replacing this caller model. A selected Rust-hosted export facet is a target-neutral public contract; Oven turns it into target-specific build units and verified `*.loaf` assets. RFC 117 owns the authored-manifest, resolved-graph, asset-identity, and receipt model that this RFC consumes. A Rust application that already uses Cargo may consume a lightweight caller package over that Oven-produced output, but it must not need Cargo to resolve or compile the Incan library itself.
 
 The missing piece is not only a command. It is a boundary. A Rust application embedding Incan code needs to know which calls are stable, how values convert, how errors surface, whether async calls need a runtime, whether panics are contained, how logs and telemetry are connected, and which compiler/runtime version produced the artifact. Without that boundary, users either treat compiler output as hand-authored Rust or avoid Rust-hosted Incan entirely.
 
@@ -56,7 +62,8 @@ The end-state should be simple: an application team writes domain logic, policy,
 - Define conversion requirements for primitives, collections, models, enums, newtypes, results, options, and Rust-backed values.
 - Define reusable caller helpers that can reduce bespoke emitter output for common boundary shapes.
 - Define initialization, version, diagnostics, panic, async, logging, telemetry, and host capability responsibilities at the caller boundary.
-- Preserve Cargo-native Rust host ergonomics without requiring generated Rust source to be the concrete public artifact.
+- Preserve Cargo-compatible Rust host ergonomics without making Cargo the authority for Incan resolution, baking, or provenance.
+- Define how a selected caller facet becomes a target-compatible Oven caller artifact with inspectable build and source-map receipts.
 - Leave room for both local path development and published package consumption.
 - Keep Rust integration Rust-shaped enough to feel natural in Rust applications without making Incan source adopt Rust's full API design model.
 
@@ -68,8 +75,10 @@ The end-state should be simple: an application team writes domain logic, policy,
 - This RFC does not replace `rust::` imports or Rust interop from Incan source.
 - This RFC does not define a C ABI, dynamic plugin ABI, `extern "C"` boundary, or cross-language FFI story.
 - This RFC does not require a Rust application to run the Incan compiler at runtime.
+- This RFC does not require Cargo to resolve or compile an Incan package before a Rust host can call it.
 - This RFC does not require every Incan public export to be Rust-callable by default.
 - This RFC does not define registry publication mechanics beyond compatibility with RFC 034 and RFC 079.
+- This RFC does not define `Loaf.toml`, `Oven.lock`, or the `*.loaf` asset format; it consumes the project, asset-identity, and receipt contract from RFC 117.
 - This RFC does not define the full implementation of async runtime internals, host capability enforcement, or telemetry backends.
 - This RFC does not guarantee that every Rust type imported through `rust::` can automatically cross back into a host Rust application without an adapter.
 
@@ -102,17 +111,12 @@ pub caller from pricing import quote_order
 
 That example is intentionally minimal. A synchronous function does not need to spell `mode = "sync"`, and a Rust caller name does not need to be repeated when it matches the Incan export name. Extra metadata should appear only when the Rust-hosted profile needs an alias, a projection choice, a blocking wrapper, or another non-default policy.
 
-The library is built for Rust-hosted consumption:
-
-```bash
-incan build --lib --caller rust
-```
-
-That command emits or materializes a Cargo-usable caller artifact with caller metadata. A Rust application can then depend on it through Cargo:
+Oven materializes a target-compatible caller artifact from the selected Rust-hosted facet. The exact command spelling is not normative. The artifact carries caller metadata, ABI/package metadata, target compatibility, source-map references, and its verified Oven build receipt. A Rust application that uses Cargo can consume the resulting compatibility package without compiling the Incan library:
 
 ```toml
 [dependencies]
-pricing_rules = { path = "../pricing_rules/target/lib" }
+# This is a caller package materialized from a verified Oven artifact.
+pricing_rules = { path = "../pricing_rules/caller" }
 ```
 
 The Rust application calls the typed caller wrapper rather than internal implementation details:
@@ -155,7 +159,9 @@ The author-facing model is:
 Incan library source
   -> checked public Incan API
   -> Rust-hosted public profile
-  -> Rust-facing ABI/package metadata + caller artifact
+  -> Rust-facing caller facet + ABI/package metadata
+  -> Oven-selected target caller build unit and `*.loaf` asset
+  -> Oven-native Rust host or Cargo-compatible caller package
   -> native Rust application
 ```
 
@@ -175,13 +181,13 @@ The caller boundary must include:
 
 The caller boundary must not require Rust consumers to import arbitrary compiler-generated implementation modules as the host API. Internal generated modules may exist and should remain readable, but only the caller namespace is stable for Rust-hosted consumption.
 
-The caller boundary should be generated or materialized as a Cargo-usable artifact. It may live in the same package as implementation artifacts or in a sibling package, but Rust consumers must not need to know the compiler's internal implementation layout.
+The caller boundary must be materialized by Oven as a target-compatible caller artifact. A Cargo-compatible package may live beside that artifact or be projected from it for a Rust host, but Cargo must not become responsible for resolving, compiling, or selecting the Incan implementation graph. Rust consumers must not need to know the compiler's internal implementation layout.
 
 Caller-visible Incan functions must have a representable Rust signature. The compiler must reject a Rust-hosted public export when any parameter, return value, type parameter, effect, or captured dependency cannot be represented by the caller boundary.
 
 Caller-visible synchronous functions must expose a synchronous Rust call. Caller-visible async functions must expose an async Rust call or an explicit runtime-backed blocking call, depending on the declared caller mode. The generated API must not silently create or own a runtime in a way that surprises the host application.
 
-Caller initialization must validate compiler/runtime compatibility before the first call. The generated artifact must expose enough metadata to identify the Incan compiler version, manifest format, caller ABI version, and generated support crate version.
+Caller initialization must validate compiler/runtime compatibility before the first call. The generated artifact must expose enough metadata to identify the Incan compiler version, manifest format, caller facet, caller ABI version, generated support crate version, target/profile compatibility, and the selected Oven build receipt or `*.loaf` asset identity.
 
 Incan `Result[T, E]` crossing into Rust must map to Rust `Result<T, E>` when both `T` and `E` are representable. Boundary failures that occur outside the Incan function's declared return value must use the caller error type, not the Incan function's domain error type.
 
@@ -199,28 +205,38 @@ Panics from generated Incan code or Rust code called by Incan must not be indist
 
 Host capabilities used by caller-visible Incan code must be visible through metadata. If an Incan caller export requires filesystem, network, process, environment, telemetry, clock, async runtime, or other host services, the Rust caller initialization must provide or validate those services before use when the target supports such validation.
 
+Caller diagnostics and capability outcomes must reference stable public source-map and receipt identities. They must not expose private HIR, Body IR, compiler session state, or backend implementation representations.
+
 ## Design details
 
-### Caller artifact shape
+### Caller facet and artifact shape
 
-The caller artifact should be a Cargo-usable package backed by Incan-owned caller metadata and ABI metadata. A current implementation may materialize that as a generated Rust package, but the normative contract is the Cargo-usable caller artifact and its metadata, not the emitted source layout.
+The Rust-hosted caller facet is the target-neutral public selection of Incan exports, type projections, capability requirements, caller ABI version, and source-map schema. Oven materializes that facet into target-compatible caller artifacts. A current implementation may use generated Rust adapters or a Cargo-compatible package, but the normative contract is the caller facet and metadata, not the emitted source layout or Cargo package structure.
 
-Conceptually, the package contains:
+Conceptually, the caller artifact set contains:
 
 ```text
 stable caller namespace
-caller metadata
+caller facet metadata
 ABI/package metadata
 semantic manifest
-Cargo metadata
+source-map and Oven-receipt references
 implementation artifact(s)
+target-compatible caller `*.loaf` asset(s)
+optional Cargo-compatible package projection
 ```
 
-The exact directory layout is not normative. The normative requirement is that Rust consumers do not need to know which files came from Incan source lowering, backend emission, support glue, or ABI materialization.
+The exact directory layout, static-versus-dynamic linkage, and Cargo package arrangement are not normative. Rust consumers must not need to know which files came from Incan source lowering, backend emission, support glue, ABI materialization, or Oven storage.
+
+### Oven planning and Cargo compatibility
+
+Oven must include the selected caller facet, public feature projection, compiler and support compatibility, target/profile, native-linkage requirements, and relevant source/ABI metadata in the caller build-unit identity. The resulting `*.loaf` asset must identify the caller facet and the exact public receipt through which it was built.
+
+An Oven-native Rust host may consume that selected caller artifact directly. A Cargo-compatible package may instead provide Rust source, metadata, and linkage directives that connect an ordinary Cargo host application to the same selected artifact. Such a package must not invoke the Incan compiler, discover a different Incan artifact, or treat generated implementation modules as public API. It may validate that the selected artifact is compatible with the host target and caller ABI.
 
 ### Support crate
 
-The Incan toolchain should provide a small Rust support crate for caller boundaries. That crate should own shared traits, error types, version checks, conversion helpers, and host context traits that would otherwise be duplicated into every generated package or embedded directly into emitter output.
+The Incan toolchain should provide a small Rust support crate for caller boundaries. That crate should own shared traits, error types, version checks, conversion helpers, and host context traits that would otherwise be duplicated into every generated package or embedded directly into emitter output. It may be a dependency of a Cargo-compatible caller package, but its existence must not make Cargo a prerequisite for Oven to bake or select caller artifacts.
 
 The support crate should not become a large runtime framework. It should be boundary infrastructure: initialization, compatibility checks, conversions, diagnostics, panic policy, host context plumbing, and reusable call-shape helpers. Those helpers should make Rust-hosted calls feel closer to Incan's domain model while giving the emitter fewer bespoke cases to print inline.
 
@@ -271,15 +287,15 @@ Caller failures should identify the caller export name, the Incan function name,
 
 ### Compatibility and migration
 
-This RFC is additive but reframes older generated-crate consumption as transitional. Existing `incan build --lib` consumers may continue depending directly on generated crates while that path exists, but that should be documented as a lower-level implementation-artifact path rather than the recommended Rust-hosted integration path.
+This RFC is additive but reframes older generated-crate consumption as transitional. Existing direct generated-crate consumers may continue while that path exists, but it must be documented as a lower-level implementation-artifact path rather than the recommended Rust-hosted integration path.
 
-Once caller artifacts exist, docs should steer Rust application authors toward caller APIs and reserve backend artifacts for debugging, compiler tests, inspection, or advanced toolchain integration.
+Once caller artifacts exist, docs should steer Rust application authors toward caller APIs and reserve backend artifacts for debugging, compiler tests, inspection, or advanced toolchain integration. Migration reporting must classify direct generated-crate use as supported through the caller facet, temporarily retained for migration/debugging, or unsupported with an explicit diagnostic.
 
 ## Alternatives considered
 
 - **Tell Rust users to depend on the generated crate directly** — Rejected because it makes generated Rust internals the compatibility path. Rust hosts need a stable caller ABI/package contract even if the current backend happens to emit Rust.
 - **Use a dynamic plugin or C ABI boundary** — Rejected for this RFC because Incan already emits Rust, and Rust-hosted applications should get normal Cargo type checking, optimization, and dependency resolution.
-- **Use only a `build.rs` helper in the Rust application** — Useful for local development, but insufficient as the whole model because published artifacts and registry workflows should not require every consumer to run the Incan compiler.
+- **Use only a `build.rs` helper in the Rust application** — A development helper may hydrate or validate a selected caller artifact, but it is insufficient as the whole model because published artifacts and registry workflows must not require every consumer to run the Incan compiler.
 - **Make every public Incan export Rust-callable automatically** — Rejected as the default because Incan's `pub` system should be enriched with host-facing profiles instead of flattening every public Incan symbol into the same Rust-hosted contract.
 - **Generate only untyped stringly dynamic calls** — Rejected because it gives up the main benefit of compiling Incan into the Rust ecosystem: typed, auditable integration.
 
@@ -293,13 +309,13 @@ Once caller artifacts exist, docs should steer Rust application authors toward c
 
 ## Implementation architecture
 
-The recommended architecture is to extend library builds with a caller adapter generation pass that consumes checked public API metadata, semantic facts, ABI metadata, and caller export declarations. The adapter should call into backend-owned implementation artifacts through compiler-owned internal paths or ABI entrypoints, while exposing only the caller namespace to host Rust code.
+The recommended architecture is to extend library builds with a caller adapter generation pass that consumes checked public API metadata, semantic facts, ABI metadata, and caller export declarations. Oven plans that adapter, its implementation dependencies, target/profile requirements, and native linkage as one caller build-unit graph. The adapter calls backend-owned implementation artifacts through compiler-owned internal paths or ABI entrypoints while exposing only the caller namespace to host Rust code.
 
-The support crate should remain narrow and versioned. Caller artifacts should declare the caller ABI version they were emitted against and validate it at initialization. Metadata should be inspectable by docs, LSP, and registry tooling so Rust-hosted integration can be documented and discovered without building the package.
+The support crate should remain narrow and versioned. Caller artifacts should declare the caller ABI version they were emitted against and validate it at initialization. Metadata, source maps, and Oven receipts should be inspectable by docs, LSP, registry tooling, and hosts so Rust-hosted integration can be documented and discovered without building the package.
 
-Local development may later add a build-script helper that invokes the Incan compiler from a Rust workspace, but that helper should produce the same caller boundary as a prebuilt or published package.
+Local development may later add a Cargo helper that hydrates or validates a selected Oven caller artifact from a Rust workspace, but the helper must not define a second caller boundary or require Cargo to compile the Incan library.
 
-Current package-facing characterization shows why generated implementation artifacts are not enough as the public contract. Ordinary `incan build --lib` artifacts can already expose owned scalar callable parameters through package exports, but borrowed non-`Copy` callable parameters are not yet consumable across a `pub::` package boundary. A producer export such as `Callable[Payload, None]` currently emits a Rust signature shaped like `fn(&Payload) -> ()`, while a downstream Incan consumer observer still emits `fn(Payload)`, causing Cargo type checking to fail. The caller adapter work must either generate a compatible borrowed wrapper for that boundary or reject/document the unsupported export before producing a broken consumer build.
+Borrowed non-`Copy` callable parameters illustrate why implementation artifacts are not enough as the public contract. The caller adapter must generate a compatible caller projection or reject the unsupported export before producing a caller artifact. It must not publish a boundary whose generated Rust shape is incompatible with its declared caller signature.
 
 ## Layers affected
 
@@ -307,21 +323,21 @@ Current package-facing characterization shows why generated implementation artif
 - **Typechecker / API metadata**: caller export validation must prove that selected entrypoints and boundary types are representable for Rust-hosted calls.
 - **IR Lowering / Emission**: backend output must preserve a stable caller namespace or ABI entrypoint and avoid making internal generated modules part of the Rust-hosted contract.
 - **Stdlib / Runtime (`incan_stdlib`)**: host-facing runtime hooks, errors, logging, telemetry, async, and capability surfaces may need caller-compatible contracts.
-- **CLI / Tooling**: build commands should expose a caller artifact mode and diagnostics for unsupported caller exports.
+- **Oven / Tooling**: Oven must plan, materialize, inspect, and verify caller build units and `*.loaf` assets under RFC 117's project/asset contract; tooling must report diagnostics for unsupported caller exports and incompatible caller artifacts.
 - **LSP / Docs tooling**: tooling should surface caller-visible exports, Rust-facing signatures, compatibility metadata, and unsupported-boundary diagnostics.
 - **Registry / Package metadata**: published packages should advertise whether they provide a Rust-hosted caller surface and which caller ABI version they require.
 
 ## Unresolved questions
 
 - What is the exact source syntax for marking caller-visible exports?
-- Should caller adapters live in the same Cargo package as the implementation artifact or in a sibling package?
+- Should a Cargo-compatible caller package live beside the target caller artifact or be materialized as a separate compatibility projection?
 - What is the first stable shape of the Rust support crate API?
 - Should synchronous wrappers around async Incan exports be generated by default, opt-in only, or disallowed?
 - How should nested domain results and boundary errors be represented ergonomically in Rust signatures?
 - Which derives should caller-projected models and enums receive by default?
 - How should generic Incan functions and generic model types be projected into Rust caller APIs?
 - How should host capability metadata from RFC 092 connect to caller initialization before RFC 092 is fully implemented?
-- Should local Rust workspaces use a build-script helper first, or should the first implementation require explicit `incan build --lib --caller rust` before Cargo builds the host application?
+- What local Rust-host hydration or validation workflow is sufficient without making Cargo compile the Incan library?
 
 <!-- Rename this section to "Design Decisions" once all questions have been resolved.
      An RFC cannot move from Draft to Planned until no unresolved questions remain. -->

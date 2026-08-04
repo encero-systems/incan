@@ -9,9 +9,11 @@
     - RFC 034 (`incan.pub` package registry)
     - RFC 074 (template rendering and boilerplate provenance)
     - RFC 075 (starter profiles and capability packs)
+    - RFC 117 (`Loaf.toml` and Oven's language-neutral project model)
+    - RFC 118 (Incan and Oven command-line surfaces)
 - **Issue:** https://github.com/encero-systems/incan/issues/404
 - **RFC PR:** —
-- **Written against:** v0.3
+- **Written against:** ~~v0.3~~ v0.5
 - **Shipped in:** —
 
 ## Summary
@@ -65,14 +67,14 @@ This RFC intentionally stays above hosting and registry transport. It captures t
 A project can define a policy that describes which mutation sources are allowed and which categories require review:
 
 ```toml
-[tool.incan.policy.sources]
+[oven.policy.sources]
 builtin = "allow"
 local = "warn"
 git = "require-immutable-pin"
 public-catalog = "require-review"
 private-catalog = "allow"
 
-[tool.incan.policy.risk]
+[oven.policy.risk]
 source = "require-review"
 dependency = "require-review"
 script = "require-review"
@@ -89,7 +91,7 @@ The exact policy encoding is not normative in this Draft. The contract is that p
 When a user previews a capability, policy evaluation appears alongside the mutation plan:
 
 ```text
-incan capability add cli --dry-run
+oven capability add cli --dry-run
 ```
 
 Example output:
@@ -102,7 +104,7 @@ Policy: requires review
 Risk categories:
   source            src/main.incn
   source            tests/test_cli.incn
-  script            [tool.incan.envs.default.scripts].run
+  script            [oven.envs.default.scripts].run
   dependency        app-cli = "0.3.1"
   agent-guidance    cli.write-commands
 
@@ -120,7 +122,7 @@ The important behavior is not the exact wording. The important behavior is that 
 Automation may detect that a template or capability source has a newer compatible version or a known advisory:
 
 ```text
-incan mutation propose --stale --security
+oven mutation propose --stale --security
 ```
 
 A valid implementation may choose a different command name, but the behavior should be review-first. Automation creates a patch-sized proposal containing source identity changes, integrity or advisory changes, rendered receiver-side diffs, and policy outcomes. It does not merge, approve, or apply the proposal by itself when policy requires review.
@@ -128,9 +130,9 @@ A valid implementation may choose a different command name, but the behavior sho
 For capability version updates, automation should follow the same shape a user would run manually:
 
 ```text
-incan capability status cli
-incan capability diff cli --to 1.6.0
-incan capability update cli --to 1.6.0 --dry-run
+oven capability status cli
+oven capability diff cli --to 1.6.0
+oven capability update cli --to 1.6.0 --dry-run
 ```
 
 Automation may package that dry-run output as a pull-request-sized patch or review artifact, but it must not turn a detected `1.3.0 -> 1.6.0` opportunity into an unattended write unless receiver policy explicitly allows that class of mutation. Even then, source identity changes, newly introduced scripts, CI/workflow edits, env changes, executable source changes, dependency upgrades, generated-file ownership changes, and agent guidance changes remain policy-visible events.
@@ -140,7 +142,7 @@ Automation may package that dry-run output as a pull-request-sized patch or revi
 If a previously applied template or capability is later yanked, revoked, or marked unsafe, status should show a receiver-actionable state:
 
 ```text
-incan mutation status
+oven mutation status
 ```
 
 Example output:
@@ -326,7 +328,7 @@ The same policy result should power terminal diagnostics, machine-readable JSON,
 
 ## Layers affected
 
-- **Manifest schema / configuration validation:** project tooling needs a place to describe project-local policy and record policy-related audit metadata, whether in `incan.toml`, a sidecar state file, or a future lock/state artifact.
+- **Manifest schema / configuration validation:** project tooling needs a place to describe project-local policy and record policy-related audit metadata, whether in a typed `Loaf.toml` policy table or an explicit tool-owned policy state artifact. `Oven.lock` is not a general policy store.
 - **CLI / tooling:** lifecycle commands must evaluate policy before applying template, starter, capability, update, reset, refresh, or recovery mutations.
 - **LSP / IDE tooling:** editor-facing tools should surface policy outcomes, blocked mutation reasons, review requirements, and recovery actions from machine-readable lifecycle output.
 - **Package and catalog integration:** registries and catalogs may provide source identity, integrity, yanking, revocation, advisory, compatibility, and trust-tier metadata that policy can consume.
@@ -335,7 +337,7 @@ The same policy result should power terminal diagnostics, machine-readable JSON,
 
 ## Unresolved questions
 
-- Where should project-local mutation policy live: `incan.toml`, a sidecar policy file, or a future lock/state artifact?
+- Should project-local mutation policy live in a typed `Loaf.toml` table or an explicit tool-owned policy state artifact, and which audit facts belong in receipts rather than either location?
 - What is the minimum useful policy syntax for v1?
 - Which risk categories should be standardized in v1, and which should remain extension labels?
 - Should policy support explicit reviewer or owner requirements, or should it only emit categories for external review systems to interpret?

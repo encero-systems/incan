@@ -3,15 +3,15 @@
 - **Status:** Draft
 - **Created:** 2026-03-06
 - **Author(s):** Danny Meijer (@dannymeijer)
-- **Related:** RFC 031 (library system phase 1), RFC 027 (incan-vocab)
+- **Related:** RFC 027 (incan-vocab), RFC 031 (library system phase 1), RFC 117 (`Loaf.toml` and Oven's language-neutral project model), RFC 118 (Incan and Oven command-line surfaces)
 - **Issue:** [#168](https://github.com/encero-systems/incan/issues/168)
 - **RFC PR:** —
-- **Written against:** v0.2
+- **Written against:** ~~v0.2~~ v0.5
 - **Shipped in:** —
 
 ## Summary
 
-Define the `incan.pub` package registry: the protocols, guarantees, and CLI commands that allow Incan library authors to publish packages and consumers to resolve them. The registry must be EU-hosted, integrity-verified, signature-aware, and operationally cheap enough to run with predictable capped spend. Exact vendor choice and launch-era cost numbers are implementation details, not the core contract.
+Define the `incan.pub` package registry: the protocols, guarantees, and Oven lifecycle operations that allow Incan library authors to publish packages and consumers to resolve them. The registry must be EU-hosted, integrity-verified, signature-aware, and operationally cheap enough to run with predictable capped spend. Exact vendor choice and launch-era cost numbers are implementation details, not the core contract.
 
 This Draft was originally written against RFC 031's generated-Rust library artifact shape. The package format and resolution model below are now amended to align with the backend replacement direction: generated Rust may remain an internal/debug artifact, but it is not the public package compatibility path. The registry stores Incan package artifacts with semantic manifests, ABI/package metadata, and optional backend artifacts; consumers resolve Incan semantics first, not downloaded generated Rust source.
 
@@ -40,13 +40,13 @@ The `incan.pub` registry closes this gap. It is the canonical source for publish
 
 ```bash
 # One-time setup: create an account and save credentials
-$ incan login
+$ oven login
   Opening https://incan.pub/tokens in your browser...
   Paste your API token: ****
   Saved to ~/.incan/credentials
 
 # Publish from a library project
-$ incan publish
+$ oven publish
   Building library...
   Packaging mylib 0.1.0...
   Signing with Sigstore (GitHub: @dannymeijer)...
@@ -57,13 +57,13 @@ $ incan publish
 ### Consuming a published package
 
 ```toml
-# my-app/incan.toml
+# my-app/Loaf.toml
 [project]
 name = "my-app"
 version = "0.1.0"
 
 [dependencies]
-mylib = "0.1.0"
+mylib = { loaf = "mylib", version = "0.1.0" }
 ```
 
 ```incan
@@ -76,7 +76,7 @@ def main():
 ```
 
 ```bash
-$ incan build
+$ oven bake
   Resolving dependencies...
     mylib 0.1.0 (incan.pub)
   Downloading mylib 0.1.0...
@@ -89,7 +89,7 @@ $ incan build
 ### Yanking a version
 
 ```bash
-$ incan yank mylib 0.1.0
+$ oven yank mylib 0.1.0
   Yanked mylib 0.1.0 — existing lockfiles still resolve, new resolves skip it.
 ```
 
@@ -253,7 +253,7 @@ Returns the package archive. Served from object storage, cached at CDN edge. Imm
 
 #### Token-based auth
 
-Publishers authenticate with API tokens. Tokens are generated via the `incan.pub` web UI (or a future `incan token create` CLI command).
+Publishers authenticate with API tokens. Tokens are generated via the `incan.pub` web UI (or a future `oven token create` CLI command).
 
 Token storage:
 
@@ -261,7 +261,7 @@ Token storage:
 - **Client side:** `~/.incan/credentials` (file permissions 0600). Format: `[registry]\ntoken = "incan_tok_..."`.
 
 ```bash
-$ incan login
+$ oven login
   Opening https://incan.pub/tokens in your browser...
   Paste your API token: ****
   Saved to ~/.incan/credentials
@@ -270,23 +270,23 @@ $ incan login
 #### Package ownership
 
 - First publish of a name → publisher becomes owner
-- Owners can add co-owners via `incan owner add <username> <package>`
+- Owners can add co-owners via `oven owner add <username> <package>`
 - Only owners can publish new versions or yank existing ones
 - Reserved names: `std`, `incan`, `core`, `test` — cannot be claimed by users
 
 ### Package signing with Sigstore
 
-Every `incan publish` signs the package archive using [Sigstore](https://sigstore.dev) keyless signing:
+Every `oven publish` signs the package archive using [Sigstore](https://sigstore.dev) keyless signing:
 
 **Publish side:**
 
-1. `incan publish` initiates an OIDC flow (opens browser → GitHub/GitLab/Google login)
+1. `oven publish` initiates an OIDC flow (opens browser → GitHub/GitLab/Google login)
 2. Sigstore's Fulcio CA issues a short-lived signing certificate tied to the OIDC identity
 3. The package archive's SHA256 digest is signed with the ephemeral private key
 4. The signature + certificate + checksum are recorded in Sigstore's Rekor transparency log
 5. The signature and certificate are sent to the registry alongside the package archive
 
-**Verification side (`incan build`):**
+**Verification side (`oven bake`):**
 
 1. Download package archive + `.sig` + `.cert` from registry
 2. Verify SHA256 of the archive matches the index checksum
@@ -295,9 +295,9 @@ Every `incan publish` signs the package archive using [Sigstore](https://sigstor
 5. Verify the signer identity in the certificate matches the `publisher` field in the index
 6. Verify the signature is recorded in Sigstore Rekor (transparency log lookup)
 
-If verification fails, `incan build` refuses to use the package and emits a clear diagnostic.
+If verification fails, `oven bake` refuses to use the package and emits a clear diagnostic.
 
-**Sigstore is optional in Phase 1** — the `signatures` field in the index is nullable. Unsigned packages are accepted but display a warning during `incan build`. The goal is to make signing the default from early on, then make it mandatory once the tooling is proven.
+**Sigstore is optional in Phase 1** — the `signatures` field in the index is nullable. Unsigned packages are accepted but display a warning during `oven bake`. The goal is to make signing the default from early on, then make it mandatory once the tooling is proven.
 
 **Implementation note:** the service can rely on existing Sigstore client libraries rather than inventing its own signing stack. The registry still verifies signatures on publish so invalid artifacts are rejected early.
 
@@ -318,18 +318,18 @@ RFC 079 generalizes this package-level integrity model for the wider `incan.pub`
 
 ### Consumer resolution flow
 
-When `incan build` encounters a registry dependency:
+When Oven resolves a registry dependency:
 
 ```text
 [dependencies]
-mylib = "0.1.0"          # exact version
-mylib = "^0.1"           # SemVer-compatible range
-mylib = { version = "0.1.0", registry = "incan.pub" }  # explicit (default)
+mylib = { loaf = "mylib", version = "0.1.0" } # exact version
+mylib = { loaf = "mylib", version = "^0.1" }  # SemVer-compatible range
+mylib = { loaf = "mylib", version = "0.1.0", registry = "incan.pub" } # explicit default
 ```
 
 Resolution:
 
-1. Read `[dependencies]` from `incan.toml`
+1. Read the typed dependency entry from `Loaf.toml`
 2. For each registry dep: `GET https://incan.pub/index/<prefix>/<name>`
 3. Parse JSON lines, filter by version requirement, select newest matching non-yanked version
 4. Check local cache `~/.incan/libs/<name>-<version>/` — if cached and checksum matches, skip download
@@ -342,58 +342,59 @@ Resolution:
 
 The resolver must not wire downloaded generated Rust source into generated `Cargo.toml` as the package compatibility path. Rust-facing consumption should go through the ABI/Cargo-native package direction rather than treating generated Rust internals as public API.
 
-**Lockfile (`incan.lock`):** on first resolution, write resolved versions + checksums to `incan.lock`. Subsequent builds use the lockfile for reproducibility. `incan update` re-resolves.
+**Lockfile (`Oven.lock`):** on first resolution, write resolved versions, canonical registry identity, integrity facts, and checksums to `Oven.lock`. Subsequent bakes use the lockfile for reproducibility. `oven update` re-resolves.
 
 ### CLI commands
 
 | Command | Description |
 |---|---|
-| `incan add <pkg>` | Add a dependency to `incan.toml` (fetch latest version from registry) |
-| `incan remove <pkg>` | Remove a dependency from `incan.toml` |
-| `incan update` | Re-resolve all dependencies and update `incan.lock` |
-| `incan login` | Authenticate with `incan.pub`, save token to `~/.incan/credentials` |
-| `incan publish` | Build library, package `.incanpkg`, sign, upload to registry |
-| `incan yank <pkg> <ver>` | Mark a version as yanked (still downloadable but skipped in new resolves) |
-| `incan search <query>` | Search the registry index (client-side text search over cached index) |
-| `incan owner add <user> <pkg>` | Add a co-owner for a package |
-| `incan owner list <pkg>` | List owners of a package |
+| `oven add <pkg>` | Add a Loaf dependency to `Loaf.toml` (fetch latest version from `incan.pub`) |
+| `oven add --crate <pkg>` | Add a crate dependency to `Loaf.toml` (fetch from crates.io by default) |
+| `oven remove <pkg>` | Remove a typed dependency from `Loaf.toml` |
+| `oven update` | Re-resolve the selected closure and update `Oven.lock` |
+| `oven login` | Authenticate with `incan.pub`, save credentials in Oven-controlled secure storage |
+| `oven publish` | Bake the selected Loaf, package `.incanpkg`, sign, and upload it |
+| `oven yank <pkg> <ver>` | Mark a version as yanked (still downloadable but skipped in new resolves) |
+| `oven search <query>` | Search the registry index (client-side text search over cached index) |
+| `oven owner add <user> <pkg>` | Add a co-owner for a package |
+| `oven owner list <pkg>` | List owners of a package |
 
-#### `incan add` in detail
+#### `oven add` in detail
 
-Like `cargo add`, this is the primary way users add dependencies. It edits `incan.toml` for you:
+Like `cargo add`, this is the primary way users add dependencies. It edits `Loaf.toml` for you. The final aliases exposed through `incan` are owned by RFC 118; they must delegate to Oven rather than duplicate this resolution behavior.
 
 ```bash
 # Add latest version from incan.pub
-$ incan add widgets
-  Added widgets = "^0.2.1" to [dependencies]
+$ oven add widgets
+  Added widgets = { loaf = "widgets", version = "^0.2.1" } to [dependencies]
 
 # Add a specific version
-$ incan add widgets@0.1.0
-  Added widgets = "0.1.0" to [dependencies]
+$ oven add widgets@0.1.0
+  Added widgets = { loaf = "widgets", version = "0.1.0" } to [dependencies]
 
-# Add a Rust crate (to [rust-dependencies])
-$ incan add --rust serde
-  Added serde = "1.0" to [rust-dependencies]
+# Add a Rust crate to the same typed dependency graph
+$ oven add --crate serde
+  Added serde = { crate = "serde", version = "1.0" } to [dependencies]
 
 # Add a path dependency (local library)
-$ incan add widgets --path ../widgets
-  Added widgets = { path = "../widgets" } to [dependencies]
+$ oven add widgets --path ../widgets
+  Added widgets = { loaf = "widgets", path = "../widgets" } to [dependencies]
 
 # Add a git dependency (Phase 2)
-$ incan add widgets --git https://github.com/example/widgets --tag v0.2.0
-  Added widgets = { git = "https://...", tag = "v0.2.0" } to [dependencies]
+$ oven add widgets --git https://github.com/example/widgets --tag v0.2.0
+  Added widgets = { loaf = "widgets", git = "https://...", tag = "v0.2.0" } to [dependencies]
 ```
 
 **Behavior:**
 
-1. If no `incan.toml` exists, error with "run `incan init` first"
+1. If no `Loaf.toml` exists, error with "run `oven init` first"
 2. Query the registry index for the latest non-yanked version (unless `@version` or `--path`/`--git` specified)
 3. Default to `^major.minor.patch` range (SemVer-compatible, like Cargo)
-4. Write the entry to `[dependencies]` (or `[rust-dependencies]` with `--rust`)
-5. If the package is already in `incan.toml`, update the version (with a confirmation prompt unless `--force`)
-6. Run `incan lock` to update `incan.lock` with the resolved version
+4. Write the typed entry to `[dependencies]`
+5. If the package is already in `Loaf.toml`, update the version (with a confirmation prompt unless `--force`)
+6. Update `Oven.lock` with the resolved closure
 
-`incan remove` does the inverse: removes the entry from `incan.toml` and re-locks.
+`oven remove` does the inverse: removes the entry from `Loaf.toml` and re-locks.
 
 ## Infrastructure: provider selection
 
@@ -459,8 +460,8 @@ The important design constraint is portability:
 
 ## Interaction with existing features
 
-- **RFC 031 (library system):** This RFC builds on RFC 031's `.incnlib` manifest format, `pub::` import syntax, and `incan build --lib` command, but supersedes any assumption that generated Rust source is the registry package contract.
-- **RFC 027 (incan-vocab):** Library soft keyword declarations are serialized into checked package metadata during `incan build --lib` and included in the package archive. The registry is unaware of soft keywords; it stores and serves packages.
+- **RFC 031 (library system):** This RFC builds on RFC 031's `.incnlib` manifest format and `pub::` import syntax, but supersedes any assumption that generated Rust source is the registry package contract. The package lifecycle operation is `oven bake --lib` under RFCs 117 and 118.
+- **RFC 027 (incan-vocab):** Library soft keyword declarations are serialized into checked package metadata during `oven bake --lib` and included in the package archive. The registry is unaware of soft keywords; it stores and serves packages.
 - **`rust::` imports (RFC 005):** `pub::` registry imports and `rust::` Rust crate imports coexist. A package's Rust dependencies may appear in package metadata, but the compiler backend owns how they are linked into the target build.
 
 ## Alternatives considered
@@ -498,14 +499,14 @@ German provider, good pricing. However: no scale-to-zero compute (minimum €4.5
 
 - Registry service for publish, yank, index reads, and package downloads
 - Object storage integration for package, index, and signature artifacts
-- `incan login` credential management
-- `incan publish` packaging and upload flow
+- `oven login` credential management
+- `oven publish` packaging and upload flow
 - Index reader and package cache integration on the consumer side
 - Lockfile integration consistent with the broader library-resolution story
 
 ### Phase 2: Sigstore signing
 
-- `incan publish` integration for keyless signing
+- `oven publish` integration for keyless signing
 - Registry-side signature verification on publish
 - Consumer-side verification during download/build
 - Web and CLI surfacing of signer identity and verification status
@@ -513,7 +514,7 @@ German provider, good pricing. However: no scale-to-zero compute (minimum €4.5
 ### Phase 3: Web UI + search
 
 - Static site generation for package pages from index data
-- `incan search` over registry metadata
+- `oven search` over registry metadata
 - Download counters or equivalent package-usage reporting
 
 ## Layers affected
@@ -540,7 +541,7 @@ German provider, good pricing. However: no scale-to-zero compute (minimum €4.5
 
 ## Future extensions (out of scope)
 
-- **Private registries.** Organizations running their own `incan.pub`-compatible registry for internal packages. Uses the same protocol and CLI commands with a different registry URL in `incan.toml`.
+- **Private registries.** Organizations may register an `incan.pub`-compatible registry in Oven-controlled organization or user configuration, then allow-list that registered identity from a Loaf or workspace. Credentials and trust policy never live in `Loaf.toml`; `Oven.lock` records the resolved canonical identity and observed trust facts.
 - **Trusted Publishers (GitHub Actions OIDC).** Like PyPI's Trusted Publishers — CI/CD can publish without long-lived tokens by using GitHub Actions' OIDC identity directly with Sigstore.
-- **Package auditing tools.** `incan audit` to check dependencies against a vulnerability database.
+- **Package auditing tools.** `oven audit` to check dependencies against a vulnerability database.
 - **Mirror support.** Read-only mirrors of `incan.pub` for network-restricted environments or regional performance.

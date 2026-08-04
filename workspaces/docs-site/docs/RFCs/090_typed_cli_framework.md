@@ -12,9 +12,11 @@
     - RFC 073 (environment matrices and toolchain constraints)
     - RFC 083 (symbol and method aliases)
     - RFC 089 (`std.environ` runtime environment access)
+    - RFC 117 (`Loaf.toml` and Oven's language-neutral project model)
+    - RFC 118 (Incan and Oven command-line surfaces)
 - **Issue:** https://github.com/encero-systems/incan/issues/87
 - **RFC PR:** —
-- **Written against:** v0.3
+- **Written against:** ~~v0.3~~ v0.5
 - **Shipped in:** —
 
 ## Summary
@@ -56,7 +58,7 @@ This also helps library and application tests. A CLI program should be testable 
 
 - Requiring the `incan` compiler CLI to adopt this framework.
 - Replacing `std.process.Command`, `Pipeline`, or shell DSL execution from RFC 063.
-- Replacing project lifecycle env execution, matrix execution, or `incan env run` behavior from RFC 015 and RFC 073.
+- Replacing Oven project lifecycle env execution, matrix execution, or `oven env run` behavior from RFCs 073 and 117.
 - Replacing direct runtime environment access from RFC 089.
 - Defining terminal UI widgets, progress bars, prompts, interactive menus, curses-style interfaces, or rich text styling.
 - Defining shell completion script generation in full detail, though the spec should preserve enough structure for a later RFC or extension to add it.
@@ -473,7 +475,7 @@ When a CLI argument has `env`, parsing should use the same missing, malformed, p
 
 ### Boundary with project lifecycle tooling
 
-This RFC is for applications written in Incan. It does not change `incan env run`, matrix expansion, project scripts, or compiler lifecycle commands. Those remain owned by RFC 015, RFC 019, and RFC 073.
+This RFC is for applications written in Incan. It does not change `oven env run`, matrix expansion, project scripts, or Oven lifecycle commands. Those remain owned by RFCs 019, 073, 117, and 118.
 
 The long-term compiler CLI may eventually dogfood `std.cli`, but this RFC deliberately does not make compiler CLI migration part of the contract. A forced migration would make the RFC larger and tie framework design to current compiler implementation details.
 
