@@ -37,8 +37,7 @@ plugins:
       scripts:
         - utils/gen_rfc_index_snippet.py
   - search
-  - tags:
-      tags_file: tags.md
+  - tags
 hooks:
   - mkdocs_hooks.py
 
